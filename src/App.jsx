@@ -12,6 +12,7 @@ import {
 } from 'firebase/firestore';
 
 // --- 2. CONFIGURACIÓN DE FIREBASE ---
+// ⚠️ PEGA AQUÍ TUS CREDENCIALES REALES DE FIREBASE ⚠️
 const firebaseConfig = {
   apiKey: "AIzaSyCavgJ20mrE5HZHW7H7NKQ0sibs5p4Q-TU",
   authDomain: "gestion-028.firebaseapp.com",
@@ -56,7 +57,7 @@ const Input = ({ label, symbol, darkMode, ...props }) => (
     {label && <label className={`text-xs font-bold uppercase tracking-wide ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>{label}</label>}
     <div className="relative">
       {symbol && <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><span className={`text-sm font-bold ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>{symbol}</span></div>}
-      <input className={`border rounded-lg p-2.5 w-full outline-none transition-all ${darkMode ? 'bg-slate-700 border-slate-600 text-white focus:ring-2 focus:ring-blue-500' : 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-2 focus:ring-slate-800'} ${symbol ? 'pl-8' : ''}`} {...props} />
+      <input className={`border rounded-lg p-2.5 w-full outline-none transition-all ${darkMode ? 'bg-slate-700 border-slate-600 text-white focus:ring-2 focus:ring-emerald-500' : 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-2 focus:ring-slate-800'} ${symbol ? 'pl-8' : ''}`} {...props} />
     </div>
   </div>
 );
@@ -80,7 +81,7 @@ const getTodayDate = () => {
   return `${year}-${month}-${day}`;
 };
 
-// --- APP PRINCIPAL ---
+// --- 4. APP PRINCIPAL ---
 export default function App() {
   const [user, setUser] = useState(() => localStorage.getItem('028_user') || null);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('028_dark_mode') === 'true');
@@ -91,25 +92,23 @@ export default function App() {
   }, [darkMode]);
 
   const [activeTab, setActiveTab] = useState('batches');
-  const [batches, setBatches] = useState([]); 
+  const [batches, setBatches] = useState([]);
   const [sales, setSales] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [configError, setConfigError] = useState(false);
-
-  // Estados UI para Lotes Expandibles
   const [expandedBatchId, setExpandedBatchId] = useState(null);
 
-  // --- SINCRONIZACIÓN ---
+  // Sincronización
   useEffect(() => {
     if (!user) return;
     if (firebaseConfig.apiKey === "TU_API_KEY_AQUI") { setConfigError(true); setLoading(false); return; }
+    
     setLoading(true);
 
     const unsubBatches = onSnapshot(query(collection(db, 'batches'), orderBy('createdAt', 'desc')), (snap) => {
       setBatches(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
-
     const unsubSales = onSnapshot(query(collection(db, 'sales'), orderBy('date', 'desc')), (snap) => setSales(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubExp = onSnapshot(query(collection(db, 'expenses'), orderBy('date', 'desc')), (snap) => setExpenses(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     
@@ -119,74 +118,69 @@ export default function App() {
 
   const formatMoney = (val) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(val);
 
-  // --- ACCIONES DE LOTES (NUEVA ESTRUCTURA: CARPETAS) ---
+  // --- ACCIONES DE LOTES Y ITEMS ---
   
-  // 1. Crear Carpeta (Lote Vacío)
+  // 1. Crear Carpeta
   const [newBatchName, setNewBatchName] = useState('');
   const handleCreateBatch = async () => {
     if (!newBatchName) return alert("Ponle un nombre a la carpeta");
-    try {
-      await addDoc(collection(db, 'batches'), {
-        name: newBatchName,
-        createdAt: new Date().toISOString(),
-        items: [] // Array vacío para meter productos después
-      });
-      setNewBatchName('');
-      alert("✅ Carpeta de Lote creada");
-    } catch (e) { alert("Error: " + e.message); }
+    try { await addDoc(collection(db, 'batches'), { name: newBatchName, createdAt: new Date().toISOString(), items: [] }); setNewBatchName(''); alert("✅ Carpeta creada"); } catch (e) { alert("Error: " + e.message); }
   };
+  const handleDeleteBatch = async (id) => { if (confirm('¿Borrar carpeta completa? Se perderá el historial interno.')) await deleteDoc(doc(db, 'batches', id)); };
 
-  const handleDeleteBatch = async (id) => { if (confirm('¿Borrar carpeta completa? Perderás todo el historial de stock interno.')) await deleteDoc(doc(db, 'batches', id)); };
-
-  // 2. Agregar Producto a una Carpeta
+  // 2. Items dentro de Carpeta
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '' });
   
   const handleAddItemToBatch = async (batchId) => {
-    if (!newItem.product || !newItem.costArs || !newItem.initialStock) return alert("Faltan datos del producto");
+    if (!newItem.product || !newItem.costArs || !newItem.initialStock) return alert("Faltan datos");
+    const batch = batches.find(b => b.id === batchId);
+    if (!batch) return;
+    const newItemData = {
+      id: crypto.randomUUID(), product: newItem.product, variant: newItem.variant || 'Único', costArs: parseFloat(newItem.costArs) || 0, initialStock: parseInt(newItem.initialStock) || 0, currentStock: parseInt(newItem.initialStock) || 0,
+    };
+    try {
+      await updateDoc(doc(db, 'batches', batchId), { items: [...(batch.items || []), newItemData] });
+      setNewItem({ product: '', variant: '', costArs: '', initialStock: '' });
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  // --- NUEVA FUNCIÓN: BORRAR ITEM ESPECÍFICO ---
+  const handleDeleteItemFromBatch = async (batchId, itemId) => {
+    if (!confirm('¿Borrar este producto del lote?')) return;
     
     const batch = batches.find(b => b.id === batchId);
     if (!batch) return;
-
-    const newItemData = {
-      id: crypto.randomUUID(), // ID único interno
-      product: newItem.product,
-      variant: newItem.variant || 'Único',
-      costArs: parseFloat(newItem.costArs) || 0,
-      initialStock: parseInt(newItem.initialStock) || 0,
-      currentStock: parseInt(newItem.initialStock) || 0,
-    };
-
-    const updatedItems = [...(batch.items || []), newItemData];
-
+    
+    // Filtramos para quitar el item
+    const updatedItems = batch.items.filter(i => i.id !== itemId);
+    
     try {
       await updateDoc(doc(db, 'batches', batchId), { items: updatedItems });
-      setNewItem({ product: '', variant: '', costArs: '', initialStock: '' });
-      // No cerramos la carpeta para seguir cargando si quiere
-    } catch (e) { alert("Error al agregar ítem: " + e.message); }
+    } catch (e) {
+      alert("Error al borrar item: " + e.message);
+    }
   };
 
-  // --- VENTAS (Linkeadas a Item dentro de Lote) ---
+  // 3. Ventas
   const [newSale, setNewSale] = useState({ batchId: '', itemId: '', quantity: 1, unitPrice: '', shippingCost: 0, shippingPrice: 0, source: 'Instagram', isReseller: 'No', saleDate: getTodayDate() });
   
   const handleAddSale = async () => {
     if (!newSale.batchId || !newSale.itemId || !newSale.unitPrice) return alert("Faltan datos");
     
-    // 1. Encontrar Batch y Item
     const batch = batches.find(b => b.id === newSale.batchId);
     if (!batch) return alert("Carpeta no encontrada");
-    
     const itemIndex = batch.items.findIndex(i => i.id === newSale.itemId);
-    if (itemIndex === -1) return alert("Producto no encontrado en la carpeta");
-    
+    if (itemIndex === -1) return alert("Producto no encontrado");
     const item = batch.items[itemIndex];
 
-    // 2. Validar Stock
-    if (item.currentStock <= 0) return alert(`⛔ SIN STOCK: ${item.product} agotado en este lote.`);
+    if (item.currentStock <= 0) return alert(`⛔ SIN STOCK: ${item.product} agotado.`);
     const qty = parseInt(newSale.quantity) || 1;
     if (item.currentStock < qty) return alert(`⚠️ Stock insuficiente. Quedan ${item.currentStock} u.`);
 
-    // 3. Cálculos
     const enteredPrice = parseFloat(newSale.unitPrice) || 0;
+    
+    // --- CORRECCIÓN CÁLCULO TOTAL (CAJA) ---
+    // Total Caja = (Precio Unitario * Cantidad) + (Cobro Envio - Costo Envio)
     const shippingProfit = parseFloat(newSale.shippingPrice || 0) - parseFloat(newSale.shippingCost || 0);
     const totalCashIn = (enteredPrice * qty) + shippingProfit;
 
@@ -195,50 +189,34 @@ export default function App() {
 
     const saleData = {
       date: saleDateObj.toISOString(),
-      batchId: batch.id,
-      batchName: batch.name,
-      itemId: item.id, // Guardamos ID del item para referencias
-      
-      productName: item.product,
-      variant: item.variant,
-      
-      quantity: qty,
-      unitPrice: enteredPrice,
-      totalSaleRaw: totalCashIn,
-      
-      costArsAtSale: item.costArs, // Costo de este item específico
-      shippingCostArs: parseFloat(newSale.shippingCost || 0),
-      
-      source: newSale.source,
-      isReseller: newSale.isReseller === 'Si'
+      batchId: batch.id, batchName: batch.name, itemId: item.id,
+      productName: item.product, variant: item.variant,
+      quantity: qty, unitPrice: enteredPrice, totalSaleRaw: totalCashIn,
+      costArsAtSale: item.costArs, shippingCostArs: parseFloat(newSale.shippingCost || 0),
+      source: newSale.source, isReseller: newSale.isReseller === 'Si'
     };
 
     try {
-      // Guardar Venta
       await addDoc(collection(db, 'sales'), saleData);
-      
-      // Actualizar Stock (Array Update)
       const newItems = [...batch.items];
       newItems[itemIndex] = { ...item, currentStock: item.currentStock - qty };
-      
       await updateDoc(doc(db, 'batches', batch.id), { items: newItems });
-      
       setNewSale({ ...newSale, quantity: 1, unitPrice: '', shippingCost: 0, shippingPrice: 0 });
-      alert(`✅ Venta registrada: ${item.product} (${batch.name})`);
+      alert(`✅ Venta OK. Caja: ${formatMoney(totalCashIn)}`);
     } catch (e) { alert('Error: ' + e.message); }
   };
 
   const handleDeleteSale = async (sale) => {
-    if (!confirm(`¿Borrar venta de ${sale.productName}? El stock volverá a la carpeta "${sale.batchName}".`)) return;
-    
+    if (!sale || !sale.id) return;
+    if (!confirm(`¿Eliminar venta de ${sale.productName}? El stock se devolverá.`)) return;
     try {
+      // 1. Borrar la venta
       await deleteDoc(doc(db, 'sales', sale.id));
       
-      // Restaurar Stock
+      // 2. Restaurar Stock
       if (sale.batchId && sale.itemId) {
-        // Necesitamos leer el batch actual para no pisar cambios
-        // (Nota: En app real de alto tráfico usar transactions, aquí onSnapshot ayuda a tener 'batches' actualizado)
         const batch = batches.find(b => b.id === sale.batchId);
+        // Si el lote todavía existe, devolvemos el stock
         if (batch) {
           const itemIndex = batch.items.findIndex(i => i.id === sale.itemId);
           if (itemIndex !== -1) {
@@ -251,7 +229,7 @@ export default function App() {
     } catch (e) { alert('Error: ' + e.message); }
   };
 
-  // --- GASTOS ---
+  // 4. Gastos
   const [newExpense, setNewExpense] = useState({ description: '', amount: '' });
   const handleAddExpense = async () => {
     if (!newExpense.description || !newExpense.amount) return;
@@ -260,47 +238,21 @@ export default function App() {
   };
   const handleDeleteExpense = async (id) => await deleteDoc(doc(db, 'expenses', id));
 
-  // --- ANALISIS POR LOTE ---
+  // --- ANALISIS ---
   const [selectedBatchStats, setSelectedBatchStats] = useState(null);
-
   const batchAnalysis = useMemo(() => {
     if (!selectedBatchStats) return null;
     const batch = batches.find(b => b.id === selectedBatchStats);
     if (!batch) return null;
-
-    // Filtrar ventas SOLO de este lote
     const batchSales = sales.filter(s => s.batchId === batch.id);
-
-    let totalRevenue = 0;
-    let itemsSold = 0;
-    
-    batchSales.forEach(s => {
-      totalRevenue += s.totalSaleRaw;
-      itemsSold += s.quantity;
-    });
-
-    // Costo Total del Lote (Sumatoria de todos los items)
+    let totalRevenue = 0; let itemsSold = 0;
+    batchSales.forEach(s => { totalRevenue += s.totalSaleRaw; itemsSold += s.quantity; });
     const totalInvestment = (batch.items || []).reduce((acc, item) => acc + (item.costArs * item.initialStock), 0);
-    
-    // Costo de lo Vendido (Para calcular ganancia actual)
-    // Recorremos las ventas y sumamos su costo histórico guardado
     const costOfSold = batchSales.reduce((acc, s) => acc + (s.costArsAtSale * s.quantity), 0);
-    
     const currentProfit = totalRevenue - costOfSold;
-
-    // Progreso Global del Lote
     const totalInitialStock = (batch.items || []).reduce((acc, item) => acc + item.initialStock, 0);
     const progress = totalInitialStock > 0 ? (itemsSold / totalInitialStock) * 100 : 0;
-
-    return {
-      batch,
-      salesCount: batchSales.length,
-      itemsSold,
-      totalRevenue,
-      totalInvestment,
-      currentProfit,
-      progress
-    };
+    return { batch, salesCount: batchSales.length, itemsSold, totalRevenue, totalInvestment, currentProfit, progress };
   }, [selectedBatchStats, sales, batches]);
 
   // --- RENDER ---
@@ -325,15 +277,10 @@ export default function App() {
   return (
     <div className={`min-h-screen p-4 md:p-8 font-sans transition-colors duration-300 ${darkMode ? 'bg-slate-900 text-slate-100' : 'bg-slate-100 text-slate-800'}`}>
       <div className="max-w-7xl mx-auto space-y-6">
-        
-        {/* HEADER */}
         <header className={`p-6 rounded-2xl shadow-xl flex flex-col md:flex-row justify-between items-center gap-6 transition-colors duration-300 ${darkMode ? 'bg-slate-800 border border-slate-700' : 'bg-slate-900 text-white'}`}>
           <div className="flex items-center gap-4">
             <div className="bg-blue-600 p-3 rounded-xl text-white relative"><FolderOpen size={32} strokeWidth={2.5} /></div>
-            <div>
-              <h1 className="text-3xl font-black tracking-tight">028 IMPORT</h1>
-              <p className={`text-sm font-medium ${darkMode ? 'text-slate-400' : 'text-slate-400'}`}>Gestión por Lotes | {user}</p>
-            </div>
+            <div><h1 className="text-3xl font-black tracking-tight">028 IMPORT</h1><p className={`text-sm font-medium ${darkMode ? 'text-slate-400' : 'text-slate-400'}`}>Gestión por Lotes | {user}</p></div>
           </div>
           <div className="flex items-center gap-4">
             <button onClick={() => setDarkMode(!darkMode)} className={`p-3 rounded-xl transition ${darkMode ? 'bg-slate-700 text-yellow-400' : 'bg-slate-800 text-slate-300'}`}>{darkMode ? <Sun size={20} /> : <Moon size={20} />}</button>
@@ -345,8 +292,8 @@ export default function App() {
             {[
             { id: 'batches', icon: FolderOpen, label: 'Lotes (Carpetas)' },
             { id: 'sales', icon: ShoppingCart, label: 'Ventas' },
-            { id: 'analysis', icon: Activity, label: 'Análisis de Lote' },
-            { id: 'expenses', icon: Wallet, label: 'Gastos Grales' },
+            { id: 'analysis', icon: Activity, label: 'Análisis' },
+            { id: 'expenses', icon: Wallet, label: 'Gastos' },
             ].map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all ${activeTab === tab.id ? (darkMode ? 'bg-blue-600 text-white' : 'bg-slate-800 text-white') : (darkMode ? 'bg-slate-800 text-slate-400' : 'bg-white text-slate-500')}`}>
                 <tab.icon size={18} /> {tab.label}
@@ -354,10 +301,8 @@ export default function App() {
             ))}
         </div>
 
-        {/* --- 1. GESTIÓN DE LOTES (CARPETAS + ITEMS) --- */}
         {activeTab === 'batches' && (
           <div className="space-y-6 animate-in fade-in">
-            {/* CREAR NUEVA CARPETA */}
             <Card className={darkMode ? 'border-l-4 border-l-blue-500' : 'border-l-4 border-l-slate-800'} darkMode={darkMode}>
               <h2 className="text-lg font-bold mb-4 flex items-center gap-2"><Plus className="text-blue-500" /> Crear Nueva Carpeta / Lote</h2>
               <div className="flex gap-4 items-end">
@@ -365,32 +310,15 @@ export default function App() {
                 <div className="w-48"><Button darkMode={darkMode} onClick={handleCreateBatch} className="w-full">Crear Carpeta</Button></div>
               </div>
             </Card>
-
-            {/* LISTA DE CARPETAS */}
             <div className="space-y-4">
               {batches.map((b) => (
                 <div key={b.id} className={`rounded-xl border overflow-hidden transition-all ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                  {/* CABECERA DE CARPETA (Click para expandir) */}
-                  <div 
-                    className={`p-4 flex justify-between items-center cursor-pointer ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-50'}`}
-                    onClick={() => setExpandedBatchId(expandedBatchId === b.id ? null : b.id)}
-                  >
-                    <div className="flex items-center gap-3">
-                      <FolderOpen className="text-blue-500" size={24} />
-                      <div>
-                        <h3 className={`font-bold text-lg ${darkMode ? 'text-white' : 'text-slate-800'}`}>{b.name}</h3>
-                        <p className="text-xs opacity-50">{(b.items || []).length} Productos adentro</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      {expandedBatchId === b.id ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
-                    </div>
+                  <div className={`p-4 flex justify-between items-center cursor-pointer ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-50'}`} onClick={() => setExpandedBatchId(expandedBatchId === b.id ? null : b.id)}>
+                    <div className="flex items-center gap-3"><FolderOpen className="text-blue-500" size={24} /><div><h3 className={`font-bold text-lg ${darkMode ? 'text-white' : 'text-slate-800'}`}>{b.name}</h3><p className="text-xs opacity-50">{(b.items || []).length} Productos adentro</p></div></div>
+                    <div className="flex items-center gap-4">{expandedBatchId === b.id ? <ChevronDown size={20} /> : <ChevronRight size={20} />}</div>
                   </div>
-
-                  {/* CONTENIDO DE LA CARPETA (Items) */}
                   {expandedBatchId === b.id && (
                     <div className={`p-4 border-t ${darkMode ? 'border-slate-700 bg-slate-900/50' : 'border-slate-100 bg-slate-50'}`}>
-                      {/* FORMULARIO AGREGAR ITEM A ESTA CARPETA */}
                       <div className="mb-6 p-4 rounded-lg border border-dashed border-slate-400/50">
                         <h4 className="text-sm font-bold uppercase mb-3 flex items-center gap-2"><Box size={14}/> Agregar Producto a "{b.name}"</h4>
                         <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
@@ -401,31 +329,22 @@ export default function App() {
                           <div className="md:col-span-5"><Button darkMode={darkMode} onClick={() => handleAddItemToBatch(b.id)} className="w-full text-xs h-9">Agregar a Carpeta</Button></div>
                         </div>
                       </div>
-
-                      {/* TABLA DE ITEMS */}
                       <table className="w-full text-left text-sm">
-                        <thead className={`text-xs uppercase opacity-50 border-b ${darkMode ? 'border-slate-700' : 'border-slate-200'}`}>
-                          <tr><th className="pb-2">Producto</th><th className="pb-2">Costo</th><th className="pb-2">Stock</th></tr>
-                        </thead>
+                        <thead className={`text-xs uppercase opacity-50 border-b ${darkMode ? 'border-slate-700' : 'border-slate-200'}`}><tr><th className="pb-2">Producto</th><th className="pb-2">Costo</th><th className="pb-2">Stock</th><th className="pb-2 text-right">Acción</th></tr></thead>
                         <tbody className="divide-y divide-slate-700/20">
                           {(b.items || []).map((item, idx) => (
                             <tr key={idx} className="hover:opacity-80">
                               <td className="py-3 font-medium">{item.product} <span className="opacity-60 text-xs ml-1">{item.variant}</span></td>
                               <td className="py-3 font-mono">{formatMoney(item.costArs)}</td>
-                              <td className="py-3">
-                                <span className={`font-bold px-2 py-0.5 rounded text-xs ${item.currentStock === 0 ? 'bg-red-500/20 text-red-500' : 'bg-emerald-500/20 text-emerald-500'}`}>
-                                  {item.currentStock} / {item.initialStock}
-                                </span>
+                              <td className="py-3"><span className={`font-bold px-2 py-0.5 rounded text-xs ${item.currentStock === 0 ? 'bg-red-500/20 text-red-500' : 'bg-emerald-500/20 text-emerald-500'}`}>{item.currentStock} / {item.initialStock}</span></td>
+                              <td className="py-3 text-right">
+                                <button onClick={() => handleDeleteItemFromBatch(b.id, item.id)} className="text-slate-400 hover:text-red-500 transition-colors p-1" title="Eliminar este producto"><Trash2 size={14} /></button>
                               </td>
                             </tr>
                           ))}
-                          {(b.items || []).length === 0 && <tr><td colSpan="3" className="py-4 text-center opacity-40">Carpeta vacía</td></tr>}
                         </tbody>
                       </table>
-                      
-                      <div className="mt-4 pt-4 border-t border-slate-700/20 flex justify-end">
-                        <button onClick={(e) => { e.stopPropagation(); handleDeleteBatch(b.id); }} className="text-xs text-red-500 hover:underline flex items-center gap-1"><Trash2 size={12}/> Eliminar Carpeta Completa</button>
-                      </div>
+                      <div className="mt-4 pt-4 border-t border-slate-700/20 flex justify-end"><button onClick={(e) => { e.stopPropagation(); handleDeleteBatch(b.id); }} className="text-xs text-red-500 hover:underline flex items-center gap-1"><Trash2 size={12}/> Eliminar Carpeta Completa</button></div>
                     </div>
                   )}
                 </div>
@@ -434,7 +353,6 @@ export default function App() {
           </div>
         )}
 
-        {/* --- 2. VENTAS (SELECCIONANDO LOTE) --- */}
         {activeTab === 'sales' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in">
             <Card className="lg:col-span-1 border-t-4 border-t-emerald-500 h-fit" darkMode={darkMode}>
@@ -443,29 +361,17 @@ export default function App() {
                   <div className="bg-amber-50/50 p-2 rounded border border-amber-100/20">
                       <Input darkMode={darkMode} label="Fecha" type="date" value={newSale.saleDate} onChange={e => setNewSale({...newSale, saleDate: e.target.value})} />
                   </div>
-
-                  {/* SELECTOR DE LOTE (CARPETA) */}
                   <div className="flex flex-col gap-1.5">
                     <label className={`text-xs font-bold uppercase ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>1. Seleccionar Carpeta</label>
-                    <select 
-                        className={`border rounded-lg p-2.5 w-full outline-none ${darkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-slate-50 border-slate-200'}`}
-                        value={newSale.batchId}
-                        onChange={e => setNewSale({...newSale, batchId: e.target.value, itemId: ''})}
-                    >
+                    <select className={`border rounded-lg p-2.5 w-full outline-none ${darkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-slate-50 border-slate-200'}`} value={newSale.batchId} onChange={e => setNewSale({...newSale, batchId: e.target.value, itemId: ''})}>
                         <option value="">-- Elegir Carpeta --</option>
                         {batches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                     </select>
                   </div>
-
-                  {/* SELECTOR DE ITEM (DENTRO DE LA CARPETA) */}
                   {newSale.batchId && (
                     <div className="flex flex-col gap-1.5 animate-in fade-in">
                       <label className={`text-xs font-bold uppercase ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>2. Seleccionar Producto</label>
-                      <select 
-                          className={`border rounded-lg p-2.5 w-full outline-none ${darkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-slate-50 border-slate-200'}`}
-                          value={newSale.itemId}
-                          onChange={e => setNewSale({...newSale, itemId: e.target.value})}
-                      >
+                      <select className={`border rounded-lg p-2.5 w-full outline-none ${darkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-slate-50 border-slate-200'}`} value={newSale.itemId} onChange={e => setNewSale({...newSale, itemId: e.target.value})}>
                           <option value="">-- Elegir Producto --</option>
                           {batches.find(b => b.id === newSale.batchId)?.items?.map(item => (
                               <option key={item.id} value={item.id} disabled={item.currentStock <= 0}>
@@ -475,28 +381,20 @@ export default function App() {
                       </select>
                     </div>
                   )}
-
-                  <div className="grid grid-cols-2 gap-2">
-                      <Input darkMode={darkMode} label="Cantidad" type="number" value={newSale.quantity} onChange={e => setNewSale({...newSale, quantity: e.target.value})} />
-                  </div>
-                  
+                  <div className="grid grid-cols-2 gap-2"><Input darkMode={darkMode} label="Cantidad" type="number" value={newSale.quantity} onChange={e => setNewSale({...newSale, quantity: e.target.value})} /></div>
                   <Input darkMode={darkMode} label="Precio Venta Unitario ($)" type="number" value={newSale.unitPrice} onChange={e => setNewSale({...newSale, unitPrice: e.target.value})} />
-                  
                   <div className={`p-3 rounded-lg border grid grid-cols-2 gap-2 ${darkMode ? 'bg-slate-900 border-slate-700' : 'bg-blue-50 border-blue-100'}`}>
                       <Input darkMode={darkMode} label="Costo Envío" type="number" value={newSale.shippingCost} onChange={e => setNewSale({...newSale, shippingCost: e.target.value})} />
                       <Input darkMode={darkMode} label="Cobro Envío" type="number" value={newSale.shippingPrice} onChange={e => setNewSale({...newSale, shippingPrice: e.target.value})} />
                   </div>
-
                   <div className="grid grid-cols-2 gap-2">
                       <Select darkMode={darkMode} label="Origen" value={newSale.source} onChange={e => setNewSale({...newSale, source: e.target.value})} options={[{value:'Instagram', label:'Instagram'}, {value:'Whatsapp', label:'Whatsapp'}, {value:'Personal', label:'Personal'}]} />
                       <Select darkMode={darkMode} label="Tipo" value={newSale.isReseller} onChange={e => setNewSale({...newSale, isReseller: e.target.value})} options={[{value:'No', label:'Consumidor Final'}, {value:'Si', label:'Revendedor'}]} />
                   </div>
-
                   <Button darkMode={darkMode} onClick={handleAddSale} variant="success" className="w-full py-3">Registrar Venta</Button>
                 </div>
             </Card>
             
-            {/* HISTORIAL */}
             <div className="lg:col-span-2 space-y-4">
               <div className={`rounded-xl shadow overflow-hidden ${darkMode ? 'bg-slate-800' : 'bg-white'}`}>
                 <div className={`p-4 font-bold border-b ${darkMode ? 'bg-slate-900 border-slate-700' : 'bg-slate-50 border-slate-100'}`}>Historial de Ventas</div>
@@ -529,7 +427,6 @@ export default function App() {
           </div>
         )}
 
-        {/* --- 3. ANÁLISIS DE LOTE --- */}
         {activeTab === 'analysis' && (
           <div className="space-y-6 animate-in fade-in">
             <Card darkMode={darkMode}>
@@ -584,7 +481,6 @@ export default function App() {
           </div>
         )}
 
-        {/* --- 4. GASTOS GENERALES --- */}
         {activeTab === 'expenses' && (
             <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in">
             <Card darkMode={darkMode}>
