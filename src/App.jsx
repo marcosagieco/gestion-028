@@ -14,12 +14,12 @@ import {
 // --- 2. CONFIGURACIÓN DE FIREBASE ---
 // ⚠️ PEGA AQUÍ TUS CREDENCIALES REALES DE FIREBASE ⚠️
 const firebaseConfig = {
-  apiKey: "AIzaSyCavgJ20mrE5HZHW7H7NKQ0sibs5p4Q-TU",
-  authDomain: "gestion-028.firebaseapp.com",
-  projectId: "gestion-028",
-  storageBucket: "gestion-028.firebasestorage.app",
-  messagingSenderId: "5538640148",
-  appId: "1:5538640148:web:a6a34ee4e1dad97390d201"
+  apiKey: "TU_API_KEY_AQUI",
+  authDomain: "TU_PROYECTO.firebaseapp.com",
+  projectId: "TU_PROYECTO_ID",
+  storageBucket: "TU_PROYECTO.firebasestorage.app",
+  messagingSenderId: "TU_SENDER_ID",
+  appId: "TU_APP_ID"
 };
 
 // Inicialización segura
@@ -137,9 +137,8 @@ export default function App() {
     const batch = batches.find(b => b.id === batchId);
     if (!batch) return;
 
-    // Generador de ID seguro
     const newItemData = {
-      id: Date.now() + Math.random().toString(36).substr(2, 9), 
+      id: Date.now() + Math.random().toString(36).substr(2, 9),
       product: newItem.product, 
       variant: newItem.variant || 'Único', 
       costArs: parseFloat(newItem.costArs) || 0, 
@@ -203,10 +202,9 @@ export default function App() {
     try {
       await addDoc(collection(db, 'sales'), saleData);
       
-      // Actualizar Stock en la carpeta (Copia Segura)
+      // Actualizar Stock en la carpeta (Array)
       const newItems = [...batch.items];
       newItems[itemIndex] = { ...item, currentStock: item.currentStock - qty };
-      
       await updateDoc(doc(db, 'batches', batch.id), { items: newItems });
       
       setNewSale({ ...newSale, quantity: 1, unitPrice: '', shippingCost: 0, shippingPrice: 0 });
@@ -225,12 +223,8 @@ export default function App() {
         if (batch) {
           const itemIndex = batch.items.findIndex(i => i.id === sale.itemId);
           if (itemIndex !== -1) {
-            // Actualización Segura
             const newItems = [...batch.items];
-            newItems[itemIndex] = {
-                ...newItems[itemIndex],
-                currentStock: newItems[itemIndex].currentStock + sale.quantity
-            };
+            newItems[itemIndex].currentStock += sale.quantity;
             await updateDoc(doc(db, 'batches', batch.id), { items: newItems });
           }
         }
@@ -270,17 +264,19 @@ export default function App() {
     const costOfSold = batchSales.reduce((acc, s) => acc + (s.costArsAtSale * s.quantity), 0);
     const currentProfit = totalRevenue - costOfSold;
     
-    // Promedios y Tiempos
+    // --- CÁLCULO PROMEDIO CORREGIDO ---
     const createdDate = new Date(batch.createdAt);
     const today = new Date();
     const diffTime = Math.abs(today - createdDate);
     const daysActive = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1; 
-    const dailyAvg = totalRevenue / daysActive;
+    
+    // Items por día
+    const dailyAvgItems = itemsSold / daysActive;
 
     const totalInitStock = (batch.items || []).reduce((acc, i) => acc + i.initialStock, 0);
     const progress = totalInitStock > 0 ? (itemsSold / totalInitStock) * 100 : 0;
 
-    return { batch, salesCount: batchSales.length, itemsSold, totalRevenue, totalInvestment, currentProfit, progress, sourceCounts, typeCounts, daysActive, dailyAvg };
+    return { batch, salesCount: batchSales.length, itemsSold, totalRevenue, totalInvestment, currentProfit, progress, sourceCounts, typeCounts, daysActive, dailyAvgItems };
   }, [selectedBatchStats, sales, batches]);
 
   // --- RENDER ---
@@ -305,7 +301,7 @@ export default function App() {
       <div className="max-w-lg text-center space-y-4">
         <AlertTriangle size={64} className="mx-auto text-yellow-500" />
         <h1 className="text-3xl font-bold">Falta Configuración</h1>
-        <p className="text-slate-300">Debes poner las claves de Firebase en el código (Línea 17).</p>
+        <p className="text-slate-300">Debes poner las claves de Firebase en el código.</p>
         <button onClick={() => window.location.reload()} className="bg-emerald-500 text-slate-900 px-6 py-2 rounded-lg font-bold hover:bg-emerald-400">Recargar</button>
       </div>
     </div>
@@ -354,7 +350,7 @@ export default function App() {
                         <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
                           <div className="md:col-span-2"><Input darkMode={darkMode} label="Producto" placeholder="Ej: ElfBar" value={newItem.product} onChange={e => setNewItem({...newItem, product: e.target.value})} /></div>
                           <div><Input darkMode={darkMode} label="Variante" placeholder="Ej: Mint" value={newItem.variant} onChange={e => setNewItem({...newItem, variant: e.target.value})} /></div>
-                          <div><Input darkMode={darkMode} label="Costo ($)" type="number" value={newItem.costArs} onChange={e => setNewItem({...newItem, costArs: e.target.value})} /></div>
+                          <div><Input darkMode={darkMode} label="Costo Un. ($)" type="number" value={newItem.costArs} onChange={e => setNewItem({...newItem, costArs: e.target.value})} /></div>
                           <div><Input darkMode={darkMode} label="Cantidad" type="number" value={newItem.initialStock} onChange={e => setNewItem({...newItem, initialStock: e.target.value})} /></div>
                           <div className="md:col-span-5"><Button darkMode={darkMode} onClick={() => handleAddItemToBatch(b.id)} className="w-full text-xs h-9">Agregar a Carpeta</Button></div>
                         </div>
@@ -462,13 +458,15 @@ export default function App() {
             {batchAnalysis && (
                 <div className="space-y-6 animate-in slide-in-from-bottom-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                      {/* CORRECCIÓN: Se usa dailyAvgItems y se formatea como número, no dinero */}
                       <Card className="bg-slate-800 text-white border-none relative overflow-hidden">
                           <div className="relative z-10">
-                              <div className="text-slate-400 text-xs font-bold uppercase">Promedio Diario</div>
-                              <div className="text-3xl font-black mt-1">{formatMoney(batchAnalysis.dailyAvg)}</div>
+                              <div className="text-slate-400 text-xs font-bold uppercase">Velocidad de Venta</div>
+                              <div className="text-3xl font-black mt-1">{batchAnalysis.dailyAvgItems.toFixed(1)} <span className="text-sm font-normal text-slate-400">u/día</span></div>
                               <div className="text-xs text-right mt-1 text-blue-400">Lleva {batchAnalysis.daysActive} días activo</div>
                           </div>
                       </Card>
+
                       <Card darkMode={darkMode}><div className="text-xs font-bold uppercase opacity-50">Inversión Total</div><div className="text-2xl font-bold text-red-500">{formatMoney(batchAnalysis.totalInvestment)}</div></Card>
                       <Card darkMode={darkMode}><div className="text-xs font-bold uppercase opacity-50">Ventas Totales</div><div className="text-2xl font-bold text-blue-500">{formatMoney(batchAnalysis.totalRevenue)}</div></Card>
                       <Card className={`border-t-4 ${batchAnalysis.currentProfit > 0 ? 'border-t-emerald-500' : 'border-t-orange-500'}`} darkMode={darkMode}>
@@ -477,9 +475,7 @@ export default function App() {
                       </Card>
                   </div>
 
-                  {/* NUEVO: DESGLOSE DE VENTAS */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in slide-in-from-bottom-8">
-                    {/* ORIGEN */}
                     <Card darkMode={darkMode}>
                       <h3 className="font-bold mb-4 flex items-center gap-2"><Users size={18}/> Ventas por Origen</h3>
                       <div className="space-y-3">
@@ -495,7 +491,6 @@ export default function App() {
                       </div>
                     </Card>
 
-                    {/* TIPO CLIENTE */}
                     <Card darkMode={darkMode}>
                       <h3 className="font-bold mb-4 flex items-center gap-2"><BarChart3 size={18}/> Tipo de Cliente</h3>
                       <div className="flex gap-4 items-center justify-center h-32">
