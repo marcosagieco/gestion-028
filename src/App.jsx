@@ -12,14 +12,14 @@ import {
 } from 'firebase/firestore';
 
 // --- 2. CONFIGURACIÓN DE FIREBASE ---
-// ⚠️ IMPORTANTE: Borra estos textos de ejemplo y pega tus claves reales de Firebase ⚠️
+// ⚠️ PEGA AQUÍ TUS CREDENCIALES REALES DE FIREBASE ⚠️
 const firebaseConfig = {
-  apiKey: "TU_API_KEY_AQUI",
-  authDomain: "TU_PROYECTO.firebaseapp.com",
-  projectId: "TU_PROYECTO_ID",
-  storageBucket: "TU_PROYECTO.firebasestorage.app",
-  messagingSenderId: "TU_SENDER_ID",
-  appId: "TU_APP_ID"
+  apiKey: "AIzaSyCavgJ20mrE5HZHW7H7NKQ0sibs5p4Q-TU",
+  authDomain: "gestion-028.firebaseapp.com",
+  projectId: "gestion-028",
+  storageBucket: "gestion-028.firebasestorage.app",
+  messagingSenderId: "5538640148",
+  appId: "1:5538640148:web:a6a34ee4e1dad97390d201"
 };
 
 // Inicialización segura
@@ -102,7 +102,6 @@ export default function App() {
   // Sincronización con Firebase
   useEffect(() => {
     if (!user) return;
-    // Si el usuario no puso las claves, mostramos error
     if (firebaseConfig.apiKey === "TU_API_KEY_AQUI") { setConfigError(true); setLoading(false); return; }
     
     setLoading(true);
@@ -127,7 +126,7 @@ export default function App() {
     if (!newBatchName) return alert("Ponle un nombre a la carpeta");
     try { await addDoc(collection(db, 'batches'), { name: newBatchName, createdAt: new Date().toISOString(), items: [] }); setNewBatchName(''); alert("✅ Carpeta creada"); } catch (e) { alert("Error: " + e.message); }
   };
-  const handleDeleteBatch = async (id) => { if (confirm('¿Borrar carpeta completa? Se perderá el historial interno.')) await deleteDoc(doc(db, 'batches', id)); };
+  const handleDeleteBatch = async (id) => { if (window.confirm('¿Borrar carpeta completa? Se perderá el historial interno.')) await deleteDoc(doc(db, 'batches', id)); };
 
   // 2. Items dentro de Carpeta
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '' });
@@ -138,8 +137,14 @@ export default function App() {
     const batch = batches.find(b => b.id === batchId);
     if (!batch) return;
 
+    // Generador de ID seguro
     const newItemData = {
-      id: crypto.randomUUID(), product: newItem.product, variant: newItem.variant || 'Único', costArs: parseFloat(newItem.costArs) || 0, initialStock: parseInt(newItem.initialStock) || 0, currentStock: parseInt(newItem.initialStock) || 0,
+      id: Date.now() + Math.random().toString(36).substr(2, 9), 
+      product: newItem.product, 
+      variant: newItem.variant || 'Único', 
+      costArs: parseFloat(newItem.costArs) || 0, 
+      initialStock: parseInt(newItem.initialStock) || 0, 
+      currentStock: parseInt(newItem.initialStock) || 0,
     };
 
     try {
@@ -149,7 +154,7 @@ export default function App() {
   };
 
   const handleDeleteItemFromBatch = async (batchId, itemId) => {
-    if (!confirm('¿Borrar este producto del lote?')) return;
+    if (!window.confirm('¿Borrar este producto del lote?')) return;
     
     const batch = batches.find(b => b.id === batchId);
     if (!batch) return;
@@ -198,9 +203,10 @@ export default function App() {
     try {
       await addDoc(collection(db, 'sales'), saleData);
       
-      // Actualizar Stock en la carpeta (Array)
+      // Actualizar Stock en la carpeta (Copia Segura)
       const newItems = [...batch.items];
       newItems[itemIndex] = { ...item, currentStock: item.currentStock - qty };
+      
       await updateDoc(doc(db, 'batches', batch.id), { items: newItems });
       
       setNewSale({ ...newSale, quantity: 1, unitPrice: '', shippingCost: 0, shippingPrice: 0 });
@@ -210,7 +216,7 @@ export default function App() {
 
   const handleDeleteSale = async (sale) => {
     if (!sale || !sale.id) return;
-    if (!confirm(`¿Eliminar venta de ${sale.productName}? El stock se devolverá.`)) return;
+    if (!window.confirm(`¿Eliminar venta de ${sale.productName}? El stock se devolverá.`)) return;
     try {
       await deleteDoc(doc(db, 'sales', sale.id));
       
@@ -219,8 +225,12 @@ export default function App() {
         if (batch) {
           const itemIndex = batch.items.findIndex(i => i.id === sale.itemId);
           if (itemIndex !== -1) {
+            // Actualización Segura
             const newItems = [...batch.items];
-            newItems[itemIndex].currentStock += sale.quantity;
+            newItems[itemIndex] = {
+                ...newItems[itemIndex],
+                currentStock: newItems[itemIndex].currentStock + sale.quantity
+            };
             await updateDoc(doc(db, 'batches', batch.id), { items: newItems });
           }
         }
@@ -451,7 +461,6 @@ export default function App() {
 
             {batchAnalysis && (
                 <div className="space-y-6 animate-in slide-in-from-bottom-4">
-                  {/* KPI PRINCIPALES */}
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                       <Card className="bg-slate-800 text-white border-none relative overflow-hidden">
                           <div className="relative z-10">
@@ -483,7 +492,6 @@ export default function App() {
                             </div>
                           </div>
                         ))}
-                        {Object.keys(batchAnalysis.sourceCounts).length === 0 && <p className="text-sm opacity-50">Sin ventas aún.</p>}
                       </div>
                     </Card>
 
