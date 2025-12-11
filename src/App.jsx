@@ -14,12 +14,12 @@ import {
 // --- 2. CONFIGURACIÓN DE FIREBASE ---
 // ⚠️ PEGA AQUÍ TUS CREDENCIALES REALES DE FIREBASE ⚠️
 const firebaseConfig = {
-  apiKey: "TU_API_KEY_AQUI",
-  authDomain: "TU_PROYECTO.firebaseapp.com",
-  projectId: "TU_PROYECTO_ID",
-  storageBucket: "TU_PROYECTO.firebasestorage.app",
-  messagingSenderId: "TU_SENDER_ID",
-  appId: "TU_APP_ID"
+  apiKey: "AIzaSyCavgJ20mrE5HZHW7H7NKQ0sibs5p4Q-TU",
+  authDomain: "gestion-028.firebaseapp.com",
+  projectId: "gestion-028",
+  storageBucket: "gestion-028.firebasestorage.app",
+  messagingSenderId: "5538640148",
+  appId: "1:5538640148:web:a6a34ee4e1dad97390d201"
 };
 
 // Inicialización segura
