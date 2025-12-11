@@ -264,13 +264,11 @@ export default function App() {
     const costOfSold = batchSales.reduce((acc, s) => acc + (s.costArsAtSale * s.quantity), 0);
     const currentProfit = totalRevenue - costOfSold;
     
-    // --- CÁLCULO PROMEDIO CORREGIDO ---
+    // --- CÁLCULO PROMEDIO ---
     const createdDate = new Date(batch.createdAt);
     const today = new Date();
     const diffTime = Math.abs(today - createdDate);
     const daysActive = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1; 
-    
-    // Items por día
     const dailyAvgItems = itemsSold / daysActive;
 
     const totalInitStock = (batch.items || []).reduce((acc, i) => acc + i.initialStock, 0);
@@ -346,11 +344,10 @@ export default function App() {
                   {expandedBatchId === b.id && (
                     <div className={`p-4 border-t ${darkMode ? 'border-slate-700 bg-slate-900/50' : 'border-slate-100 bg-slate-50'}`}>
                       <div className="mb-6 p-4 rounded-lg border border-dashed border-slate-400/50">
-                        <h4 className="text-sm font-bold uppercase mb-3 flex items-center gap-2"><Box size={14}/> Agregar Producto a "{b.name}"</h4>
                         <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
                           <div className="md:col-span-2"><Input darkMode={darkMode} label="Producto" placeholder="Ej: ElfBar" value={newItem.product} onChange={e => setNewItem({...newItem, product: e.target.value})} /></div>
                           <div><Input darkMode={darkMode} label="Variante" placeholder="Ej: Mint" value={newItem.variant} onChange={e => setNewItem({...newItem, variant: e.target.value})} /></div>
-                          <div><Input darkMode={darkMode} label="Costo Un. ($)" type="number" value={newItem.costArs} onChange={e => setNewItem({...newItem, costArs: e.target.value})} /></div>
+                          <div><Input darkMode={darkMode} label="Costo ($)" type="number" value={newItem.costArs} onChange={e => setNewItem({...newItem, costArs: e.target.value})} /></div>
                           <div><Input darkMode={darkMode} label="Cantidad" type="number" value={newItem.initialStock} onChange={e => setNewItem({...newItem, initialStock: e.target.value})} /></div>
                           <div className="md:col-span-5"><Button darkMode={darkMode} onClick={() => handleAddItemToBatch(b.id)} className="w-full text-xs h-9">Agregar a Carpeta</Button></div>
                         </div>
@@ -458,13 +455,11 @@ export default function App() {
             {batchAnalysis && (
                 <div className="space-y-6 animate-in slide-in-from-bottom-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                      {/* CORRECCIÓN: Se usa dailyAvgItems y se formatea como número, no dinero */}
-                      <Card className="bg-slate-800 text-white border-none relative overflow-hidden">
-                          <div className="relative z-10">
-                              <div className="text-slate-400 text-xs font-bold uppercase">Velocidad de Venta</div>
-                              <div className="text-3xl font-black mt-1">{batchAnalysis.dailyAvgItems.toFixed(1)} <span className="text-sm font-normal text-slate-400">u/día</span></div>
-                              <div className="text-xs text-right mt-1 text-blue-400">Lleva {batchAnalysis.daysActive} días activo</div>
-                          </div>
+                      {/* --- CORRECCIÓN: DISEÑO UNIFICADO Y TEXTO VIOLETA --- */}
+                      <Card darkMode={darkMode}>
+                          <div className="text-xs font-bold uppercase opacity-50">Promedio por día</div>
+                          <div className="text-3xl font-black text-purple-500 mt-1">{batchAnalysis.dailyAvgItems.toFixed(1)} <span className="text-sm font-normal text-slate-400">u/día</span></div>
+                          <div className="text-xs opacity-50 mt-1 text-right">Lleva {batchAnalysis.daysActive} días activo</div>
                       </Card>
 
                       <Card darkMode={darkMode}><div className="text-xs font-bold uppercase opacity-50">Inversión Total</div><div className="text-2xl font-bold text-red-500">{formatMoney(batchAnalysis.totalInvestment)}</div></Card>
