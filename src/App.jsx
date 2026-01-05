@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package,
-  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings
+  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck
 } from 'lucide-react';
 
 // --- 1. IMPORTACIONES DE FIREBASE ---
@@ -310,12 +310,17 @@ export default function App() {
     // Filtrar gastos para este lote
     const batchExpenses = expenses.filter(e => e.batchId === batch.id);
     
-    let totalRevenue = 0, itemsSold = 0;
+    let totalRevenue = 0, itemsSold = 0, totalShippingProfit = 0;
     const sourceCounts = {}, typeCounts = { Revendedor: 0, Final: 0 };
 
     batchSales.forEach(s => {
       totalRevenue += s.totalSaleRaw;
       itemsSold += s.quantity;
+      
+      // Calculate shipping profit for this sale: Total Recibido - (Precio Item * Cantidad)
+      const saleShippingProfit = s.totalSaleRaw - (s.unitPrice * s.quantity);
+      totalShippingProfit += saleShippingProfit;
+
       const src = s.source || 'Otro';
       sourceCounts[src] = (sourceCounts[src] || 0) + 1;
       if (s.isReseller) typeCounts.Revendedor++; else typeCounts.Final++;
@@ -349,6 +354,7 @@ export default function App() {
         totalRevenue, 
         totalInvestment, 
         grossProfit, // Ganancia por ventas
+        totalShippingProfit, // Ganancia por envios
         totalBatchExpenses, // Gastos operativos
         netProfit, // Ganancia final real
         progress, 
@@ -613,13 +619,20 @@ export default function App() {
                           <div className="text-xs font-bold uppercase opacity-50">Ganancia Ventas (Bruta)</div>
                           <div className={`text-3xl font-black ${batchAnalysis.grossProfit > 0 ? 'text-emerald-500' : 'text-orange-500'}`}>{formatMoney(batchAnalysis.grossProfit)}</div>
                       </Card>
-                      {/* NUEVAS CARDS DE GASTOS Y NETO FINAL */}
+
+                       {/* NUEVA CARD DE GANANCIA ENVÍOS */}
+                       <Card darkMode={darkMode} className={batchAnalysis.totalShippingProfit >= 0 ? "border-t-4 border-t-emerald-500/50" : "border-t-4 border-t-red-500/50"}>
+                          <div className="text-xs font-bold uppercase opacity-50 flex items-center gap-1"><Truck size={12}/> Ganancia Envíos</div>
+                          <div className={`text-2xl font-bold ${batchAnalysis.totalShippingProfit >= 0 ? 'text-emerald-500' : 'text-orange-500'}`}>{formatMoney(batchAnalysis.totalShippingProfit)}</div>
+                          <div className="text-xs opacity-50 mt-1">Cobrado - Costo</div>
+                      </Card>
+
                       <Card darkMode={darkMode}>
                           <div className="text-xs font-bold uppercase opacity-50">Gastos Operativos</div>
                           <div className="text-2xl font-bold text-red-500">{formatMoney(batchAnalysis.totalBatchExpenses)}</div>
                           <div className="text-xs opacity-50 mt-1">Asignados a este lote</div>
                       </Card>
-                      <Card className={`border-t-4 md:col-span-3 ${batchAnalysis.netProfit > 0 ? 'border-t-emerald-600' : 'border-t-red-500'}`} darkMode={darkMode}>
+                      <Card className={`border-t-4 md:col-span-2 ${batchAnalysis.netProfit > 0 ? 'border-t-emerald-600' : 'border-t-red-500'}`} darkMode={darkMode}>
                           <div className="text-xs font-bold uppercase opacity-50">Resultado Final (Ganancia Real)</div>
                           <div className={`text-4xl font-black ${batchAnalysis.netProfit > 0 ? 'text-emerald-600' : 'text-red-500'}`}>{formatMoney(batchAnalysis.netProfit)}</div>
                           <div className="text-sm opacity-60 mt-1">Ganancia por Ventas - Gastos Operativos</div>
