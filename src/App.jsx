@@ -8,11 +8,10 @@ import {
 import { initializeApp } from "firebase/app";
 import {
   getFirestore, collection, addDoc, deleteDoc, doc, updateDoc,
-  onSnapshot, query, orderBy, increment
+  onSnapshot, query, orderBy
 } from 'firebase/firestore';
 
 // --- 2. CONFIGURACIÓN DE FIREBASE ---
-// ⚠️ PEGA AQUÍ TUS CREDENCIALES REALES DE FIREBASE ⚠️
 const firebaseConfig = {
   apiKey: "AIzaSyCavgJ20mrE5HZHW7H7NKQ0sibs5p4Q-TU",
   authDomain: "gestion-028.firebaseapp.com",
@@ -102,7 +101,7 @@ export default function App() {
   // Estado para la fecha manual de finalización en Análisis
   const [manualFinalizeDate, setManualFinalizeDate] = useState(getTodayDate());
 
-  // Sincronización con Firebase
+  // Sincronización con Firebase REAL
   useEffect(() => {
     if (!user) return;
     if (firebaseConfig.apiKey === "TU_API_KEY_AQUI") { setConfigError(true); setLoading(false); return; }
@@ -197,11 +196,14 @@ export default function App() {
     }
   };
 
-  // 3. Ventas
+  // 3. Ventas (CON VALIDACIONES MEJORADAS)
   const [newSale, setNewSale] = useState({ batchId: '', itemId: '', quantity: 1, unitPrice: '', shippingCost: 0, shippingPrice: 0, source: 'Instagram', isReseller: 'No', saleDate: getTodayDate() });
   
   const handleAddSale = async () => {
-    if (!newSale.batchId || !newSale.itemId || !newSale.unitPrice) return alert("Faltan datos");
+    // --- VALIDACIONES ---
+    if (!newSale.batchId) return alert("⚠️ Error: Debes seleccionar una Carpeta primero.");
+    if (!newSale.itemId) return alert("⚠️ Error: Debes seleccionar un Producto.");
+    if (!newSale.unitPrice) return alert("⚠️ Error: Debes ingresar el Precio de Venta.");
     
     const batch = batches.find(b => b.id === newSale.batchId);
     if (!batch) return alert("Carpeta no encontrada");
@@ -210,7 +212,9 @@ export default function App() {
     const item = batch.items[itemIndex];
 
     if (item.currentStock <= 0) return alert(`⛔ SIN STOCK: ${item.product} agotado.`);
+    
     const qty = parseInt(newSale.quantity) || 1;
+    if (qty < 1) return alert("⚠️ La cantidad debe ser al menos 1.");
     if (item.currentStock < qty) return alert(`⚠️ Stock insuficiente. Quedan ${item.currentStock} u.`);
 
     const enteredPrice = parseFloat(newSale.unitPrice) || 0;
@@ -326,15 +330,19 @@ export default function App() {
       if (s.isReseller) typeCounts.Revendedor++; else typeCounts.Final++;
     });
 
+    // Inversión Total (Costo de mercadería)
     const totalInvestment = (batch.items || []).reduce((acc, i) => acc + (i.costArs * i.initialStock), 0);
+    
+    // Costo de lo Vendido (Para margen bruto)
     const costOfSold = batchSales.reduce((acc, s) => acc + (s.costArsAtSale * s.quantity), 0);
     const grossProfit = totalRevenue - costOfSold; // Ganancia bruta por ventas (Margen)
 
-    // Calcular gastos totales del lote
+    // Gastos Operativos
     const totalBatchExpenses = batchExpenses.reduce((acc, e) => acc + e.amount, 0);
     
-    // Ganancia Real (Neta final)
-    const netProfit = grossProfit - totalBatchExpenses;
+    // --- NUEVA LÓGICA DE GANANCIA REAL (ROI) ---
+    // Net Profit = Ventas - Inversión Inicial - Gastos
+    const netProfit = totalRevenue - totalInvestment - totalBatchExpenses;
     
     // --- CÁLCULO PROMEDIO ---
     const createdDate = new Date(batch.createdAt);
@@ -356,7 +364,7 @@ export default function App() {
         grossProfit, // Ganancia por ventas
         totalShippingProfit, // Ganancia por envios
         totalBatchExpenses, // Gastos operativos
-        netProfit, // Ganancia final real
+        netProfit, // Ganancia final real (ROI)
         progress, 
         sourceCounts, 
         typeCounts, 
@@ -473,7 +481,7 @@ export default function App() {
                       
                       {/* BOTÓN ELIMINAR CARPETA (SIN FINALIZAR) */}
                       <div className="flex justify-end items-center mt-6 pt-4 border-t border-slate-700/20">
-                         <button onClick={(e) => { e.stopPropagation(); handleDeleteBatch(b.id); }} className="text-xs text-red-500 hover:underline flex items-center gap-1"><Trash2 size={12}/> Eliminar Carpeta</button>
+                          <button onClick={(e) => { e.stopPropagation(); handleDeleteBatch(b.id); }} className="text-xs text-red-500 hover:underline flex items-center gap-1"><Trash2 size={12}/> Eliminar Carpeta</button>
                       </div>
                     </div>
                   )}
@@ -511,7 +519,7 @@ export default function App() {
                       <Input darkMode={darkMode} label="Cobro Envío" type="number" value={newSale.shippingPrice} onChange={e => setNewSale({...newSale, shippingPrice: e.target.value})} />
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                      <Select darkMode={darkMode} label="Origen" value={newSale.source} onChange={e => setNewSale({...newSale, source: e.target.value})} options={[{value:'Instagram', label:'Instagram'}, {value:'Whatsapp', label:'Whatsapp'}, {value:'Personal', label:'Personal'}]} />
+                      <Select darkMode={darkMode} label="Origen" value={newSale.source} onChange={e => setNewSale({...newSale, source: e.target.value})} options={[{value:'Instagram', label:'Instagram'}, {value:'Whatsapp', label:'Whatsapp'}, {value:'Personal', label:'Personal'}, {value:'Web', label:'Web'}]} />
                       <Select darkMode={darkMode} label="Tipo" value={newSale.isReseller} onChange={e => setNewSale({...newSale, isReseller: e.target.value})} options={[{value:'No', label:'Consumidor Final'}, {value:'Si', label:'Revendedor'}]} />
                   </div>
                   <Button darkMode={darkMode} onClick={handleAddSale} variant="success" className="w-full py-3">Registrar Venta</Button>
@@ -620,8 +628,8 @@ export default function App() {
                           <div className={`text-3xl font-black ${batchAnalysis.grossProfit > 0 ? 'text-emerald-500' : 'text-orange-500'}`}>{formatMoney(batchAnalysis.grossProfit)}</div>
                       </Card>
 
-                       {/* NUEVA CARD DE GANANCIA ENVÍOS */}
-                       <Card darkMode={darkMode} className={batchAnalysis.totalShippingProfit >= 0 ? "border-t-4 border-t-emerald-500/50" : "border-t-4 border-t-red-500/50"}>
+                        {/* NUEVA CARD DE GANANCIA ENVÍOS */}
+                        <Card darkMode={darkMode} className={batchAnalysis.totalShippingProfit >= 0 ? "border-t-4 border-t-emerald-500/50" : "border-t-4 border-t-red-500/50"}>
                           <div className="text-xs font-bold uppercase opacity-50 flex items-center gap-1"><Truck size={12}/> Ganancia Envíos</div>
                           <div className={`text-2xl font-bold ${batchAnalysis.totalShippingProfit >= 0 ? 'text-emerald-500' : 'text-orange-500'}`}>{formatMoney(batchAnalysis.totalShippingProfit)}</div>
                           <div className="text-xs opacity-50 mt-1">Cobrado - Costo</div>
@@ -635,7 +643,7 @@ export default function App() {
                       <Card className={`border-t-4 md:col-span-2 ${batchAnalysis.netProfit > 0 ? 'border-t-emerald-600' : 'border-t-red-500'}`} darkMode={darkMode}>
                           <div className="text-xs font-bold uppercase opacity-50">Resultado Final (Ganancia Real)</div>
                           <div className={`text-4xl font-black ${batchAnalysis.netProfit > 0 ? 'text-emerald-600' : 'text-red-500'}`}>{formatMoney(batchAnalysis.netProfit)}</div>
-                          <div className="text-sm opacity-60 mt-1">Ganancia por Ventas - Gastos Operativos</div>
+                          <div className="text-sm opacity-60 mt-1">Ventas Totales - Inversión Total - Gastos</div>
                       </Card>
                   </div>
 
@@ -687,7 +695,7 @@ export default function App() {
                         <div className="w-32"><Input darkMode={darkMode} label="Monto ($)" type="number" value={newExpense.amount} onChange={e => setNewExpense({...newExpense, amount: e.target.value})} /></div>
                     </div>
                     <div className="flex gap-3 items-end">
-                         <div className="flex-1">
+                          <div className="flex-1">
                              <Select 
                                 darkMode={darkMode} 
                                 label="Asignar a Lote (Opcional)"
@@ -698,8 +706,8 @@ export default function App() {
                                     ...batches.map(b => ({ value: b.id, label: b.name }))
                                 ]}
                              />
-                         </div>
-                         <Button darkMode={darkMode} onClick={handleAddExpense} variant="danger" className="w-32 h-[42px]">Restar</Button>
+                          </div>
+                          <Button darkMode={darkMode} onClick={handleAddExpense} variant="danger" className="w-32 h-[42px]">Restar</Button>
                     </div>
                 </div>
             </Card>
