@@ -100,6 +100,9 @@ export default function App() {
 
   // Estado para la fecha manual de finalización en Análisis
   const [manualFinalizeDate, setManualFinalizeDate] = useState(getTodayDate());
+  
+  // Estado para el filtro global de mes
+  const [globalMonth, setGlobalMonth] = useState('all');
 
   // Sincronización con Firebase REAL
   useEffect(() => {
@@ -129,14 +132,51 @@ export default function App() {
   const formatMoney = (val) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(val);
   const formatPercent = (val) => new Intl.NumberFormat('es-AR', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(val / 100);
 
-  // --- ANALISIS GLOBAL (INICIO) ---
+  // Extraer meses disponibles para el selector
+  const monthOptions = useMemo(() => {
+    const getLocalMonth = (isoString) => {
+      if (!isoString) return '';
+      const d = new Date(isoString);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    };
+
+    const months = new Set();
+    sales.forEach(s => months.add(getLocalMonth(s.date)));
+    expenses.forEach(e => months.add(getLocalMonth(e.date)));
+    batches.forEach(b => months.add(getLocalMonth(b.createdAt)));
+    
+    const sortedMonths = Array.from(months).filter(Boolean).sort().reverse();
+    return [
+      { value: 'all', label: '-- Histórico Completo --' },
+      ...sortedMonths.map(m => {
+        const [year, month] = m.split('-');
+        const date = new Date(year, parseInt(month) - 1);
+        const monthName = date.toLocaleString('es-ES', { month: 'long', year: 'numeric' });
+        return { value: m, label: monthName.charAt(0).toUpperCase() + monthName.slice(1) };
+      })
+    ];
+  }, [sales, expenses, batches]);
+
+
+  // --- ANALISIS GLOBAL (INICIO) CON FILTRO DE MES ---
   const globalAnalysis = useMemo(() => {
+      const getLocalMonth = (isoString) => {
+          if (!isoString) return '';
+          const d = new Date(isoString);
+          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      };
+
+      // Filtrar datos según el mes seleccionado
+      const filteredSales = globalMonth === 'all' ? sales : sales.filter(s => getLocalMonth(s.date) === globalMonth);
+      const filteredExpenses = globalMonth === 'all' ? expenses : expenses.filter(e => getLocalMonth(e.date) === globalMonth);
+      const filteredBatches = globalMonth === 'all' ? batches : batches.filter(b => getLocalMonth(b.createdAt) === globalMonth);
+
       let totalRevenue = 0, itemsSold = 0, totalShippingProfit = 0;
       const sourceCounts = {};
       const typeCounts = { Revendedor: 0, Final: 0 };
 
-      // 1. Analizar todas las ventas
-      sales.forEach(s => {
+      // 1. Analizar ventas (filtradas)
+      filteredSales.forEach(s => {
           totalRevenue += s.totalSaleRaw;
           itemsSold += s.quantity;
           
@@ -148,42 +188,51 @@ export default function App() {
           if (s.isReseller) typeCounts.Revendedor++; else typeCounts.Final++;
       });
 
-      // 2. Inversión Total Histórica (Todos los items de todos los lotes)
-      const totalInvestment = batches.reduce((accBatch, batch) => {
+      // 2. Inversión (filtrada por mes de creación)
+      const totalInvestment = filteredBatches.reduce((accBatch, batch) => {
           return accBatch + (batch.items || []).reduce((accItem, item) => {
               return accItem + (item.costArs * item.initialStock);
           }, 0);
       }, 0);
 
-      // 3. Gastos Totales Históricos
-      const totalGlobalExpenses = expenses.reduce((acc, e) => acc + e.amount, 0);
+      // 3. Gastos Totales (filtrados)
+      const totalGlobalExpenses = filteredExpenses.reduce((acc, e) => acc + e.amount, 0);
 
-      // 4. Margen Bruto Global y Ganancia Real
-      const costOfSoldGlobal = sales.reduce((acc, s) => acc + (s.costArsAtSale * s.quantity), 0);
-      const grossProfit = totalRevenue - costOfSoldGlobal;
+      // 4. Margen Bruto y Ganancia Real (filtrados)
+      const costOfSoldFiltered = filteredSales.reduce((acc, s) => acc + (s.costArsAtSale * s.quantity), 0);
+      const grossProfit = totalRevenue - costOfSoldFiltered;
       
-      // NUEVA FÓRMULA 1: Ganancia Histórica Neta (Rentabilidad Operativa) - No resta stock
       const netProfit = grossProfit - totalGlobalExpenses;
-      
-      // NUEVA FÓRMULA 2: Flujo de Caja (Bolsillo) - SÍ resta toda la inversión (stock parado)
       const cashBalance = totalRevenue - totalInvestment - totalGlobalExpenses;
       
-      // Calculamos valor del stock actual (Activo)
-      const currentStockValue = totalInvestment - costOfSoldGlobal;
+      // 5. El Valor de Stock es SIEMPRE Global (No lo filtramos por mes porque es el patrimonio actual real)
+      const globalTotalInvestment = batches.reduce((accBatch, batch) => accBatch + (batch.items || []).reduce((accItem, item) => accItem + (item.costArs * item.initialStock), 0), 0);
+      const globalCostOfSold = sales.reduce((acc, s) => acc + (s.costArsAtSale * s.quantity), 0);
+      const currentStockValue = globalTotalInvestment - globalCostOfSold;
 
-      // CÁLCULO DE MÁRGENES (NUEVO)
+      // CÁLCULO DE MÁRGENES
       const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
       const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
-      // 6. Días Activos Totales
+      // 6. Días Activos (Depende de si vemos todo o un mes)
       let daysActive = 0;
-      if (batches.length > 0) {
-          const sortedBatches = [...batches].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-          const firstDate = new Date(sortedBatches[0].createdAt);
+      if (globalMonth === 'all') {
+          if (batches.length > 0) {
+              const sortedBatches = [...batches].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+              const firstDate = new Date(sortedBatches[0].createdAt);
+              const now = new Date();
+              daysActive = Math.ceil(Math.abs(now - firstDate) / (1000 * 60 * 60 * 24)) || 1;
+          }
+      } else {
+          const [y, m] = globalMonth.split('-').map(Number);
           const now = new Date();
-          const diffTime = Math.abs(now - firstDate);
-          daysActive = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) || 1;
+          if (now.getFullYear() === y && now.getMonth() + 1 === m) {
+              daysActive = now.getDate(); // Días transcurridos del mes actual
+          } else {
+              daysActive = new Date(y, m, 0).getDate(); // Días totales de ese mes pasado
+          }
       }
+      
       const dailyAvgItems = daysActive > 0 ? itemsSold / daysActive : 0;
 
       return {
@@ -191,20 +240,20 @@ export default function App() {
           totalInvestment,
           totalGlobalExpenses,
           grossProfit,
-          grossMargin, // % Bruto
+          grossMargin,
           totalShippingProfit,
           netProfit,
-          netMargin, // % Neto
+          netMargin,
           cashBalance,
-          currentStockValue, 
+          currentStockValue, // Activo intocable globalmente
           itemsSold,
-          salesCount: sales.length,
+          salesCount: filteredSales.length,
           sourceCounts,
           typeCounts,
           dailyAvgItems,
           daysActive
       };
-  }, [sales, batches, expenses]);
+  }, [sales, batches, expenses, globalMonth]);
 
 
   // --- ACCIONES DE LOTES Y ITEMS ---
@@ -505,18 +554,44 @@ export default function App() {
             ))}
         </div>
 
-        {/* --- PESTAÑA INICIO (ANÁLISIS GLOBAL) --- */}
+        {/* --- PESTAÑA INICIO (ANÁLISIS GLOBAL / MENSUAL) --- */}
         {activeTab === 'home' && (
              <div className="space-y-4 animate-in fade-in">
-                <Card darkMode={darkMode} className="bg-gradient-to-r from-blue-900 to-slate-900 text-white border-none py-3">
-                    <h2 className="text-lg font-bold mb-0.5 flex items-center gap-2"><Activity size={18} className="text-emerald-400"/> Resumen Global</h2>
-                    <p className="opacity-60 text-xs">Estado histórico de toda la operación.</p>
+                <Card darkMode={darkMode} className="bg-gradient-to-r from-blue-900 to-slate-900 text-white border-none py-3 shadow-md">
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div>
+                            <h2 className="text-lg font-bold mb-0.5 flex items-center gap-2"><Activity size={18} className="text-emerald-400"/> Panel de Resultados</h2>
+                            <p className="opacity-70 text-xs">Analizando {globalMonth === 'all' ? 'todo el historial de tu negocio' : 'el rendimiento del mes seleccionado'}.</p>
+                        </div>
+                        
+                        {/* SELECTOR DE MES MEJORADO */}
+                        <div className="relative w-full md:w-auto md:min-w-[220px] group">
+                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                <Calendar size={14} className="text-emerald-400 group-hover:scale-110 transition-transform" />
+                            </div>
+                            <select 
+                                className="w-full appearance-none rounded-lg py-2 pl-9 pr-10 text-sm font-bold outline-none cursor-pointer transition-all duration-300 bg-white/10 text-white border border-white/20 hover:bg-white/20 focus:ring-2 focus:ring-emerald-400 focus:border-transparent shadow-inner backdrop-blur-sm"
+                                value={globalMonth} 
+                                onChange={e => setGlobalMonth(e.target.value)}
+                            >
+                                {monthOptions.map(opt => (
+                                    <option key={opt.value} value={opt.value} className="bg-slate-800 text-white font-medium">
+                                        {opt.label}
+                                    </option>
+                                ))}
+                            </select>
+                            <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                                <ChevronDown size={16} className="text-white/60 group-hover:text-white transition-colors" />
+                            </div>
+                        </div>
+                        
+                    </div>
                 </Card>
 
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                       
-                      {/* FILA 1: RESULTADOS HISTÓRICOS (TU SCORE TOTAL) */}
-                      <Card darkMode={darkMode}><div className="text-[10px] font-bold uppercase opacity-50">Ventas Históricas</div><div className="text-xl font-bold text-blue-500">{formatMoney(globalAnalysis.totalRevenue)}</div></Card>
+                      {/* FILA 1: RESULTADOS (TU SCORE TOTAL O MENSUAL) */}
+                      <Card darkMode={darkMode}><div className="text-[10px] font-bold uppercase opacity-50">Ventas {globalMonth === 'all' ? 'Totales' : 'del Mes'}</div><div className="text-xl font-bold text-blue-500">{formatMoney(globalAnalysis.totalRevenue)}</div></Card>
                       
                       <Card className={`border-t-2 ${globalAnalysis.grossProfit > 0 ? 'border-t-emerald-500' : 'border-t-orange-500'}`} darkMode={darkMode}>
                           <div className="text-[10px] font-bold uppercase opacity-50 flex justify-between">
@@ -527,43 +602,51 @@ export default function App() {
                       </Card>
 
                       <Card darkMode={darkMode}>
-                          <div className="text-[10px] font-bold uppercase opacity-50">Gastos Totales</div>
+                          <div className="text-[10px] font-bold uppercase opacity-50">Gastos {globalMonth === 'all' ? 'Totales' : 'del Mes'}</div>
                           <div className="text-xl font-bold text-red-500">{formatMoney(globalAnalysis.totalGlobalExpenses)}</div>
                       </Card>
                       
-                      {/* LA TARJETA PRINCIPAL: GANANCIA HISTÓRICA ACUMULADA */}
+                      {/* LA TARJETA PRINCIPAL: GANANCIA NETA */}
                       <Card className={`border-t-2 ${globalAnalysis.netProfit > 0 ? 'border-t-emerald-600' : 'border-t-red-500'}`} darkMode={darkMode}>
                           <div className="text-[10px] font-bold uppercase opacity-50 flex justify-between items-center">
-                              Ganancia Histórica Neta
+                              Ganancia Neta {globalMonth === 'all' ? '(Histórica)' : '(Mes)'}
                               <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${globalAnalysis.netProfit > 0 ? 'bg-emerald-500/20 text-emerald-500' : 'bg-red-500/20 text-red-500'}`}>{formatPercent(globalAnalysis.netMargin)}</span>
                           </div>
                           <div className={`text-2xl font-black ${globalAnalysis.netProfit > 0 ? 'text-emerald-600' : 'text-red-500'}`}>{formatMoney(globalAnalysis.netProfit)}</div>
-                          <div className="text-[9px] opacity-60">Dinero generado libre (Total)</div>
+                          <div className="text-[9px] opacity-60">Dinero generado libre</div>
                       </Card>
 
-                      {/* FILA 2: ACTIVOS Y LIQUIDEZ (DONDE ESTÁ LA PLATA HOY) */}
-                      <Card darkMode={darkMode}><div className="text-[10px] font-bold uppercase opacity-50">Inversión Total</div><div className="text-xl font-bold text-red-500">{formatMoney(globalAnalysis.totalInvestment)}</div></Card>
+                      {/* FILA 2: ACTIVOS Y LIQUIDEZ */}
+                      <Card darkMode={darkMode}>
+                          <div className="text-[10px] font-bold uppercase opacity-50">Inversión {globalMonth === 'all' ? 'Histórica' : 'del Mes'}</div>
+                          <div className="text-xl font-bold text-red-500">{formatMoney(globalAnalysis.totalInvestment)}</div>
+                          <div className="text-[9px] opacity-50">En lotes nuevos</div>
+                      </Card>
 
-                       <Card darkMode={darkMode} className="border-l-2 border-l-blue-500">
+                       {/* VALOR STOCK: SIEMPRE GLOBAL Y ACTUAL */}
+                       <Card darkMode={darkMode} className="border-l-2 border-l-blue-500 relative overflow-hidden">
                           <div className="text-[10px] font-bold uppercase opacity-50 flex items-center gap-1"><Package size={10}/> Valor Stock Actual</div>
                           <div className="text-xl font-bold text-blue-500">{formatMoney(globalAnalysis.currentStockValue)}</div>
+                          <div className="text-[9px] opacity-50 text-blue-400">Total Global (No se filtra)</div>
                       </Card>
 
-                      {/* SALDO CAJA (LIQUIDEZ) */}
+                      {/* FLUJO DE CAJA (LIQUIDEZ) */}
                       <Card darkMode={darkMode} className={`border-l-4 ${globalAnalysis.cashBalance >= 0 ? 'border-l-emerald-500' : 'border-l-red-500'}`}>
-                          <div className="text-[10px] font-bold uppercase opacity-50 flex items-center gap-1"><Wallet size={10}/> Saldo Caja (Bolsillo)</div>
+                          <div className="text-[10px] font-bold uppercase opacity-50 flex items-center gap-1"><Wallet size={10}/> Flujo de Caja {globalMonth === 'all' ? '(Total)' : '(Mensual)'}</div>
                           <div className={`text-xl font-black ${globalAnalysis.cashBalance >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{formatMoney(globalAnalysis.cashBalance)}</div>
+                          <div className="text-[9px] opacity-50">Liquidez generada</div>
                       </Card>
 
                       <Card darkMode={darkMode}>
                           <div className="text-[10px] font-bold uppercase opacity-50 flex justify-between">Promedio Ventas</div>
                           <div className="text-xl font-black text-purple-500">{globalAnalysis.dailyAvgItems.toFixed(1)} <span className="text-[10px] font-normal text-slate-400">u/día</span></div>
+                          <div className="text-[9px] opacity-50 flex items-center gap-1 mt-0.5"><Clock size={10}/> {globalAnalysis.daysActive} días de análisis</div>
                       </Card>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 animate-in slide-in-from-bottom-8">
                     <Card darkMode={darkMode}>
-                      <h3 className="font-bold mb-3 flex items-center gap-2 text-xs"><Users size={14}/> Ventas por Origen (Global)</h3>
+                      <h3 className="font-bold mb-3 flex items-center gap-2 text-xs"><Users size={14}/> Ventas por Origen</h3>
                       <div className="space-y-2">
                         {Object.entries(globalAnalysis.sourceCounts).map(([source, count]) => (
                           <div key={source} className="flex items-center justify-between">
@@ -578,7 +661,7 @@ export default function App() {
                     </Card>
 
                     <Card darkMode={darkMode}>
-                      <h3 className="font-bold mb-3 flex items-center gap-2 text-xs"><BarChart3 size={14}/> Tipo de Cliente (Global)</h3>
+                      <h3 className="font-bold mb-3 flex items-center gap-2 text-xs"><BarChart3 size={14}/> Tipo de Cliente</h3>
                       <div className="flex gap-4 items-center justify-center h-24">
                         <div className="text-center w-1/2">
                           <div className="text-2xl font-bold text-emerald-500">{globalAnalysis.typeCounts.Final}</div>
@@ -686,8 +769,8 @@ export default function App() {
                       <Input darkMode={darkMode} label="Cobro Envío" type="number" value={newSale.shippingPrice} onChange={e => setNewSale({...newSale, shippingPrice: e.target.value})} />
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                      <Select darkMode={darkMode} label="Origen" value={newSale.source} onChange={e => setNewSale({...newSale, source: e.target.value})} options={[{value:'Instagram', label:'IG'}, {value:'Whatsapp', label:'WPP'}, {value:'Personal', label:'Per'}, {value:'Web', label:'Web'}]} />
-                      <Select darkMode={darkMode} label="Tipo" value={newSale.isReseller} onChange={e => setNewSale({...newSale, isReseller: e.target.value})} options={[{value:'No', label:'Final'}, {value:'Si', label:'Reventa'}]} />
+                      <Select darkMode={darkMode} label="Origen" value={newSale.source} onChange={e => setNewSale({...newSale, source: e.target.value})} options={[{value:'Instagram', label:'Instagram'}, {value:'Whatsapp', label:'Whatsapp'}, {value:'Personal', label:'Personal'}, {value:'Web', label:'Web'}]} />
+                      <Select darkMode={darkMode} label="Tipo" value={newSale.isReseller} onChange={e => setNewSale({...newSale, isReseller: e.target.value})} options={[{value:'No', label:'Consumidor Final'}, {value:'Si', label:'Revendedor'}]} />
                   </div>
                   <Button darkMode={darkMode} onClick={handleAddSale} variant="success" className="w-full py-2">Confirmar Venta</Button>
                 </div>
