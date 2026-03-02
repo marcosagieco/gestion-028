@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package,
-  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Tag
+  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search
 } from 'lucide-react';
 
 // --- 1. IMPORTACIONES DE FIREBASE ---
@@ -29,75 +29,88 @@ try {
   console.error("Error inicializando Firebase:", error);
 }
 
-// --- 3. COMPONENTES UI MODERNOS (DISEÑO SAAS) ---
+// --- 3. COMPONENTES UI (DISEÑO NORMALIZADO Y PROPORCIONAL) ---
 
 const Card = ({ children, className = '', darkMode }) => (
-  <div className={`rounded-2xl p-5 border transition-all duration-300 shadow-sm ${
-    darkMode ? 'bg-[#131824] border-slate-800/80 text-slate-100' : 'bg-white border-slate-200/80 text-slate-800'
+  <div className={`rounded-xl border shadow-sm transition-colors duration-200 ${
+    darkMode ? 'bg-[#0f1115] border-zinc-800 text-zinc-100' : 'bg-white border-zinc-200 text-zinc-900'
   } ${className}`}>
     {children}
   </div>
 );
 
-const MetricCard = ({ title, value, subtitle, icon: Icon, color, trend, darkMode }) => {
-  const colors = {
-    indigo: darkMode ? 'text-indigo-400 bg-indigo-900/30' : 'text-indigo-600 bg-indigo-100',
-    emerald: darkMode ? 'text-emerald-400 bg-emerald-900/30' : 'text-emerald-600 bg-emerald-100',
-    rose: darkMode ? 'text-rose-400 bg-rose-900/30' : 'text-rose-600 bg-rose-100',
-    blue: darkMode ? 'text-blue-400 bg-blue-900/30' : 'text-blue-600 bg-blue-100',
-    amber: darkMode ? 'text-amber-400 bg-amber-900/30' : 'text-amber-600 bg-amber-100',
-    violet: darkMode ? 'text-violet-400 bg-violet-900/30' : 'text-violet-600 bg-violet-100',
+const MetricCard = ({ title, value, subtitle, icon: Icon, trend, color = 'zinc', darkMode }) => {
+  // Paletas de tintes sutiles para fondos y bordes
+  const colorStyles = {
+    blue: darkMode ? 'bg-blue-900/10 border-blue-900/50 hover:bg-blue-900/20 hover:border-blue-800' : 'bg-blue-50/80 border-blue-200 hover:bg-blue-100/50 hover:border-blue-300',
+    emerald: darkMode ? 'bg-emerald-900/10 border-emerald-900/50 hover:bg-emerald-900/20 hover:border-emerald-800' : 'bg-emerald-50/80 border-emerald-200 hover:bg-emerald-100/50 hover:border-emerald-300',
+    rose: darkMode ? 'bg-rose-900/10 border-rose-900/50 hover:bg-rose-900/20 hover:border-rose-800' : 'bg-rose-50/80 border-rose-200 hover:bg-rose-100/50 hover:border-rose-300',
+    amber: darkMode ? 'bg-amber-900/10 border-amber-900/50 hover:bg-amber-900/20 hover:border-amber-800' : 'bg-amber-50/80 border-amber-200 hover:bg-amber-100/50 hover:border-amber-300',
+    violet: darkMode ? 'bg-violet-900/10 border-violet-900/50 hover:bg-violet-900/20 hover:border-violet-800' : 'bg-violet-50/80 border-violet-200 hover:bg-violet-100/50 hover:border-violet-300',
+    indigo: darkMode ? 'bg-indigo-900/10 border-indigo-900/50 hover:bg-indigo-900/20 hover:border-indigo-800' : 'bg-indigo-50/80 border-indigo-200 hover:bg-indigo-100/50 hover:border-indigo-300',
+    zinc: darkMode ? 'bg-[#0f1115] border-zinc-800 hover:border-zinc-700' : 'bg-white border-zinc-200 hover:border-zinc-300',
   };
-  
+
+  // Colores fuertes para los íconos
+  const iconColors = {
+    blue: darkMode ? 'text-blue-400 bg-blue-500/20' : 'text-blue-600 bg-blue-200/50',
+    emerald: darkMode ? 'text-emerald-400 bg-emerald-500/20' : 'text-emerald-700 bg-emerald-200/50',
+    rose: darkMode ? 'text-rose-400 bg-rose-500/20' : 'text-rose-600 bg-rose-200/50',
+    amber: darkMode ? 'text-amber-400 bg-amber-500/20' : 'text-amber-600 bg-amber-200/50',
+    violet: darkMode ? 'text-violet-400 bg-violet-500/20' : 'text-violet-600 bg-violet-200/50',
+    indigo: darkMode ? 'text-indigo-400 bg-indigo-500/20' : 'text-indigo-600 bg-indigo-200/50',
+    zinc: darkMode ? 'text-zinc-400 bg-zinc-800' : 'text-zinc-600 bg-zinc-100',
+  };
+
   return (
-    <Card darkMode={darkMode} className="flex flex-col gap-4 relative overflow-hidden group hover:shadow-md">
-       <div className="flex items-center justify-between">
-          <span className={`text-[11px] font-bold uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>{title}</span>
-          <div className={`p-2 rounded-xl transition-transform group-hover:scale-110 ${colors[color]}`}>
-             <Icon size={18} strokeWidth={2.5} />
+    <div className={`flex flex-col p-4 rounded-xl border shadow-sm transition-all duration-200 group ${colorStyles[color]} ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>
+       <div className="flex items-center justify-between mb-3">
+          <span className={`text-xs font-bold uppercase tracking-wider ${darkMode ? 'opacity-60' : 'text-zinc-600'}`}>{title}</span>
+          <div className={`p-1.5 rounded-md transition-colors ${iconColors[color]}`}>
+              <Icon size={16} strokeWidth={2.5} />
           </div>
        </div>
        <div>
-          <div className="text-2xl font-black tracking-tight">{value}</div>
-          <div className="flex items-center justify-between mt-1.5">
-             <span className={`text-[10px] font-medium ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>{subtitle}</span>
+          <div className="text-2xl font-bold tracking-tight">{value}</div>
+          <div className="flex items-center justify-between mt-2">
+             <span className={`text-xs font-medium ${darkMode ? 'opacity-50' : 'text-zinc-500'}`}>{subtitle}</span>
              {trend}
           </div>
        </div>
-    </Card>
+    </div>
   );
 };
 
 const Button = ({ onClick, children, variant = 'primary', className = '', disabled = false, darkMode }) => {
-  const baseStyle = "px-4 py-2 rounded-xl font-bold transition-all duration-200 flex items-center justify-center gap-2 text-xs active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed tracking-wide shadow-sm";
+  const baseStyle = "h-10 px-4 rounded-lg font-semibold transition-all duration-200 flex items-center justify-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed";
   const variants = {
-    primary: darkMode ? "bg-indigo-600 text-white hover:bg-indigo-500 hover:shadow-indigo-500/25" : "bg-slate-900 text-white hover:bg-slate-800 hover:shadow-slate-900/25",
-    danger: "bg-rose-500 text-white hover:bg-rose-600",
-    success: "bg-emerald-600 text-white hover:bg-emerald-500",
-    outline: darkMode ? "border-2 border-slate-700 text-slate-300 bg-transparent hover:border-slate-500" : "border-2 border-slate-200 text-slate-700 bg-transparent hover:border-slate-300"
+    primary: "bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm",
+    danger: darkMode ? "bg-red-500/10 text-red-500 hover:bg-red-500/20" : "bg-red-50 text-red-600 hover:bg-red-100",
+    success: "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm",
+    outline: darkMode ? "border border-zinc-700 text-zinc-300 bg-transparent hover:bg-zinc-800" : "border border-zinc-300 text-zinc-700 bg-transparent hover:bg-zinc-50"
   };
   return <button onClick={onClick} disabled={disabled} className={`${baseStyle} ${variants[variant]} ${className}`}>{children}</button>;
 };
 
 const Input = ({ label, symbol, darkMode, list, ...props }) => (
   <div className="flex flex-col gap-1.5 w-full">
-    {label && <label className={`text-[10px] font-bold uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>{label}</label>}
+    {label && <label className={`text-xs font-semibold ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>{label}</label>}
     <div className="relative">
-      {symbol && <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><span className={`text-sm font-bold ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>{symbol}</span></div>}
-      <input list={list} className={`border-2 rounded-xl p-2.5 w-full text-sm outline-none transition-all duration-200 font-medium ${darkMode ? 'bg-slate-900/50 border-slate-700 text-white focus:border-indigo-500 focus:bg-slate-900' : 'bg-slate-50 border-slate-200 text-slate-900 focus:border-indigo-500 focus:bg-white'} ${symbol ? 'pl-8' : ''}`} {...props} />
+      {symbol && <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><span className={`text-sm font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{symbol}</span></div>}
+      <input list={list} className={`h-10 border rounded-lg px-3 w-full text-sm outline-none transition-colors duration-200 ${darkMode ? 'bg-[#0a0c10] border-zinc-800 text-zinc-100 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50' : 'bg-white border-zinc-300 text-zinc-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50'} ${symbol ? 'pl-8' : ''}`} {...props} />
     </div>
   </div>
 );
 
 const Select = ({ label, options, darkMode, ...props }) => (
   <div className="flex flex-col gap-1.5 w-full">
-    {label && <label className={`text-[10px] font-bold uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>{label}</label>}
+    {label && <label className={`text-xs font-semibold ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>{label}</label>}
     <div className="relative">
-      <select className={`appearance-none w-full border-2 rounded-xl p-2.5 pr-8 text-sm outline-none cursor-pointer transition-all duration-200 font-medium ${darkMode ? 'bg-slate-900/50 border-slate-700 text-white focus:border-indigo-500 focus:bg-slate-900' : 'bg-slate-50 border-slate-200 text-slate-900 focus:border-indigo-500 focus:bg-white'}`} {...props}>
-        {options.map((opt, idx) => <option key={idx} value={opt.value} className={darkMode ? 'bg-slate-800' : ''}>{opt.label}</option>)}
+      <select className={`h-10 appearance-none w-full border rounded-lg px-3 pr-8 text-sm outline-none cursor-pointer transition-colors duration-200 ${darkMode ? 'bg-[#0a0c10] border-zinc-800 text-zinc-100 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50' : 'bg-white border-zinc-300 text-zinc-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50'}`} {...props}>
+        {options.map((opt, idx) => <option key={idx} value={opt.value}>{opt.label}</option>)}
       </select>
       <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-          <ChevronDown size={14} className={darkMode ? "text-slate-400" : "text-slate-500"} />
+          <ChevronDown size={14} className={darkMode ? "text-zinc-500" : "text-zinc-400"} />
       </div>
     </div>
   </div>
@@ -130,7 +143,7 @@ const getPreviousDayStr = (dateStr) => {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 };
 
-// --- COMPONENTE DE GRÁFICO ---
+// --- COMPONENTE DE GRÁFICO (NORMALIZADO) ---
 const SalesChart = ({ sales, globalMonth, darkMode }) => {
   const [metric, setMetric] = useState('revenue'); 
   const [hoveredIndex, setHoveredIndex] = useState(null);
@@ -147,7 +160,6 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
       const y = parseInt(yStr);
       const m = parseInt(mStr);
       const daysInMonth = new Date(y, m, 0).getDate();
-      
       for (let i = 1; i <= daysInMonth; i++) {
         const dayStr = String(i).padStart(2, '0');
         const key = `${yStr}-${mStr}-${dayStr}`;
@@ -156,12 +168,9 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
     } else {
       if (!sales || sales.length === 0) return [];
       const dates = sales.map(s => new Date(s.date));
-      const rawMin = new Date(Math.min(...dates));
-      const rawMax = new Date(Math.max(...dates));
-      const minDate = new Date(rawMin.getFullYear(), rawMin.getMonth(), rawMin.getDate());
-      const maxDate = new Date(rawMax.getFullYear(), rawMax.getMonth(), rawMax.getDate());
-
-      for (let d = new Date(minDate); d <= maxDate; d.setDate(d.getDate() + 1)) {
+      const minDate = new Date(Math.min(...dates));
+      const maxDate = new Date(Math.max(...dates));
+      for (let d = new Date(minDate.getFullYear(), minDate.getMonth(), minDate.getDate()); d <= maxDate; d.setDate(d.getDate() + 1)) {
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
         const day = String(d.getDate()).padStart(2, '0');
@@ -182,25 +191,25 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
     return Object.values(map).sort((a, b) => a.key.localeCompare(b.key));
   }, [sales, globalMonth]);
 
-  if (chartData.length === 0) return <div className="h-40 flex items-center justify-center text-xs opacity-50">No hay ventas registradas en este periodo.</div>;
+  if (chartData.length === 0) return <div className="h-48 flex items-center justify-center text-sm font-medium opacity-50">No hay transacciones en este periodo.</div>;
 
   const MIN_POINT_DISTANCE = 40;
   const calculatedWidth = Math.max(800, chartData.length * MIN_POINT_DISTANCE);
   
   const w = calculatedWidth;
-  const h = 340; 
+  const h = 300; 
   const padXLeft = 15; 
   const padXRight = 40;
-  const padYTop = 100; // Incrementamos un poco el "techo" interno del gráfico
-  const padYBottom = 40;
+  const padYTop = 60; 
+  const padYBottom = 30;
   const chartW = w - padXLeft - padXRight;
   const chartH = h - padYTop - padYBottom;
 
   const values = chartData.map(d => metric === 'revenue' ? d.revenue : d.quantity);
   const rawMax = Math.max(...values, 4);
 
-  const getNiceScale = (maxVal, numTicks = 8) => {
-    if (maxVal <= 0) return { max: 8, ticks: [2, 4, 6, 8], step: 2 };
+  const getNiceScale = (maxVal, numTicks = 5) => {
+    if (maxVal <= 0) return { max: 5, ticks: [1, 2, 3, 4, 5], step: 1 };
     const roughStep = maxVal / numTicks;
     const magnitude = Math.pow(10, Math.floor(Math.log10(roughStep)));
     const normalizedStep = roughStep / magnitude;
@@ -216,7 +225,7 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
     return { max: niceMax, ticks: ticks.reverse() };
   };
 
-  const scaleData = getNiceScale(rawMax, 8); 
+  const scaleData = getNiceScale(rawMax, 5); 
   const maxVal = scaleData.max;
   const yTickValues = [...scaleData.ticks, 0];
 
@@ -235,28 +244,25 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
       return val.toString();
   };
 
-  const themeColor = metric === 'revenue' ? '#6366f1' : '#14b8a6'; // Indigo vs Teal
+  const themeColor = darkMode ? '#818cf8' : '#4f46e5'; 
+  const gridColor = darkMode ? '#27272a' : '#e4e4e7'; 
 
   return (
-    <div className="w-full flex flex-col space-y-5">
-      <div className="flex justify-start">
-          <div className={`flex items-center gap-1 p-1 rounded-xl w-fit border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-slate-100 border-slate-200'}`}>
-              <button onClick={() => setMetric('revenue')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all duration-200 ${metric === 'revenue' ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>
-                  Ingresos ($)
-              </button>
-              <button onClick={() => setMetric('quantity')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all duration-200 ${metric === 'quantity' ? 'bg-white dark:bg-slate-700 text-teal-600 dark:text-teal-400 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>
-                  Volumen (u.)
-              </button>
+    <div className="w-full flex flex-col space-y-4">
+      <div className="flex justify-end mb-1">
+          <div className={`flex items-center p-1 rounded-lg border ${darkMode ? 'bg-[#0f1115] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+              <button onClick={() => setMetric('revenue')} className={`px-4 py-1.5 text-xs font-semibold rounded-md transition-all ${metric === 'revenue' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Ingresos</button>
+              <button onClick={() => setMetric('quantity')} className={`px-4 py-1.5 text-xs font-semibold rounded-md transition-all ${metric === 'quantity' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Unidades</button>
           </div>
       </div>
 
-      <div className={`relative flex w-full rounded-2xl overflow-hidden shadow-sm border ${darkMode ? 'bg-[#0f141e] border-slate-800/80' : 'bg-slate-50/50 border-slate-200/80'}`}>
-          <div className={`w-[55px] md:w-[65px] flex-shrink-0 relative z-10 border-r ${darkMode ? 'border-slate-800/80 bg-[#131824]' : 'border-slate-200 bg-white shadow-sm'}`}>
+      <div className={`relative flex w-full h-[300px] rounded-xl overflow-hidden border ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+          <div className={`w-[60px] flex-shrink-0 relative z-10 border-r ${darkMode ? 'border-zinc-800 bg-[#0f1115]' : 'border-zinc-200 bg-zinc-50'}`}>
               {yTickValues.map(tickVal => {
                   const y = padYTop + chartH - ((tickVal / maxVal) * chartH);
                   return (
                       <div key={tickVal} className="absolute w-full text-right pr-3 pointer-events-none" style={{ top: `${y}px`, transform: 'translateY(-50%)' }}>
-                          <span className={`text-[10px] font-bold ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>{formatYAxis(tickVal)}</span>
+                          <span className={`text-xs font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{formatYAxis(tickVal)}</span>
                       </div>
                   );
               })}
@@ -267,20 +273,20 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
                   <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-full overflow-visible" preserveAspectRatio="none">
                     <defs>
                       <linearGradient id="gradientArea" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={themeColor} stopOpacity="0.3" />
+                        <stop offset="0%" stopColor={themeColor} stopOpacity="0.2" />
                         <stop offset="100%" stopColor={themeColor} stopOpacity="0.0" />
                       </linearGradient>
                     </defs>
 
                     {yTickValues.map(tickVal => {
                         const y = padYTop + chartH - ((tickVal / maxVal) * chartH);
-                        return <line key={tickVal} x1={0} y1={y} x2={w} y2={y} stroke={darkMode ? "#1e293b" : "#e2e8f0"} strokeWidth={tickVal === 0 ? "2" : "1"} strokeDasharray={tickVal === 0 ? "0" : "4 4"} />;
+                        return <line key={tickVal} x1={0} y1={y} x2={w} y2={y} stroke={gridColor} strokeWidth={tickVal === 0 ? "2" : "1"} strokeDasharray={tickVal === 0 ? "0" : "4 4"} />;
                     })}
 
-                    {hoveredIndex !== null && <line x1={points[hoveredIndex].x} y1={padYTop} x2={points[hoveredIndex].x} y2={h - padYBottom} stroke={darkMode ? "#475569" : "#94a3b8"} strokeWidth="1" strokeDasharray="4 4" />}
+                    {hoveredIndex !== null && <line x1={points[hoveredIndex].x} y1={padYTop} x2={points[hoveredIndex].x} y2={h - padYBottom} stroke={darkMode ? "#52525b" : "#a1a1aa"} strokeWidth="1" strokeDasharray="4 4" />}
 
                     <path d={areaPath} fill="url(#gradientArea)" className="transition-all duration-300" />
-                    <path d={linePath} fill="none" stroke={themeColor} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="transition-all duration-300" />
+                    <path d={linePath} fill="none" stroke={themeColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="transition-all duration-300" />
 
                     {points.map((p, i) => {
                       const isHovered = hoveredIndex === i;
@@ -289,10 +295,9 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
 
                       return (
                         <g key={i}>
-                          <circle cx={p.x} cy={p.y} r={isHovered ? "6" : "3"} fill={darkMode ? (isHovered ? themeColor : "#131824") : (isHovered ? themeColor : "#ffffff")} stroke={themeColor} strokeWidth="2.5" className="transition-all duration-200 pointer-events-none" />
-                          <circle cx={p.x} cy={p.y} r="25" fill="transparent" className="cursor-crosshair" onMouseEnter={() => setHoveredIndex(i)} onMouseLeave={() => setHoveredIndex(null)} onTouchStart={() => setHoveredIndex(i)} />
-                          {showLabel && <text x={p.x} y={h - padYBottom + 20} textAnchor="middle" fill={isHovered ? (darkMode ? "#f8fafc" : "#0f172a") : (darkMode ? "#475569" : "#94a3b8")} fontSize="11" fontWeight={isHovered ? "bold" : "600"} className="transition-all pointer-events-none">{p.label}</text>}
-                          {(!isHovered && p.val > 0 && showLabel) && <text x={p.x} y={p.y - 16} textAnchor="middle" fill={darkMode ? "#475569" : "#94a3b8"} fontSize="10" fontWeight="600" className="pointer-events-none">{metric === 'revenue' ? formatCompact(p.val) : p.val}</text>}
+                          <circle cx={p.x} cy={p.y} r={isHovered ? "5" : "0"} fill={darkMode ? "#0f1115" : "#ffffff"} stroke={themeColor} strokeWidth="2.5" className="transition-all duration-200 pointer-events-none" />
+                          <circle cx={p.x} cy={p.y} r="30" fill="transparent" className="cursor-crosshair" onMouseEnter={() => setHoveredIndex(i)} onMouseLeave={() => setHoveredIndex(null)} onTouchStart={() => setHoveredIndex(i)} />
+                          {showLabel && <text x={p.x} y={h - padYBottom + 20} textAnchor="middle" fill={isHovered ? (darkMode ? "#ffffff" : "#000000") : (darkMode ? "#71717a" : "#a1a1aa")} fontSize="11" fontWeight={isHovered ? "bold" : "500"} className="transition-all pointer-events-none">{p.label}</text>}
                         </g>
                       );
                     })}
@@ -302,24 +307,21 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
                       <div 
                           className="absolute z-10 pointer-events-none transition-all duration-100 ease-out"
                           style={{ 
-                              left: hoveredIndex === 0 ? `${(points[hoveredIndex].x / w) * 100}%` : 
-                                    hoveredIndex === points.length - 1 ? `calc(${(points[hoveredIndex].x / w) * 100}% - 10px)` : 
-                                    `${(points[hoveredIndex].x / w) * 100}%`,
+                              left: hoveredIndex === 0 ? `${(points[hoveredIndex].x / w) * 100}%` : hoveredIndex === points.length - 1 ? `calc(${(points[hoveredIndex].x / w) * 100}% - 10px)` : `${(points[hoveredIndex].x / w) * 100}%`,
                               top: `${(points[hoveredIndex].y / h) * 100}%`,
-                              // Ajuste inteligente: si el punto está muy alto (y < 120), lo mostramos debajo (20px). Si no, arriba (-120%).
-                              transform: `translate(${hoveredIndex === 0 ? '0%' : hoveredIndex === points.length - 1 ? '-100%' : '-50%'}, ${points[hoveredIndex].y < 120 ? '20px' : '-120%'})`
+                              transform: `translate(${hoveredIndex === 0 ? '0%' : hoveredIndex === points.length - 1 ? '-100%' : '-50%'}, ${points[hoveredIndex].y < 100 ? '16px' : '-120%'})`
                           }}
                       >
-                          <div className={`p-4 rounded-xl shadow-xl border backdrop-blur-xl whitespace-nowrap ${darkMode ? 'bg-slate-800/95 border-slate-700' : 'bg-white/95 border-slate-200'}`}>
-                              <div className={`text-[10px] font-bold uppercase tracking-wider mb-2.5 ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>{points[hoveredIndex].fullLabel}</div>
+                          <div className={`p-4 rounded-xl shadow-xl border whitespace-nowrap ${darkMode ? 'bg-zinc-800 border-zinc-700' : 'bg-white border-zinc-200'}`}>
+                              <div className={`text-xs font-semibold mb-3 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{points[hoveredIndex].fullLabel}</div>
                               <div className="flex flex-col gap-2">
                                   <div className="flex items-center justify-between gap-8">
-                                      <span className="text-xs font-semibold opacity-70">Ingresos</span>
-                                      <span className={`text-sm font-black ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>{formatMoney(points[hoveredIndex].revenue)}</span>
+                                      <span className="text-sm font-medium">Ingresos</span>
+                                      <span className="text-sm font-bold">{formatMoney(points[hoveredIndex].revenue)}</span>
                                   </div>
                                   <div className="flex items-center justify-between gap-8">
-                                      <span className="text-xs font-semibold opacity-70">Unidades</span>
-                                      <span className="text-sm font-bold text-teal-500">{points[hoveredIndex].quantity} u.</span>
+                                      <span className="text-sm font-medium">Unidades</span>
+                                      <span className="text-sm font-bold text-indigo-500">{points[hoveredIndex].quantity} u.</span>
                                   </div>
                               </div>
                           </div>
@@ -773,43 +775,54 @@ export default function App() {
   const handleLogin = (e) => { 
     e.preventDefault(); 
     const val = e.target.password.value; 
-    if(val === '1717') { localStorage.setItem('028_user', 'Admin'); setUser('Admin'); showToast('Acceso autorizado', 'success'); } 
-    else alert('Contraseña incorrecta');
+    if(val === '1717') { localStorage.setItem('028_user', 'Admin'); setUser('Admin'); showToast('Bienvenido', 'success'); } 
+    else showToast('Contraseña incorrecta', 'error');
   };
 
   if (!user) return (
-    <div className={`min-h-screen flex items-center justify-center p-4 transition-colors duration-500 ${darkMode ? 'bg-[#0B0F19]' : 'bg-slate-50'}`}>
-      <div className={`p-8 rounded-3xl shadow-2xl w-full max-w-sm text-center border-t border-l ${darkMode ? 'bg-[#131824] border-slate-700/50' : 'bg-white border-white'}`}>
-        <div className="bg-indigo-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-indigo-500/30"><Package size={32} className="text-white" /></div>
-        <h1 className={`text-2xl font-black mb-1 tracking-tight ${darkMode ? 'text-white' : 'text-slate-900'}`}>028 IMPORT</h1>
-        <p className="text-slate-500 mb-8 text-xs font-medium uppercase tracking-widest">Sistema de Gestión</p>
+    <div className={`min-h-screen flex flex-col items-center justify-center p-4 transition-colors duration-500 ${darkMode ? 'bg-[#0B0F19]' : 'bg-slate-50'}`}>
+      <div className={`p-8 rounded-2xl shadow-xl w-full max-w-md text-center border ${darkMode ? 'bg-[#131824] border-zinc-800/80' : 'bg-white border-zinc-200'}`}>
+        <div className="bg-indigo-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-indigo-600/30"><Package size={32} className="text-white" /></div>
+        <h1 className={`text-3xl font-black mb-2 tracking-tight ${darkMode ? 'text-white' : 'text-zinc-900'}`}>028 IMPORT</h1>
+        <p className="text-zinc-500 mb-8 text-xs font-semibold uppercase tracking-widest">Workspace Empresarial</p>
         <form onSubmit={handleLogin} className="space-y-4">
-          <input type="password" name="password" placeholder="Clave de acceso" className={`w-full border-2 p-3 rounded-xl text-center font-bold text-sm outline-none transition-all ${darkMode ? 'bg-slate-900/50 border-slate-800 text-white focus:border-indigo-500' : 'bg-slate-50 border-slate-200 focus:border-indigo-500 focus:bg-white'}`} autoFocus />
-          <button className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-500 transition-all shadow-md shadow-indigo-500/20 active:scale-95 text-sm">Entrar al Workspace</button>
+          <input type="password" name="password" placeholder="Clave de seguridad" className={`h-12 w-full border p-3.5 rounded-xl text-center font-bold text-sm outline-none transition-colors ${darkMode ? 'bg-[#0a0c10] border-zinc-800 text-white focus:border-indigo-500' : 'bg-zinc-50 border-zinc-200 focus:border-indigo-500 text-zinc-900'}`} autoFocus />
+          <button className="h-12 w-full bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all text-sm shadow-md">Autenticar</button>
         </form>
+      </div>
+      <div className="mt-8 flex gap-4">
+          <button onClick={() => setDarkMode(false)} className={`p-3 rounded-full border ${!darkMode ? 'bg-white shadow-sm border-zinc-200 text-indigo-600' : 'bg-transparent border-transparent text-zinc-600'}`}><Sun size={20}/></button>
+          <button onClick={() => setDarkMode(true)} className={`p-3 rounded-full border ${darkMode ? 'bg-[#131824] shadow-sm border-zinc-800 text-indigo-400' : 'bg-transparent border-transparent text-zinc-400'}`}><Moon size={20}/></button>
       </div>
     </div>
   );
 
   if (configError) return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 text-white">
-      <div className="max-w-lg text-center space-y-4">
-        <AlertTriangle size={64} className="mx-auto text-yellow-500" />
-        <h1 className="text-3xl font-bold">Falta Configuración</h1>
-        <p className="text-slate-300">Debes poner las claves de Firebase en el código.</p>
-        <button onClick={() => window.location.reload()} className="bg-indigo-500 text-white px-6 py-2 rounded-xl font-bold hover:bg-indigo-400">Recargar</button>
+    <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4 text-white">
+      <div className="max-w-lg text-center space-y-4 border border-zinc-800 p-8 rounded-lg bg-[#131824]">
+        <AlertTriangle size={48} className="mx-auto text-amber-500" />
+        <h1 className="text-xl font-bold tracking-tight">Falta Configuración</h1>
+        <p className="text-zinc-400 text-sm">Debes configurar las claves de Firebase en el código fuente.</p>
       </div>
     </div>
   );
 
+  const TABS = [
+      { id: 'home', icon: Activity, label: 'Dashboard' }, 
+      { id: 'sales', icon: ShoppingCart, label: 'Ventas' }, 
+      { id: 'batches', icon: FolderOpen, label: 'Lotes' }, 
+      { id: 'analysis', icon: BarChart3, label: 'Análisis' }, 
+      { id: 'expenses', icon: Wallet, label: 'Gastos' }
+  ];
+
   return (
-    <div className={`min-h-screen font-sans transition-colors duration-500 text-sm pb-24 ${darkMode ? 'bg-[#0B0F19] text-slate-200' : 'bg-[#F8FAFC] text-slate-800'}`}>
+    <div className={`flex h-screen overflow-hidden font-sans transition-colors duration-300 ${darkMode ? 'bg-[#0B0F19] text-zinc-100' : 'bg-slate-50 text-zinc-900'}`}>
       
       {/* TOASTS */}
       {toast && (
-          <div className={`fixed bottom-6 right-6 px-5 py-3.5 rounded-2xl shadow-2xl flex items-center gap-3 animate-in slide-in-from-bottom-5 z-50 border backdrop-blur-md ${toast.type === 'error' ? 'bg-rose-600/90 border-rose-500 text-white' : 'bg-slate-900/90 border-slate-800 text-white'}`}>
-             {toast.type === 'error' ? <XCircle size={18} className="text-rose-200"/> : <CheckCircle size={18} className="text-emerald-400"/>}
-             <span className="font-semibold text-xs tracking-wide">{toast.message}</span>
+          <div className={`fixed bottom-24 md:bottom-8 right-4 md:right-8 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-in slide-in-from-bottom-5 z-50 border ${toast.type === 'error' ? 'bg-red-600/95 border-red-500 text-white' : 'bg-zinc-900/95 border-zinc-800 text-white'}`}>
+             {toast.type === 'error' ? <XCircle size={18} className="text-red-200"/> : <CheckCircle size={18} className="text-emerald-400"/>}
+             <span className="font-medium text-sm tracking-wide">{toast.message}</span>
           </div>
       )}
 
@@ -817,504 +830,562 @@ export default function App() {
       <datalist id="products-list">{uniqueProducts.map(p => <option key={p} value={p} />)}</datalist>
       <datalist id="variants-list">{uniqueVariants.map(v => <option key={v} value={v} />)}</datalist>
 
-      {/* HEADER STICKY GLASSMORPHISM */}
-      <header className={`sticky top-0 z-40 backdrop-blur-xl border-b transition-colors duration-300 ${darkMode ? 'bg-[#0B0F19]/80 border-slate-800/80' : 'bg-white/80 border-slate-200/80 shadow-sm'}`}>
-        <div className="max-w-6xl mx-auto px-4 py-3 flex justify-between items-center gap-4">
-          <div className="flex items-center gap-3 w-full sm:w-auto">
-            <div className="bg-indigo-600 p-2.5 rounded-xl text-white shadow-sm"><FolderOpen size={18} strokeWidth={2.5} /></div>
-            <div>
-                <h1 className={`text-lg font-black tracking-tight leading-none ${darkMode ? 'text-white' : 'text-slate-900'}`}>028 IMPORT</h1>
-                <div className="flex items-center gap-2 mt-0.5">
-                    <p className={`text-[10px] font-bold uppercase tracking-wider ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>Workspace • {user}</p>
-                    {isOffline && (
-                        <span className="flex items-center gap-1 text-[9px] bg-rose-500/10 text-rose-500 px-1.5 py-0.5 rounded-md font-bold border border-rose-500/20">
-                            <WifiOff size={10}/> Offline
-                        </span>
-                    )}
+      {/* --- DESKTOP SIDEBAR --- */}
+      <aside className={`hidden md:flex flex-col w-60 border-r flex-shrink-0 transition-colors z-20 ${darkMode ? 'bg-[#0f1115] border-zinc-800/80' : 'bg-white border-zinc-200 shadow-sm'}`}>
+        <div className="p-5 pb-2 border-b dark:border-zinc-800/80">
+            <div className="flex items-center gap-3 mb-5">
+                <div className="bg-indigo-600 p-2 rounded-lg text-white shadow-sm shadow-indigo-600/20"><Package size={20} strokeWidth={2.5} /></div>
+                <div>
+                    <h1 className="text-lg font-black tracking-tight leading-none">028 IMPORT</h1>
+                    <p className={`text-[10px] font-bold uppercase tracking-wider mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Workspace</p>
                 </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2 self-end sm:self-auto">
-            <button onClick={() => setDarkMode(!darkMode)} className={`p-2.5 rounded-xl transition-all border ${darkMode ? 'bg-slate-800 border-slate-700 text-amber-400 hover:bg-slate-700' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}>{darkMode ? <Sun size={16} /> : <Moon size={16} />}</button>
-            <button onClick={() => { localStorage.removeItem('028_user'); setUser(null); }} className={`p-2.5 rounded-xl transition-all border ${darkMode ? 'bg-slate-800 border-slate-700 text-rose-400 hover:bg-rose-500/10 hover:border-rose-500/30' : 'bg-white border-slate-200 text-rose-500 hover:bg-rose-50'}`}><LogOut size={16} /></button>
-          </div>
         </div>
-      </header>
 
-      <div className="max-w-6xl mx-auto space-y-6 px-4 mt-6">
-        
-        {/* NAVEGACIÓN SEGMENTADA MODERNIZADA */}
-        <div className={`flex overflow-x-auto custom-scrollbar p-1.5 rounded-2xl border w-fit shadow-sm ${darkMode ? 'bg-[#131824] border-slate-800' : 'bg-white border-slate-200'}`}>
-            {[
-                { id: 'home', icon: Activity, label: 'Dashboard' }, 
-                { id: 'batches', icon: FolderOpen, label: 'Lotes' }, 
-                { id: 'sales', icon: ShoppingCart, label: 'Ventas' }, 
-                { id: 'analysis', icon: BarChart3, label: 'Análisis' }, 
-                { id: 'expenses', icon: Wallet, label: 'Gastos' }
-            ].map(tab => (
+        <div className="flex-1 overflow-y-auto py-5 px-3 space-y-1 custom-scrollbar">
+            <div className={`text-xs font-semibold px-3 mb-2 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Navegación</div>
+            {TABS.map(tab => (
             <button 
                 key={tab.id} 
                 onClick={() => setActiveTab(tab.id)} 
-                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-[11px] uppercase tracking-wider transition-all duration-200 whitespace-nowrap ${activeTab === tab.id ? (darkMode ? 'bg-slate-800 text-white shadow-sm' : 'bg-slate-100 text-slate-900 shadow-sm') : (darkMode ? 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50')}`}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg font-medium text-sm transition-all duration-200 ${activeTab === tab.id ? (darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-50 text-indigo-700') : (darkMode ? 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200' : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900')}`}
             >
-                <tab.icon size={14} strokeWidth={2.5} /> {tab.label}
+                <tab.icon size={18} strokeWidth={activeTab === tab.id ? 2.5 : 2} /> {tab.label}
             </button>
             ))}
         </div>
 
-        {/* --- PESTAÑA DASHBOARD (INICIO) --- */}
-        {activeTab === 'home' && (
-             <div className="space-y-6 animate-in fade-in duration-500">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                    <div>
-                        <h2 className={`text-2xl font-black tracking-tight ${darkMode ? 'text-white' : 'text-slate-900'}`}>Visión General</h2>
-                        <p className={`text-xs font-medium mt-1 ${darkMode ? 'text-slate-500' : 'text-slate-500'}`}>Métricas clave de {globalMonth === 'all' ? 'todo el histórico' : 'este periodo'}.</p>
-                    </div>
-                    
-                    <div className="relative w-full sm:w-auto min-w-[200px]">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <Calendar size={14} className="text-indigo-500" />
-                        </div>
-                        <select 
-                            className={`appearance-none w-full border-2 rounded-xl py-2.5 pl-9 pr-10 text-sm font-bold outline-none cursor-pointer transition-all shadow-sm ${darkMode ? 'bg-[#131824] border-slate-700 text-white hover:border-slate-600 focus:border-indigo-500' : 'bg-white border-slate-200 text-slate-800 hover:border-slate-300 focus:border-indigo-500'}`}
-                            value={globalMonth} 
-                            onChange={e => setGlobalMonth(e.target.value)}
-                        >
-                            {monthOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                        </select>
-                        <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                            <ChevronDown size={14} className={darkMode ? 'text-slate-500' : 'text-slate-400'} />
-                        </div>
+        <div className="p-4 border-t dark:border-zinc-800/80 space-y-2">
+            {isOffline && (
+                <div className="flex items-center justify-center gap-2 text-xs font-bold text-red-500 bg-red-500/10 p-2 rounded-lg mb-2">
+                    <WifiOff size={14}/> Modo Offline
+                </div>
+            )}
+            <div className={`flex items-center justify-between p-2 rounded-lg border ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+                <div className="flex items-center gap-3">
+                    <div className={`w-8 h-8 rounded-md flex items-center justify-center font-bold text-xs ${darkMode ? 'bg-indigo-900/50 text-indigo-400' : 'bg-indigo-100 text-indigo-700'}`}>{user?.charAt(0)}</div>
+                    <div className="flex flex-col items-start">
+                        <span className="text-xs font-bold">{user}</span>
+                        <span className={`text-[10px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Admin</span>
                     </div>
                 </div>
+                <button onClick={() => { localStorage.removeItem('028_user'); setUser(null); }} className={`p-2 rounded-md transition-colors ${darkMode ? 'text-zinc-500 hover:bg-red-500/10 hover:text-red-400' : 'text-zinc-400 hover:bg-red-50 hover:text-red-600'}`} title="Cerrar sesión">
+                    <LogOut size={16} />
+                </button>
+            </div>
+            <button onClick={() => setDarkMode(!darkMode)} className={`w-full flex items-center justify-center gap-2 h-10 rounded-lg font-medium text-sm border transition-colors ${darkMode ? 'border-zinc-800 hover:bg-zinc-800/50 text-zinc-300' : 'border-zinc-200 hover:bg-zinc-50 text-zinc-600'}`}>
+                {darkMode ? <><Sun size={14}/> Modo Claro</> : <><Moon size={14}/> Modo Oscuro</>}
+            </button>
+        </div>
+      </aside>
 
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                      <MetricCard 
-                          darkMode={darkMode} title={`Ventas ${globalMonth === 'all' ? 'Totales' : ''}`} value={formatMoney(globalAnalysis.totalRevenue)} subtitle="Ingresos brutos" icon={DollarSign} color="blue"
-                          trend={globalAnalysis.prevRevenue !== null && globalAnalysis.prevRevenue > 0 ? (
-                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${globalAnalysis.totalRevenue >= globalAnalysis.prevRevenue ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
-                                  {globalAnalysis.totalRevenue >= globalAnalysis.prevRevenue ? '↑' : '↓'} {Math.abs(((globalAnalysis.totalRevenue - globalAnalysis.prevRevenue)/globalAnalysis.prevRevenue)*100).toFixed(0)}%
-                              </span>
-                          ) : null}
-                      />
-                      
-                      <MetricCard 
-                          darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(globalAnalysis.grossProfit)} subtitle="Antes de gastos" icon={TrendingUp} color="emerald"
-                          trend={<span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-slate-500/10 text-slate-500">{formatPercent(globalAnalysis.grossMargin)}</span>}
-                      />
+      {/* --- MOBILE BOTTOM NAV --- */}
+      <nav className={`md:hidden fixed bottom-0 w-full z-40 border-t pb-safe transition-colors ${darkMode ? 'bg-[#0f1115]/90 backdrop-blur-xl border-zinc-800/80 text-zinc-400' : 'bg-white/90 backdrop-blur-xl border-zinc-200 text-zinc-500'}`}>
+          <div className="flex justify-around items-center h-16 px-2">
+            {TABS.map(tab => (
+              <button 
+                  key={tab.id} 
+                  onClick={() => setActiveTab(tab.id)} 
+                  className={`flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors ${activeTab === tab.id ? (darkMode ? 'text-indigo-400' : 'text-indigo-600') : 'hover:text-zinc-900 dark:hover:text-zinc-200'}`}
+              >
+                  <tab.icon size={20} strokeWidth={activeTab === tab.id ? 2.5 : 2} />
+                  <span className={`text-[10px] font-medium ${activeTab === tab.id ? 'font-bold' : ''}`}>{tab.label}</span>
+              </button>
+            ))}
+          </div>
+      </nav>
 
-                      <MetricCard darkMode={darkMode} title="Gastos Operativos" value={formatMoney(globalAnalysis.totalGlobalExpenses)} subtitle="Envíos, aduana, etc." icon={Wallet} color="rose" />
-                      
-                      <MetricCard 
-                          darkMode={darkMode} title="Ganancia Neta" value={formatMoney(globalAnalysis.netProfit)} subtitle="Dinero libre real" icon={Award} color="violet"
-                          trend={
-                              <div className="flex gap-1 items-center">
-                                  {globalAnalysis.prevNetProfit !== null && globalAnalysis.prevNetProfit > 0 && (
-                                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${globalAnalysis.netProfit >= globalAnalysis.prevNetProfit ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
-                                          {globalAnalysis.netProfit >= globalAnalysis.prevNetProfit ? '↑' : '↓'} {Math.abs(((globalAnalysis.netProfit - globalAnalysis.prevNetProfit)/globalAnalysis.prevNetProfit)*100).toFixed(0)}%
-                                      </span>
-                                  )}
-                                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${globalAnalysis.netProfit > 0 ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'}`}>{formatPercent(globalAnalysis.netMargin)}</span>
+      {/* --- MAIN CONTENT AREA --- */}
+      <main className="flex-1 overflow-y-auto relative w-full custom-scrollbar">
+        
+        {/* MOBILE TOP HEADER */}
+        <header className={`md:hidden sticky top-0 z-30 flex justify-between items-center px-4 py-3 border-b backdrop-blur-xl ${darkMode ? 'bg-[#0B0F19]/80 border-zinc-800/80' : 'bg-slate-50/80 border-zinc-200'}`}>
+            <div className="flex items-center gap-3">
+                <div className="bg-indigo-600 p-1.5 rounded-md text-white"><Package size={16} /></div>
+                <h1 className="font-bold tracking-tight text-base">028 IMPORT</h1>
+            </div>
+            <div className="flex items-center gap-3">
+                {isOffline && <WifiOff size={16} className="text-red-500" />}
+                <button onClick={() => setDarkMode(!darkMode)} className={darkMode ? 'text-zinc-400' : 'text-zinc-500'}>{darkMode ? <Sun size={18} /> : <Moon size={18} />}</button>
+            </div>
+        </header>
+
+        <div className="p-4 md:p-8 pb-24 md:pb-8 max-w-6xl mx-auto space-y-6">
+            
+            {/* HEADER DE LA PÁGINA (SOLO DESKTOP) */}
+            <div className="hidden md:flex justify-between items-end mb-6">
+                <div>
+                    <h2 className="text-2xl font-bold tracking-tight">{TABS.find(t => t.id === activeTab)?.label}</h2>
+                    <p className={`text-sm font-medium mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Gestiona y analiza tus datos de negocio.</p>
+                </div>
+            </div>
+
+            {/* --- CONTENIDO POR PESTAÑA --- */}
+            
+            {activeTab === 'home' && (
+                <div className="space-y-6 animate-in fade-in duration-300">
+                    <div className={`p-4 rounded-xl border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 ${darkMode ? 'bg-[#131824] border-zinc-800/80' : 'bg-white border-zinc-200'}`}>
+                        <div className="flex items-center gap-3">
+                            <div className="p-2.5 rounded-lg bg-indigo-500/10 text-indigo-500"><Calendar size={20}/></div>
+                            <div>
+                                <h3 className="font-bold text-sm">Periodo de Análisis</h3>
+                                <p className={`text-xs ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Selecciona el rango de tiempo a evaluar</p>
+                            </div>
+                        </div>
+                        <div className="w-full sm:w-64">
+                            <Select 
+                                darkMode={darkMode}
+                                value={globalMonth} 
+                                onChange={e => setGlobalMonth(e.target.value)}
+                                options={monthOptions}
+                            />
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <MetricCard 
+                            color="blue"
+                            darkMode={darkMode} title={`Ingresos ${globalMonth === 'all' ? 'Totales' : ''}`} value={formatMoney(globalAnalysis.totalRevenue)} subtitle="Bruto facturado" icon={DollarSign}
+                            trend={globalAnalysis.prevRevenue !== null && globalAnalysis.prevRevenue > 0 ? (
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${globalAnalysis.totalRevenue >= globalAnalysis.prevRevenue ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 text-red-600 dark:text-red-400'}`}>
+                                    {globalAnalysis.totalRevenue >= globalAnalysis.prevRevenue ? '↑' : '↓'} {Math.abs(((globalAnalysis.totalRevenue - globalAnalysis.prevRevenue)/globalAnalysis.prevRevenue)*100).toFixed(0)}%
+                                </span>
+                            ) : null}
+                        />
+                        <MetricCard color="emerald" darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(globalAnalysis.grossProfit)} subtitle="Ingresos - Costo Mercadería" icon={TrendingUp} trend={<span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/50 text-zinc-600 dark:bg-black/50 dark:text-zinc-400">{formatPercent(globalAnalysis.grossMargin)}</span>} />
+                        <MetricCard color="rose" darkMode={darkMode} title="Gastos Fijos" value={formatMoney(globalAnalysis.totalGlobalExpenses)} subtitle="Logística y operativos" icon={Wallet} />
+                        <MetricCard 
+                            color="violet"
+                            darkMode={darkMode} title="Beneficio Neto" value={formatMoney(globalAnalysis.netProfit)} subtitle="Capital libre" icon={Award}
+                            trend={
+                                <div className="flex gap-1 items-center">
+                                    {globalAnalysis.prevNetProfit !== null && globalAnalysis.prevNetProfit > 0 && (
+                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${globalAnalysis.netProfit >= globalAnalysis.prevNetProfit ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 text-red-600 dark:text-red-400'}`}>
+                                            {globalAnalysis.netProfit >= globalAnalysis.prevNetProfit ? '↑' : '↓'} {Math.abs(((globalAnalysis.netProfit - globalAnalysis.prevNetProfit)/globalAnalysis.prevNetProfit)*100).toFixed(0)}%
+                                        </span>
+                                    )}
+                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md bg-white/50 text-violet-700 dark:bg-black/50 dark:text-violet-400`}>{formatPercent(globalAnalysis.netMargin)}</span>
+                                </div>
+                            }
+                        />
+                        <MetricCard color="amber" darkMode={darkMode} title="Inversión" value={formatMoney(globalAnalysis.totalInvestment)} subtitle="Capital apostado" icon={Box} />
+                        <MetricCard color="indigo" darkMode={darkMode} title="Valor Inventario" value={formatMoney(globalAnalysis.currentStockValue)} subtitle="Activo retenido actual" icon={Package} />
+                        <MetricCard color="emerald" darkMode={darkMode} title="Flujo Efectivo" value={formatMoney(globalAnalysis.cashBalance)} subtitle="Diferencia real en caja" icon={Activity} />
+                        <MetricCard 
+                            color="amber"
+                            darkMode={darkMode} title="Promedio Ventas" value={globalAnalysis.dailyAvgItems.toFixed(1)} subtitle="Unidades por día activo" icon={Flame}
+                            trend={globalAnalysis.currentStreak > 0 ? <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/50 text-orange-600 dark:bg-black/50 dark:text-orange-400 flex items-center gap-1"><Flame size={12}/> {globalAnalysis.currentStreak} días</span> : null}
+                        />
+                    </div>
+
+                    <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                        <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                            <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><TrendingUp size={18}/></div>
+                            <h3 className="font-bold tracking-tight text-sm">Evolución de Ingresos</h3>
+                        </div>
+                        <div className="p-5">
+                            <SalesChart sales={globalAnalysis.filteredSales} globalMonth={globalMonth} darkMode={darkMode} />
+                        </div>
+                    </Card>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                          <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                              <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><Users size={18}/></div>
+                              <h3 className="font-bold tracking-tight text-sm">Tráfico por Canales</h3>
+                          </div>
+                          <div className="p-5 space-y-4">
+                            {Object.entries(globalAnalysis.sourceCounts).map(([source, count]) => (
+                              <div key={source} className="flex items-center justify-between">
+                                <span className="text-sm font-semibold w-24 truncate">{source}</span>
+                                <div className="flex-1 mx-4">
+                                  <div className={`h-2 rounded-full overflow-hidden ${darkMode ? 'bg-[#0a0c10]' : 'bg-zinc-100'}`}>
+                                      <div className="h-full bg-indigo-500 rounded-full" style={{width: `${(count/globalAnalysis.salesCount)*100}%`}}></div>
+                                  </div>
+                                </div>
+                                <span className="font-bold text-sm w-8 text-right text-zinc-500">{count}</span>
                               </div>
-                          }
-                      />
+                            ))}
+                            {Object.keys(globalAnalysis.sourceCounts).length === 0 && <div className="text-center text-sm opacity-50 py-4">Sin datos</div>}
+                          </div>
+                        </Card>
 
-                      <MetricCard darkMode={darkMode} title="Inversión" value={formatMoney(globalAnalysis.totalInvestment)} subtitle="Costo mercadería" icon={Box} color="amber" />
-                      <MetricCard darkMode={darkMode} title="Valor Stock" value={formatMoney(globalAnalysis.currentStockValue)} subtitle="Activo inmovilizado" icon={Package} color="indigo" />
-                      <MetricCard darkMode={darkMode} title="Flujo de Caja" value={formatMoney(globalAnalysis.cashBalance)} subtitle="Efectivo en mano" icon={Activity} color="emerald" />
-                      
-                      <MetricCard 
-                          darkMode={darkMode} title="Ritmo de Ventas" value={globalAnalysis.dailyAvgItems.toFixed(1)} subtitle="Unidades por día" icon={Flame} color="amber"
-                          trend={globalAnalysis.currentStreak > 0 ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-600 flex items-center gap-0.5"><Flame size={10}/> {globalAnalysis.currentStreak} d.</span> : null}
-                      />
+                        <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                          <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                              <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><BarChart3 size={18}/></div>
+                              <h3 className="font-bold tracking-tight text-sm">Segmentación B2B / B2C</h3>
+                          </div>
+                          <div className="p-5 flex gap-4 items-center justify-center h-[160px]">
+                            <div className="text-center w-1/2">
+                              <div className="text-3xl font-black text-emerald-500 mb-2">{globalAnalysis.typeCounts.Final}</div>
+                              <div className={`text-xs font-bold text-zinc-500`}>Consumidor Final</div>
+                            </div>
+                            <div className={`h-16 w-[2px] rounded-full ${darkMode ? 'bg-zinc-800' : 'bg-zinc-200'}`}></div>
+                            <div className="text-center w-1/2">
+                              <div className="text-3xl font-black text-indigo-500 mb-2">{globalAnalysis.typeCounts.Revendedor}</div>
+                              <div className={`text-xs font-bold text-zinc-500`}>Revendedor</div>
+                            </div>
+                          </div>
+                        </Card>
+                    </div>
+                </div>
+            )}
+
+            {/* --- PESTAÑA VENTAS (LAYOUT DIVIDIDO) --- */}
+            {activeTab === 'sales' && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 animate-in fade-in duration-300">
+                
+                {/* Columna Izquierda: Formulario Fijo */}
+                <div className="lg:col-span-4">
+                    <div className="sticky top-6 space-y-4">
+                        <Card darkMode={darkMode} className="p-5">
+                            <h2 className="text-base font-bold mb-5 flex items-center gap-2"><ShoppingCart size={18} className="text-indigo-500"/> Registrar Ingreso</h2>
+                            <div className="space-y-4">
+                              <div>
+                                  <Input darkMode={darkMode} label="Fecha de Operación" type="date" value={newSale.saleDate} onChange={e => setNewSale({...newSale, saleDate: e.target.value})} />
+                              </div>
+                              <div className="space-y-3 pt-3 border-t dark:border-zinc-800">
+                                    <Select darkMode={darkMode} label="1. Carpeta de Origen" value={newSale.batchId} onChange={e => setNewSale({...newSale, batchId: e.target.value, itemId: ''})} options={[{value: '', label: '-- Elegir --'}, ...batches.map(b => ({value: b.id, label: `${b.name} ${b.finalizedAt ? '(Fin)' : ''}`}))]} />
+                                    
+                                    {newSale.batchId && (
+                                        <div className="animate-in slide-in-from-top-2">
+                                           <Select darkMode={darkMode} label="2. Artículo Vendido" value={newSale.itemId} onChange={e => setNewSale({...newSale, itemId: e.target.value})} options={[{value: '', label: '-- Elegir --'}, ...(batches.find(b => b.id === newSale.batchId)?.items?.map(item => ({value: item.id, label: `${item.product} ${item.variant} (Disp: ${item.currentStock})`, disabled: item.currentStock <= 0})) || [])]} />
+                                        </div>
+                                    )}
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <Input darkMode={darkMode} label="Cantidad" type="number" value={newSale.quantity} onChange={e => setNewSale({...newSale, quantity: e.target.value})} />
+                                        <Input darkMode={darkMode} label="Precio Un." type="number" symbol="$" value={newSale.unitPrice} onChange={e => setNewSale({...newSale, unitPrice: e.target.value})} />
+                                    </div>
+                              </div>
+                              
+                              <div className={`p-3 rounded-lg border grid grid-cols-2 gap-3 ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+                                  <Input darkMode={darkMode} label="Costo Envío" type="number" symbol="$" value={newSale.shippingCost} onChange={e => setNewSale({...newSale, shippingCost: e.target.value})} />
+                                  <Input darkMode={darkMode} label="Cobro Envío" type="number" symbol="$" value={newSale.shippingPrice} onChange={e => setNewSale({...newSale, shippingPrice: e.target.value})} />
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-3">
+                                  <Select darkMode={darkMode} label="Canal" value={newSale.source} onChange={e => setNewSale({...newSale, source: e.target.value})} options={[{value:'Instagram', label:'Instagram'}, {value:'Whatsapp', label:'Whatsapp'}, {value:'Personal', label:'Personal'}, {value:'Web', label:'Web'}]} />
+                                  <Select darkMode={darkMode} label="Cliente" value={newSale.isReseller} onChange={e => setNewSale({...newSale, isReseller: e.target.value})} options={[{value:'No', label:'Consumidor'}, {value:'Si', label:'Revendedor'}]} />
+                              </div>
+
+                              <Button darkMode={darkMode} onClick={handleAddSale} className="w-full mt-4">Procesar Venta</Button>
+                            </div>
+                        </Card>
+                    </div>
                 </div>
 
-                <Card darkMode={darkMode} className="col-span-full pb-2">
-                    <h3 className={`font-bold mb-5 flex items-center gap-2 text-xs uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}><TrendingUp size={16} className="text-indigo-500"/> Rendimiento Financiero</h3>
-                    <SalesChart sales={globalAnalysis.filteredSales} globalMonth={globalMonth} darkMode={darkMode} />
+                {/* Columna Derecha: Historial */}
+                <div className="lg:col-span-8">
+                  <Card darkMode={darkMode} className="h-full flex flex-col p-0 overflow-hidden border-zinc-200 dark:border-zinc-800">
+                    <div className={`p-4 border-b flex justify-between items-center ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                        <div>
+                            <h3 className="font-bold text-base">Libro de Ventas</h3>
+                        </div>
+                        <Button darkMode={darkMode} onClick={handleExportSales} variant="outline" className="h-9 px-3"><Download size={14}/> Exportar CSV</Button>
+                    </div>
+                    <div className="overflow-x-auto flex-1 h-[700px] custom-scrollbar">
+                      <table className="w-full text-left text-sm border-collapse">
+                          <thead className={`sticky top-0 z-10 text-xs font-semibold ${darkMode ? 'bg-[#0f1115] text-zinc-400 border-b border-zinc-800 shadow-sm' : 'bg-zinc-50 text-zinc-500 border-b border-zinc-200 shadow-sm'}`}>
+                              <tr><th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Operación</th><th className="px-4 py-3 text-emerald-500">Neto (Ítem)</th><th className="px-4 py-3">Total Fac.</th><th className="px-4 py-3"></th></tr>
+                          </thead>
+                          <tbody className={`divide-y ${darkMode ? 'divide-zinc-800/80' : 'divide-zinc-100'}`}>
+                            {sales.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-sm font-medium opacity-50 italic">Aún no hay ventas registradas en el sistema.</td></tr>}
+                            {sales.map(s => {
+                              const itemProfit = s.totalSaleRaw - ((s.costArsAtSale || 0) * s.quantity);
+                              return (
+                                <tr key={s.id} className={`transition-colors group ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-zinc-50'}`}>
+                                  <td className={`px-4 py-3 text-xs font-medium whitespace-nowrap ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{new Date(s.date).toLocaleDateString(undefined, {month:'short', day:'numeric'})}</td>
+                                  <td className="px-4 py-3">
+                                      <div className="font-semibold text-sm">{s.quantity}x {s.productName} <span className="font-normal opacity-70 ml-1">{s.variant}</span></div>
+                                      <div className={`text-xs font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Lote: {s.batchName}</div>
+                                  </td>
+                                  <td className="px-4 py-3 font-medium text-emerald-500 text-sm">{formatMoney(itemProfit)}</td>
+                                  <td className="px-4 py-3 font-bold font-mono tracking-tight">{formatMoney(s.totalSaleRaw)}</td>
+                                  <td className="px-4 py-3 text-right">
+                                      <button onClick={() => handleDeleteSale(s)} className={`p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:bg-red-500/10 hover:text-red-400' : 'text-zinc-400 hover:bg-red-50 hover:text-red-600'}`}><Trash2 size={16} /></button>
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                </div>
+              </div>
+            )}
+
+            {/* --- PESTAÑA LOTES --- */}
+            {activeTab === 'batches' && (
+              <div className="space-y-6 animate-in fade-in duration-300">
+                <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                  <div className={`p-5 border-b flex flex-col md:flex-row justify-between md:items-center gap-4 ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                      <div>
+                          <h2 className="text-xl font-bold mb-1">Inventario de Lotes</h2>
+                          <p className={`text-sm ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Administra tus importaciones y catálogos de productos.</p>
+                      </div>
+                      <div className="flex gap-3 items-end w-full md:w-auto">
+                        <div className="flex-1 md:w-64"><Input darkMode={darkMode} placeholder="Nombre del nuevo lote..." value={newBatchName} onChange={e => setNewBatchName(e.target.value)} /></div>
+                        <Button darkMode={darkMode} onClick={handleCreateBatch} className="shrink-0"><Plus size={16}/> Crear Lote</Button>
+                      </div>
+                  </div>
+                  <div className={`px-5 py-3 flex justify-end bg-zinc-50 dark:bg-[#0a0c10]`}>
+                      <Button darkMode={darkMode} onClick={handleExportBatches} variant="outline" className="h-9"><Download size={14}/> Bajar CSV Completo</Button>
+                  </div>
                 </Card>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in slide-in-from-bottom-8">
-                    <Card darkMode={darkMode}>
-                      <h3 className={`font-bold mb-4 flex items-center gap-2 text-xs uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}><Users size={16} className="text-blue-500"/> Canales de Adquisición</h3>
-                      <div className="space-y-3">
-                        {Object.entries(globalAnalysis.sourceCounts).map(([source, count]) => (
-                          <div key={source} className="flex items-center justify-between">
-                            <span className="text-xs font-semibold w-24 truncate">{source}</span>
-                            <div className="flex-1 mx-4">
-                              <div className={`h-2 rounded-full overflow-hidden ${darkMode ? 'bg-slate-800' : 'bg-slate-100'}`}>
-                                  <div className="h-full bg-blue-500 rounded-full" style={{width: `${(count/globalAnalysis.salesCount)*100}%`}}></div>
-                              </div>
+                <div className="grid grid-cols-1 gap-4">
+                  {batches.map((b) => (
+                    <Card key={b.id} darkMode={darkMode} className={`p-0 overflow-hidden transition-all duration-300 ${expandedBatchId === b.id ? 'ring-2 ring-indigo-500/50 border-transparent' : ''}`}>
+                      <div className={`p-5 flex justify-between items-center cursor-pointer transition-colors ${darkMode ? 'hover:bg-[#1a1f2e]' : 'hover:bg-zinc-50'}`} onClick={() => setExpandedBatchId(expandedBatchId === b.id ? null : b.id)}>
+                        <div className="flex items-center gap-4">
+                            <div className={`w-12 h-12 flex items-center justify-center rounded-xl ${b.finalizedAt ? (darkMode ? 'bg-emerald-500/10 text-emerald-500' : 'bg-emerald-100 text-emerald-600') : (darkMode ? 'bg-indigo-500/10 text-indigo-500' : 'bg-indigo-100 text-indigo-600')}`}>
+                                <FolderOpen size={24} strokeWidth={2} />
                             </div>
-                            <span className="font-bold text-xs w-6 text-right text-slate-500">{count}</span>
+                            <div>
+                                <h3 className={`font-bold text-base ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{b.name}</h3>
+                                <div className="flex items-center gap-3 mt-1">
+                                    <span className={`text-xs font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{(b.items || []).length} Ítems</span>
+                                    <span className="text-zinc-300 dark:text-zinc-700">•</span>
+                                    <span className={`text-xs font-bold ${b.finalizedAt ? (darkMode ? 'text-zinc-500' : 'text-zinc-500') : (darkMode ? 'text-emerald-400' : 'text-emerald-600')}`}>{b.finalizedAt ? 'Archivado' : 'En Venta'}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className={`p-2 rounded-full transition-colors ${darkMode ? 'text-zinc-500 bg-[#0f1115]' : 'text-zinc-400 bg-zinc-100'}`}>
+                            {expandedBatchId === b.id ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+                        </div>
+                      </div>
+                      
+                      {expandedBatchId === b.id && (
+                        <div className={`border-t animate-in slide-in-from-top-2 ${darkMode ? 'border-zinc-800 bg-[#0f1115]' : 'border-zinc-200 bg-zinc-50/50'}`}>
+                          
+                          {/* Agregar Item Form */}
+                          <div className={`p-5 m-5 rounded-xl border border-dashed ${darkMode ? 'border-zinc-700 bg-[#131824]' : 'border-zinc-300 bg-white'}`}>
+                            <h4 className={`text-xs font-bold uppercase tracking-wider mb-4 flex items-center gap-2 ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`}><Plus size={14}/> Agregar Mercadería</h4>
+                            <div className="grid grid-cols-2 md:grid-cols-12 gap-3 items-end">
+                              <div className="col-span-2 md:col-span-4"><Input darkMode={darkMode} list="products-list" label="Producto" placeholder="Ej: iPhone 15" value={newItem.product} onChange={e => setNewItem({...newItem, product: e.target.value})} /></div>
+                              <div className="col-span-2 md:col-span-3"><Input darkMode={darkMode} list="variants-list" label="Variante" placeholder="Ej: 128GB Black" value={newItem.variant} onChange={e => setNewItem({...newItem, variant: e.target.value})} /></div>
+                              <div className="col-span-1 md:col-span-2"><Input darkMode={darkMode} label="Costo ($)" type="number" value={newItem.costArs} onChange={e => setNewItem({...newItem, costArs: e.target.value})} /></div>
+                              <div className="col-span-1 md:col-span-1"><Input darkMode={darkMode} label="Cant." type="number" value={newItem.initialStock} onChange={e => setNewItem({...newItem, initialStock: e.target.value})} /></div>
+                              <div className="col-span-2 md:col-span-2"><Button darkMode={darkMode} onClick={() => handleAddItemToBatch(b.id)} className="w-full">Añadir</Button></div>
+                            </div>
                           </div>
-                        ))}
-                      </div>
-                    </Card>
 
-                    <Card darkMode={darkMode}>
-                      <h3 className={`font-bold mb-4 flex items-center gap-2 text-xs uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}><BarChart3 size={16} className="text-violet-500"/> Distribución de Clientes</h3>
-                      <div className="flex gap-4 items-center justify-center h-20">
-                        <div className={`text-center w-1/2 p-3 rounded-xl border ${darkMode ? 'bg-slate-800/50 border-slate-700/50' : 'bg-slate-50 border-slate-100'}`}>
-                          <div className="text-2xl font-black text-emerald-500">{globalAnalysis.typeCounts.Final}</div>
-                          <div className={`text-[9px] font-bold uppercase tracking-wider mt-1 ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>Consumidor Final</div>
-                        </div>
-                        <div className={`text-center w-1/2 p-3 rounded-xl border ${darkMode ? 'bg-slate-800/50 border-slate-700/50' : 'bg-slate-50 border-slate-100'}`}>
-                          <div className="text-2xl font-black text-violet-500">{globalAnalysis.typeCounts.Revendedor}</div>
-                          <div className={`text-[9px] font-bold uppercase tracking-wider mt-1 ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>Revendedor</div>
-                        </div>
-                      </div>
-                    </Card>
-                  </div>
-             </div>
-        )}
-
-        {/* --- PESTAÑA LOTES --- */}
-        {activeTab === 'batches' && (
-          <div className="space-y-4 animate-in fade-in duration-500">
-            <Card darkMode={darkMode} className={darkMode ? 'border-l-4 border-l-indigo-500' : 'border-l-4 border-l-indigo-600'}>
-              <div className="flex flex-col sm:flex-row sm:items-end gap-3 justify-between">
-                  <div className="flex-1 max-w-md">
-                      <h2 className={`text-sm font-bold flex items-center gap-2 mb-3 ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`}><Plus size={16} /> Crear Carpeta de Lote</h2>
-                      <div className="flex gap-2 items-end">
-                        <Input darkMode={darkMode} label="Identificador del Lote" placeholder="Ej: Viaje Miami Mar'26" value={newBatchName} onChange={e => setNewBatchName(e.target.value)} />
-                        <Button darkMode={darkMode} onClick={handleCreateBatch} className="h-[44px]">Guardar</Button>
-                      </div>
-                  </div>
-                  <button onClick={handleExportBatches} className={`mt-2 sm:mt-0 flex items-center justify-center gap-2 text-xs font-bold px-4 py-2.5 rounded-xl border-2 transition-all ${darkMode ? 'border-slate-700 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                      <Download size={14}/> Bajar CSV
-                  </button>
-              </div>
-            </Card>
-
-            <div className="space-y-3">
-              {batches.map((b) => (
-                <div key={b.id} className={`rounded-2xl border transition-all duration-300 overflow-hidden ${expandedBatchId === b.id ? 'shadow-md' : 'shadow-sm hover:shadow-md'} ${darkMode ? 'bg-[#131824] border-slate-800/80' : 'bg-white border-slate-200'}`}>
-                  <div className={`p-4 flex justify-between items-center cursor-pointer transition-colors ${darkMode ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}`} onClick={() => setExpandedBatchId(expandedBatchId === b.id ? null : b.id)}>
-                    <div className="flex items-center gap-4">
-                        <div className={`p-2.5 rounded-xl ${b.finalizedAt ? (darkMode ? 'bg-emerald-900/30 text-emerald-400' : 'bg-emerald-100 text-emerald-600') : (darkMode ? 'bg-indigo-900/30 text-indigo-400' : 'bg-indigo-100 text-indigo-600')}`}>
-                            <FolderOpen size={20} strokeWidth={2.5} />
-                        </div>
-                        <div>
-                            <h3 className={`font-bold text-[15px] ${darkMode ? 'text-white' : 'text-slate-900'}`}>{b.name}</h3>
-                            <div className="flex items-center gap-2 mt-0.5">
-                                <span className={`text-[10px] font-bold uppercase tracking-wider ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>{(b.items || []).length} Productos</span>
-                                <span className="text-slate-300 dark:text-slate-700">•</span>
-                                <span className={`text-[10px] font-bold uppercase tracking-wider ${b.finalizedAt ? 'text-emerald-500' : (darkMode ? 'text-indigo-400' : 'text-indigo-600')}`}>{b.finalizedAt ? 'Cerrado' : 'Activo'}</span>
-                            </div>
-                        </div>
-                    </div>
-                    <div className={`p-1.5 rounded-full transition-colors ${darkMode ? 'text-slate-500 hover:bg-slate-800' : 'text-slate-400 hover:bg-slate-100'}`}>
-                        {expandedBatchId === b.id ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
-                    </div>
-                  </div>
-                  
-                  {expandedBatchId === b.id && (
-                    <div className={`p-4 border-t animate-in slide-in-from-top-2 ${darkMode ? 'border-slate-800/80 bg-[#0B0F19]/50' : 'border-slate-100 bg-slate-50/50'}`}>
-                      <div className={`mb-5 p-4 rounded-xl border-2 border-dashed ${darkMode ? 'border-slate-700/50 bg-slate-900/20' : 'border-slate-200 bg-white'}`}>
-                        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 items-end">
-                          <div className="col-span-2 md:col-span-2"><Input darkMode={darkMode} list="products-list" label="Producto" placeholder="Ej: ElfBar" value={newItem.product} onChange={e => setNewItem({...newItem, product: e.target.value})} /></div>
-                          <div className="col-span-1"><Input darkMode={darkMode} list="variants-list" label="Variante" placeholder="Ej: Mint" value={newItem.variant} onChange={e => setNewItem({...newItem, variant: e.target.value})} /></div>
-                          <div className="col-span-1"><Input darkMode={darkMode} label="Costo ($)" type="number" value={newItem.costArs} onChange={e => setNewItem({...newItem, costArs: e.target.value})} /></div>
-                          <div className="col-span-1"><Input darkMode={darkMode} label="Stock" type="number" value={newItem.initialStock} onChange={e => setNewItem({...newItem, initialStock: e.target.value})} /></div>
-                          <div className="col-span-2 md:col-span-5 mt-1"><Button darkMode={darkMode} onClick={() => handleAddItemToBatch(b.id)} className="w-full">Agregar al Inventario</Button></div>
-                        </div>
-                      </div>
-
-                      <div className={`rounded-xl border overflow-hidden ${darkMode ? 'border-slate-800' : 'border-slate-200'}`}>
-                          <table className="w-full text-left text-sm">
-                            <thead className={`text-[10px] uppercase tracking-wider font-bold ${darkMode ? 'bg-slate-900 text-slate-500' : 'bg-slate-100 text-slate-500'}`}>
-                                <tr><th className="p-3">Descripción</th><th className="p-3">Costo Un.</th><th className="p-3">Stock Real</th><th className="p-3 text-right"></th></tr>
+                          {/* Tabla de Items */}
+                          <table className="w-full text-left text-sm border-t dark:border-zinc-800">
+                            <thead className={`text-xs font-semibold ${darkMode ? 'bg-[#131824] text-zinc-500' : 'bg-zinc-100 text-zinc-500'}`}>
+                                <tr><th className="px-5 py-3">Descripción del Artículo</th><th className="px-5 py-3">Costo Un.</th><th className="px-5 py-3">Disponibilidad</th><th className="px-5 py-3 text-right"></th></tr>
                             </thead>
-                            <tbody className={`divide-y ${darkMode ? 'divide-slate-800' : 'divide-slate-100'}`}>
-                              {(b.items || []).length === 0 && <tr><td colSpan="4" className="p-4 text-center text-xs opacity-50 italic">Aún no hay productos cargados en esta carpeta.</td></tr>}
+                            <tbody className={`divide-y ${darkMode ? 'divide-zinc-800/50' : 'divide-zinc-200'}`}>
+                              {(b.items || []).length === 0 && <tr><td colSpan="4" className="p-8 text-center text-sm font-medium opacity-50 italic">La carpeta está vacía.</td></tr>}
                               {(b.items || []).map((item, idx) => (
-                                <tr key={idx} className={`transition-colors ${darkMode ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}`}>
-                                  <td className="p-3">
-                                      <div className="font-bold">{item.product}</div>
-                                      <div className={`text-[11px] ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>{item.variant}</div>
+                                <tr key={idx} className={`transition-colors group ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-white'}`}>
+                                  <td className="px-5 py-3">
+                                      <div className="font-semibold text-sm">{item.product}</div>
+                                      <div className={`text-xs font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{item.variant}</div>
                                   </td>
-                                  <td className="p-3 font-mono font-medium text-xs">{formatMoney(item.costArs)}</td>
-                                  <td className="p-3">
-                                      <span className={`inline-flex font-bold px-2 py-1 rounded-lg text-[11px] ${item.currentStock === 0 ? (darkMode ? 'bg-rose-500/10 text-rose-400' : 'bg-rose-100 text-rose-600') : (darkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-100 text-emerald-600')}`}>
-                                          {item.currentStock} / {item.initialStock}
-                                      </span>
+                                  <td className="px-5 py-3 font-mono font-medium text-sm text-zinc-500">{formatMoney(item.costArs)}</td>
+                                  <td className="px-5 py-3">
+                                      <div className="flex items-center gap-2">
+                                          <div className={`h-2 w-16 rounded-full overflow-hidden ${darkMode ? 'bg-zinc-800' : 'bg-zinc-200'}`}>
+                                              <div className={`h-full rounded-full ${item.currentStock === 0 ? 'bg-red-500' : 'bg-emerald-500'}`} style={{width: `${(item.currentStock/item.initialStock)*100}%`}}></div>
+                                          </div>
+                                          <span className="font-bold text-xs">{item.currentStock} <span className="opacity-50 font-normal">/ {item.initialStock}</span></span>
+                                      </div>
                                   </td>
-                                  <td className="p-3 text-right">
-                                      <button onClick={() => handleDeleteItemFromBatch(b.id, item.id)} className={`p-1.5 rounded-lg transition-colors ${darkMode ? 'text-slate-500 hover:text-rose-400 hover:bg-rose-500/10' : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'}`}><Trash2 size={14} /></button>
+                                  <td className="px-5 py-3 text-right">
+                                      <button onClick={() => handleDeleteItemFromBatch(b.id, item.id)} className={`p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:bg-red-500/10 hover:text-red-400' : 'text-zinc-400 hover:bg-red-50 hover:text-red-600'}`}><Trash2 size={16} /></button>
                                   </td>
                                 </tr>
                               ))}
                             </tbody>
                           </table>
-                      </div>
-                      
-                      <div className="flex justify-end mt-4">
-                          <button onClick={(e) => { e.stopPropagation(); handleDeleteBatch(b.id); }} className={`text-[11px] font-bold flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors ${darkMode ? 'text-rose-400 hover:bg-rose-500/10' : 'text-rose-600 hover:bg-rose-50'}`}><Trash2 size={12}/> Eliminar Carpeta Completa</button>
-                      </div>
-                    </div>
-                  )}
+                          
+                          <div className={`p-4 flex justify-end border-t ${darkMode ? 'border-zinc-800 bg-[#0a0c10]' : 'border-zinc-200 bg-zinc-100'}`}>
+                              <button onClick={(e) => { e.stopPropagation(); handleDeleteBatch(b.id); }} className={`text-sm font-semibold flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${darkMode ? 'text-red-500 hover:bg-red-500/10' : 'text-red-600 hover:bg-red-50'}`}><Trash2 size={16}/> Eliminar Carpeta Definitivamente</button>
+                          </div>
+                        </div>
+                      )}
+                    </Card>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
+              </div>
+            )}
 
-        {/* --- PESTAÑA VENTAS --- */}
-        {activeTab === 'sales' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 animate-in fade-in duration-500">
-            <div className="lg:col-span-4">
-                <Card className={`sticky top-24 border-t-4 ${darkMode ? 'border-t-emerald-500' : 'border-t-emerald-500'}`} darkMode={darkMode}>
-                    <h2 className="text-lg font-black tracking-tight mb-4 flex items-center gap-2"><ShoppingCart size={18} className="text-emerald-500"/> Nueva Venta</h2>
-                    <div className="space-y-4">
-                      <div className={`p-1.5 rounded-xl border-2 ${darkMode ? 'bg-amber-900/20 border-amber-500/20' : 'bg-amber-50 border-amber-200'}`}>
-                          <Input darkMode={darkMode} label="Fecha de la Operación" type="date" value={newSale.saleDate} onChange={e => setNewSale({...newSale, saleDate: e.target.value})} />
-                      </div>
-                      <div className="space-y-3">
-                            <Select darkMode={darkMode} label="1. Seleccionar Carpeta" value={newSale.batchId} onChange={e => setNewSale({...newSale, batchId: e.target.value, itemId: ''})} options={[{value: '', label: '-- Elegir --'}, ...batches.map(b => ({value: b.id, label: `${b.name} ${b.finalizedAt ? '(Fin)' : ''}`}))]} />
-                            
-                            {newSale.batchId && (
-                                <div className="animate-in slide-in-from-top-2">
-                                   <Select darkMode={darkMode} label="2. Seleccionar Producto" value={newSale.itemId} onChange={e => setNewSale({...newSale, itemId: e.target.value})} options={[{value: '', label: '-- Elegir --'}, ...(batches.find(b => b.id === newSale.batchId)?.items?.map(item => ({value: item.id, label: `${item.product} ${item.variant} (Disp: ${item.currentStock})`, disabled: item.currentStock <= 0})) || [])]} />
-                                </div>
-                            )}
-                            <div className="grid grid-cols-2 gap-3">
-                                <Input darkMode={darkMode} label="Cant." type="number" value={newSale.quantity} onChange={e => setNewSale({...newSale, quantity: e.target.value})} />
-                                <Input darkMode={darkMode} label="Precio Unit." type="number" symbol="$" value={newSale.unitPrice} onChange={e => setNewSale({...newSale, unitPrice: e.target.value})} />
-                            </div>
-                      </div>
-                      
-                      <div className={`p-3 rounded-xl border-2 grid grid-cols-2 gap-3 ${darkMode ? 'bg-[#0B0F19] border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
-                          <Input darkMode={darkMode} label="Costo Envío" type="number" symbol="$" value={newSale.shippingCost} onChange={e => setNewSale({...newSale, shippingCost: e.target.value})} />
-                          <Input darkMode={darkMode} label="Cobro Envío" type="number" symbol="$" value={newSale.shippingPrice} onChange={e => setNewSale({...newSale, shippingPrice: e.target.value})} />
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3">
-                          <Select darkMode={darkMode} label="Canal" value={newSale.source} onChange={e => setNewSale({...newSale, source: e.target.value})} options={[{value:'Instagram', label:'Instagram'}, {value:'Whatsapp', label:'Whatsapp'}, {value:'Personal', label:'Personal'}, {value:'Web', label:'Web'}]} />
-                          <Select darkMode={darkMode} label="Cliente" value={newSale.isReseller} onChange={e => setNewSale({...newSale, isReseller: e.target.value})} options={[{value:'No', label:'Consumidor'}, {value:'Si', label:'Revendedor'}]} />
-                      </div>
-
-                      <Button darkMode={darkMode} onClick={handleAddSale} variant="success" className="w-full h-[48px] mt-2 text-sm">Registrar Ingreso</Button>
+            {/* --- PESTAÑA ANÁLISIS DE LOTE --- */}
+            {activeTab === 'analysis' && (
+              <div className="space-y-6 animate-in fade-in duration-300">
+                <Card darkMode={darkMode} className="p-5">
+                    <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between">
+                        <div>
+                            <h2 className="text-xl font-bold tracking-tight flex items-center gap-2"><BarChart3 size={20} className="text-indigo-500"/> Auditoría de Lotes</h2>
+                            <p className={`text-sm font-medium mt-1 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>Selecciona una importación para ver su rendimiento exacto.</p>
+                        </div>
+                        <div className="w-full md:w-80">
+                            <Select
+                                darkMode={darkMode}
+                                onChange={(e) => setSelectedBatchStats(e.target.value)}
+                                value={selectedBatchStats || ''}
+                                options={[{value: '', label: '-- Selecciona un lote de la lista --'}, ...batches.map(b => ({value: b.id, label: `${b.name} ${b.finalizedAt ? '(Archivado)' : ''}`}))]}
+                            />
+                        </div>
                     </div>
                 </Card>
-            </div>
 
-            <div className="lg:col-span-8">
-              <Card darkMode={darkMode} className="h-full flex flex-col p-0 overflow-hidden">
-                <div className={`p-4 border-b flex justify-between items-center ${darkMode ? 'bg-slate-900/50 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
-                    <div>
-                        <h3 className="font-black text-sm tracking-tight">Historial de Movimientos</h3>
-                        <p className={`text-[10px] font-bold uppercase tracking-wider mt-0.5 ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>Últimas transacciones</p>
-                    </div>
-                    <button onClick={handleExportSales} className={`flex items-center gap-2 text-[11px] font-bold px-3 py-1.5 rounded-lg border-2 transition-colors ${darkMode ? 'border-slate-700 hover:bg-slate-800 text-slate-300' : 'border-slate-200 hover:bg-slate-100 text-slate-600'}`}>
-                      <Download size={14}/> Exportar
-                    </button>
-                </div>
-                <div className="overflow-x-auto flex-1 max-h-[600px] custom-scrollbar">
-                  <table className="w-full text-left text-sm">
-                      <thead className={`sticky top-0 z-10 text-[10px] uppercase tracking-wider font-bold ${darkMode ? 'bg-[#0f141e] text-slate-500 shadow-sm' : 'bg-white text-slate-500 shadow-sm'}`}>
-                          <tr><th className="p-4">Fecha</th><th className="p-4">Operación</th><th className="p-4">Margen Neto</th><th className="p-4">Caja ($)</th><th className="p-4"></th></tr>
-                      </thead>
-                      <tbody className={`divide-y ${darkMode ? 'divide-slate-800/80' : 'divide-slate-100'}`}>
-                        {sales.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-xs opacity-50 italic">Aún no hay ventas registradas.</td></tr>}
-                        {sales.map(s => {
-                          const itemProfit = s.totalSaleRaw - ((s.costArsAtSale || 0) * s.quantity);
-                          return (
-                            <tr key={s.id} className={`transition-colors group ${darkMode ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}`}>
-                              <td className={`p-4 text-xs font-medium whitespace-nowrap ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>{new Date(s.date).toLocaleDateString(undefined, {month:'short', day:'numeric'})}</td>
-                              <td className="p-4">
-                                  <div className="font-bold text-[13px]">{s.quantity}x {s.productName} {s.variant}</div>
-                                  <div className={`text-[10px] font-medium uppercase tracking-wider mt-0.5 ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>{s.batchName}</div>
-                              </td>
-                              <td className="p-4 font-bold text-emerald-500 text-xs">{formatMoney(itemProfit)}</td>
-                              <td className="p-4 font-black font-mono tracking-tight">{formatMoney(s.totalSaleRaw)}</td>
-                              <td className="p-4 text-right">
-                                  <button onClick={() => handleDeleteSale(s)} className={`p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-slate-500 hover:text-rose-400 hover:bg-rose-500/10' : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'}`}><Trash2 size={14} /></button>
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                  </table>
-                </div>
-              </Card>
-            </div>
-          </div>
-        )}
-
-        {/* --- PESTAÑA ANÁLISIS DE LOTE --- */}
-        {activeTab === 'analysis' && (
-          <div className="space-y-4 animate-in fade-in duration-500">
-            <Card darkMode={darkMode}>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
-                    <div>
-                        <h2 className="text-lg font-black tracking-tight flex items-center gap-2"><BarChart3 size={18} className="text-violet-500"/> Análisis por Carpeta</h2>
-                        <p className={`text-xs font-medium mt-1 ${darkMode ? 'text-slate-500' : 'text-slate-500'}`}>Desglose financiero de un lote específico.</p>
-                    </div>
-                    <div className="w-full sm:w-64">
-                        <Select
-                            darkMode={darkMode}
-                            onChange={(e) => setSelectedBatchStats(e.target.value)}
-                            value={selectedBatchStats || ''}
-                            options={[{value: '', label: '-- Seleccionar Lote --'}, ...batches.map(b => ({value: b.id, label: `${b.name} ${b.finalizedAt ? '(Finalizado)' : ''}`}))]}
-                        />
-                    </div>
-                </div>
-            </Card>
-
-            {batchAnalysis ? (
-                <div className="space-y-4 animate-in slide-in-from-bottom-4">
-                   <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 ${batchAnalysis.batch.finalizedAt ? (darkMode ? 'bg-emerald-900/10 border-emerald-500/30' : 'bg-emerald-50 border-emerald-200') : (darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200')}`}>
-                      <div>
-                        <h3 className="font-bold text-sm flex items-center gap-2">
-                            <Settings size={16} className={darkMode ? 'text-slate-400' : 'text-slate-500'}/> Status del Lote: 
-                            <span className={`px-2 py-1 rounded-md text-[10px] tracking-wider uppercase ${batchAnalysis.batch.finalizedAt ? 'bg-emerald-500/20 text-emerald-500' : 'bg-indigo-500/20 text-indigo-500'}`}>
-                                {batchAnalysis.batch.finalizedAt ? "Cerrado" : "Activo"}
-                            </span>
-                        </h3>
-                        {batchAnalysis.batch.finalizedAt && <div className={`text-[11px] font-medium mt-1.5 ${darkMode ? 'text-slate-500' : 'text-slate-500'}`}>Se agotó o finalizó el {new Date(batchAnalysis.batch.finalizedAt).toLocaleDateString()}</div>}
-                      </div>
-
-                      {batchAnalysis.batch.finalizedAt ? (
-                          <Button darkMode={darkMode} onClick={() => handleUpdateBatchStatus(batchAnalysis.batch.id, false)} variant="outline" className="h-10 text-[11px]">🔄 Reabrir Lote</Button>
-                          ) : (
-                          <div className="flex gap-2 items-end w-full sm:w-auto">
-                              <Input darkMode={darkMode} type="date" label="Fecha de cierre" value={manualFinalizeDate} onChange={e => setManualFinalizeDate(e.target.value)} />
-                              <Button darkMode={darkMode} onClick={() => handleUpdateBatchStatus(batchAnalysis.batch.id, true)} className="h-[44px] text-[11px]">🏁 Finalizar Lote</Button>
+                {batchAnalysis ? (
+                    <div className="space-y-6 animate-in slide-in-from-bottom-4">
+                       <div className={`p-4 rounded-xl border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 ${batchAnalysis.batch.finalizedAt ? (darkMode ? 'border-zinc-800 bg-[#0f1115]' : 'border-zinc-300 bg-zinc-100') : (darkMode ? 'border-indigo-500/30 bg-indigo-500/5' : 'border-indigo-200 bg-indigo-50')}`}>
+                          <div>
+                            <h3 className="font-bold text-sm flex items-center gap-2">
+                                <Settings size={18} className={darkMode ? 'text-zinc-400' : 'text-zinc-500'}/> Estado Operativo: 
+                                <span className={`px-2.5 py-1 rounded-lg text-xs font-bold ${batchAnalysis.batch.finalizedAt ? 'bg-zinc-500/20 text-zinc-500' : 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'}`}>
+                                    {batchAnalysis.batch.finalizedAt ? "Archivado" : "Activo"}
+                                </span>
+                            </h3>
+                            {batchAnalysis.batch.finalizedAt && <div className={`text-xs font-medium mt-2 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Se marcó como agotado el {new Date(batchAnalysis.batch.finalizedAt).toLocaleDateString()}</div>}
                           </div>
-                      )}
-                   </div>
 
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                      <MetricCard darkMode={darkMode} title="Inversión" value={formatMoney(batchAnalysis.totalInvestment)} subtitle="Costo original" icon={Box} color="amber" />
-                      <MetricCard darkMode={darkMode} title="Ventas Generadas" value={formatMoney(batchAnalysis.totalRevenue)} subtitle="Ingreso bruto" icon={DollarSign} color="blue" />
-                      <MetricCard darkMode={darkMode} title="Gastos Asignados" value={formatMoney(batchAnalysis.totalBatchExpenses)} subtitle="Costos extra" icon={Wallet} color="rose" />
-                      
-                      <MetricCard 
-                          darkMode={darkMode} title="Saldo de Caja" value={formatMoney(batchAnalysis.cashBalance)} subtitle="Liquidez de bolsillo" icon={Activity} color="emerald" 
-                      />
-
-                      <MetricCard darkMode={darkMode} title="Stock Remanente" value={formatMoney(batchAnalysis.currentStockValue)} subtitle="Activo sin vender" icon={Package} color="indigo" />
-                      
-                      <MetricCard 
-                          darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(batchAnalysis.grossProfit)} subtitle="Antes de gastos" icon={TrendingUp} color="emerald"
-                          trend={<span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-slate-500/10 text-slate-500">{formatPercent(batchAnalysis.grossMargin)}</span>}
-                      />
-
-                      <MetricCard darkMode={darkMode} title="Diferencia Envíos" value={formatMoney(batchAnalysis.totalShippingProfit)} subtitle="Cobrado vs Pagado" icon={Truck} color="amber" />
-                      
-                      <MetricCard 
-                          darkMode={darkMode} title="Rentabilidad Neta" value={formatMoney(batchAnalysis.netProfit)} subtitle="Utilidad final" icon={Award} color="violet"
-                          trend={<span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${batchAnalysis.netProfit > 0 ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'}`}>{formatPercent(batchAnalysis.netMargin)}</span>}
-                      />
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in slide-in-from-bottom-8">
-                    <Card darkMode={darkMode}>
-                      <h3 className={`font-bold mb-4 flex items-center gap-2 text-xs uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}><Users size={16} className="text-blue-500"/> Origen de Ventas</h3>
-                      <div className="space-y-3">
-                        {Object.entries(batchAnalysis.sourceCounts).map(([source, count]) => (
-                          <div key={source} className="flex items-center justify-between">
-                            <span className="text-xs font-semibold w-24 truncate">{source}</span>
-                            <div className="flex-1 mx-4">
-                              <div className={`h-2 rounded-full overflow-hidden ${darkMode ? 'bg-slate-800' : 'bg-slate-100'}`}>
-                                  <div className="h-full bg-blue-500 rounded-full" style={{width: `${(count/batchAnalysis.salesCount)*100}%`}}></div>
+                          {batchAnalysis.batch.finalizedAt ? (
+                              <Button darkMode={darkMode} onClick={() => handleUpdateBatchStatus(batchAnalysis.batch.id, false)} variant="outline">🔄 Reabrir Operación</Button>
+                              ) : (
+                              <div className="flex gap-3 items-end w-full sm:w-auto">
+                                  <Input darkMode={darkMode} type="date" label="Cierre Manual" value={manualFinalizeDate} onChange={e => setManualFinalizeDate(e.target.value)} />
+                                  <Button darkMode={darkMode} onClick={() => handleUpdateBatchStatus(batchAnalysis.batch.id, true)}>Archivar Lote</Button>
                               </div>
+                          )}
+                       </div>
+
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                          <MetricCard color="amber" darkMode={darkMode} title="Inversión Base" value={formatMoney(batchAnalysis.totalInvestment)} subtitle="Costo original" icon={Box} />
+                          <MetricCard color="blue" darkMode={darkMode} title="Retorno Bruto" value={formatMoney(batchAnalysis.totalRevenue)} subtitle="Ventas totales" icon={DollarSign} />
+                          <MetricCard color="rose" darkMode={darkMode} title="Gastos Adicionales" value={formatMoney(batchAnalysis.totalBatchExpenses)} subtitle="Costos operativos" icon={Wallet} />
+                          
+                          <MetricCard 
+                              color="emerald" darkMode={darkMode} title="Flujo de Caja Real" value={formatMoney(batchAnalysis.cashBalance)} subtitle="Liquidez generada" icon={Activity} 
+                          />
+
+                          <MetricCard color="indigo" darkMode={darkMode} title="Stock Remanente" value={formatMoney(batchAnalysis.currentStockValue)} subtitle="Activo sin liquidar" icon={Package} />
+                          
+                          <MetricCard 
+                              color="emerald" darkMode={darkMode} title="Beneficio Bruto" value={formatMoney(batchAnalysis.grossProfit)} subtitle="Previo a gastos" icon={TrendingUp}
+                              trend={<span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/50 text-emerald-700 dark:bg-black/50 dark:text-emerald-400">{formatPercent(batchAnalysis.grossMargin)}</span>}
+                          />
+
+                            <MetricCard color="amber" darkMode={darkMode} title="Resultado Envíos" value={formatMoney(batchAnalysis.totalShippingProfit)} subtitle="Cobrado vs Pagado" icon={Truck} />
+                          
+                          <MetricCard 
+                              color="violet" darkMode={darkMode} title="Beneficio Neto" value={formatMoney(batchAnalysis.netProfit)} subtitle="Utilidad limpia" icon={Award}
+                              trend={<span className={`text-[10px] font-bold px-2 py-0.5 rounded-md bg-white/50 text-violet-700 dark:bg-black/50 dark:text-violet-400`}>{formatPercent(batchAnalysis.netMargin)}</span>}
+                          />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <Card darkMode={darkMode}>
+                          <h3 className={`font-bold mb-5 flex items-center gap-2 text-sm ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}><Users size={18}/> Distribución de Canales</h3>
+                          <div className="space-y-4">
+                            {Object.entries(batchAnalysis.sourceCounts).map(([source, count]) => (
+                              <div key={source} className="flex items-center justify-between">
+                                <span className="text-sm font-semibold w-24 truncate">{source}</span>
+                                <div className="flex-1 mx-4">
+                                  <div className={`h-2 rounded-full overflow-hidden ${darkMode ? 'bg-[#0a0c10]' : 'bg-zinc-100'}`}>
+                                      <div className={`h-full rounded-full ${darkMode ? 'bg-indigo-500' : 'bg-indigo-600'}`} style={{width: `${(count/batchAnalysis.salesCount)*100}%`}}></div>
+                                  </div>
+                                </div>
+                                <span className="font-bold text-sm w-6 text-right text-zinc-500">{count}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </Card>
+
+                        <Card darkMode={darkMode}>
+                          <h3 className={`font-bold mb-5 flex items-center gap-2 text-sm ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}><BarChart3 size={18}/> Perfil de Comprador</h3>
+                          <div className="flex gap-4 items-center justify-center h-[120px]">
+                            <div className="text-center w-1/2">
+                              <div className="text-3xl font-black text-emerald-500 mb-1">{batchAnalysis.typeCounts.Final}</div>
+                              <div className={`text-xs font-semibold ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Consumidor Final</div>
                             </div>
-                            <span className="font-bold text-xs w-6 text-right text-slate-500">{count}</span>
+                            <div className={`h-16 w-[2px] rounded-full ${darkMode ? 'bg-zinc-800' : 'bg-zinc-200'}`}></div>
+                            <div className="text-center w-1/2">
+                              <div className="text-3xl font-black text-indigo-500 mb-1">{batchAnalysis.typeCounts.Revendedor}</div>
+                              <div className={`text-xs font-semibold ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Revendedor</div>
+                            </div>
                           </div>
-                        ))}
+                        </Card>
                       </div>
-                    </Card>
-
-                    <Card darkMode={darkMode}>
-                      <h3 className={`font-bold mb-4 flex items-center gap-2 text-xs uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}><BarChart3 size={16} className="text-violet-500"/> Tipo de Cliente</h3>
-                      <div className="flex gap-4 items-center justify-center h-20">
-                        <div className={`text-center w-1/2 p-3 rounded-xl border ${darkMode ? 'bg-slate-800/50 border-slate-700/50' : 'bg-slate-50 border-slate-100'}`}>
-                          <div className="text-2xl font-black text-emerald-500">{batchAnalysis.typeCounts.Final}</div>
-                          <div className={`text-[9px] font-bold uppercase tracking-wider mt-1 ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>Consumidor Final</div>
-                        </div>
-                        <div className="h-8 w-[1px] bg-slate-300"></div>
-                        <div className={`text-center w-1/2 p-3 rounded-xl border ${darkMode ? 'bg-slate-800/50 border-slate-700/50' : 'bg-slate-50 border-slate-100'}`}>
-                          <div className="text-2xl font-black text-violet-500">{batchAnalysis.typeCounts.Revendedor}</div>
-                          <div className={`text-[9px] font-bold uppercase tracking-wider mt-1 ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>Revendedor</div>
-                        </div>
-                      </div>
-                    </Card>
-                  </div>
-                </div>
-            ) : (
-                <div className={`p-12 text-center rounded-2xl border-2 border-dashed ${darkMode ? 'border-slate-800 bg-slate-900/20' : 'border-slate-200 bg-slate-50'}`}>
-                    <FolderOpen size={48} className={`mx-auto mb-4 ${darkMode ? 'text-slate-700' : 'text-slate-300'}`}/>
-                    <p className={`text-sm font-medium ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>Selecciona un lote en el menú superior para ver su análisis financiero detallado.</p>
-                </div>
+                    </div>
+                ) : (
+                    <div className={`py-24 text-center rounded-xl border border-dashed ${darkMode ? 'border-zinc-800 bg-[#0f1115]' : 'border-zinc-300 bg-zinc-50'}`}>
+                        <BarChart3 size={48} className={`mx-auto mb-4 ${darkMode ? 'text-zinc-800' : 'text-zinc-200'}`}/>
+                        <p className={`text-sm font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Elige un lote en el menú superior para comenzar el análisis.</p>
+                    </div>
+                )}
+              </div>
             )}
-          </div>
-        )}
 
-        {/* --- PESTAÑA GASTOS --- */}
-        {activeTab === 'expenses' && (
-            <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in duration-500">
-            <Card darkMode={darkMode} className="border-t-4 border-t-rose-500">
-                <h2 className="text-lg font-black tracking-tight mb-4 flex items-center gap-2"><Wallet size={18} className="text-rose-500"/> Registrar Salida de Dinero</h2>
-                <div className="flex flex-col gap-4">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <div className="sm:col-span-2"><Input darkMode={darkMode} label="Concepto / Descripción" placeholder="Ej: Publicidad Instagram" value={newExpense.description} onChange={e => setNewExpense({...newExpense, description: e.target.value})} /></div>
-                        <div className="sm:col-span-1"><Input darkMode={darkMode} label="Monto" type="number" symbol="$" value={newExpense.amount} onChange={e => setNewExpense({...newExpense, amount: e.target.value})} /></div>
+            {/* --- PESTAÑA GASTOS --- */}
+            {activeTab === 'expenses' && (
+                <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in duration-300">
+                <Card darkMode={darkMode} className="border-t-4 border-t-rose-500 p-5 md:p-6">
+                    <h2 className="text-xl font-bold tracking-tight mb-5 flex items-center gap-2"><Wallet size={20} className="text-rose-500"/> Declarar Egreso</h2>
+                    <div className="flex flex-col gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            <div className="sm:col-span-2"><Input darkMode={darkMode} label="Descripción del Gasto" placeholder="Ej: Publicidad Ads, Envío Extra..." value={newExpense.description} onChange={e => setNewExpense({...newExpense, description: e.target.value})} /></div>
+                            <div className="sm:col-span-1"><Input darkMode={darkMode} label="Importe" type="number" symbol="$" value={newExpense.amount} onChange={e => setNewExpense({...newExpense, amount: e.target.value})} /></div>
+                        </div>
+                        <div className="flex flex-col sm:flex-row gap-4 items-end">
+                              <div className="flex-1 w-full">
+                                 <Select 
+                                    darkMode={darkMode} 
+                                    label="Asignación Contable (Opcional)"
+                                    value={newExpense.batchId} 
+                                    onChange={e => setNewExpense({...newExpense, batchId: e.target.value})}
+                                    options={[
+                                        { value: '', label: '-- Gasto General del Negocio --' },
+                                        ...batches.map(b => ({ value: b.id, label: b.name }))
+                                    ]}
+                                 />
+                              </div>
+                              <Button darkMode={darkMode} onClick={handleAddExpense} variant="danger" className="w-full sm:w-48">Registrar Salida</Button>
+                        </div>
                     </div>
-                    <div className="flex flex-col sm:flex-row gap-3 items-end">
-                          <div className="flex-1 w-full">
-                             <Select 
-                                darkMode={darkMode} 
-                                label="¿Asignar a un lote específico? (Opcional)"
-                                value={newExpense.batchId} 
-                                onChange={e => setNewExpense({...newExpense, batchId: e.target.value})}
-                                options={[
-                                    { value: '', label: '-- Gasto General del Negocio --' },
-                                    ...batches.map(b => ({ value: b.id, label: b.name }))
-                                ]}
-                             />
-                          </div>
-                          <Button darkMode={darkMode} onClick={handleAddExpense} variant="danger" className="w-full sm:w-32 h-[44px]">Registrar Gasto</Button>
-                    </div>
-                </div>
-            </Card>
+                </Card>
 
-            <Card darkMode={darkMode} className="p-0 overflow-hidden">
-                <div className={`p-4 border-b ${darkMode ? 'bg-slate-900/50 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
-                    <h3 className="font-black text-sm tracking-tight">Historial de Egresos</h3>
-                </div>
-                <div className={`divide-y ${darkMode ? 'divide-slate-800/80' : 'divide-slate-100'}`}>
-                    {expenses.length === 0 && <div className="p-8 text-center text-xs opacity-50 italic">No hay gastos registrados.</div>}
-                    {expenses.map(e => (
-                    <div key={e.id} className={`flex justify-between items-center p-4 transition-colors group ${darkMode ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}`}>
-                        <div className="flex items-center gap-4">
-                            <div className={`p-2 rounded-lg ${darkMode ? 'bg-rose-500/10 text-rose-500' : 'bg-rose-100 text-rose-600'}`}><Wallet size={16}/></div>
-                            <div>
-                                <div className="font-bold text-[13px]">{e.description}</div>
-                                <div className="flex items-center gap-2 mt-1">
-                                    <span className={`text-[10px] font-medium ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>{new Date(e.date).toLocaleDateString(undefined, {month:'short', day:'numeric'})}</span>
-                                    {e.batchName && (
-                                        <>
-                                            <span className="text-slate-300 dark:text-slate-700">•</span>
-                                            <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${darkMode ? 'border-slate-700 text-slate-400' : 'border-slate-200 text-slate-500'}`}>{e.batchName}</span>
-                                        </>
-                                    )}
+                <Card darkMode={darkMode} className="p-0 overflow-hidden border-zinc-200 dark:border-zinc-800">
+                    <div className={`p-4 md:p-5 border-b ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                        <h3 className="font-bold text-base tracking-tight">Registro de Egresos</h3>
+                    </div>
+                    <div className={`divide-y ${darkMode ? 'divide-zinc-800' : 'divide-zinc-100'}`}>
+                        {expenses.length === 0 && <div className="p-12 text-center text-sm font-medium opacity-50">No hay movimientos de salida registrados.</div>}
+                        {expenses.map(e => (
+                        <div key={e.id} className={`flex justify-between items-center p-4 md:p-5 transition-colors group ${darkMode ? 'hover:bg-zinc-900/50 bg-[#0f1115]' : 'hover:bg-zinc-50 bg-white'}`}>
+                            <div className="flex items-center gap-4">
+                                <div className={`p-2.5 rounded-lg ${darkMode ? 'bg-red-500/10 text-red-500' : 'bg-red-50 text-red-600'}`}><Wallet size={20}/></div>
+                                <div>
+                                    <div className="font-semibold text-sm">{e.description}</div>
+                                    <div className="flex items-center gap-2 mt-1">
+                                        <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{new Date(e.date).toLocaleDateString(undefined, {month:'long', day:'numeric'})}</span>
+                                        {e.batchName && (
+                                            <>
+                                                <span className="text-zinc-300 dark:text-zinc-700">•</span>
+                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-zinc-700 text-zinc-400' : 'border-zinc-200 text-zinc-500'}`}>{e.batchName}</span>
+                                            </>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
+                            <div className="flex items-center gap-6">
+                                <span className="font-bold tracking-tight text-red-500 text-lg">-{formatMoney(e.amount)}</span> 
+                                <button onClick={()=>handleDeleteExpense(e.id)} className={`p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}><Trash2 size={18}/></button>
+                            </div>
                         </div>
-                        <div className="flex items-center gap-4">
-                            <span className="font-black tracking-tight text-rose-500 text-sm">-{formatMoney(e.amount)}</span> 
-                            <button onClick={()=>handleDeleteExpense(e.id)} className={`p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-slate-500 hover:text-rose-400 hover:bg-rose-500/10' : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'}`}><Trash2 size={14}/></button>
-                        </div>
+                        ))}
                     </div>
-                    ))}
+                </Card>
                 </div>
-            </Card>
-            </div>
-        )}
+            )}
 
-      </div>
+        </div>
+      </main>
     </div>
   );
 }
