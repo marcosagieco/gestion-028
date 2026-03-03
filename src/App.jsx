@@ -143,7 +143,7 @@ const getPreviousDayStr = (dateStr) => {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 };
 
-// --- COMPONENTE DE GRÁFICO (NORMALIZADO) ---
+// --- COMPONENTE DE GRÁFICO (NORMALIZADO Y CORREGIDO PARA PICOS ALTOS) ---
 const SalesChart = ({ sales, globalMonth, darkMode }) => {
   const [metric, setMetric] = useState('revenue'); 
   const [hoveredIndex, setHoveredIndex] = useState(null);
@@ -200,7 +200,7 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
   const h = 300; 
   const padXLeft = 15; 
   const padXRight = 40;
-  const padYTop = 60; 
+  const padYTop = 80; // Aumentado el padding superior para dar espacio a etiquetas
   const padYBottom = 30;
   const chartW = w - padXLeft - padXRight;
   const chartH = h - padYTop - padYBottom;
@@ -309,7 +309,8 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
                           style={{ 
                               left: hoveredIndex === 0 ? `${(points[hoveredIndex].x / w) * 100}%` : hoveredIndex === points.length - 1 ? `calc(${(points[hoveredIndex].x / w) * 100}% - 10px)` : `${(points[hoveredIndex].x / w) * 100}%`,
                               top: `${(points[hoveredIndex].y / h) * 100}%`,
-                              transform: `translate(${hoveredIndex === 0 ? '0%' : hoveredIndex === points.length - 1 ? '-100%' : '-50%'}, ${points[hoveredIndex].y < 100 ? '16px' : '-120%'})`
+                              // Corrección clave: Si y < 130px, la etiqueta sale hacia abajo (15px) para evitar cortarse. Si no, sale hacia arriba normal.
+                              transform: `translate(${hoveredIndex === 0 ? '0%' : hoveredIndex === points.length - 1 ? '-100%' : '-50%'}, ${points[hoveredIndex].y < 130 ? '15px' : 'calc(-100% - 15px)'})`
                           }}
                       >
                           <div className={`p-4 rounded-xl shadow-xl border whitespace-nowrap ${darkMode ? 'bg-zinc-800 border-zinc-700' : 'bg-white border-zinc-200'}`}>
@@ -487,8 +488,11 @@ export default function App() {
       const cashBalance = totalRevenue - totalInvestment - totalGlobalExpenses;
       
       const globalTotalInvestment = batches.reduce((accBatch, batch) => accBatch + (batch.items || []).reduce((accItem, item) => accItem + (item.costArs * item.initialStock), 0), 0);
-      const globalCostOfSold = sales.reduce((acc, s) => acc + (s.costArsAtSale * s.quantity), 0);
-      const currentStockValue = globalTotalInvestment - globalCostOfSold;
+      
+      // NUEVA LÓGICA: Calcula el valor en inventario solo sumando el stock actual de lotes ACTIVOS (No finalizados)
+      const currentStockValue = batches
+          .filter(b => !b.finalizedAt)
+          .reduce((accBatch, batch) => accBatch + (batch.items || []).reduce((accItem, item) => accItem + (item.costArs * item.currentStock), 0), 0);
 
       const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
       const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
@@ -731,7 +735,10 @@ export default function App() {
     const totalBatchExpenses = batchExpenses.reduce((acc, e) => acc + e.amount, 0);
     const netProfit = grossProfit - totalBatchExpenses;
     const cashBalance = totalRevenue - totalInvestment - totalBatchExpenses;
-    const currentStockValue = totalInvestment - costOfSold;
+    
+    // NUEVA LÓGICA DE AUDITORÍA: Si el lote está finalizado, el valor de su stock sobrante es 0 (pérdida/merma)
+    const currentStockValue = batch.finalizedAt ? 0 : (batch.items || []).reduce((acc, item) => acc + (item.costArs * item.currentStock), 0);
+
     const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
     const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
@@ -808,7 +815,7 @@ export default function App() {
   );
 
   const TABS = [
-      { id: 'home', icon: Activity, label: 'Dashboard' }, 
+      { id: 'home', icon: Activity, label: 'Inicio' }, 
       { id: 'sales', icon: ShoppingCart, label: 'Ventas' }, 
       { id: 'batches', icon: FolderOpen, label: 'Lotes' }, 
       { id: 'analysis', icon: BarChart3, label: 'Análisis' }, 
