@@ -2,6 +2,7 @@ Sistema de Gestión Interna - 028import 📊
 
 Desarrollé esta plataforma con el objetivo de centralizar y digitalizar la operativa interna de 028import. Mi enfoque principal fue sustituir el uso de registros manuales y planillas por una solución digital integral que permitiera un control preciso del inventario y las ventas desde un solo lugar.
 
+
 Dashboard Administrativo
 
 Esta interfaz fue diseñada para optimizar la toma de decisiones del dueño del negocio. Implementé herramientas específicas que transforman los datos en información útil para la operativa diaria:
@@ -11,6 +12,7 @@ Control de Inventario: Desarrollé un sistema dinámico para la carga, edición 
 Registro de Transacciones: Implementé un módulo de ventas que permite trackear cada transacción, facilitando el control de ingresos y la rotación de productos.
 
 Sincronización de Stock: Decidí utilizar Firestore para asegurar que cualquier cambio administrativo impacte de forma inmediata en el catálogo público, evitando pedidos de artículos sin stock.
+
 
 Decisiones del Tech Stack:
 Seleccioné estas tecnologías para garantizar un entorno de trabajo ágil, seguro y escalable:
