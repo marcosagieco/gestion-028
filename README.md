@@ -2,7 +2,7 @@ Sistema de Gestión Interna - 028import 📊
 
 Desarrollé esta plataforma con el objetivo de centralizar y digitalizar la operativa interna de 028import. Mi enfoque principal fue sustituir el uso de registros manuales y planillas por una solución digital integral que permitiera un control preciso del inventario y las ventas desde un solo lugar.
 
-_Dashboard Administrativo_
+Dashboard Administrativo
 
 Esta interfaz fue diseñada para optimizar la toma de decisiones del dueño del negocio. Implementé herramientas específicas que transforman los datos en información útil para la operativa diaria:
 
