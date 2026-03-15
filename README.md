@@ -1,22 +1,20 @@
-# Gestión 028 - Dashboard Administrativo 📊
+Sistema de Gestión Interna - 028import
+Desarrollé esta plataforma con el objetivo de centralizar y digitalizar la operativa de 028import. Mi enfoque principal fue sustituir procesos de registro manuales por una solución integral que permitiera un control preciso del inventario y las ventas en tiempo real.
 
-Este proyecto es una plataforma de gestión interna diseñada para centralizar la operativa de **028import**. El objetivo principal fue crear una herramienta intuitiva que permita al dueño del negocio tener control total sobre sus ventas y stock sin depender de planillas manuales.
+Decisiones Técnicas y Funcionalidades:
+Arquitectura de Datos: Opté por Firebase (Firestore) para garantizar la sincronización inmediata de los datos. Esto permite que cualquier actualización de stock realizada en este panel se refleje instantáneamente en el catálogo del cliente.
 
-### 🛠️ Funcionalidades Clave
-- **Control de Inventario:** Panel dinámico para cargar, editar y eliminar productos con actualización inmediata en la base de datos.
-- **Registro de Ventas:** Sistema para trackear transacciones y visualizar el rendimiento del negocio.
-- **Gestión de Stock:** Alertas visuales y actualización en tiempo real mediante Firestore.
-- **Seguridad:** Acceso protegido y manejo profesional de credenciales mediante variables de entorno.
+Desarrollo Frontend: Decidí implementar React.js con Vite debido a su eficiencia en el manejo del estado y la notable velocidad que ofrece tanto en el desarrollo como en la carga final de la interfaz.
 
-### 🏗️ Tech Stack
-Elegí este stack por la velocidad de desarrollo y la estabilidad de los datos:
-- **Frontend:** React.js con **Vite** para una experiencia de desarrollo y carga ultra rápida.
-- **Backend:** Firebase (Cloud Firestore) para la sincronización en tiempo real.
-- **Estilos:** Tailwind CSS (Diseño responsive y moderno).
-- **Iconos:** Lucide-React para una interfaz clara y profesional.
+Gestión Administrativa: Diseñé un panel de control que permite la administración completa de productos (altas, bajas y modificaciones) y el seguimiento detallado de las transacciones diarias.
 
-### 🚀 Despliegue
-La plataforma se encuentra desplegada en **Vercel** y conectada mediante CI/CD al repositorio.
+Seguridad y Prácticas Pro: Prioricé la seguridad del sistema mediante la implementación de Firebase Auth para el acceso restringido y el uso de variables de entorno para proteger las credenciales de la base de datos.
 
----
-Desarrollado por **Marcos Gieco** - *Product Builder enfocado en soluciones de negocio.*
+Stack Tecnológico:
+Framework: React.js (Vite)
+
+Base de Datos y Auth: Firebase
+
+Estilos: Tailwind CSS
+
+Despliegue: Vercel
