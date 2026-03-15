@@ -15,6 +15,7 @@ Sincronización de Stock: Decidí utilizar Firestore para asegurar que cualquier
 
 
 Decisiones del Tech Stack:
+
 Seleccioné estas tecnologías para garantizar un entorno de trabajo ágil, seguro y escalable:
 
 React.js (Vite): Lo elegí por su eficiencia en el manejo del estado y la notable velocidad que ofrece tanto en el proceso de desarrollo como en la carga final del dashboard.
