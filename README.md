@@ -1,16 +1,22 @@
-# React + Vite
+# Gestión 028 - Dashboard Administrativo 📊
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Este proyecto es una plataforma de gestión interna diseñada para centralizar la operativa de **028import**. El objetivo principal fue crear una herramienta intuitiva que permita al dueño del negocio tener control total sobre sus ventas y stock sin depender de planillas manuales.
 
-Currently, two official plugins are available:
+### 🛠️ Funcionalidades Clave
+- **Control de Inventario:** Panel dinámico para cargar, editar y eliminar productos con actualización inmediata en la base de datos.
+- **Registro de Ventas:** Sistema para trackear transacciones y visualizar el rendimiento del negocio.
+- **Gestión de Stock:** Alertas visuales y actualización en tiempo real mediante Firestore.
+- **Seguridad:** Acceso protegido y manejo profesional de credenciales mediante variables de entorno.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+### 🏗️ Tech Stack
+Elegí este stack por la velocidad de desarrollo y la estabilidad de los datos:
+- **Frontend:** React.js con **Vite** para una experiencia de desarrollo y carga ultra rápida.
+- **Backend:** Firebase (Cloud Firestore) para la sincronización en tiempo real.
+- **Estilos:** Tailwind CSS (Diseño responsive y moderno).
+- **Iconos:** Lucide-React para una interfaz clara y profesional.
 
-## React Compiler
+### 🚀 Despliegue
+La plataforma se encuentra desplegada en **Vercel** y conectada mediante CI/CD al repositorio.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+---
+Desarrollado por **Marcos Gieco** - *Product Builder enfocado en soluciones de negocio.*
