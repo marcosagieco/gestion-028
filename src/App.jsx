@@ -13,12 +13,12 @@ import {
 
 // --- 2. CONFIGURACIÓN DE FIREBASE ---
 const firebaseConfig = {
-  apiKey: "AIzaSyCavgJ20mrE5HZHW7H7NKQ0sibs5p4Q-TU",
-  authDomain: "gestion-028.firebaseapp.com",
-  projectId: "gestion-028",
-  storageBucket: "gestion-028.firebasestorage.app",
-  messagingSenderId: "5538640148",
-  appId: "1:5538640148:web:a6a34ee4e1dad97390d201"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
 let db;
