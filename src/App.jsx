@@ -365,7 +365,10 @@ export default function App() {
   const [newBatchName, setNewBatchName] = useState('');
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '' });
   const [newSale, setNewSale] = useState({ batchId: '', itemId: '', quantity: 1, unitPrice: '', shippingCost: 0, shippingPrice: 0, source: 'Instagram', isReseller: 'No', saleDate: getTodayDate() });
-  const [newExpense, setNewExpense] = useState({ description: '', amount: '', batchId: '' });
+  
+  // MODIFICADO: Agregada la propiedad de fecha para elegir el mes del gasto
+  const [newExpense, setNewExpense] = useState({ description: '', amount: '', batchId: '', date: getTodayDate() });
+  
   const [selectedBatchStats, setSelectedBatchStats] = useState(null);
   const [hiddenSuggestions, setHiddenSuggestions] = useState({ products: [], variants: [] });
 
@@ -489,7 +492,6 @@ export default function App() {
       
       const globalTotalInvestment = batches.reduce((accBatch, batch) => accBatch + (batch.items || []).reduce((accItem, item) => accItem + (item.costArs * item.initialStock), 0), 0);
       
-      // NUEVA LÓGICA: Calcula el valor en inventario solo sumando el stock actual de lotes ACTIVOS (No finalizados)
       const currentStockValue = batches
           .filter(b => !b.finalizedAt)
           .reduce((accBatch, batch) => accBatch + (batch.items || []).reduce((accItem, item) => accItem + (item.costArs * item.currentStock), 0), 0);
@@ -690,20 +692,26 @@ export default function App() {
     } catch (e) { showToast('Error: ' + e.message, 'error'); }
   };
 
+  // MODIFICADO: Agregada la lógica para procesar la fecha ingresada
   const handleAddExpense = async () => {
-    if (!newExpense.description || !newExpense.amount) return showToast('Completa la descripción y el monto', 'error');
+    if (!newExpense.description || !newExpense.amount || !newExpense.date) return showToast('Completa descripción, fecha y monto', 'error');
     let batchName = 'General';
     if (newExpense.batchId) {
         const foundBatch = batches.find(b => b.id === newExpense.batchId);
         if (foundBatch) batchName = foundBatch.name;
     }
+    
+    const [y, m, d] = newExpense.date.split('-');
+    const expenseDateStr = new Date(y, m - 1, d, 12, 0, 0).toISOString();
+
     await addDoc(collection(db, 'expenses'), { 
-        date: new Date().toISOString(), description: newExpense.description, amount: parseFloat(newExpense.amount),
+        date: expenseDateStr, description: newExpense.description, amount: parseFloat(newExpense.amount),
         batchId: newExpense.batchId || null, batchName: batchName
     });
-    setNewExpense({ description: '', amount: '', batchId: '' });
+    setNewExpense({ description: '', amount: '', batchId: '', date: getTodayDate() });
     showToast('Gasto asentado', 'success');
   };
+
   const handleDeleteExpense = async (id) => {
       await deleteDoc(doc(db, 'expenses', id));
       showToast('Gasto eliminado', 'success');
@@ -736,7 +744,6 @@ export default function App() {
     const netProfit = grossProfit - totalBatchExpenses;
     const cashBalance = totalRevenue - totalInvestment - totalBatchExpenses;
     
-    // NUEVA LÓGICA DE AUDITORÍA: Si el lote está finalizado, el valor de su stock sobrante es 0 (pérdida/merma)
     const currentStockValue = batch.finalizedAt ? 0 : (batch.items || []).reduce((acc, item) => acc + (item.costArs * item.currentStock), 0);
 
     const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
@@ -1335,9 +1342,11 @@ export default function App() {
                 <Card darkMode={darkMode} className="border-t-4 border-t-rose-500 p-5 md:p-6">
                     <h2 className="text-xl font-bold tracking-tight mb-5 flex items-center gap-2"><Wallet size={20} className="text-rose-500"/> Declarar Egreso</h2>
                     <div className="flex flex-col gap-4">
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                            <div className="sm:col-span-2"><Input darkMode={darkMode} label="Descripción del Gasto" placeholder="Ej: Publicidad Ads, Envío Extra..." value={newExpense.description} onChange={e => setNewExpense({...newExpense, description: e.target.value})} /></div>
-                            <div className="sm:col-span-1"><Input darkMode={darkMode} label="Importe" type="number" symbol="$" value={newExpense.amount} onChange={e => setNewExpense({...newExpense, amount: e.target.value})} /></div>
+                        {/* MODIFICADO: Agregamos el selector de fecha al layout del form de gastos */}
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
+                            <div className="sm:col-span-3"><Input darkMode={darkMode} type="date" label="Fecha" value={newExpense.date} onChange={e => setNewExpense({...newExpense, date: e.target.value})} /></div>
+                            <div className="sm:col-span-6"><Input darkMode={darkMode} label="Descripción del Gasto" placeholder="Ej: Publicidad Ads, Envío Extra..." value={newExpense.description} onChange={e => setNewExpense({...newExpense, description: e.target.value})} /></div>
+                            <div className="sm:col-span-3"><Input darkMode={darkMode} label="Importe" type="number" symbol="$" value={newExpense.amount} onChange={e => setNewExpense({...newExpense, amount: e.target.value})} /></div>
                         </div>
                         <div className="flex flex-col sm:flex-row gap-4 items-end">
                               <div className="flex-1 w-full">
