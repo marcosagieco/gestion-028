@@ -29,7 +29,7 @@ try {
   console.error("Error inicializando Firebase:", error);
 }
 
-// --- 3. COMPONENTES UI (DISEÑO NORMALIZADO Y PROPORCIONAL) ---
+// --- 3. COMPONENTES UI ---
 
 const Card = ({ children, className = '', darkMode }) => (
   <div className={`rounded-xl border shadow-sm transition-colors duration-200 ${
@@ -40,7 +40,6 @@ const Card = ({ children, className = '', darkMode }) => (
 );
 
 const MetricCard = ({ title, value, subtitle, icon: Icon, trend, color = 'zinc', darkMode }) => {
-  // Paletas de tintes sutiles para fondos y bordes
   const colorStyles = {
     blue: darkMode ? 'bg-blue-900/10 border-blue-900/50 hover:bg-blue-900/20 hover:border-blue-800' : 'bg-blue-50/80 border-blue-200 hover:bg-blue-100/50 hover:border-blue-300',
     emerald: darkMode ? 'bg-emerald-900/10 border-emerald-900/50 hover:bg-emerald-900/20 hover:border-emerald-800' : 'bg-emerald-50/80 border-emerald-200 hover:bg-emerald-100/50 hover:border-emerald-300',
@@ -51,7 +50,6 @@ const MetricCard = ({ title, value, subtitle, icon: Icon, trend, color = 'zinc',
     zinc: darkMode ? 'bg-[#0f1115] border-zinc-800 hover:border-zinc-700' : 'bg-white border-zinc-200 hover:border-zinc-300',
   };
 
-  // Colores fuertes para los íconos
   const iconColors = {
     blue: darkMode ? 'text-blue-400 bg-blue-500/20' : 'text-blue-600 bg-blue-200/50',
     emerald: darkMode ? 'text-emerald-400 bg-emerald-500/20' : 'text-emerald-700 bg-emerald-200/50',
@@ -116,7 +114,6 @@ const Select = ({ label, options, darkMode, ...props }) => (
   </div>
 );
 
-// Utilidad para exportar a CSV
 const exportToCSV = (filename, rows) => {
   const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.map(item => `"${String(item).replace(/"/g, '""')}"`).join(",")).join("\n");
   const encodedUri = encodeURI(csvContent);
@@ -143,7 +140,7 @@ const getPreviousDayStr = (dateStr) => {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 };
 
-// --- COMPONENTE DE GRÁFICO (NORMALIZADO Y CORREGIDO PARA PICOS ALTOS) ---
+// --- COMPONENTE DE GRÁFICO ---
 const SalesChart = ({ sales, globalMonth, darkMode }) => {
   const [metric, setMetric] = useState('revenue'); 
   const [hoveredIndex, setHoveredIndex] = useState(null);
@@ -155,7 +152,24 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
     const map = {};
     const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 
-    if (globalMonth !== 'all') {
+    const generateDays = (daysBack) => {
+        const today = new Date();
+        for (let i = daysBack - 1; i >= 0; i--) {
+            const d = new Date(today);
+            d.setDate(d.getDate() - i);
+            const yStr = d.getFullYear();
+            const mStr = String(d.getMonth() + 1).padStart(2, '0');
+            const dayStr = String(d.getDate()).padStart(2, '0');
+            const key = `${yStr}-${mStr}-${dayStr}`;
+            map[key] = { key, label: `${dayStr}/${mStr}`, fullLabel: `${dayStr} de ${monthNames[d.getMonth()]} ${yStr}`, revenue: 0, quantity: 0 };
+        }
+    };
+
+    if (globalMonth === 'today') { generateDays(1); }
+    else if (globalMonth === 'week') { generateDays(7); }
+    else if (globalMonth === '15days') { generateDays(15); }
+    else if (globalMonth === '30days') { generateDays(30); }
+    else if (globalMonth !== 'all') {
       const [yStr, mStr] = globalMonth.split('-');
       const y = parseInt(yStr);
       const m = parseInt(mStr);
@@ -200,7 +214,7 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
   const h = 300; 
   const padXLeft = 15; 
   const padXRight = 40;
-  const padYTop = 80; // Aumentado el padding superior para dar espacio a etiquetas
+  const padYTop = 80;
   const padYBottom = 30;
   const chartW = w - padXLeft - padXRight;
   const chartH = h - padYTop - padYBottom;
@@ -285,8 +299,8 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
 
                     {hoveredIndex !== null && <line x1={points[hoveredIndex].x} y1={padYTop} x2={points[hoveredIndex].x} y2={h - padYBottom} stroke={darkMode ? "#52525b" : "#a1a1aa"} strokeWidth="1" strokeDasharray="4 4" />}
 
-                    <path d={areaPath} fill="url(#gradientArea)" className="transition-all duration-300" />
-                    <path d={linePath} fill="none" stroke={themeColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="transition-all duration-300" />
+                    {chartData.length > 1 && <path d={areaPath} fill="url(#gradientArea)" className="transition-all duration-300" />}
+                    {chartData.length > 1 && <path d={linePath} fill="none" stroke={themeColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="transition-all duration-300" />}
 
                     {points.map((p, i) => {
                       const isHovered = hoveredIndex === i;
@@ -295,7 +309,7 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
 
                       return (
                         <g key={i}>
-                          <circle cx={p.x} cy={p.y} r={isHovered ? "5" : "0"} fill={darkMode ? "#0f1115" : "#ffffff"} stroke={themeColor} strokeWidth="2.5" className="transition-all duration-200 pointer-events-none" />
+                          <circle cx={p.x} cy={p.y} r={isHovered ? "5" : (chartData.length === 1 ? "4" : "0")} fill={darkMode ? "#0f1115" : "#ffffff"} stroke={themeColor} strokeWidth="2.5" className="transition-all duration-200 pointer-events-none" />
                           <circle cx={p.x} cy={p.y} r="30" fill="transparent" className="cursor-crosshair" onMouseEnter={() => setHoveredIndex(i)} onMouseLeave={() => setHoveredIndex(null)} onTouchStart={() => setHoveredIndex(i)} />
                           {showLabel && <text x={p.x} y={h - padYBottom + 20} textAnchor="middle" fill={isHovered ? (darkMode ? "#ffffff" : "#000000") : (darkMode ? "#71717a" : "#a1a1aa")} fontSize="11" fontWeight={isHovered ? "bold" : "500"} className="transition-all pointer-events-none">{p.label}</text>}
                         </g>
@@ -307,10 +321,9 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
                       <div 
                           className="absolute z-10 pointer-events-none transition-all duration-100 ease-out"
                           style={{ 
-                              left: hoveredIndex === 0 ? `${(points[hoveredIndex].x / w) * 100}%` : hoveredIndex === points.length - 1 ? `calc(${(points[hoveredIndex].x / w) * 100}% - 10px)` : `${(points[hoveredIndex].x / w) * 100}%`,
+                              left: chartData.length === 1 ? '50%' : (hoveredIndex === 0 ? `${(points[hoveredIndex].x / w) * 100}%` : hoveredIndex === points.length - 1 ? `calc(${(points[hoveredIndex].x / w) * 100}% - 10px)` : `${(points[hoveredIndex].x / w) * 100}%`),
                               top: `${(points[hoveredIndex].y / h) * 100}%`,
-                              // Corrección clave: Si y < 130px, la etiqueta sale hacia abajo (15px) para evitar cortarse. Si no, sale hacia arriba normal.
-                              transform: `translate(${hoveredIndex === 0 ? '0%' : hoveredIndex === points.length - 1 ? '-100%' : '-50%'}, ${points[hoveredIndex].y < 130 ? '15px' : 'calc(-100% - 15px)'})`
+                              transform: `translate(${chartData.length === 1 ? '-50%' : (hoveredIndex === 0 ? '0%' : hoveredIndex === points.length - 1 ? '-100%' : '-50%')}, ${points[hoveredIndex].y < 130 ? '15px' : 'calc(-100% - 15px)'})`
                           }}
                       >
                           <div className={`p-4 rounded-xl shadow-xl border whitespace-nowrap ${darkMode ? 'bg-zinc-800 border-zinc-700' : 'bg-white border-zinc-200'}`}>
@@ -361,12 +374,10 @@ export default function App() {
   
   const [expandedBatchId, setExpandedBatchId] = useState(null);
   const [manualFinalizeDate, setManualFinalizeDate] = useState(getTodayDate());
-  const [globalMonth, setGlobalMonth] = useState('all');
+  const [globalMonth, setGlobalMonth] = useState('30days'); // Valor por defecto actualizado
   const [newBatchName, setNewBatchName] = useState('');
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '' });
   const [newSale, setNewSale] = useState({ batchId: '', itemId: '', quantity: 1, unitPrice: '', shippingCost: 0, shippingPrice: 0, source: 'Instagram', isReseller: 'No', saleDate: getTodayDate() });
-  
-  // MODIFICADO: Agregada la propiedad de fecha para elegir el mes del gasto
   const [newExpense, setNewExpense] = useState({ description: '', amount: '', batchId: '', date: getTodayDate() });
   
   const [selectedBatchStats, setSelectedBatchStats] = useState(null);
@@ -432,7 +443,8 @@ export default function App() {
       return { uniqueProducts: Array.from(prodsMap.values()).sort(), uniqueVariants: Array.from(varsMap.values()).sort() };
   }, [batches, hiddenSuggestions]);
 
-  const monthOptions = useMemo(() => {
+  // Modificado: Opciones de periodo enriquecidas
+  const periodOptions = useMemo(() => {
     const getLocalMonth = (isoString) => {
       if (!isoString) return '';
       const d = new Date(isoString);
@@ -443,7 +455,12 @@ export default function App() {
     expenses.forEach(e => months.add(getLocalMonth(e.date)));
     batches.forEach(b => months.add(getLocalMonth(b.createdAt)));
     const sortedMonths = Array.from(months).filter(Boolean).sort().reverse();
+    
     return [
+      { value: 'today', label: 'Diario (Hoy)' },
+      { value: 'week', label: 'Últimos 7 días' },
+      { value: '15days', label: 'Últimos 15 días' },
+      { value: '30days', label: 'Últimos 30 días' },
       { value: 'all', label: '-- Histórico Completo --' },
       ...sortedMonths.map(m => {
         const [year, month] = m.split('-');
@@ -454,16 +471,61 @@ export default function App() {
     ];
   }, [sales, expenses, batches]);
 
+  // Modificado: Lógica de análisis global basada en rangos dinámicos
   const globalAnalysis = useMemo(() => {
-      const getLocalMonth = (isoString) => {
-          if (!isoString) return '';
-          const d = new Date(isoString);
-          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+      const getRanges = (filter) => {
+          let currentStart = null;
+          let prevStart = null;
+          let prevEnd = null;
+
+          if (filter === 'today') {
+              currentStart = todayStart;
+              prevStart = new Date(todayStart); prevStart.setDate(prevStart.getDate() - 1);
+              prevEnd = new Date(todayStart); prevEnd.setMilliseconds(-1);
+          } else if (filter === 'week') {
+              currentStart = new Date(todayStart); currentStart.setDate(currentStart.getDate() - 6);
+              prevStart = new Date(currentStart); prevStart.setDate(prevStart.getDate() - 7);
+              prevEnd = new Date(currentStart); prevEnd.setMilliseconds(-1);
+          } else if (filter === '15days') {
+              currentStart = new Date(todayStart); currentStart.setDate(currentStart.getDate() - 14);
+              prevStart = new Date(currentStart); prevStart.setDate(prevStart.getDate() - 15);
+              prevEnd = new Date(currentStart); prevEnd.setMilliseconds(-1);
+          } else if (filter === '30days') {
+              currentStart = new Date(todayStart); currentStart.setDate(currentStart.getDate() - 29);
+              prevStart = new Date(currentStart); prevStart.setDate(prevStart.getDate() - 30);
+              prevEnd = new Date(currentStart); prevEnd.setMilliseconds(-1);
+          } else if (filter !== 'all') {
+              const [y, m] = filter.split('-').map(Number);
+              currentStart = new Date(y, m - 1, 1);
+              prevStart = new Date(y, m - 2, 1);
+              prevEnd = new Date(y, m - 1, 0, 23, 59, 59, 999);
+          }
+          return { currentStart, prevStart, prevEnd };
       };
 
-      const filteredSales = globalMonth === 'all' ? sales : sales.filter(s => getLocalMonth(s.date) === globalMonth);
-      const filteredExpenses = globalMonth === 'all' ? expenses : expenses.filter(e => getLocalMonth(e.date) === globalMonth);
-      const filteredBatches = globalMonth === 'all' ? batches : batches.filter(b => getLocalMonth(b.createdAt) === globalMonth);
+      const { currentStart, prevStart, prevEnd } = getRanges(globalMonth);
+
+      const isCurrentRange = (dateString) => {
+          if (globalMonth === 'all') return true;
+          const d = new Date(dateString);
+          if (globalMonth.includes('-')) { // Formato YYYY-MM
+             return d.getFullYear() === currentStart.getFullYear() && d.getMonth() === currentStart.getMonth();
+          }
+          return d >= currentStart;
+      };
+
+      const isPrevRange = (dateString) => {
+          if (globalMonth === 'all' || !prevStart) return false;
+          const d = new Date(dateString);
+          return d >= prevStart && d <= prevEnd;
+      };
+
+      const filteredSales = sales.filter(s => isCurrentRange(s.date));
+      const filteredExpenses = expenses.filter(e => isCurrentRange(e.date));
+      const filteredBatches = batches.filter(b => isCurrentRange(b.createdAt));
 
       let totalRevenue = 0, itemsSold = 0, totalShippingProfit = 0;
       const sourceCounts = {};
@@ -490,8 +552,6 @@ export default function App() {
       const netProfit = grossProfit - totalGlobalExpenses;
       const cashBalance = totalRevenue - totalInvestment - totalGlobalExpenses;
       
-      const globalTotalInvestment = batches.reduce((accBatch, batch) => accBatch + (batch.items || []).reduce((accItem, item) => accItem + (item.costArs * item.initialStock), 0), 0);
-      
       const currentStockValue = batches
           .filter(b => !b.finalizedAt)
           .reduce((accBatch, batch) => accBatch + (batch.items || []).reduce((accItem, item) => accItem + (item.costArs * item.currentStock), 0), 0);
@@ -501,12 +561,10 @@ export default function App() {
 
       let prevRevenue = null;
       let prevNetProfit = null;
+      
       if (globalMonth !== 'all') {
-          const [y, m] = globalMonth.split('-').map(Number);
-          const prevDate = new Date(y, m - 2, 1);
-          const prevMonthStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
-          const prevSales = sales.filter(s => getLocalMonth(s.date) === prevMonthStr);
-          const prevExpenses = expenses.filter(e => getLocalMonth(e.date) === prevMonthStr);
+          const prevSales = sales.filter(s => isPrevRange(s.date));
+          const prevExpenses = expenses.filter(e => isPrevRange(e.date));
           let pRev = 0, pCostSold = 0;
           prevSales.forEach(s => { pRev += s.totalSaleRaw; pCostSold += (s.costArsAtSale * s.quantity); });
           const pExp = prevExpenses.reduce((acc, e) => acc + e.amount, 0);
@@ -519,11 +577,14 @@ export default function App() {
           if (batches.length > 0) {
               const sortedBatches = [...batches].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
               const firstDate = new Date(sortedBatches[0].createdAt);
-              daysActive = Math.ceil(Math.abs(new Date() - firstDate) / (1000 * 60 * 60 * 24)) || 1;
+              daysActive = Math.ceil(Math.abs(now - firstDate) / (1000 * 60 * 60 * 24)) || 1;
           }
-      } else {
+      } else if (globalMonth === 'today') daysActive = 1;
+      else if (globalMonth === 'week') daysActive = 7;
+      else if (globalMonth === '15days') daysActive = 15;
+      else if (globalMonth === '30days') daysActive = 30;
+      else {
           const [y, m] = globalMonth.split('-').map(Number);
-          const now = new Date();
           daysActive = (now.getFullYear() === y && now.getMonth() + 1 === m) ? now.getDate() : new Date(y, m, 0).getDate();
       }
       
@@ -692,7 +753,6 @@ export default function App() {
     } catch (e) { showToast('Error: ' + e.message, 'error'); }
   };
 
-  // MODIFICADO: Agregada la lógica para procesar la fecha ingresada
   const handleAddExpense = async () => {
     if (!newExpense.description || !newExpense.amount || !newExpense.date) return showToast('Completa descripción, fecha y monto', 'error');
     let batchName = 'General';
@@ -951,7 +1011,7 @@ export default function App() {
                                 darkMode={darkMode}
                                 value={globalMonth} 
                                 onChange={e => setGlobalMonth(e.target.value)}
-                                options={monthOptions}
+                                options={periodOptions}
                             />
                         </div>
                     </div>
@@ -1342,7 +1402,6 @@ export default function App() {
                 <Card darkMode={darkMode} className="border-t-4 border-t-rose-500 p-5 md:p-6">
                     <h2 className="text-xl font-bold tracking-tight mb-5 flex items-center gap-2"><Wallet size={20} className="text-rose-500"/> Declarar Egreso</h2>
                     <div className="flex flex-col gap-4">
-                        {/* MODIFICADO: Agregamos el selector de fecha al layout del form de gastos */}
                         <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
                             <div className="sm:col-span-3"><Input darkMode={darkMode} type="date" label="Fecha" value={newExpense.date} onChange={e => setNewExpense({...newExpense, date: e.target.value})} /></div>
                             <div className="sm:col-span-6"><Input darkMode={darkMode} label="Descripción del Gasto" placeholder="Ej: Publicidad Ads, Envío Extra..." value={newExpense.description} onChange={e => setNewExpense({...newExpense, description: e.target.value})} /></div>
