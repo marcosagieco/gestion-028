@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package,
-  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search
+  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown
 } from 'lucide-react';
+
+// --- NUEVAS IMPORTACIONES DE RECHARTS ---
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 // --- 1. IMPORTACIONES DE FIREBASE ---
 import { initializeApp } from "firebase/app";
@@ -28,6 +31,11 @@ try {
 } catch (error) {
   console.error("Error inicializando Firebase:", error);
 }
+
+// --- UTILIDADES GLOBALES ---
+const formatMoney = (val) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(val);
+const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val);
+const formatPercent = (val) => new Intl.NumberFormat('es-AR', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(val / 100);
 
 // --- 3. COMPONENTES UI ---
 
@@ -95,7 +103,8 @@ const Input = ({ label, symbol, darkMode, list, ...props }) => (
     {label && <label className={`text-xs font-semibold ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>{label}</label>}
     <div className="relative">
       {symbol && <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><span className={`text-sm font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{symbol}</span></div>}
-      <input list={list} className={`h-10 border rounded-lg px-3 w-full text-sm outline-none transition-colors duration-200 ${darkMode ? 'bg-[#0a0c10] border-zinc-800 text-zinc-100 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50' : 'bg-white border-zinc-300 text-zinc-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50'} ${symbol ? 'pl-8' : ''}`} {...props} />
+      {props.type === 'search' && <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search size={16} className={`${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}/></div>}
+      <input list={list} className={`h-10 border rounded-lg px-3 w-full text-sm outline-none transition-colors duration-200 ${darkMode ? 'bg-[#0a0c10] border-zinc-800 text-zinc-100 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50' : 'bg-white border-zinc-300 text-zinc-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50'} ${symbol || props.type === 'search' ? 'pl-9' : ''}`} {...props} />
     </div>
   </div>
 );
@@ -140,13 +149,26 @@ const getPreviousDayStr = (dateStr) => {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 };
 
-// --- COMPONENTE DE GRÁFICO ---
-const SalesChart = ({ sales, globalMonth, darkMode }) => {
-  const [metric, setMetric] = useState('revenue'); 
-  const [hoveredIndex, setHoveredIndex] = useState(null);
+// --- NUEVOS COMPONENTES DE GRÁFICOS (RECHARTS) ---
 
-  const formatMoney = (val) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(val);
-  const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val);
+const CustomTooltip = ({ active, payload, label, darkMode }) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className={`p-3 rounded-lg shadow-xl border ${darkMode ? 'bg-zinc-800 border-zinc-700 text-white' : 'bg-white border-zinc-200 text-zinc-900'}`}>
+        <p className="text-xs font-semibold mb-1 opacity-70">{label}</p>
+        {payload.map((entry, index) => (
+          <p key={index} className="text-sm font-bold" style={{ color: entry.color }}>
+            {entry.name}: {entry.name === 'Ingresos' ? formatMoney(entry.value) : `${entry.value} un.`}
+          </p>
+        ))}
+      </div>
+    );
+  }
+  return null;
+};
+
+const SalesAreaChart = ({ sales, globalMonth, darkMode }) => {
+  const [metric, setMetric] = useState('revenue');
 
   const chartData = useMemo(() => {
     const map = {};
@@ -161,7 +183,7 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
             const mStr = String(d.getMonth() + 1).padStart(2, '0');
             const dayStr = String(d.getDate()).padStart(2, '0');
             const key = `${yStr}-${mStr}-${dayStr}`;
-            map[key] = { key, label: `${dayStr}/${mStr}`, fullLabel: `${dayStr} de ${monthNames[d.getMonth()]} ${yStr}`, revenue: 0, quantity: 0 };
+            map[key] = { key, name: `${dayStr}/${mStr}`, fullLabel: `${dayStr} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0 };
         }
     };
 
@@ -177,7 +199,7 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
       for (let i = 1; i <= daysInMonth; i++) {
         const dayStr = String(i).padStart(2, '0');
         const key = `${yStr}-${mStr}-${dayStr}`;
-        map[key] = { key, label: `${i}`, fullLabel: `${i} de ${monthNames[m - 1]} ${y}`, revenue: 0, quantity: 0 };
+        map[key] = { key, name: `${dayStr}/${mStr}`, fullLabel: `${i} de ${monthNames[m - 1]}`, Ingresos: 0, Unidades: 0 };
       }
     } else {
       if (!sales || sales.length === 0) return [];
@@ -189,7 +211,7 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
         const m = String(d.getMonth() + 1).padStart(2, '0');
         const day = String(d.getDate()).padStart(2, '0');
         const key = `${y}-${m}-${day}`;
-        map[key] = { key, label: `${day}/${m}`, fullLabel: `${day} de ${monthNames[d.getMonth()]} ${y}`, revenue: 0, quantity: 0 };
+        map[key] = { key, name: `${day}/${m}`, fullLabel: `${day} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0 };
       }
     }
 
@@ -197,69 +219,19 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
       const d = new Date(s.date);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       if (map[key]) {
-        map[key].revenue += s.totalSaleRaw;
-        map[key].quantity += s.quantity;
+        map[key].Ingresos += s.totalSaleRaw;
+        map[key].Unidades += s.quantity;
       }
     });
 
     return Object.values(map).sort((a, b) => a.key.localeCompare(b.key));
   }, [sales, globalMonth]);
 
-  if (chartData.length === 0) return <div className="h-48 flex items-center justify-center text-sm font-medium opacity-50">No hay transacciones en este periodo.</div>;
-
-  const MIN_POINT_DISTANCE = 40;
-  const calculatedWidth = Math.max(800, chartData.length * MIN_POINT_DISTANCE);
-  
-  const w = calculatedWidth;
-  const h = 300; 
-  const padXLeft = 15; 
-  const padXRight = 40;
-  const padYTop = 80;
-  const padYBottom = 30;
-  const chartW = w - padXLeft - padXRight;
-  const chartH = h - padYTop - padYBottom;
-
-  const values = chartData.map(d => metric === 'revenue' ? d.revenue : d.quantity);
-  const rawMax = Math.max(...values, 4);
-
-  const getNiceScale = (maxVal, numTicks = 5) => {
-    if (maxVal <= 0) return { max: 5, ticks: [1, 2, 3, 4, 5], step: 1 };
-    const roughStep = maxVal / numTicks;
-    const magnitude = Math.pow(10, Math.floor(Math.log10(roughStep)));
-    const normalizedStep = roughStep / magnitude;
-    let niceStep;
-    if (normalizedStep < 1.5) niceStep = 1;
-    else if (normalizedStep < 3.5) niceStep = 2;
-    else if (normalizedStep < 7.5) niceStep = 5;
-    else niceStep = 10;
-    niceStep *= magnitude;
-    const niceMax = Math.ceil(maxVal / niceStep) * niceStep;
-    const ticks = [];
-    for (let i = niceStep; i <= niceMax; i += niceStep) ticks.push(i);
-    return { max: niceMax, ticks: ticks.reverse() };
-  };
-
-  const scaleData = getNiceScale(rawMax, 5); 
-  const maxVal = scaleData.max;
-  const yTickValues = [...scaleData.ticks, 0];
-
-  const points = chartData.map((d, i) => {
-    const val = metric === 'revenue' ? d.revenue : d.quantity;
-    const x = padXLeft + (i * chartW / (chartData.length > 1 ? chartData.length - 1 : 1));
-    const y = padYTop + chartH - ((val / maxVal) * chartH);
-    return { ...d, x, y, val };
-  });
-
-  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
-  const areaPath = `${linePath} L ${points[points.length - 1].x} ${h - padYBottom} L ${points[0].x} ${h - padYBottom} Z`;
-
-  const formatYAxis = (val) => {
-      if (metric === 'revenue') return val === 0 ? '0' : '$' + formatCompact(val);
-      return val.toString();
-  };
+  if (chartData.length === 0) return <div className="h-[300px] flex items-center justify-center text-sm font-medium opacity-50">No hay transacciones en este periodo.</div>;
 
   const themeColor = darkMode ? '#818cf8' : '#4f46e5'; 
-  const gridColor = darkMode ? '#27272a' : '#e4e4e7'; 
+  const gridColor = darkMode ? '#27272a' : '#e4e4e7';
+  const textColor = darkMode ? '#71717a' : '#a1a1aa';
 
   return (
     <div className="w-full flex flex-col space-y-4">
@@ -269,84 +241,63 @@ const SalesChart = ({ sales, globalMonth, darkMode }) => {
               <button onClick={() => setMetric('quantity')} className={`px-4 py-1.5 text-xs font-semibold rounded-md transition-all ${metric === 'quantity' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Unidades</button>
           </div>
       </div>
-
-      <div className={`relative flex w-full h-[300px] rounded-xl overflow-hidden border ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-white border-zinc-200'}`}>
-          <div className={`w-[60px] flex-shrink-0 relative z-10 border-r ${darkMode ? 'border-zinc-800 bg-[#0f1115]' : 'border-zinc-200 bg-zinc-50'}`}>
-              {yTickValues.map(tickVal => {
-                  const y = padYTop + chartH - ((tickVal / maxVal) * chartH);
-                  return (
-                      <div key={tickVal} className="absolute w-full text-right pr-3 pointer-events-none" style={{ top: `${y}px`, transform: 'translateY(-50%)' }}>
-                          <span className={`text-xs font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{formatYAxis(tickVal)}</span>
-                      </div>
-                  );
-              })}
-          </div>
-
-          <div className="flex-1 overflow-x-auto custom-scrollbar relative group">
-              <div style={{ minWidth: `${w}px`, height: `${h}px` }} className="relative">
-                  <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-full overflow-visible" preserveAspectRatio="none">
-                    <defs>
-                      <linearGradient id="gradientArea" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={themeColor} stopOpacity="0.2" />
-                        <stop offset="100%" stopColor={themeColor} stopOpacity="0.0" />
-                      </linearGradient>
-                    </defs>
-
-                    {yTickValues.map(tickVal => {
-                        const y = padYTop + chartH - ((tickVal / maxVal) * chartH);
-                        return <line key={tickVal} x1={0} y1={y} x2={w} y2={y} stroke={gridColor} strokeWidth={tickVal === 0 ? "2" : "1"} strokeDasharray={tickVal === 0 ? "0" : "4 4"} />;
-                    })}
-
-                    {hoveredIndex !== null && <line x1={points[hoveredIndex].x} y1={padYTop} x2={points[hoveredIndex].x} y2={h - padYBottom} stroke={darkMode ? "#52525b" : "#a1a1aa"} strokeWidth="1" strokeDasharray="4 4" />}
-
-                    {chartData.length > 1 && <path d={areaPath} fill="url(#gradientArea)" className="transition-all duration-300" />}
-                    {chartData.length > 1 && <path d={linePath} fill="none" stroke={themeColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="transition-all duration-300" />}
-
-                    {points.map((p, i) => {
-                      const isHovered = hoveredIndex === i;
-                      let step = chartData.length > 90 ? 10 : chartData.length > 60 ? 5 : chartData.length > 31 ? 3 : chartData.length > 15 ? 2 : 1;
-                      const showLabel = isHovered || (i % step === 0) || i === chartData.length - 1;
-
-                      return (
-                        <g key={i}>
-                          <circle cx={p.x} cy={p.y} r={isHovered ? "5" : (chartData.length === 1 ? "4" : "0")} fill={darkMode ? "#0f1115" : "#ffffff"} stroke={themeColor} strokeWidth="2.5" className="transition-all duration-200 pointer-events-none" />
-                          <circle cx={p.x} cy={p.y} r="30" fill="transparent" className="cursor-crosshair" onMouseEnter={() => setHoveredIndex(i)} onMouseLeave={() => setHoveredIndex(null)} onTouchStart={() => setHoveredIndex(i)} />
-                          {showLabel && <text x={p.x} y={h - padYBottom + 20} textAnchor="middle" fill={isHovered ? (darkMode ? "#ffffff" : "#000000") : (darkMode ? "#71717a" : "#a1a1aa")} fontSize="11" fontWeight={isHovered ? "bold" : "500"} className="transition-all pointer-events-none">{p.label}</text>}
-                        </g>
-                      );
-                    })}
-                  </svg>
-
-                  {hoveredIndex !== null && (
-                      <div 
-                          className="absolute z-10 pointer-events-none transition-all duration-100 ease-out"
-                          style={{ 
-                              left: chartData.length === 1 ? '50%' : (hoveredIndex === 0 ? `${(points[hoveredIndex].x / w) * 100}%` : hoveredIndex === points.length - 1 ? `calc(${(points[hoveredIndex].x / w) * 100}% - 10px)` : `${(points[hoveredIndex].x / w) * 100}%`),
-                              top: `${(points[hoveredIndex].y / h) * 100}%`,
-                              transform: `translate(${chartData.length === 1 ? '-50%' : (hoveredIndex === 0 ? '0%' : hoveredIndex === points.length - 1 ? '-100%' : '-50%')}, ${points[hoveredIndex].y < 130 ? '15px' : 'calc(-100% - 15px)'})`
-                          }}
-                      >
-                          <div className={`p-4 rounded-xl shadow-xl border whitespace-nowrap ${darkMode ? 'bg-zinc-800 border-zinc-700' : 'bg-white border-zinc-200'}`}>
-                              <div className={`text-xs font-semibold mb-3 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{points[hoveredIndex].fullLabel}</div>
-                              <div className="flex flex-col gap-2">
-                                  <div className="flex items-center justify-between gap-8">
-                                      <span className="text-sm font-medium">Ingresos</span>
-                                      <span className="text-sm font-bold">{formatMoney(points[hoveredIndex].revenue)}</span>
-                                  </div>
-                                  <div className="flex items-center justify-between gap-8">
-                                      <span className="text-sm font-medium">Unidades</span>
-                                      <span className="text-sm font-bold text-indigo-500">{points[hoveredIndex].quantity} u.</span>
-                                  </div>
-                              </div>
-                          </div>
-                      </div>
-                  )}
-              </div>
-          </div>
+      
+      <div className={`w-full h-[300px] p-2 rounded-xl border ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={chartData} margin={{ top: 20, right: 20, left: 0, bottom: 0 }}>
+            <defs>
+              <linearGradient id="colorMetric" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={themeColor} stopOpacity={0.3}/>
+                <stop offset="95%" stopColor={themeColor} stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridColor} />
+            <XAxis dataKey="name" stroke={textColor} fontSize={12} tickLine={false} axisLine={false} dy={10} minTickGap={30} />
+            <YAxis 
+              stroke={textColor} fontSize={12} tickLine={false} axisLine={false} 
+              tickFormatter={(value) => metric === 'revenue' ? formatCompact(value) : value} 
+              width={60}
+            />
+            <RechartsTooltip content={<CustomTooltip darkMode={darkMode} />} cursor={{ stroke: textColor, strokeWidth: 1, strokeDasharray: '3 3' }} />
+            <Area type="monotone" dataKey={metric === 'revenue' ? 'Ingresos' : 'Unidades'} stroke={themeColor} strokeWidth={3} fillOpacity={1} fill="url(#colorMetric)" activeDot={{ r: 6, strokeWidth: 0 }} />
+          </AreaChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );
 };
+
+const CustomPieChart = ({ data, colors, darkMode }) => {
+  if (!data || data.length === 0) return <div className="h-[160px] flex items-center justify-center text-sm font-medium opacity-50">Sin datos</div>;
+  
+  return (
+    <div className="h-[180px] w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie
+            data={data}
+            cx="50%"
+            cy="50%"
+            innerRadius={60}
+            outerRadius={80}
+            paddingAngle={5}
+            dataKey="value"
+            stroke="none"
+          >
+            {data.map((entry, index) => (
+              <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />
+            ))}
+          </Pie>
+          <RechartsTooltip 
+            contentStyle={{ backgroundColor: darkMode ? '#27272a' : '#fff', borderColor: darkMode ? '#3f3f46' : '#e4e4e7', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', color: darkMode ? '#fff' : '#000' }}
+            itemStyle={{ color: darkMode ? '#fff' : '#000' }}
+          />
+        </PieChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 
 // --- APP PRINCIPAL ---
 export default function App() {
@@ -374,7 +325,7 @@ export default function App() {
   
   const [expandedBatchId, setExpandedBatchId] = useState(null);
   const [manualFinalizeDate, setManualFinalizeDate] = useState(getTodayDate());
-  const [globalMonth, setGlobalMonth] = useState('30days'); // Valor por defecto actualizado
+  const [globalMonth, setGlobalMonth] = useState('30days'); 
   const [newBatchName, setNewBatchName] = useState('');
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '' });
   const [newSale, setNewSale] = useState({ batchId: '', itemId: '', quantity: 1, unitPrice: '', shippingCost: 0, shippingPrice: 0, source: 'Instagram', isReseller: 'No', saleDate: getTodayDate() });
@@ -382,6 +333,10 @@ export default function App() {
   
   const [selectedBatchStats, setSelectedBatchStats] = useState(null);
   const [hiddenSuggestions, setHiddenSuggestions] = useState({ products: [], variants: [] });
+
+  // ESTADOS PARA FILTROS DE VENTAS
+  const [salesSearch, setSalesSearch] = useState('');
+  const [salesSort, setSalesSort] = useState({ key: 'date', direction: 'desc' });
 
   useEffect(() => {
     if (!user) return;
@@ -418,9 +373,6 @@ export default function App() {
     }
   }, [user]);
 
-  const formatMoney = (val) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(val);
-  const formatPercent = (val) => new Intl.NumberFormat('es-AR', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(val / 100);
-
   const { uniqueProducts, uniqueVariants } = useMemo(() => {
       const prodsMap = new Map();
       const varsMap = new Map();
@@ -443,7 +395,6 @@ export default function App() {
       return { uniqueProducts: Array.from(prodsMap.values()).sort(), uniqueVariants: Array.from(varsMap.values()).sort() };
   }, [batches, hiddenSuggestions]);
 
-  // Modificado: Opciones de periodo enriquecidas
   const periodOptions = useMemo(() => {
     const getLocalMonth = (isoString) => {
       if (!isoString) return '';
@@ -471,7 +422,6 @@ export default function App() {
     ];
   }, [sales, expenses, batches]);
 
-  // Modificado: Lógica de análisis global basada en rangos dinámicos
   const globalAnalysis = useMemo(() => {
       const now = new Date();
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -511,7 +461,7 @@ export default function App() {
       const isCurrentRange = (dateString) => {
           if (globalMonth === 'all') return true;
           const d = new Date(dateString);
-          if (globalMonth.includes('-')) { // Formato YYYY-MM
+          if (globalMonth.includes('-')) { 
              return d.getFullYear() === currentStart.getFullYear() && d.getMonth() === currentStart.getMonth();
           }
           return d >= currentStart;
@@ -612,17 +562,152 @@ export default function App() {
           }
       }
 
+      const pieSourceData = Object.entries(sourceCounts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
+      const pieTypeData = [
+        { name: 'Consumidor', value: typeCounts.Final },
+        { name: 'Revendedor', value: typeCounts.Revendedor }
+      ].filter(d => d.value > 0);
+
       return {
           totalRevenue, totalInvestment, totalGlobalExpenses, grossProfit, grossMargin,
           totalShippingProfit, netProfit, netMargin, cashBalance, currentStockValue, 
           itemsSold, salesCount: filteredSales.length, sourceCounts, typeCounts, dailyAvgItems,
-          daysActive, currentStreak, filteredSales, prevRevenue, prevNetProfit
+          daysActive, currentStreak, filteredSales, prevRevenue, prevNetProfit, pieSourceData, pieTypeData
       };
   }, [sales, batches, expenses, globalMonth]);
 
+  const batchAnalysis = useMemo(() => {
+    if (!selectedBatchStats) return null;
+    const batch = batches.find(b => b.id === selectedBatchStats);
+    if (!batch) return null;
+
+    const batchSales = sales.filter(s => s.batchId === batch.id);
+    const batchExpenses = expenses.filter(e => e.batchId === batch.id);
+    let totalRevenue = 0, itemsSold = 0, totalShippingProfit = 0;
+    const sourceCounts = {}, typeCounts = { Revendedor: 0, Final: 0 };
+
+    batchSales.forEach(s => {
+      totalRevenue += s.totalSaleRaw;
+      itemsSold += s.quantity;
+      const saleShippingProfit = s.totalSaleRaw - (s.unitPrice * s.quantity);
+      totalShippingProfit += saleShippingProfit;
+      const src = s.source || 'Otro';
+      sourceCounts[src] = (sourceCounts[src] || 0) + 1;
+      if (s.isReseller === 'Si' || s.isReseller === true) typeCounts.Revendedor++; else typeCounts.Final++;
+    });
+
+    const totalInvestment = (batch.items || []).reduce((acc, i) => acc + (i.costArs * i.initialStock), 0);
+    const costOfSold = batchSales.reduce((acc, s) => acc + (s.costArsAtSale * s.quantity), 0);
+    const grossProfit = totalRevenue - costOfSold; 
+    const totalBatchExpenses = batchExpenses.reduce((acc, e) => acc + e.amount, 0);
+    const netProfit = grossProfit - totalBatchExpenses;
+    const cashBalance = totalRevenue - totalInvestment - totalBatchExpenses;
+    
+    const currentStockValue = batch.finalizedAt ? 0 : (batch.items || []).reduce((acc, item) => acc + (item.costArs * item.currentStock), 0);
+
+    const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+    const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+
+    const createdDate = new Date(batch.createdAt);
+    const endDate = batch.finalizedAt ? new Date(batch.finalizedAt) : new Date(); 
+    const diffTime = Math.max(0, endDate - createdDate);
+    const daysActive = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
+    const dailyAvgItems = itemsSold / daysActive;
+    const totalInitStock = (batch.items || []).reduce((acc, i) => acc + i.initialStock, 0);
+    const progress = totalInitStock > 0 ? (itemsSold / totalInitStock) * 100 : 0;
+
+    const uniqueDateStrs = [...new Set(batchSales.map(s => {
+        const d = new Date(s.date);
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    }))].sort((a, b) => b.localeCompare(a));
+
+    let currentStreak = 0;
+    if (uniqueDateStrs.length > 0) {
+        const todayStr = getTodayDate();
+        const yesterdayStr = getPreviousDayStr(todayStr);
+        let checkDate = '';
+        if (uniqueDateStrs[0] === todayStr) { currentStreak = 1; checkDate = todayStr; } 
+        else if (uniqueDateStrs[0] === yesterdayStr) { currentStreak = 1; checkDate = yesterdayStr; }
+
+        if (currentStreak === 1) {
+            for (let i = 1; i < uniqueDateStrs.length; i++) {
+                const expectedStr = getPreviousDayStr(checkDate);
+                if (uniqueDateStrs[i] === expectedStr) { currentStreak++; checkDate = expectedStr; } 
+                else break;
+            }
+        }
+    }
+
+    const pieSourceData = Object.entries(sourceCounts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
+    const pieTypeData = [
+      { name: 'Consumidor', value: typeCounts.Final },
+      { name: 'Revendedor', value: typeCounts.Revendedor }
+    ].filter(d => d.value > 0);
+
+    return { 
+        batch, salesCount: batchSales.length, itemsSold, totalRevenue, totalInvestment, 
+        grossProfit, grossMargin, totalShippingProfit, totalBatchExpenses, netProfit, netMargin, cashBalance, 
+        progress, currentStockValue, sourceCounts, typeCounts, daysActive, dailyAvgItems, currentStreak,
+        pieSourceData, pieTypeData 
+    };
+  }, [selectedBatchStats, sales, batches, expenses]);
+
+  // LÓGICA DE BÚSQUEDA Y ORDENAMIENTO EN TABLA DE VENTAS
+  const processedSales = useMemo(() => {
+    let result = [...sales];
+
+    if (salesSearch) {
+      const lowerQuery = salesSearch.toLowerCase();
+      result = result.filter(s => 
+        s.productName?.toLowerCase().includes(lowerQuery) ||
+        s.batchName?.toLowerCase().includes(lowerQuery) ||
+        new Date(s.date).toLocaleDateString().includes(lowerQuery)
+      );
+    }
+
+    result.sort((a, b) => {
+      let valA, valB;
+      
+      switch (salesSort.key) {
+        case 'date':
+          valA = new Date(a.date).getTime();
+          valB = new Date(b.date).getTime();
+          break;
+        case 'productName':
+          valA = a.productName.toLowerCase();
+          valB = b.productName.toLowerCase();
+          break;
+        case 'profit':
+          valA = a.totalSaleRaw - ((a.costArsAtSale || 0) * a.quantity);
+          valB = b.totalSaleRaw - ((b.costArsAtSale || 0) * b.quantity);
+          break;
+        case 'totalSaleRaw':
+          valA = a.totalSaleRaw;
+          valB = b.totalSaleRaw;
+          break;
+        default:
+          valA = a[salesSort.key];
+          valB = b[salesSort.key];
+      }
+
+      if (valA < valB) return salesSort.direction === 'asc' ? -1 : 1;
+      if (valA > valB) return salesSort.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return result;
+  }, [sales, salesSearch, salesSort]);
+
+  const toggleSort = (key) => {
+    setSalesSort(prev => ({
+      key,
+      direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
+    }));
+  };
+
   const handleExportSales = () => {
       const headers = ['Fecha', 'Lote', 'Producto', 'Variante', 'Cantidad', 'Precio Unitario', 'Total Venta', 'Costo Unitario', 'Ganancia Envio', 'Origen', 'Revendedor'];
-      const rows = sales.map(s => [
+      const rows = processedSales.map(s => [
           new Date(s.date).toLocaleDateString(), s.batchName, s.productName, s.variant, 
           s.quantity, s.unitPrice, s.totalSaleRaw, s.costArsAtSale, 
           (s.totalSaleRaw - (s.unitPrice * s.quantity)), s.source, s.isReseller ? 'Si' : 'No'
@@ -777,75 +862,6 @@ export default function App() {
       showToast('Gasto eliminado', 'success');
   }
 
-  const batchAnalysis = useMemo(() => {
-    if (!selectedBatchStats) return null;
-    const batch = batches.find(b => b.id === selectedBatchStats);
-    if (!batch) return null;
-
-    const batchSales = sales.filter(s => s.batchId === batch.id);
-    const batchExpenses = expenses.filter(e => e.batchId === batch.id);
-    let totalRevenue = 0, itemsSold = 0, totalShippingProfit = 0;
-    const sourceCounts = {}, typeCounts = { Revendedor: 0, Final: 0 };
-
-    batchSales.forEach(s => {
-      totalRevenue += s.totalSaleRaw;
-      itemsSold += s.quantity;
-      const saleShippingProfit = s.totalSaleRaw - (s.unitPrice * s.quantity);
-      totalShippingProfit += saleShippingProfit;
-      const src = s.source || 'Otro';
-      sourceCounts[src] = (sourceCounts[src] || 0) + 1;
-      if (s.isReseller === 'Si' || s.isReseller === true) typeCounts.Revendedor++; else typeCounts.Final++;
-    });
-
-    const totalInvestment = (batch.items || []).reduce((acc, i) => acc + (i.costArs * i.initialStock), 0);
-    const costOfSold = batchSales.reduce((acc, s) => acc + (s.costArsAtSale * s.quantity), 0);
-    const grossProfit = totalRevenue - costOfSold; 
-    const totalBatchExpenses = batchExpenses.reduce((acc, e) => acc + e.amount, 0);
-    const netProfit = grossProfit - totalBatchExpenses;
-    const cashBalance = totalRevenue - totalInvestment - totalBatchExpenses;
-    
-    const currentStockValue = batch.finalizedAt ? 0 : (batch.items || []).reduce((acc, item) => acc + (item.costArs * item.currentStock), 0);
-
-    const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
-    const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
-
-    const createdDate = new Date(batch.createdAt);
-    const endDate = batch.finalizedAt ? new Date(batch.finalizedAt) : new Date(); 
-    const diffTime = Math.max(0, endDate - createdDate);
-    const daysActive = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
-    const dailyAvgItems = itemsSold / daysActive;
-    const totalInitStock = (batch.items || []).reduce((acc, i) => acc + i.initialStock, 0);
-    const progress = totalInitStock > 0 ? (itemsSold / totalInitStock) * 100 : 0;
-
-    const uniqueDateStrs = [...new Set(batchSales.map(s => {
-        const d = new Date(s.date);
-        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    }))].sort((a, b) => b.localeCompare(a));
-
-    let currentStreak = 0;
-    if (uniqueDateStrs.length > 0) {
-        const todayStr = getTodayDate();
-        const yesterdayStr = getPreviousDayStr(todayStr);
-        let checkDate = '';
-        if (uniqueDateStrs[0] === todayStr) { currentStreak = 1; checkDate = todayStr; } 
-        else if (uniqueDateStrs[0] === yesterdayStr) { currentStreak = 1; checkDate = yesterdayStr; }
-
-        if (currentStreak === 1) {
-            for (let i = 1; i < uniqueDateStrs.length; i++) {
-                const expectedStr = getPreviousDayStr(checkDate);
-                if (uniqueDateStrs[i] === expectedStr) { currentStreak++; checkDate = expectedStr; } 
-                else break;
-            }
-        }
-    }
-
-    return { 
-        batch, salesCount: batchSales.length, itemsSold, totalRevenue, totalInvestment, 
-        grossProfit, grossMargin, totalShippingProfit, totalBatchExpenses, netProfit, netMargin, cashBalance, 
-        progress, currentStockValue, sourceCounts, typeCounts, daysActive, dailyAvgItems, currentStreak 
-    };
-  }, [selectedBatchStats, sales, batches, expenses]);
-
   const handleLogin = (e) => { 
     e.preventDefault(); 
     const val = e.target.password.value; 
@@ -994,8 +1010,7 @@ export default function App() {
                 </div>
             </div>
 
-            {/* --- CONTENIDO POR PESTAÑA --- */}
-            
+            {/* --- PESTAÑA INICIO --- */}
             {activeTab === 'home' && (
                 <div className="space-y-6 animate-in fade-in duration-300">
                     <div className={`p-4 rounded-xl border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 ${darkMode ? 'bg-[#131824] border-zinc-800/80' : 'bg-white border-zinc-200'}`}>
@@ -1058,7 +1073,7 @@ export default function App() {
                             <h3 className="font-bold tracking-tight text-sm">Evolución de Ingresos</h3>
                         </div>
                         <div className="p-5">
-                            <SalesChart sales={globalAnalysis.filteredSales} globalMonth={globalMonth} darkMode={darkMode} />
+                            <SalesAreaChart sales={globalAnalysis.filteredSales} globalMonth={globalMonth} darkMode={darkMode} />
                         </div>
                     </Card>
 
@@ -1068,19 +1083,22 @@ export default function App() {
                               <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><Users size={18}/></div>
                               <h3 className="font-bold tracking-tight text-sm">Tráfico por Canales</h3>
                           </div>
-                          <div className="p-5 space-y-4">
-                            {Object.entries(globalAnalysis.sourceCounts).map(([source, count]) => (
-                              <div key={source} className="flex items-center justify-between">
-                                <span className="text-sm font-semibold w-24 truncate">{source}</span>
-                                <div className="flex-1 mx-4">
-                                  <div className={`h-2 rounded-full overflow-hidden ${darkMode ? 'bg-[#0a0c10]' : 'bg-zinc-100'}`}>
-                                      <div className="h-full bg-indigo-500 rounded-full" style={{width: `${(count/globalAnalysis.salesCount)*100}%`}}></div>
+                          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+                            <CustomPieChart data={globalAnalysis.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} />
+                            <div className="space-y-3">
+                              {globalAnalysis.pieSourceData.map((d, i) => {
+                                const colors = ['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b'];
+                                return (
+                                  <div key={d.name} className="flex justify-between items-center text-sm">
+                                    <div className="flex items-center gap-2">
+                                      <div className="w-3 h-3 rounded-full" style={{backgroundColor: colors[i % colors.length]}}></div>
+                                      <span className="font-medium">{d.name}</span>
+                                    </div>
+                                    <span className="font-bold text-zinc-500">{d.value}</span>
                                   </div>
-                                </div>
-                                <span className="font-bold text-sm w-8 text-right text-zinc-500">{count}</span>
-                              </div>
-                            ))}
-                            {Object.keys(globalAnalysis.sourceCounts).length === 0 && <div className="text-center text-sm opacity-50 py-4">Sin datos</div>}
+                                )
+                              })}
+                            </div>
                           </div>
                         </Card>
 
@@ -1089,15 +1107,17 @@ export default function App() {
                               <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><BarChart3 size={18}/></div>
                               <h3 className="font-bold tracking-tight text-sm">Segmentación B2B / B2C</h3>
                           </div>
-                          <div className="p-5 flex gap-4 items-center justify-center h-[160px]">
-                            <div className="text-center w-1/2">
-                              <div className="text-3xl font-black text-emerald-500 mb-2">{globalAnalysis.typeCounts.Final}</div>
-                              <div className={`text-xs font-bold text-zinc-500`}>Consumidor Final</div>
-                            </div>
-                            <div className={`h-16 w-[2px] rounded-full ${darkMode ? 'bg-zinc-800' : 'bg-zinc-200'}`}></div>
-                            <div className="text-center w-1/2">
-                              <div className="text-3xl font-black text-indigo-500 mb-2">{globalAnalysis.typeCounts.Revendedor}</div>
-                              <div className={`text-xs font-bold text-zinc-500`}>Revendedor</div>
+                          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+                            <CustomPieChart data={globalAnalysis.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} />
+                            <div className="space-y-3">
+                               <div className="flex justify-between items-center text-sm">
+                                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500"></div><span className="font-medium">Consumidor</span></div>
+                                  <span className="font-bold text-zinc-500">{globalAnalysis.typeCounts.Final}</span>
+                               </div>
+                               <div className="flex justify-between items-center text-sm">
+                                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-indigo-500"></div><span className="font-medium">Revendedor</span></div>
+                                  <span className="font-bold text-zinc-500">{globalAnalysis.typeCounts.Revendedor}</span>
+                               </div>
                             </div>
                           </div>
                         </Card>
@@ -1105,7 +1125,7 @@ export default function App() {
                 </div>
             )}
 
-            {/* --- PESTAÑA VENTAS (LAYOUT DIVIDIDO) --- */}
+            {/* --- PESTAÑA VENTAS --- */}
             {activeTab === 'sales' && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 animate-in fade-in duration-300">
                 
@@ -1148,23 +1168,47 @@ export default function App() {
                     </div>
                 </div>
 
-                {/* Columna Derecha: Historial */}
+                {/* Columna Derecha: Historial con Filtros */}
                 <div className="lg:col-span-8">
                   <Card darkMode={darkMode} className="h-full flex flex-col p-0 overflow-hidden border-zinc-200 dark:border-zinc-800">
-                    <div className={`p-4 border-b flex justify-between items-center ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-white border-zinc-200'}`}>
-                        <div>
-                            <h3 className="font-bold text-base">Libro de Ventas</h3>
+                    <div className={`p-4 border-b flex flex-col sm:flex-row justify-between gap-4 sm:items-center ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                        <h3 className="font-bold text-base flex-shrink-0">Libro de Ventas</h3>
+                        <div className="flex gap-2 w-full sm:w-auto">
+                            <div className="flex-1 sm:w-64">
+                                <Input 
+                                  darkMode={darkMode} 
+                                  type="search" 
+                                  placeholder="Buscar producto, lote o fecha..." 
+                                  value={salesSearch}
+                                  onChange={(e) => setSalesSearch(e.target.value)}
+                                />
+                            </div>
+                            <Button darkMode={darkMode} onClick={handleExportSales} variant="outline" className="h-10 px-3 flex-shrink-0" title="Exportar CSV"><Download size={16}/></Button>
                         </div>
-                        <Button darkMode={darkMode} onClick={handleExportSales} variant="outline" className="h-9 px-3"><Download size={14}/> Exportar CSV</Button>
                     </div>
+                    
                     <div className="overflow-x-auto flex-1 h-[700px] custom-scrollbar">
                       <table className="w-full text-left text-sm border-collapse">
                           <thead className={`sticky top-0 z-10 text-xs font-semibold ${darkMode ? 'bg-[#0f1115] text-zinc-400 border-b border-zinc-800 shadow-sm' : 'bg-zinc-50 text-zinc-500 border-b border-zinc-200 shadow-sm'}`}>
-                              <tr><th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Operación</th><th className="px-4 py-3 text-emerald-500">Neto (Ítem)</th><th className="px-4 py-3">Total Fac.</th><th className="px-4 py-3"></th></tr>
+                              <tr>
+                                <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors" onClick={() => toggleSort('date')}>
+                                  <div className="flex items-center gap-1">Fecha <ArrowUpDown size={12} className={salesSort.key === 'date' ? 'text-indigo-500' : 'opacity-30'}/></div>
+                                </th>
+                                <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors" onClick={() => toggleSort('productName')}>
+                                  <div className="flex items-center gap-1">Operación <ArrowUpDown size={12} className={salesSort.key === 'productName' ? 'text-indigo-500' : 'opacity-30'}/></div>
+                                </th>
+                                <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-emerald-500" onClick={() => toggleSort('profit')}>
+                                  <div className="flex items-center gap-1">Neto (Ítem) <ArrowUpDown size={12} className={salesSort.key === 'profit' ? 'text-indigo-500' : 'opacity-30'}/></div>
+                                </th>
+                                <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors" onClick={() => toggleSort('totalSaleRaw')}>
+                                  <div className="flex items-center gap-1">Total Fac. <ArrowUpDown size={12} className={salesSort.key === 'totalSaleRaw' ? 'text-indigo-500' : 'opacity-30'}/></div>
+                                </th>
+                                <th className="px-4 py-3"></th>
+                              </tr>
                           </thead>
                           <tbody className={`divide-y ${darkMode ? 'divide-zinc-800/80' : 'divide-zinc-100'}`}>
-                            {sales.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-sm font-medium opacity-50 italic">Aún no hay ventas registradas en el sistema.</td></tr>}
-                            {sales.map(s => {
+                            {processedSales.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-sm font-medium opacity-50 italic">No se encontraron ventas con esos filtros.</td></tr>}
+                            {processedSales.map(s => {
                               const itemProfit = s.totalSaleRaw - ((s.costArsAtSale || 0) * s.quantity);
                               return (
                                 <tr key={s.id} className={`transition-colors group ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-zinc-50'}`}>
@@ -1354,34 +1398,46 @@ export default function App() {
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <Card darkMode={darkMode}>
-                          <h3 className={`font-bold mb-5 flex items-center gap-2 text-sm ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}><Users size={18}/> Distribución de Canales</h3>
-                          <div className="space-y-4">
-                            {Object.entries(batchAnalysis.sourceCounts).map(([source, count]) => (
-                              <div key={source} className="flex items-center justify-between">
-                                <span className="text-sm font-semibold w-24 truncate">{source}</span>
-                                <div className="flex-1 mx-4">
-                                  <div className={`h-2 rounded-full overflow-hidden ${darkMode ? 'bg-[#0a0c10]' : 'bg-zinc-100'}`}>
-                                      <div className={`h-full rounded-full ${darkMode ? 'bg-indigo-500' : 'bg-indigo-600'}`} style={{width: `${(count/batchAnalysis.salesCount)*100}%`}}></div>
+                        <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                          <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                              <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><Users size={18}/></div>
+                              <h3 className="font-bold tracking-tight text-sm">Distribución de Canales</h3>
+                          </div>
+                          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+                            <CustomPieChart data={batchAnalysis.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} />
+                            <div className="space-y-3">
+                              {batchAnalysis.pieSourceData.map((d, i) => {
+                                const colors = ['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b'];
+                                return (
+                                  <div key={d.name} className="flex justify-between items-center text-sm">
+                                    <div className="flex items-center gap-2">
+                                      <div className="w-3 h-3 rounded-full" style={{backgroundColor: colors[i % colors.length]}}></div>
+                                      <span className="font-medium">{d.name}</span>
+                                    </div>
+                                    <span className="font-bold text-zinc-500">{d.value}</span>
                                   </div>
-                                </div>
-                                <span className="font-bold text-sm w-6 text-right text-zinc-500">{count}</span>
-                              </div>
-                            ))}
+                                )
+                              })}
+                            </div>
                           </div>
                         </Card>
 
-                        <Card darkMode={darkMode}>
-                          <h3 className={`font-bold mb-5 flex items-center gap-2 text-sm ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}><BarChart3 size={18}/> Perfil de Comprador</h3>
-                          <div className="flex gap-4 items-center justify-center h-[120px]">
-                            <div className="text-center w-1/2">
-                              <div className="text-3xl font-black text-emerald-500 mb-1">{batchAnalysis.typeCounts.Final}</div>
-                              <div className={`text-xs font-semibold ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Consumidor Final</div>
-                            </div>
-                            <div className={`h-16 w-[2px] rounded-full ${darkMode ? 'bg-zinc-800' : 'bg-zinc-200'}`}></div>
-                            <div className="text-center w-1/2">
-                              <div className="text-3xl font-black text-indigo-500 mb-1">{batchAnalysis.typeCounts.Revendedor}</div>
-                              <div className={`text-xs font-semibold ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Revendedor</div>
+                        <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                          <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                              <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><BarChart3 size={18}/></div>
+                              <h3 className="font-bold tracking-tight text-sm">Perfil de Comprador</h3>
+                          </div>
+                          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+                            <CustomPieChart data={batchAnalysis.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} />
+                            <div className="space-y-3">
+                               <div className="flex justify-between items-center text-sm">
+                                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500"></div><span className="font-medium">Consumidor</span></div>
+                                  <span className="font-bold text-zinc-500">{batchAnalysis.typeCounts.Final}</span>
+                               </div>
+                               <div className="flex justify-between items-center text-sm">
+                                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-indigo-500"></div><span className="font-medium">Revendedor</span></div>
+                                  <span className="font-bold text-zinc-500">{batchAnalysis.typeCounts.Revendedor}</span>
+                               </div>
                             </div>
                           </div>
                         </Card>
