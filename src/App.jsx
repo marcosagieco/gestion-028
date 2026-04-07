@@ -4,17 +4,14 @@ import {
   ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown
 } from 'lucide-react';
 
-// --- NUEVAS IMPORTACIONES DE RECHARTS ---
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
-// --- 1. IMPORTACIONES DE FIREBASE ---
 import { initializeApp } from "firebase/app";
 import {
   initializeFirestore, collection, addDoc, deleteDoc, doc, updateDoc, setDoc,
   onSnapshot, query, orderBy
 } from 'firebase/firestore';
 
-// --- 2. CONFIGURACIÓN DE FIREBASE ---
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -31,13 +28,6 @@ try {
 } catch (error) {
   console.error("Error inicializando Firebase:", error);
 }
-
-// --- UTILIDADES GLOBALES ---
-const formatMoney = (val) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(val);
-const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val);
-const formatPercent = (val) => new Intl.NumberFormat('es-AR', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(val / 100);
-
-// --- 3. COMPONENTES UI ---
 
 const Card = ({ children, className = '', darkMode }) => (
   <div className={`rounded-xl border shadow-sm transition-colors duration-200 ${
@@ -149,8 +139,6 @@ const getPreviousDayStr = (dateStr) => {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 };
 
-// --- NUEVOS COMPONENTES DE GRÁFICOS (RECHARTS) ---
-
 const CustomTooltip = ({ active, payload, label, darkMode }) => {
   if (active && payload && payload.length) {
     return (
@@ -158,7 +146,7 @@ const CustomTooltip = ({ active, payload, label, darkMode }) => {
         <p className="text-xs font-semibold mb-1 opacity-70">{label}</p>
         {payload.map((entry, index) => (
           <p key={index} className="text-sm font-bold" style={{ color: entry.color }}>
-            {entry.name}: {entry.name === 'Ingresos' ? formatMoney(entry.value) : `${entry.value} un.`}
+            {entry.name}: {entry.name === 'Ingresos' ? new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(entry.value) : `${entry.value} un.`}
           </p>
         ))}
       </div>
@@ -169,6 +157,7 @@ const CustomTooltip = ({ active, payload, label, darkMode }) => {
 
 const SalesAreaChart = ({ sales, globalMonth, darkMode }) => {
   const [metric, setMetric] = useState('revenue');
+  const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val);
 
   const chartData = useMemo(() => {
     const map = {};
@@ -298,8 +287,6 @@ const CustomPieChart = ({ data, colors, darkMode }) => {
   );
 }
 
-
-// --- APP PRINCIPAL ---
 export default function App() {
   const [user, setUser] = useState(() => localStorage.getItem('028_user') || null);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('028_dark_mode') === 'true');
@@ -334,9 +321,8 @@ export default function App() {
   const [selectedBatchStats, setSelectedBatchStats] = useState(null);
   const [hiddenSuggestions, setHiddenSuggestions] = useState({ products: [], variants: [] });
 
-  // ESTADOS PARA FILTROS DE VENTAS
   const [salesSearch, setSalesSearch] = useState('');
-  const [salesSort, setSalesSort] = useState({ key: 'date', direction: 'desc' });
+  const [salesSort, setSalesSort] = useState({ key: 'createdAt', direction: 'desc' });
 
   useEffect(() => {
     if (!user) return;
@@ -372,6 +358,9 @@ export default function App() {
         setLoading(false);
     }
   }, [user]);
+
+  const formatMoney = (val) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(val);
+  const formatPercent = (val) => new Intl.NumberFormat('es-AR', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(val / 100);
 
   const { uniqueProducts, uniqueVariants } = useMemo(() => {
       const prodsMap = new Map();
@@ -652,7 +641,6 @@ export default function App() {
     };
   }, [selectedBatchStats, sales, batches, expenses]);
 
-  // LÓGICA DE BÚSQUEDA Y ORDENAMIENTO EN TABLA DE VENTAS
   const processedSales = useMemo(() => {
     let result = [...sales];
 
@@ -672,6 +660,10 @@ export default function App() {
         case 'date':
           valA = new Date(a.date).getTime();
           valB = new Date(b.date).getTime();
+          break;
+        case 'createdAt':
+          valA = new Date(a.createdAt || a.date).getTime();
+          valB = new Date(b.createdAt || b.date).getTime();
           break;
         case 'productName':
           valA = a.productName.toLowerCase();
@@ -797,6 +789,7 @@ export default function App() {
     const saleDateObj = new Date(year, month - 1, day, new Date().getHours(), new Date().getMinutes());
 
     const saleData = {
+      createdAt: new Date().toISOString(),
       date: saleDateObj.toISOString(), batchId: batch.id, batchName: batch.name, itemId: item.id,
       productName: item.product, variant: item.variant, quantity: qty, unitPrice: enteredPrice, totalSaleRaw: totalCashIn,
       costArsAtSale: item.costArs, shippingCostArs: parseFloat(newSale.shippingCost || 0),
@@ -904,7 +897,6 @@ export default function App() {
       { id: 'analysis', icon: BarChart3, label: 'Análisis' }, 
       { id: 'expenses', icon: Wallet, label: 'Gastos' }
   ];
-
   return (
     <div className={`flex h-screen overflow-hidden font-sans transition-colors duration-300 ${darkMode ? 'bg-[#0B0F19] text-zinc-100' : 'bg-slate-50 text-zinc-900'}`}>
       
@@ -1125,7 +1117,7 @@ export default function App() {
                 </div>
             )}
 
-            {/* --- PESTAÑA VENTAS --- */}
+            {/* --- PESTAÑA VENTAS (CON BÚSQUEDA Y ORDENAMIENTO) --- */}
             {activeTab === 'sales' && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 animate-in fade-in duration-300">
                 
@@ -1191,8 +1183,8 @@ export default function App() {
                       <table className="w-full text-left text-sm border-collapse">
                           <thead className={`sticky top-0 z-10 text-xs font-semibold ${darkMode ? 'bg-[#0f1115] text-zinc-400 border-b border-zinc-800 shadow-sm' : 'bg-zinc-50 text-zinc-500 border-b border-zinc-200 shadow-sm'}`}>
                               <tr>
-                                <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors" onClick={() => toggleSort('date')}>
-                                  <div className="flex items-center gap-1">Fecha <ArrowUpDown size={12} className={salesSort.key === 'date' ? 'text-indigo-500' : 'opacity-30'}/></div>
+                                <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors" onClick={() => toggleSort('createdAt')}>
+                                  <div className="flex items-center gap-1">Registro <ArrowUpDown size={12} className={salesSort.key === 'createdAt' ? 'text-indigo-500' : 'opacity-30'}/></div>
                                 </th>
                                 <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors" onClick={() => toggleSort('productName')}>
                                   <div className="flex items-center gap-1">Operación <ArrowUpDown size={12} className={salesSort.key === 'productName' ? 'text-indigo-500' : 'opacity-30'}/></div>
@@ -1212,7 +1204,9 @@ export default function App() {
                               const itemProfit = s.totalSaleRaw - ((s.costArsAtSale || 0) * s.quantity);
                               return (
                                 <tr key={s.id} className={`transition-colors group ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-zinc-50'}`}>
-                                  <td className={`px-4 py-3 text-xs font-medium whitespace-nowrap ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{new Date(s.date).toLocaleDateString(undefined, {month:'short', day:'numeric'})}</td>
+                                  <td className={`px-4 py-3 text-xs font-medium whitespace-nowrap ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                                      {new Date(s.date).toLocaleDateString(undefined, {month:'short', day:'numeric'})}
+                                  </td>
                                   <td className="px-4 py-3">
                                       <div className="font-semibold text-sm">{s.quantity}x {s.productName} <span className="font-normal opacity-70 ml-1">{s.variant}</span></div>
                                       <div className={`text-xs font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Lote: {s.batchName}</div>
