@@ -729,7 +729,6 @@ export default function App() {
 
   // EL CEREBRO DE LA TABLA VENTAS PROTEGIDO
   const processedSales = useMemo(() => {
-    // Escudo #1: Ignoramos ventas vacías que hayan crasheado
     let result = [...sales].filter(s => s != null);
 
     if (salesSearch) {
@@ -744,7 +743,6 @@ export default function App() {
       });
     }
 
-    // Escudo #2: Ordenamiento con matemáticas protegidas
     result.sort((a, b) => {
       let valA, valB;
       
@@ -1314,16 +1312,16 @@ export default function App() {
                           <thead className={`sticky top-0 z-10 text-xs font-semibold ${darkMode ? 'bg-[#0f1115] text-zinc-400 border-b border-zinc-800 shadow-sm' : 'bg-zinc-50 text-zinc-500 border-b border-zinc-200 shadow-sm'}`}>
                               <tr>
                                 <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors" onClick={() => toggleSort('createdAt')}>
-                                  <div className="flex items-center gap-1">Registro <ArrowUpDown size={12} className={salesSort.key === 'createdAt' ? 'text-indigo-500' : 'opacity-30'}/></div>
+                                  <div className="flex items-center gap-1">Registro <span className="opacity-50">{salesSort.key === 'createdAt' ? (salesSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></div>
                                 </th>
                                 <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors" onClick={() => toggleSort('productName')}>
-                                  <div className="flex items-center gap-1">Operación <ArrowUpDown size={12} className={salesSort.key === 'productName' ? 'text-indigo-500' : 'opacity-30'}/></div>
+                                  <div className="flex items-center gap-1">Operación <span className="opacity-50">{salesSort.key === 'productName' ? (salesSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></div>
                                 </th>
                                 <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-emerald-500" onClick={() => toggleSort('profit')}>
-                                  <div className="flex items-center gap-1">Neto (Ítem) <ArrowUpDown size={12} className={salesSort.key === 'profit' ? 'text-indigo-500' : 'opacity-30'}/></div>
+                                  <div className="flex items-center gap-1">Neto (Ítem) <span className="opacity-50">{salesSort.key === 'profit' ? (salesSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></div>
                                 </th>
                                 <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors" onClick={() => toggleSort('totalSaleRaw')}>
-                                  <div className="flex items-center gap-1">Total Fac. <ArrowUpDown size={12} className={salesSort.key === 'totalSaleRaw' ? 'text-indigo-500' : 'opacity-30'}/></div>
+                                  <div className="flex items-center gap-1">Total Fac. <span className="opacity-50">{salesSort.key === 'totalSaleRaw' ? (salesSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></div>
                                 </th>
                                 <th className="px-4 py-3"></th>
                               </tr>
