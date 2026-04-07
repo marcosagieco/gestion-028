@@ -238,6 +238,8 @@ const CustomTooltip = ({ active, payload, label, darkMode }) => {
 
 const SalesAreaChart = ({ sales, globalMonth, darkMode }) => {
   const [metric, setMetric] = useState('revenue');
+  const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val);
+
   const chartData = useMemo(() => {
     const map = {};
     const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -402,14 +404,14 @@ export default function App() {
   const [selectedBatchStats, setSelectedBatchStats] = useState(null);
   const [hiddenSuggestions, setHiddenSuggestions] = useState({ products: [], variants: [] });
 
-  // ESTADOS PARA FILTROS DE VENTAS
   const [salesSearch, setSalesSearch] = useState('');
   const [salesSort, setSalesSort] = useState({ key: 'createdAt', direction: 'desc' });
 
-  // --- NUEVOS ESTADOS PARA VENTA SIMPLE MULTIPRODUCTO ---
+  // ESTADOS PARA VENTA SIMPLE MULTIPRODUCTO
   const [saleGeneral, setSaleGeneral] = useState({ saleDate: getTodayDate(), shippingCost: '', shippingPrice: '', source: 'Instagram', isReseller: 'No' });
   const [saleItems, setSaleItems] = useState([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
 
+  // Aquí está tu corrección aplicada usando `prev` para que no falle al elegir carpeta
   const updateSaleItem = (id, field, value) => {
     setSaleItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
   };
@@ -742,6 +744,7 @@ export default function App() {
     };
   }, [selectedBatchStats, sales, batches, expenses]);
 
+  // LÓGICA DE BÚSQUEDA Y ORDENAMIENTO (TABLA)
   const processedSales = useMemo(() => {
     let result = [...sales].filter(s => s != null);
 
@@ -793,6 +796,38 @@ export default function App() {
 
     return result;
   }, [sales, salesSearch, salesSort]);
+
+  // EL NUEVO AGRUPADOR: Une los productos que se vendieron en el mismo ticket
+  const groupedSales = useMemo(() => {
+    const map = {};
+    const result = [];
+    processedSales.forEach(s => {
+      const key = s.ticketId || s.id; // Usa ticketId si existe, sino usa el id suelto
+      if (!map[key]) {
+        map[key] = {
+          ticketId: key,
+          date: s.date,
+          createdAt: s.createdAt || s.date,
+          totalSaleRaw: 0,
+          totalProfit: 0,
+          items: [],
+          originalSales: []
+        };
+        result.push(map[key]); // Para mantener el orden de processedSales
+      }
+      map[key].items.push({
+        quantity: s.quantity,
+        productName: s.productName,
+        variant: s.variant,
+        batchName: s.batchName,
+        unitPrice: s.unitPrice
+      });
+      map[key].totalSaleRaw += (s.totalSaleRaw || 0);
+      map[key].totalProfit += ((s.totalSaleRaw || 0) - ((s.costArsAtSale || 0) * (s.quantity || 0)));
+      map[key].originalSales.push(s);
+    });
+    return result;
+  }, [processedSales]);
 
   const toggleSort = (key) => {
     setSalesSort(prev => ({
@@ -870,9 +905,9 @@ export default function App() {
     try { await updateDoc(doc(db, 'batches', batchId), { items: updatedItems }); showToast("Producto eliminado", 'success'); } catch (e) { showToast("Error al borrar: " + e.message, 'error'); }
   };
 
-  // --- NUEVA LÓGICA DE PROCESAMIENTO (MÚLTIPLES PRODUCTOS) ---
+  // NUEVA FUNCIÓN PARA GUARDAR MÚLTIPLES PRODUCTOS EN UN SOLO CLIC
   const handleAddSale = async () => {
-    // 1. Validaciones
+    // 1. Validar que todos los formcitos estén llenos
     for (let i = 0; i < saleItems.length; i++) {
         const item = saleItems[i];
         if (!item.batchId) return showToast(`Falta seleccionar la carpeta en el producto ${i + 1}.`, 'error');
@@ -882,8 +917,7 @@ export default function App() {
         if (qty < 1) return showToast(`La cantidad mínima es 1 en el producto ${i + 1}.`, 'error');
     }
 
-    // 2. Control de Stock Total 
-    // (Por si eligen 2 veces el mismo producto en distintas cajas y se quedan sin stock)
+    // 2. Comprobar que no intentes vender más stock del que tienes
     const stockNeeds = {};
     saleItems.forEach(si => {
         stockNeeds[si.itemId] = (stockNeeds[si.itemId] || 0) + (parseInt(si.quantity) || 1);
@@ -901,23 +935,23 @@ export default function App() {
         }
     }
 
-    // 3. Variables generales
+    // 3. Crear variables comunes a todo el ticket
     const shippingProfit = parseFloat(saleGeneral.shippingPrice || 0) - parseFloat(saleGeneral.shippingCost || 0);
     const [year, month, day] = saleGeneral.saleDate.split('-').map(Number);
     const saleDateObj = new Date(year, month - 1, day, new Date().getHours(), new Date().getMinutes());
     
     const createdAtStr = new Date().toISOString();
     const dateStr = saleDateObj.toISOString();
-    const ticketId = Date.now().toString(); // Agrupa todos estos ítems si a futuro quieres ver el "ticket" completo
+    const ticketId = Date.now().toString(); // La llave maestra que agrupa la venta
 
     let totalCashIn = 0;
     const batchUpdates = {};
 
     try {
-        // 4. Procesar y guardar cada producto
+        // 4. Guardar cada producto del ticket en Firebase
         for (let i = 0; i < saleItems.length; i++) {
             const si = saleItems[i];
-            const isFirstItem = i === 0; // Solo le cobramos el envío al primer producto para no duplicar datos
+            const isFirstItem = i === 0; // Solo cobramos el envío en el primero para no inflar la ganancia
             const qty = parseInt(si.quantity) || 1;
             const uPrice = parseFloat(si.unitPrice) || 0;
 
@@ -948,7 +982,7 @@ export default function App() {
 
             await addDoc(collection(db, 'sales'), saleData);
 
-            // Descontamos stock temporalmente en memoria
+            // Descontar stock (memoria temporal)
             if (!batchUpdates[batch.id]) {
                 batchUpdates[batch.id] = { items: [...batch.items], finalizedAt: batch.finalizedAt };
             }
@@ -959,7 +993,7 @@ export default function App() {
             }
         }
 
-        // 5. Guardar el nuevo stock en Firebase (una sola vez por carpeta)
+        // 5. Aplicar los descuentos de stock a Firebase
         for (const bId in batchUpdates) {
             const bData = batchUpdates[bId];
             const allZero = bData.items.every(x => x.currentStock <= 0);
@@ -968,9 +1002,9 @@ export default function App() {
             await updateDoc(doc(db, 'batches', bId), updates);
         }
 
-        showToast(`Venta registrada con éxito. Ingreso total: ${formatMoney(totalCashIn)}`, 'success');
+        showToast(`Pedido registrado. Ingreso total: ${formatMoney(totalCashIn)}`, 'success');
         
-        // 6. Resetear todo al estado original
+        // 6. Resetear el form
         setSaleGeneral({ ...saleGeneral, shippingCost: '', shippingPrice: '' });
         setSaleItems([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
 
@@ -979,23 +1013,25 @@ export default function App() {
     }
   };
 
-  const handleDeleteSale = async (sale) => {
-    if (!sale || !sale.id) return;
-    if (!window.confirm(`¿Anular venta de ${sale.productName}? El stock se devolverá.`)) return;
+  const handleDeleteTicket = async (group) => {
+    if (!window.confirm(`¿Anular pedido completo (${group.items.length} productos)? Se devolverá el stock.`)) return;
     try {
-      await deleteDoc(doc(db, 'sales', sale.id));
-      if (sale.batchId && sale.itemId) {
-        const batch = batches.find(b => b.id === sale.batchId);
-        if (batch) {
-          const itemIndex = batch.items.findIndex(i => i.id === sale.itemId);
-          if (itemIndex !== -1) {
-            const newItems = [...batch.items];
-            newItems[itemIndex].currentStock += sale.quantity;
-            await updateDoc(doc(db, 'batches', batch.id), { items: newItems });
+      // Elimina todos los productos que estaban dentro de ese ticketId
+      for (const sale of group.originalSales) {
+        await deleteDoc(doc(db, 'sales', sale.id));
+        if (sale.batchId && sale.itemId) {
+          const batch = batches.find(b => b.id === sale.batchId);
+          if (batch) {
+            const itemIndex = batch.items.findIndex(i => i.id === sale.itemId);
+            if (itemIndex !== -1) {
+              const newItems = [...batch.items];
+              newItems[itemIndex].currentStock += sale.quantity;
+              await updateDoc(doc(db, 'batches', batch.id), { items: newItems });
+            }
           }
         }
       }
-      showToast("Venta anulada correctamente", 'success');
+      showToast("Pedido anulado correctamente", 'success');
     } catch (e) { showToast('Error: ' + e.message, 'error'); }
   };
 
@@ -1286,13 +1322,13 @@ export default function App() {
                 </div>
             )}
 
-            {/* --- PESTAÑA VENTAS (SISTEMA DE VENTA MÚLTIPLE EN UNA PANTALLA) --- */}
+            {/* --- PESTAÑA VENTAS (NUEVA: FORMULARIO MULTIPRODUCTO Y TABLA AGRUPADA) --- */}
             {activeTab === 'sales' && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 animate-in fade-in duration-300">
                 
-                {/* Columna Izquierda: Formulario Multiproducto */}
+                {/* Columna Izquierda: Formulario Multiproducto con Scroll Interno */}
                 <div className="lg:col-span-4">
-                    <div className="sticky top-6 space-y-4">
+                    <div className="sticky top-6 space-y-4 max-h-[calc(100vh-80px)] overflow-y-auto custom-scrollbar pr-2 pb-4">
                         <Card darkMode={darkMode} className="p-5">
                             <h2 className="text-base font-bold mb-4 flex items-center gap-2"><ShoppingCart size={18} className="text-indigo-500"/> Registrar Ingreso</h2>
                             
@@ -1328,7 +1364,7 @@ export default function App() {
                                                     value={item.batchId} 
                                                     onChange={e => {
                                                         updateSaleItem(item.id, 'batchId', e.target.value);
-                                                        updateSaleItem(item.id, 'itemId', ''); // Reset item if batch changes
+                                                        updateSaleItem(item.id, 'itemId', ''); 
                                                     }} 
                                                     options={batches.map(b => ({
                                                         value: b.id, 
@@ -1389,13 +1425,13 @@ export default function App() {
                                 </div>
 
                                 {/* Botón Maestro para enviar TODO */}
-                                <Button darkMode={darkMode} onClick={handleAddSale} className="w-full mt-4 h-12 text-base">Procesar Venta</Button>
+                                <Button darkMode={darkMode} onClick={handleAddSale} className="w-full mt-4 h-12 text-base shadow-lg shadow-indigo-600/30">Procesar Venta</Button>
                             </div>
                         </Card>
                     </div>
                 </div>
 
-                {/* Columna Derecha: Historial con Filtros */}
+                {/* Columna Derecha: Historial Agrupado con Filtros */}
                 <div className="lg:col-span-8">
                   <Card darkMode={darkMode} className="h-full flex flex-col p-0 overflow-hidden border-zinc-200 dark:border-zinc-800">
                     <div className={`p-4 border-b flex flex-col sm:flex-row justify-between gap-4 sm:items-center ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-white border-zinc-200'}`}>
@@ -1425,7 +1461,7 @@ export default function App() {
                                   <div className="flex items-center gap-1">Operación <span className="opacity-50">{salesSort.key === 'productName' ? (salesSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></div>
                                 </th>
                                 <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-emerald-500" onClick={() => toggleSort('profit')}>
-                                  <div className="flex items-center gap-1">Neto (Ítem) <span className="opacity-50">{salesSort.key === 'profit' ? (salesSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></div>
+                                  <div className="flex items-center gap-1">Neto <span className="opacity-50">{salesSort.key === 'profit' ? (salesSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></div>
                                 </th>
                                 <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors" onClick={() => toggleSort('totalSaleRaw')}>
                                   <div className="flex items-center gap-1">Total Fac. <span className="opacity-50">{salesSort.key === 'totalSaleRaw' ? (salesSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></div>
@@ -1434,26 +1470,29 @@ export default function App() {
                               </tr>
                           </thead>
                           <tbody className={`divide-y ${darkMode ? 'divide-zinc-800/80' : 'divide-zinc-100'}`}>
-                            {processedSales.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-sm font-medium opacity-50 italic">No se encontraron ventas con esos filtros.</td></tr>}
-                            {processedSales.map(s => {
-                              const itemProfit = (s.totalSaleRaw || 0) - ((s.costArsAtSale || 0) * (s.quantity || 0));
-                              return (
-                                <tr key={s.id || Math.random()} className={`transition-colors group ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-zinc-50'}`}>
-                                  <td className={`px-4 py-3 text-xs font-medium whitespace-nowrap ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                                      {safeDateStr(s.date, {month:'short', day:'numeric'})}
+                            {groupedSales.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-sm font-medium opacity-50 italic">No se encontraron ventas con esos filtros.</td></tr>}
+                            {groupedSales.map(group => (
+                                <tr key={group.ticketId} className={`transition-colors group ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-zinc-50'}`}>
+                                  <td className={`px-4 py-3 text-xs font-medium whitespace-nowrap align-top pt-4 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                                      {safeDateStr(group.date, {month:'short', day:'numeric'})}
                                   </td>
                                   <td className="px-4 py-3">
-                                      <div className="font-semibold text-sm">{s.quantity || 0}x {s.productName || 'Sin nombre'} <span className="font-normal opacity-70 ml-1">{s.variant || ''}</span></div>
-                                      <div className={`text-xs font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Lote: {s.batchName || 'S/N'}</div>
+                                      <div className="flex flex-col gap-2">
+                                          {group.items.map((item, idx) => (
+                                              <div key={idx} className="flex flex-col">
+                                                  <div className="font-semibold text-sm">{item.quantity || 0}x {item.productName || 'Sin nombre'} <span className="font-normal opacity-70 ml-1">{item.variant || ''}</span></div>
+                                                  <div className={`text-[10px] font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Lote: {item.batchName || 'S/N'}</div>
+                                              </div>
+                                          ))}
+                                      </div>
                                   </td>
-                                  <td className="px-4 py-3 font-medium text-emerald-500 text-sm">{formatMoney(itemProfit)}</td>
-                                  <td className="px-4 py-3 font-bold font-mono tracking-tight">{formatMoney(s.totalSaleRaw || 0)}</td>
-                                  <td className="px-4 py-3 text-right">
-                                      <button onClick={() => handleDeleteSale(s)} className={`p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:bg-red-500/10 hover:text-red-400' : 'text-zinc-400 hover:bg-red-50 hover:text-red-600'}`}><Trash2 size={16} /></button>
+                                  <td className="px-4 py-3 font-medium text-emerald-500 text-sm align-top pt-4">{formatMoney(group.totalProfit)}</td>
+                                  <td className="px-4 py-3 font-bold font-mono tracking-tight align-top pt-4">{formatMoney(group.totalSaleRaw)}</td>
+                                  <td className="px-4 py-3 text-right align-top pt-3">
+                                      <button onClick={() => handleDeleteTicket(group)} className={`p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:bg-red-500/10 hover:text-red-400' : 'text-zinc-400 hover:bg-red-50 hover:text-red-600'}`}><Trash2 size={16} /></button>
                                   </td>
                                 </tr>
-                              )
-                            })}
+                            ))}
                           </tbody>
                       </table>
                     </div>
