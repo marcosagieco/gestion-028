@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package,
-  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown
+  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search
 } from 'lucide-react';
 
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -29,9 +29,9 @@ try {
   console.error("Error inicializando Firebase:", error);
 }
 
-const formatMoney = (val) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(val);
-const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val);
-const formatPercent = (val) => new Intl.NumberFormat('es-AR', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(val / 100);
+const formatMoney = (val) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(val || 0);
+const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val || 0);
+const formatPercent = (val) => new Intl.NumberFormat('es-AR', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format((val || 0) / 100);
 
 const Card = ({ children, className = '', darkMode }) => (
   <div className={`rounded-xl border shadow-sm transition-colors duration-200 ${
@@ -103,7 +103,7 @@ const Input = ({ label, symbol, darkMode, list, ...props }) => (
   </div>
 );
 
-const Select = ({ label, options, darkMode, ...props }) => (
+const Select = ({ label, options = [], darkMode, ...props }) => (
   <div className="flex flex-col gap-1.5 w-full">
     {label && <label className={`text-xs font-semibold ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>{label}</label>}
     <div className="relative">
@@ -117,8 +117,7 @@ const Select = ({ label, options, darkMode, ...props }) => (
   </div>
 );
 
-// --- COMPONENTE SELECT PERSONALIZADO (TARJETAS INDEPENDIENTES) ---
-const CustomSelect = ({ label, options, value, onChange, darkMode, placeholder = "-- Elegir --" }) => {
+const CustomSelect = ({ label, options = [], value, onChange, darkMode, placeholder = "-- Elegir --" }) => {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef(null);
 
@@ -205,7 +204,6 @@ const getPreviousDayStr = (dateStr) => {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 };
 
-// --- GRÁFICOS RECHARTS ---
 const CustomTooltip = ({ active, payload, label, darkMode }) => {
   if (active && payload && payload.length) {
     return (
@@ -213,7 +211,7 @@ const CustomTooltip = ({ active, payload, label, darkMode }) => {
         <p className="text-xs font-semibold mb-1 opacity-70">{label}</p>
         {payload.map((entry, index) => (
           <p key={index} className="text-sm font-bold" style={{ color: entry.color }}>
-            {entry.name}: {entry.name === 'Ingresos' ? formatMoney(entry.value) : `${entry.value} un.`}
+            {entry.name}: {entry.name === 'Ingresos' ? new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(entry.value) : `${entry.value} un.`}
           </p>
         ))}
       </div>
@@ -224,63 +222,99 @@ const CustomTooltip = ({ active, payload, label, darkMode }) => {
 
 const SalesAreaChart = ({ sales, globalMonth, darkMode }) => {
   const [metric, setMetric] = useState('revenue');
+  const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val);
+
   const chartData = useMemo(() => {
     const map = {};
     const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+
     const generateDays = (daysBack) => {
         const today = new Date();
         for (let i = daysBack - 1; i >= 0; i--) {
-            const d = new Date(today); d.setDate(d.getDate() - i);
-            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-            map[key] = { key, name: `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth()+1).padStart(2, '0')}`, Ingresos: 0, Unidades: 0 };
+            const d = new Date(today);
+            d.setDate(d.getDate() - i);
+            const yStr = d.getFullYear();
+            const mStr = String(d.getMonth() + 1).padStart(2, '0');
+            const dayStr = String(d.getDate()).padStart(2, '0');
+            const key = `${yStr}-${mStr}-${dayStr}`;
+            map[key] = { key, name: `${dayStr}/${mStr}`, fullLabel: `${dayStr} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0 };
         }
     };
+
     if (globalMonth === 'today') { generateDays(1); }
     else if (globalMonth === 'week') { generateDays(7); }
     else if (globalMonth === '15days') { generateDays(15); }
     else if (globalMonth === '30days') { generateDays(30); }
     else if (globalMonth !== 'all') {
-      const [y, m] = globalMonth.split('-').map(Number);
-      const days = new Date(y, m, 0).getDate();
-      for (let i = 1; i <= days; i++) {
-        const key = `${y}-${String(m).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
-        map[key] = { key, name: `${i}`, Ingresos: 0, Unidades: 0 };
+      const [yStr, mStr] = globalMonth.split('-');
+      const y = parseInt(yStr);
+      const m = parseInt(mStr);
+      const daysInMonth = new Date(y, m, 0).getDate();
+      for (let i = 1; i <= daysInMonth; i++) {
+        const dayStr = String(i).padStart(2, '0');
+        const key = `${yStr}-${mStr}-${dayStr}`;
+        map[key] = { key, name: `${dayStr}/${mStr}`, fullLabel: `${i} de ${monthNames[m - 1]}`, Ingresos: 0, Unidades: 0 };
       }
     } else {
-      if (!sales.length) return [];
-      const dates = sales.map(s => new Date(s.date));
-      const minDate = new Date(Math.min(...dates)); const maxDate = new Date(Math.max(...dates));
-      for (let d = new Date(minDate); d <= maxDate; d.setDate(d.getDate() + 1)) {
-        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        map[key] = { key, name: `${d.getDate()}/${d.getMonth()+1}`, Ingresos: 0, Unidades: 0 };
+      if (!sales || sales.length === 0) return [];
+      const dates = sales.map(s => s.date ? new Date(s.date) : new Date());
+      const minDate = new Date(Math.min(...dates));
+      const maxDate = new Date(Math.max(...dates));
+      for (let d = new Date(minDate.getFullYear(), minDate.getMonth(), minDate.getDate()); d <= maxDate; d.setDate(d.getDate() + 1)) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const key = `${y}-${m}-${day}`;
+        map[key] = { key, name: `${day}/${m}`, fullLabel: `${day} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0 };
       }
     }
+
     sales.forEach(s => {
+      if(!s.date) return;
       const d = new Date(s.date);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      if (map[key]) { map[key].Ingresos += s.totalSaleRaw; map[key].Unidades += s.quantity; }
+      if (map[key]) {
+        map[key].Ingresos += s.totalSaleRaw || 0;
+        map[key].Unidades += s.quantity || 0;
+      }
     });
+
     return Object.values(map).sort((a, b) => a.key.localeCompare(b.key));
   }, [sales, globalMonth]);
 
-  if (!chartData.length) return <div className="h-[300px] flex items-center justify-center opacity-50">No hay datos</div>;
+  if (chartData.length === 0) return <div className="h-[300px] flex items-center justify-center text-sm font-medium opacity-50">No hay transacciones en este periodo.</div>;
+
+  const themeColor = darkMode ? '#818cf8' : '#4f46e5'; 
+  const gridColor = darkMode ? '#27272a' : '#e4e4e7';
+  const textColor = darkMode ? '#71717a' : '#a1a1aa';
+
   return (
     <div className="w-full flex flex-col space-y-4">
-      <div className="flex justify-end p-1">
-          <div className={`flex rounded-lg border ${darkMode ? 'bg-[#0f1115] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
-              <button onClick={() => setMetric('revenue')} className={`px-4 py-1.5 text-xs font-semibold rounded-md ${metric === 'revenue' ? (darkMode ? 'bg-zinc-800 text-white' : 'bg-white shadow-sm') : 'text-zinc-500'}`}>Ingresos</button>
-              <button onClick={() => setMetric('quantity')} className={`px-4 py-1.5 text-xs font-semibold rounded-md ${metric === 'quantity' ? (darkMode ? 'bg-zinc-800 text-white' : 'bg-white shadow-sm') : 'text-zinc-500'}`}>Unidades</button>
+      <div className="flex justify-end mb-1">
+          <div className={`flex items-center p-1 rounded-lg border ${darkMode ? 'bg-[#0f1115] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+              <button onClick={() => setMetric('revenue')} className={`px-4 py-1.5 text-xs font-semibold rounded-md transition-all ${metric === 'revenue' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Ingresos</button>
+              <button onClick={() => setMetric('quantity')} className={`px-4 py-1.5 text-xs font-semibold rounded-md transition-all ${metric === 'quantity' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Unidades</button>
           </div>
       </div>
-      <div className="h-[300px]">
+      
+      <div className={`w-full h-[300px] p-2 rounded-xl border ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-white border-zinc-200'}`}>
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData}>
-            <defs><linearGradient id="color" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/><stop offset="95%" stopColor="#6366f1" stopOpacity={0}/></linearGradient></defs>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? "#27272a" : "#e4e4e7"} />
-            <XAxis dataKey="name" stroke="#888" fontSize={12} tickLine={false} axisLine={false} />
-            <YAxis stroke="#888" fontSize={12} tickLine={false} axisLine={false} tickFormatter={v => metric === 'revenue' ? formatCompact(v) : v} />
-            <RechartsTooltip content={<CustomTooltip darkMode={darkMode} />} />
-            <Area type="monotone" dataKey={metric === 'revenue' ? 'Ingresos' : 'Unidades'} stroke="#6366f1" fillOpacity={1} fill="url(#color)" />
+          <AreaChart data={chartData} margin={{ top: 20, right: 20, left: 0, bottom: 0 }}>
+            <defs>
+              <linearGradient id="colorMetric" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={themeColor} stopOpacity={0.3}/>
+                <stop offset="95%" stopColor={themeColor} stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridColor} />
+            <XAxis dataKey="name" stroke={textColor} fontSize={12} tickLine={false} axisLine={false} dy={10} minTickGap={30} />
+            <YAxis 
+              stroke={textColor} fontSize={12} tickLine={false} axisLine={false} 
+              tickFormatter={(value) => metric === 'revenue' ? formatCompact(value) : value} 
+              width={60}
+            />
+            <RechartsTooltip content={<CustomTooltip darkMode={darkMode} />} cursor={{ stroke: textColor, strokeWidth: 1, strokeDasharray: '3 3' }} />
+            <Area type="monotone" dataKey={metric === 'revenue' ? 'Ingresos' : 'Unidades'} stroke={themeColor} strokeWidth={3} fillOpacity={1} fill="url(#colorMetric)" activeDot={{ r: 6, strokeWidth: 0 }} />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -289,20 +323,35 @@ const SalesAreaChart = ({ sales, globalMonth, darkMode }) => {
 };
 
 const CustomPieChart = ({ data, colors, darkMode }) => {
-  if (!data.length) return <div className="h-[180px] flex items-center justify-center opacity-50 text-sm">Sin datos</div>;
+  if (!data || data.length === 0) return <div className="h-[160px] flex items-center justify-center text-sm font-medium opacity-50">Sin datos</div>;
+  
   return (
     <div className="h-[180px] w-full">
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
-          <Pie data={data} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value" stroke="none">
-            {data.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
+          <Pie
+            data={data}
+            cx="50%"
+            cy="50%"
+            innerRadius={60}
+            outerRadius={80}
+            paddingAngle={5}
+            dataKey="value"
+            stroke="none"
+          >
+            {data.map((entry, index) => (
+              <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />
+            ))}
           </Pie>
-          <RechartsTooltip contentStyle={{ borderRadius: '8px', border: 'none', backgroundColor: darkMode ? '#18181b' : '#fff' }} />
+          <RechartsTooltip 
+            contentStyle={{ backgroundColor: darkMode ? '#27272a' : '#fff', borderColor: darkMode ? '#3f3f46' : '#e4e4e7', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', color: darkMode ? '#fff' : '#000' }}
+            itemStyle={{ color: darkMode ? '#fff' : '#000' }}
+          />
         </PieChart>
       </ResponsiveContainer>
     </div>
   );
-};
+}
 // --- APP PRINCIPAL ---
 export default function App() {
   const [user, setUser] = useState(() => localStorage.getItem('028_user') || null);
@@ -406,9 +455,9 @@ export default function App() {
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     };
     const months = new Set();
-    sales.forEach(s => months.add(getLocalMonth(s.date)));
-    expenses.forEach(e => months.add(getLocalMonth(e.date)));
-    batches.forEach(b => months.add(getLocalMonth(b.createdAt)));
+    sales.forEach(s => { if(s.date) months.add(getLocalMonth(s.date)); });
+    expenses.forEach(e => { if(e.date) months.add(getLocalMonth(e.date)); });
+    batches.forEach(b => { if(b.createdAt) months.add(getLocalMonth(b.createdAt)); });
     const sortedMonths = Array.from(months).filter(Boolean).sort().reverse();
     
     return [
@@ -463,6 +512,7 @@ export default function App() {
       const { currentStart, prevStart, prevEnd } = getRanges(globalMonth);
 
       const isCurrentRange = (dateString) => {
+          if (!dateString) return false;
           if (globalMonth === 'all') return true;
           const d = new Date(dateString);
           if (globalMonth.includes('-')) { 
@@ -472,7 +522,7 @@ export default function App() {
       };
 
       const isPrevRange = (dateString) => {
-          if (globalMonth === 'all' || !prevStart) return false;
+          if (!dateString || globalMonth === 'all' || !prevStart) return false;
           const d = new Date(dateString);
           return d >= prevStart && d <= prevEnd;
       };
@@ -486,9 +536,9 @@ export default function App() {
       const typeCounts = { Revendedor: 0, Final: 0 };
 
       filteredSales.forEach(s => {
-          totalRevenue += s.totalSaleRaw;
-          itemsSold += s.quantity;
-          const saleShippingProfit = s.totalSaleRaw - (s.unitPrice * s.quantity);
+          totalRevenue += s.totalSaleRaw || 0;
+          itemsSold += s.quantity || 0;
+          const saleShippingProfit = (s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0));
           totalShippingProfit += saleShippingProfit;
           const src = s.source || 'Otro';
           sourceCounts[src] = (sourceCounts[src] || 0) + 1;
@@ -496,11 +546,11 @@ export default function App() {
       });
 
       const totalInvestment = filteredBatches.reduce((accBatch, batch) => {
-          return accBatch + (batch.items || []).reduce((accItem, item) => accItem + (item.costArs * item.initialStock), 0);
+          return accBatch + (batch.items || []).reduce((accItem, item) => accItem + ((item.costArs || 0) * (item.initialStock || 0)), 0);
       }, 0);
 
-      const totalGlobalExpenses = filteredExpenses.reduce((acc, e) => acc + e.amount, 0);
-      const costOfSoldFiltered = filteredSales.reduce((acc, s) => acc + (s.costArsAtSale * s.quantity), 0);
+      const totalGlobalExpenses = filteredExpenses.reduce((acc, e) => acc + (e.amount || 0), 0);
+      const costOfSoldFiltered = filteredSales.reduce((acc, s) => acc + ((s.costArsAtSale || 0) * (s.quantity || 0)), 0);
       
       const grossProfit = totalRevenue - costOfSoldFiltered;
       const netProfit = grossProfit - totalGlobalExpenses;
@@ -508,7 +558,7 @@ export default function App() {
       
       const currentStockValue = batches
           .filter(b => !b.finalizedAt)
-          .reduce((accBatch, batch) => accBatch + (batch.items || []).reduce((accItem, item) => accItem + (item.costArs * item.currentStock), 0), 0);
+          .reduce((accBatch, batch) => accBatch + (batch.items || []).reduce((accItem, item) => accItem + ((item.costArs || 0) * (item.currentStock || 0)), 0), 0);
 
       const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
       const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
@@ -520,18 +570,20 @@ export default function App() {
           const prevSales = sales.filter(s => isPrevRange(s.date));
           const prevExpenses = expenses.filter(e => isPrevRange(e.date));
           let pRev = 0, pCostSold = 0;
-          prevSales.forEach(s => { pRev += s.totalSaleRaw; pCostSold += (s.costArsAtSale * s.quantity); });
-          const pExp = prevExpenses.reduce((acc, e) => acc + e.amount, 0);
+          prevSales.forEach(s => { pRev += s.totalSaleRaw || 0; pCostSold += ((s.costArsAtSale || 0) * (s.quantity || 0)); });
+          const pExp = prevExpenses.reduce((acc, e) => acc + (e.amount || 0), 0);
           prevRevenue = pRev;
           prevNetProfit = (pRev - pCostSold) - pExp;
       }
 
       let daysActive = 0;
       if (globalMonth === 'all') {
-          if (batches.length > 0) {
+          if (batches.length > 0 && batches[0].createdAt) {
               const sortedBatches = [...batches].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
               const firstDate = new Date(sortedBatches[0].createdAt);
               daysActive = Math.ceil(Math.abs(now - firstDate) / (1000 * 60 * 60 * 24)) || 1;
+          } else {
+              daysActive = 1;
           }
       } else if (globalMonth === 'today') daysActive = 1;
       else if (globalMonth === 'week') daysActive = 7;
@@ -544,7 +596,7 @@ export default function App() {
       
       const dailyAvgItems = daysActive > 0 ? itemsSold / daysActive : 0;
 
-      const uniqueDateStrs = [...new Set(filteredSales.map(s => {
+      const uniqueDateStrs = [...new Set(filteredSales.filter(s => s.date).map(s => {
           const d = new Date(s.date);
           return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
       }))].sort((a, b) => b.localeCompare(a));
@@ -591,36 +643,36 @@ export default function App() {
     const sourceCounts = {}, typeCounts = { Revendedor: 0, Final: 0 };
 
     batchSales.forEach(s => {
-      totalRevenue += s.totalSaleRaw;
-      itemsSold += s.quantity;
-      const saleShippingProfit = s.totalSaleRaw - (s.unitPrice * s.quantity);
+      totalRevenue += s.totalSaleRaw || 0;
+      itemsSold += s.quantity || 0;
+      const saleShippingProfit = (s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0));
       totalShippingProfit += saleShippingProfit;
       const src = s.source || 'Otro';
       sourceCounts[src] = (sourceCounts[src] || 0) + 1;
       if (s.isReseller === 'Si' || s.isReseller === true) typeCounts.Revendedor++; else typeCounts.Final++;
     });
 
-    const totalInvestment = (batch.items || []).reduce((acc, i) => acc + (i.costArs * i.initialStock), 0);
-    const costOfSold = batchSales.reduce((acc, s) => acc + (s.costArsAtSale * s.quantity), 0);
+    const totalInvestment = (batch.items || []).reduce((acc, i) => acc + ((i.costArs || 0) * (i.initialStock || 0)), 0);
+    const costOfSold = batchSales.reduce((acc, s) => acc + ((s.costArsAtSale || 0) * (s.quantity || 0)), 0);
     const grossProfit = totalRevenue - costOfSold; 
-    const totalBatchExpenses = batchExpenses.reduce((acc, e) => acc + e.amount, 0);
+    const totalBatchExpenses = batchExpenses.reduce((acc, e) => acc + (e.amount || 0), 0);
     const netProfit = grossProfit - totalBatchExpenses;
     const cashBalance = totalRevenue - totalInvestment - totalBatchExpenses;
     
-    const currentStockValue = batch.finalizedAt ? 0 : (batch.items || []).reduce((acc, item) => acc + (item.costArs * item.currentStock), 0);
+    const currentStockValue = batch.finalizedAt ? 0 : (batch.items || []).reduce((acc, item) => acc + ((item.costArs || 0) * (item.currentStock || 0)), 0);
 
     const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
     const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
-    const createdDate = new Date(batch.createdAt);
+    const createdDate = batch.createdAt ? new Date(batch.createdAt) : new Date();
     const endDate = batch.finalizedAt ? new Date(batch.finalizedAt) : new Date(); 
     const diffTime = Math.max(0, endDate - createdDate);
     const daysActive = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
     const dailyAvgItems = itemsSold / daysActive;
-    const totalInitStock = (batch.items || []).reduce((acc, i) => acc + i.initialStock, 0);
+    const totalInitStock = (batch.items || []).reduce((acc, i) => acc + (i.initialStock || 0), 0);
     const progress = totalInitStock > 0 ? (itemsSold / totalInitStock) * 100 : 0;
 
-    const uniqueDateStrs = [...new Set(batchSales.map(s => {
+    const uniqueDateStrs = [...new Set(batchSales.filter(s => s.date).map(s => {
         const d = new Date(s.date);
         return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     }))].sort((a, b) => b.localeCompare(a));
@@ -656,15 +708,16 @@ export default function App() {
     };
   }, [selectedBatchStats, sales, batches, expenses]);
 
+  // LÓGICA DE BÚSQUEDA Y ORDENAMIENTO (CON NULL-CHECKERS DE SEGURIDAD)
   const processedSales = useMemo(() => {
     let result = [...sales];
 
     if (salesSearch) {
       const lowerQuery = salesSearch.toLowerCase();
       result = result.filter(s => 
-        s.productName?.toLowerCase().includes(lowerQuery) ||
-        s.batchName?.toLowerCase().includes(lowerQuery) ||
-        new Date(s.date).toLocaleDateString().includes(lowerQuery)
+        (s.productName || '').toLowerCase().includes(lowerQuery) ||
+        (s.batchName || '').toLowerCase().includes(lowerQuery) ||
+        (s.date ? new Date(s.date).toLocaleDateString() : '').includes(lowerQuery)
       );
     }
 
@@ -673,28 +726,28 @@ export default function App() {
       
       switch (salesSort.key) {
         case 'date':
-          valA = new Date(a.date).getTime();
-          valB = new Date(b.date).getTime();
+          valA = a.date ? new Date(a.date).getTime() : 0;
+          valB = b.date ? new Date(b.date).getTime() : 0;
           break;
         case 'createdAt':
-          valA = new Date(a.createdAt || a.date).getTime();
-          valB = new Date(b.createdAt || b.date).getTime();
+          valA = new Date(a.createdAt || a.date || 0).getTime();
+          valB = new Date(b.createdAt || b.date || 0).getTime();
           break;
         case 'productName':
-          valA = a.productName.toLowerCase();
-          valB = b.productName.toLowerCase();
+          valA = (a.productName || '').toLowerCase();
+          valB = (b.productName || '').toLowerCase();
           break;
         case 'profit':
-          valA = a.totalSaleRaw - ((a.costArsAtSale || 0) * a.quantity);
-          valB = b.totalSaleRaw - ((b.costArsAtSale || 0) * b.quantity);
+          valA = (a.totalSaleRaw || 0) - ((a.costArsAtSale || 0) * (a.quantity || 0));
+          valB = (b.totalSaleRaw || 0) - ((b.costArsAtSale || 0) * (b.quantity || 0));
           break;
         case 'totalSaleRaw':
-          valA = a.totalSaleRaw;
-          valB = b.totalSaleRaw;
+          valA = a.totalSaleRaw || 0;
+          valB = b.totalSaleRaw || 0;
           break;
         default:
-          valA = a[salesSort.key];
-          valB = b[salesSort.key];
+          valA = a[salesSort.key] || '';
+          valB = b[salesSort.key] || '';
       }
 
       if (valA < valB) return salesSort.direction === 'asc' ? -1 : 1;
@@ -710,6 +763,33 @@ export default function App() {
       key,
       direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
     }));
+  };
+
+  const handleExportSales = () => {
+      const headers = ['Fecha', 'Lote', 'Producto', 'Variante', 'Cantidad', 'Precio Unitario', 'Total Venta', 'Costo Unitario', 'Ganancia Envio', 'Origen', 'Revendedor'];
+      const rows = processedSales.map(s => [
+          s.date ? new Date(s.date).toLocaleDateString() : 'Sin Fecha', s.batchName || '', s.productName || '', s.variant || '', 
+          s.quantity || 0, s.unitPrice || 0, s.totalSaleRaw || 0, s.costArsAtSale || 0, 
+          ((s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0))), s.source || '', s.isReseller ? 'Si' : 'No'
+      ]);
+      exportToCSV('historial_ventas.csv', [headers, ...rows]);
+      showToast('Historial descargado con éxito', 'success');
+  };
+
+  const handleExportBatches = () => {
+      const headers = ['Lote', 'Fecha Creacion', 'Estado', 'Producto', 'Variante', 'Costo Unitario', 'Stock Inicial', 'Stock Actual'];
+      const rows = [];
+      batches.forEach(b => {
+          if (!b.items || b.items.length === 0) {
+              rows.push([b.name || '', b.createdAt ? new Date(b.createdAt).toLocaleDateString() : '', b.finalizedAt ? 'Finalizado' : 'Activo', '', '', '', '', '']);
+          } else {
+              b.items.forEach(i => {
+                  rows.push([b.name || '', b.createdAt ? new Date(b.createdAt).toLocaleDateString() : '', b.finalizedAt ? 'Finalizado' : 'Activo', i.product || '', i.variant || '', i.costArs || 0, i.initialStock || 0, i.currentStock || 0]);
+              });
+          }
+      });
+      exportToCSV('inventario_lotes.csv', [headers, ...rows]);
+      showToast('Inventario descargado', 'success');
   };
 
   const handleCreateBatch = async () => {
@@ -1107,7 +1187,7 @@ export default function App() {
                 </div>
             )}
 
-            {/* --- PESTAÑA VENTAS (CON COMPONENTE SELECT PERSONALIZADO) --- */}
+            {/* --- PESTAÑA VENTAS (CON COMPONENTE SELECT PERSONALIZADO Y FILTROS SEGUROS) --- */}
             {activeTab === 'sales' && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 animate-in fade-in duration-300">
                 
@@ -1128,10 +1208,10 @@ export default function App() {
                                         onChange={e => setNewSale({...newSale, batchId: e.target.value, itemId: ''})} 
                                         options={batches.map(b => ({
                                             value: b.id, 
-                                            label: b.name,
+                                            label: b.name || 'Sin nombre',
                                             renderDropdown: (
                                                 <div className="flex items-center justify-between w-full">
-                                                    <span className="font-semibold truncate">{b.name}</span>
+                                                    <span className="font-semibold truncate">{b.name || 'Sin nombre'}</span>
                                                     {b.finalizedAt && <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-zinc-500/20 text-zinc-500 ml-2">Archivado</span>}
                                                 </div>
                                             )
@@ -1147,14 +1227,14 @@ export default function App() {
                                               onChange={e => setNewSale({...newSale, itemId: e.target.value})} 
                                               options={(batches.find(b => b.id === newSale.batchId)?.items || []).map(item => ({
                                                   value: item.id, 
-                                                  label: `${item.product} - ${item.variant} (${item.currentStock})`, 
-                                                  disabled: item.currentStock <= 0,
+                                                  label: `${item.product || 'Desconocido'} - ${item.variant || ''} (${item.currentStock || 0})`, 
+                                                  disabled: (item.currentStock || 0) <= 0,
                                                   renderDropdown: (
                                                       <div className="flex flex-col w-full gap-1">
                                                           <div className="flex justify-between items-start">
-                                                              <span className={`font-bold truncate ${newSale.itemId === item.id ? 'text-indigo-500' : ''}`}>{item.product}</span>
-                                                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-md whitespace-nowrap ml-2 ${item.currentStock > 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
-                                                                  Disp: {item.currentStock}
+                                                              <span className={`font-bold truncate ${newSale.itemId === item.id ? 'text-indigo-500' : ''}`}>{item.product || 'Desconocido'}</span>
+                                                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-md whitespace-nowrap ml-2 ${(item.currentStock || 0) > 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
+                                                                  Disp: {item.currentStock || 0}
                                                               </span>
                                                           </div>
                                                           {item.variant && <span className="text-xs opacity-60">{item.variant}</span>}
@@ -1227,15 +1307,15 @@ export default function App() {
                           <tbody className={`divide-y ${darkMode ? 'divide-zinc-800/80' : 'divide-zinc-100'}`}>
                             {processedSales.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-sm font-medium opacity-50 italic">No se encontraron ventas con esos filtros.</td></tr>}
                             {processedSales.map(s => {
-                              const itemProfit = s.totalSaleRaw - ((s.costArsAtSale || 0) * s.quantity);
+                              const itemProfit = (s.totalSaleRaw || 0) - ((s.costArsAtSale || 0) * (s.quantity || 0));
                               return (
                                 <tr key={s.id} className={`transition-colors group ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-zinc-50'}`}>
                                   <td className={`px-4 py-3 text-xs font-medium whitespace-nowrap ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                                      {new Date(s.date).toLocaleDateString(undefined, {month:'short', day:'numeric'})}
+                                      {s.date ? new Date(s.date).toLocaleDateString(undefined, {month:'short', day:'numeric'}) : 'Sin fecha'}
                                   </td>
                                   <td className="px-4 py-3">
-                                      <div className="font-semibold text-sm">{s.quantity}x {s.productName} <span className="font-normal opacity-70 ml-1">{s.variant}</span></div>
-                                      <div className={`text-xs font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Lote: {s.batchName}</div>
+                                      <div className="font-semibold text-sm">{s.quantity || 0}x {s.productName || 'Sin nombre'} <span className="font-normal opacity-70 ml-1">{s.variant || ''}</span></div>
+                                      <div className={`text-xs font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Lote: {s.batchName || ''}</div>
                                   </td>
                                   <td className="px-4 py-3 font-medium text-emerald-500 text-sm">{formatMoney(itemProfit)}</td>
                                   <td className="px-4 py-3 font-bold font-mono tracking-tight">{formatMoney(s.totalSaleRaw)}</td>
@@ -1281,7 +1361,7 @@ export default function App() {
                                 <FolderOpen size={24} strokeWidth={2} />
                             </div>
                             <div>
-                                <h3 className={`font-bold text-base ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{b.name}</h3>
+                                <h3 className={`font-bold text-base ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{b.name || 'Sin nombre'}</h3>
                                 <div className="flex items-center gap-3 mt-1">
                                     <span className={`text-xs font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{(b.items || []).length} Ítems</span>
                                     <span className="text-zinc-300 dark:text-zinc-700">•</span>
@@ -1319,16 +1399,16 @@ export default function App() {
                               {(b.items || []).map((item, idx) => (
                                 <tr key={idx} className={`transition-colors group ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-white'}`}>
                                   <td className="px-5 py-3">
-                                      <div className="font-semibold text-sm">{item.product}</div>
-                                      <div className={`text-xs font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{item.variant}</div>
+                                      <div className="font-semibold text-sm">{item.product || 'Sin nombre'}</div>
+                                      <div className={`text-xs font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{item.variant || ''}</div>
                                   </td>
                                   <td className="px-5 py-3 font-mono font-medium text-sm text-zinc-500">{formatMoney(item.costArs)}</td>
                                   <td className="px-5 py-3">
                                       <div className="flex items-center gap-2">
                                           <div className={`h-2 w-16 rounded-full overflow-hidden ${darkMode ? 'bg-zinc-800' : 'bg-zinc-200'}`}>
-                                              <div className={`h-full rounded-full ${item.currentStock === 0 ? 'bg-red-500' : 'bg-emerald-500'}`} style={{width: `${(item.currentStock/item.initialStock)*100}%`}}></div>
+                                              <div className={`h-full rounded-full ${(item.currentStock || 0) === 0 ? 'bg-red-500' : 'bg-emerald-500'}`} style={{width: `${((item.currentStock || 0)/(item.initialStock || 1))*100}%`}}></div>
                                           </div>
-                                          <span className="font-bold text-xs">{item.currentStock} <span className="opacity-50 font-normal">/ {item.initialStock}</span></span>
+                                          <span className="font-bold text-xs">{item.currentStock || 0} <span className="opacity-50 font-normal">/ {item.initialStock || 0}</span></span>
                                       </div>
                                   </td>
                                   <td className="px-5 py-3 text-right">
@@ -1364,7 +1444,7 @@ export default function App() {
                                 darkMode={darkMode}
                                 onChange={(e) => setSelectedBatchStats(e.target.value)}
                                 value={selectedBatchStats || ''}
-                                options={[{value: '', label: '-- Selecciona un lote de la lista --'}, ...batches.map(b => ({value: b.id, label: `${b.name} ${b.finalizedAt ? '(Archivado)' : ''}`}))]}
+                                options={[{value: '', label: '-- Selecciona un lote de la lista --'}, ...batches.map(b => ({value: b.id, label: `${b.name || 'Sin nombre'} ${b.finalizedAt ? '(Archivado)' : ''}`}))]}
                             />
                         </div>
                     </div>
@@ -1492,7 +1572,7 @@ export default function App() {
                                     onChange={e => setNewExpense({...newExpense, batchId: e.target.value})}
                                     options={[
                                         { value: '', label: '-- Gasto General del Negocio --' },
-                                        ...batches.map(b => ({ value: b.id, label: b.name }))
+                                        ...batches.map(b => ({ value: b.id, label: b.name || 'Sin nombre' }))
                                     ]}
                                  />
                               </div>
@@ -1512,9 +1592,9 @@ export default function App() {
                             <div className="flex items-center gap-4">
                                 <div className={`p-2.5 rounded-lg ${darkMode ? 'bg-red-500/10 text-red-500' : 'bg-red-50 text-red-600'}`}><Wallet size={20}/></div>
                                 <div>
-                                    <div className="font-semibold text-sm">{e.description}</div>
+                                    <div className="font-semibold text-sm">{e.description || 'Sin descripción'}</div>
                                     <div className="flex items-center gap-2 mt-1">
-                                        <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{new Date(e.date).toLocaleDateString(undefined, {month:'long', day:'numeric'})}</span>
+                                        <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{e.date ? new Date(e.date).toLocaleDateString(undefined, {month:'long', day:'numeric'}) : 'Sin fecha'}</span>
                                         {e.batchName && (
                                             <>
                                                 <span className="text-zinc-300 dark:text-zinc-700">•</span>
