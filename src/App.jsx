@@ -387,9 +387,23 @@ export default function App() {
   const [selectedBatchStats, setSelectedBatchStats] = useState(null);
   const [hiddenSuggestions, setHiddenSuggestions] = useState({ products: [], variants: [] });
 
-  // ESTADOS PARA FILTROS DE VENTAS (Ordenado por Registro por defecto)
+  // ESTADOS PARA FILTROS DE VENTAS
   const [salesSearch, setSalesSearch] = useState('');
   const [salesSort, setSalesSort] = useState({ key: 'createdAt', direction: 'desc' });
+
+  // ESCUDOS PROTECTORES DE FECHAS
+  const safeDateStr = (dateStr, options) => {
+    if (!dateStr) return 'Sin fecha';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return 'Fecha inv.';
+    return d.toLocaleDateString(undefined, options);
+  };
+
+  const safeDateTime = (dateStr) => {
+    if (!dateStr) return 0;
+    const d = new Date(dateStr);
+    return isNaN(d.getTime()) ? 0 : d.getTime();
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -452,6 +466,7 @@ export default function App() {
     const getLocalMonth = (isoString) => {
       if (!isoString) return '';
       const d = new Date(isoString);
+      if (isNaN(d.getTime())) return '';
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     };
     const months = new Set();
@@ -515,6 +530,7 @@ export default function App() {
           if (!dateString) return false;
           if (globalMonth === 'all') return true;
           const d = new Date(dateString);
+          if (isNaN(d.getTime())) return false;
           if (globalMonth.includes('-')) { 
              return d.getFullYear() === currentStart.getFullYear() && d.getMonth() === currentStart.getMonth();
           }
@@ -524,6 +540,7 @@ export default function App() {
       const isPrevRange = (dateString) => {
           if (!dateString || globalMonth === 'all' || !prevStart) return false;
           const d = new Date(dateString);
+          if (isNaN(d.getTime())) return false;
           return d >= prevStart && d <= prevEnd;
       };
 
@@ -581,7 +598,9 @@ export default function App() {
           if (batches.length > 0 && batches[0].createdAt) {
               const sortedBatches = [...batches].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
               const firstDate = new Date(sortedBatches[0].createdAt);
-              daysActive = Math.ceil(Math.abs(now - firstDate) / (1000 * 60 * 60 * 24)) || 1;
+              if (!isNaN(firstDate.getTime())) {
+                daysActive = Math.ceil(Math.abs(now - firstDate) / (1000 * 60 * 60 * 24)) || 1;
+              } else { daysActive = 1; }
           } else {
               daysActive = 1;
           }
@@ -598,8 +617,8 @@ export default function App() {
 
       const uniqueDateStrs = [...new Set(filteredSales.filter(s => s.date).map(s => {
           const d = new Date(s.date);
-          return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-      }))].sort((a, b) => b.localeCompare(a));
+          return isNaN(d.getTime()) ? null : `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      }).filter(Boolean))].sort((a, b) => b.localeCompare(a));
 
       let currentStreak = 0;
       if (uniqueDateStrs.length > 0) {
@@ -666,16 +685,16 @@ export default function App() {
 
     const createdDate = batch.createdAt ? new Date(batch.createdAt) : new Date();
     const endDate = batch.finalizedAt ? new Date(batch.finalizedAt) : new Date(); 
-    const diffTime = Math.max(0, endDate - createdDate);
+    const diffTime = Math.max(0, isNaN(endDate.getTime()) || isNaN(createdDate.getTime()) ? 0 : endDate - createdDate);
     const daysActive = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
     const dailyAvgItems = itemsSold / daysActive;
     const totalInitStock = (batch.items || []).reduce((acc, i) => acc + (i.initialStock || 0), 0);
     const progress = totalInitStock > 0 ? (itemsSold / totalInitStock) * 100 : 0;
 
-    const uniqueDateStrs = [...new Set(batchSales.filter(s => s.date).map(s => {
+    const uniqueDateStrs = [...new Set(batchSales.filter(s=>s.date).map(s => {
         const d = new Date(s.date);
-        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    }))].sort((a, b) => b.localeCompare(a));
+        return isNaN(d.getTime()) ? null : `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    }).filter(Boolean))].sort((a, b) => b.localeCompare(a));
 
     let currentStreak = 0;
     if (uniqueDateStrs.length > 0) {
@@ -708,30 +727,35 @@ export default function App() {
     };
   }, [selectedBatchStats, sales, batches, expenses]);
 
-  // LÓGICA DE BÚSQUEDA Y ORDENAMIENTO (CON NULL-CHECKERS DE SEGURIDAD)
+  // EL CEREBRO DE LA TABLA VENTAS PROTEGIDO
   const processedSales = useMemo(() => {
-    let result = [...sales];
+    // Escudo #1: Ignoramos ventas vacías que hayan crasheado
+    let result = [...sales].filter(s => s != null);
 
     if (salesSearch) {
       const lowerQuery = salesSearch.toLowerCase();
-      result = result.filter(s => 
-        (s.productName || '').toLowerCase().includes(lowerQuery) ||
-        (s.batchName || '').toLowerCase().includes(lowerQuery) ||
-        (s.date ? new Date(s.date).toLocaleDateString() : '').includes(lowerQuery)
-      );
+      result = result.filter(s => {
+        const dateStrSafe = safeDateStr(s.date);
+        return (
+          (s.productName || '').toLowerCase().includes(lowerQuery) ||
+          (s.batchName || '').toLowerCase().includes(lowerQuery) ||
+          dateStrSafe.toLowerCase().includes(lowerQuery)
+        );
+      });
     }
 
+    // Escudo #2: Ordenamiento con matemáticas protegidas
     result.sort((a, b) => {
       let valA, valB;
       
       switch (salesSort.key) {
         case 'date':
-          valA = a.date ? new Date(a.date).getTime() : 0;
-          valB = b.date ? new Date(b.date).getTime() : 0;
+          valA = safeDateTime(a.date);
+          valB = safeDateTime(b.date);
           break;
         case 'createdAt':
-          valA = new Date(a.createdAt || a.date || 0).getTime();
-          valB = new Date(b.createdAt || b.date || 0).getTime();
+          valA = safeDateTime(a.createdAt || a.date);
+          valB = safeDateTime(b.createdAt || b.date);
           break;
         case 'productName':
           valA = (a.productName || '').toLowerCase();
@@ -768,7 +792,7 @@ export default function App() {
   const handleExportSales = () => {
       const headers = ['Fecha', 'Lote', 'Producto', 'Variante', 'Cantidad', 'Precio Unitario', 'Total Venta', 'Costo Unitario', 'Ganancia Envio', 'Origen', 'Revendedor'];
       const rows = processedSales.map(s => [
-          s.date ? new Date(s.date).toLocaleDateString() : 'Sin Fecha', s.batchName || '', s.productName || '', s.variant || '', 
+          safeDateStr(s.date), s.batchName || '', s.productName || '', s.variant || '', 
           s.quantity || 0, s.unitPrice || 0, s.totalSaleRaw || 0, s.costArsAtSale || 0, 
           ((s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0))), s.source || '', s.isReseller ? 'Si' : 'No'
       ]);
@@ -781,10 +805,10 @@ export default function App() {
       const rows = [];
       batches.forEach(b => {
           if (!b.items || b.items.length === 0) {
-              rows.push([b.name || '', b.createdAt ? new Date(b.createdAt).toLocaleDateString() : '', b.finalizedAt ? 'Finalizado' : 'Activo', '', '', '', '', '']);
+              rows.push([b.name || '', safeDateStr(b.createdAt), b.finalizedAt ? 'Finalizado' : 'Activo', '', '', '', '', '']);
           } else {
               b.items.forEach(i => {
-                  rows.push([b.name || '', b.createdAt ? new Date(b.createdAt).toLocaleDateString() : '', b.finalizedAt ? 'Finalizado' : 'Activo', i.product || '', i.variant || '', i.costArs || 0, i.initialStock || 0, i.currentStock || 0]);
+                  rows.push([b.name || '', safeDateStr(b.createdAt), b.finalizedAt ? 'Finalizado' : 'Activo', i.product || '', i.variant || '', i.costArs || 0, i.initialStock || 0, i.currentStock || 0]);
               });
           }
       });
@@ -1187,7 +1211,7 @@ export default function App() {
                 </div>
             )}
 
-            {/* --- PESTAÑA VENTAS (CON COMPONENTE SELECT PERSONALIZADO Y FILTROS SEGUROS) --- */}
+            {/* --- PESTAÑA VENTAS (CON BÚSQUEDA Y ORDENAMIENTO SEGUROS) --- */}
             {activeTab === 'sales' && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 animate-in fade-in duration-300">
                 
@@ -1309,16 +1333,16 @@ export default function App() {
                             {processedSales.map(s => {
                               const itemProfit = (s.totalSaleRaw || 0) - ((s.costArsAtSale || 0) * (s.quantity || 0));
                               return (
-                                <tr key={s.id} className={`transition-colors group ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-zinc-50'}`}>
+                                <tr key={s.id || Math.random()} className={`transition-colors group ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-zinc-50'}`}>
                                   <td className={`px-4 py-3 text-xs font-medium whitespace-nowrap ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                                      {s.date ? new Date(s.date).toLocaleDateString(undefined, {month:'short', day:'numeric'}) : 'Sin fecha'}
+                                      {safeDateStr(s.date, {month:'short', day:'numeric'})}
                                   </td>
                                   <td className="px-4 py-3">
                                       <div className="font-semibold text-sm">{s.quantity || 0}x {s.productName || 'Sin nombre'} <span className="font-normal opacity-70 ml-1">{s.variant || ''}</span></div>
-                                      <div className={`text-xs font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Lote: {s.batchName || ''}</div>
+                                      <div className={`text-xs font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Lote: {s.batchName || 'S/N'}</div>
                                   </td>
                                   <td className="px-4 py-3 font-medium text-emerald-500 text-sm">{formatMoney(itemProfit)}</td>
-                                  <td className="px-4 py-3 font-bold font-mono tracking-tight">{formatMoney(s.totalSaleRaw)}</td>
+                                  <td className="px-4 py-3 font-bold font-mono tracking-tight">{formatMoney(s.totalSaleRaw || 0)}</td>
                                   <td className="px-4 py-3 text-right">
                                       <button onClick={() => handleDeleteSale(s)} className={`p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:bg-red-500/10 hover:text-red-400' : 'text-zinc-400 hover:bg-red-50 hover:text-red-600'}`}><Trash2 size={16} /></button>
                                   </td>
@@ -1460,7 +1484,7 @@ export default function App() {
                                     {batchAnalysis.batch.finalizedAt ? "Archivado" : "Activo"}
                                 </span>
                             </h3>
-                            {batchAnalysis.batch.finalizedAt && <div className={`text-xs font-medium mt-2 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Se marcó como agotado el {new Date(batchAnalysis.batch.finalizedAt).toLocaleDateString()}</div>}
+                            {batchAnalysis.batch.finalizedAt && <div className={`text-xs font-medium mt-2 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Se marcó como agotado el {safeDateStr(batchAnalysis.batch.finalizedAt)}</div>}
                           </div>
 
                           {batchAnalysis.batch.finalizedAt ? (
@@ -1594,7 +1618,7 @@ export default function App() {
                                 <div>
                                     <div className="font-semibold text-sm">{e.description || 'Sin descripción'}</div>
                                     <div className="flex items-center gap-2 mt-1">
-                                        <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{e.date ? new Date(e.date).toLocaleDateString(undefined, {month:'long', day:'numeric'}) : 'Sin fecha'}</span>
+                                        <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{safeDateStr(e.date, {month:'long', day:'numeric'})}</span>
                                         {e.batchName && (
                                             <>
                                                 <span className="text-zinc-300 dark:text-zinc-700">•</span>
