@@ -411,13 +411,13 @@ export default function App() {
   const [saleItems, setSaleItems] = useState([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
 
   const updateSaleItem = (id, field, value) => {
-    setSaleItems(saleItems.map(item => item.id === id ? { ...item, [field]: value } : item));
+    setSaleItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
   };
   const addSaleItem = () => {
-    setSaleItems([...saleItems, { id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
+    setSaleItems(prev => [...prev, { id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
   };
   const removeSaleItem = (id) => {
-    setSaleItems(saleItems.filter(item => item.id !== id));
+    setSaleItems(prev => prev.filter(item => item.id !== id));
   };
 
   useEffect(() => {
