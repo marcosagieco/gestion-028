@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package,
-  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search
+  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown
 } from 'lucide-react';
 
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -29,10 +29,48 @@ try {
   console.error("Error inicializando Firebase:", error);
 }
 
+// --- UTILIDADES ---
 const formatMoney = (val) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(val || 0);
 const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val || 0);
 const formatPercent = (val) => new Intl.NumberFormat('es-AR', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format((val || 0) / 100);
 
+const safeDateStr = (dateStr, options) => {
+  if (!dateStr) return 'Sin fecha';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return 'Fecha inv.';
+  return d.toLocaleDateString(undefined, options);
+};
+
+const safeDateTime = (dateStr) => {
+  if (!dateStr) return 0;
+  const d = new Date(dateStr);
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+};
+
+const exportToCSV = (filename, rows) => {
+  const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.map(item => `"${String(item).replace(/"/g, '""')}"`).join(",")).join("\n");
+  const encodedUri = encodeURI(csvContent);
+  const link = document.createElement("a");
+  link.setAttribute("href", encodedUri);
+  link.setAttribute("download", filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
+
+const getTodayDate = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+};
+
+const getPreviousDayStr = (dateStr) => {
+  const [y, m, d] = dateStr.split('-');
+  const date = new Date(y, m - 1, d, 12, 0, 0);
+  date.setDate(date.getDate() - 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+};
+
+// --- COMPONENTES UI ---
 const Card = ({ children, className = '', darkMode }) => (
   <div className={`rounded-xl border shadow-sm transition-colors duration-200 ${
     darkMode ? 'bg-[#0f1115] border-zinc-800 text-zinc-100' : 'bg-white border-zinc-200 text-zinc-900'
@@ -117,6 +155,7 @@ const Select = ({ label, options = [], darkMode, ...props }) => (
   </div>
 );
 
+// --- COMPONENTE SELECT PERSONALIZADO (MÁS COMPACTO) ---
 const CustomSelect = ({ label, options = [], value, onChange, darkMode, placeholder = "-- Elegir --" }) => {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef(null);
@@ -148,13 +187,13 @@ const CustomSelect = ({ label, options = [], value, onChange, darkMode, placehol
       </div>
 
       {isOpen && (
-        <div className={`absolute top-[100%] mt-2 z-50 w-full max-h-72 overflow-y-auto rounded-xl shadow-2xl custom-scrollbar animate-in fade-in slide-in-from-top-2 p-2 
+        <div className={`absolute top-[100%] mt-1 z-50 w-full max-h-64 overflow-y-auto rounded-lg shadow-xl custom-scrollbar animate-in fade-in slide-in-from-top-1 p-1.5 
           ${darkMode ? 'bg-[#0f1115] border border-zinc-800' : 'bg-zinc-100 border border-zinc-300'}`}
         >
           {options.length === 0 ? (
-            <div className={`p-4 text-sm text-center font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>No hay opciones disponibles</div>
+            <div className={`p-3 text-xs text-center font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>No hay opciones disponibles</div>
           ) : (
-            <div className="flex flex-col gap-2"> 
+            <div className="flex flex-col gap-1"> 
               {options.map((opt, idx) => (
                 <div
                   key={idx}
@@ -164,7 +203,7 @@ const CustomSelect = ({ label, options = [], value, onChange, darkMode, placehol
                       setIsOpen(false);
                     }
                   }}
-                  className={`px-3 py-3 rounded-xl text-sm transition-all duration-200 border shadow-sm
+                  className={`px-2.5 py-1.5 rounded-md text-sm transition-all duration-200 border shadow-sm
                     ${opt.disabled 
                       ? (darkMode ? 'opacity-40 cursor-not-allowed bg-[#131824] border-zinc-800/50' : 'opacity-50 cursor-not-allowed bg-white border-zinc-200/50') 
                       : (darkMode ? 'cursor-pointer bg-[#131824] border-zinc-700 hover:border-indigo-500/50 hover:bg-[#1c2235]' : 'cursor-pointer bg-white border-zinc-200 hover:border-indigo-400/50 hover:bg-indigo-50')}
@@ -181,29 +220,7 @@ const CustomSelect = ({ label, options = [], value, onChange, darkMode, placehol
   );
 };
 
-const exportToCSV = (filename, rows) => {
-  const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.map(item => `"${String(item).replace(/"/g, '""')}"`).join(",")).join("\n");
-  const encodedUri = encodeURI(csvContent);
-  const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
-  link.setAttribute("download", filename);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-};
-
-const getTodayDate = () => {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-};
-
-const getPreviousDayStr = (dateStr) => {
-  const [y, m, d] = dateStr.split('-');
-  const date = new Date(y, m - 1, d, 12, 0, 0);
-  date.setDate(date.getDate() - 1);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-};
-
+// --- GRÁFICOS RECHARTS ---
 const CustomTooltip = ({ active, payload, label, darkMode }) => {
   if (active && payload && payload.length) {
     return (
@@ -222,8 +239,7 @@ const CustomTooltip = ({ active, payload, label, darkMode }) => {
 
 const SalesAreaChart = ({ sales, globalMonth, darkMode }) => {
   const [metric, setMetric] = useState('revenue');
-  const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val);
-
+  
   const chartData = useMemo(() => {
     const map = {};
     const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -258,8 +274,9 @@ const SalesAreaChart = ({ sales, globalMonth, darkMode }) => {
     } else {
       if (!sales || sales.length === 0) return [];
       const dates = sales.map(s => s.date ? new Date(s.date) : new Date());
-      const minDate = new Date(Math.min(...dates));
-      const maxDate = new Date(Math.max(...dates));
+      const minDate = new Date(Math.min(...dates.map(d => isNaN(d.getTime()) ? new Date().getTime() : d.getTime())));
+      const maxDate = new Date(Math.max(...dates.map(d => isNaN(d.getTime()) ? new Date().getTime() : d.getTime())));
+      
       for (let d = new Date(minDate.getFullYear(), minDate.getMonth(), minDate.getDate()); d <= maxDate; d.setDate(d.getDate() + 1)) {
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -272,6 +289,7 @@ const SalesAreaChart = ({ sales, globalMonth, darkMode }) => {
     sales.forEach(s => {
       if(!s.date) return;
       const d = new Date(s.date);
+      if(isNaN(d.getTime())) return;
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       if (map[key]) {
         map[key].Ingresos += s.totalSaleRaw || 0;
@@ -387,23 +405,8 @@ export default function App() {
   const [selectedBatchStats, setSelectedBatchStats] = useState(null);
   const [hiddenSuggestions, setHiddenSuggestions] = useState({ products: [], variants: [] });
 
-  // ESTADOS PARA FILTROS DE VENTAS
   const [salesSearch, setSalesSearch] = useState('');
   const [salesSort, setSalesSort] = useState({ key: 'createdAt', direction: 'desc' });
-
-  // ESCUDOS PROTECTORES DE FECHAS
-  const safeDateStr = (dateStr, options) => {
-    if (!dateStr) return 'Sin fecha';
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return 'Fecha inv.';
-    return d.toLocaleDateString(undefined, options);
-  };
-
-  const safeDateTime = (dateStr) => {
-    if (!dateStr) return 0;
-    const d = new Date(dateStr);
-    return isNaN(d.getTime()) ? 0 : d.getTime();
-  };
 
   useEffect(() => {
     if (!user) return;
@@ -727,7 +730,6 @@ export default function App() {
     };
   }, [selectedBatchStats, sales, batches, expenses]);
 
-  // EL CEREBRO DE LA TABLA VENTAS PROTEGIDO
   const processedSales = useMemo(() => {
     let result = [...sales].filter(s => s != null);
 
@@ -1233,8 +1235,8 @@ export default function App() {
                                             label: b.name || 'Sin nombre',
                                             renderDropdown: (
                                                 <div className="flex items-center justify-between w-full">
-                                                    <span className="font-semibold truncate">{b.name || 'Sin nombre'}</span>
-                                                    {b.finalizedAt && <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-zinc-500/20 text-zinc-500 ml-2">Archivado</span>}
+                                                    <span className="font-medium text-xs truncate">{b.name || 'Sin nombre'}</span>
+                                                    {b.finalizedAt && <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded bg-zinc-500/20 text-zinc-500 ml-2">Archivado</span>}
                                                 </div>
                                             )
                                         }))} 
@@ -1252,14 +1254,14 @@ export default function App() {
                                                   label: `${item.product || 'Desconocido'} - ${item.variant || ''} (${item.currentStock || 0})`, 
                                                   disabled: (item.currentStock || 0) <= 0,
                                                   renderDropdown: (
-                                                      <div className="flex flex-col w-full gap-1">
-                                                          <div className="flex justify-between items-start">
-                                                              <span className={`font-bold truncate ${newSale.itemId === item.id ? 'text-indigo-500' : ''}`}>{item.product || 'Desconocido'}</span>
-                                                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-md whitespace-nowrap ml-2 ${(item.currentStock || 0) > 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
+                                                      <div className="flex flex-col w-full gap-0.5">
+                                                          <div className="flex justify-between items-center">
+                                                              <span className={`font-semibold text-xs truncate ${newSale.itemId === item.id ? 'text-indigo-400' : ''}`}>{item.product || 'Desconocido'}</span>
+                                                              <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase whitespace-nowrap ml-2 ${(item.currentStock || 0) > 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
                                                                   Disp: {item.currentStock || 0}
                                                               </span>
                                                           </div>
-                                                          {item.variant && <span className="text-xs opacity-60">{item.variant}</span>}
+                                                          {item.variant && <span className="text-[10px] opacity-60 leading-tight">{item.variant}</span>}
                                                       </div>
                                                   )
                                               }))} 
