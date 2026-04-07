@@ -402,14 +402,23 @@ export default function App() {
   const [selectedBatchStats, setSelectedBatchStats] = useState(null);
   const [hiddenSuggestions, setHiddenSuggestions] = useState({ products: [], variants: [] });
 
-  // --- NUEVOS ESTADOS PARA EL SISTEMA DE CARRITO (TICKET MULTIPRODUCTO) ---
-  const [cart, setCart] = useState([]);
-  const [saleGeneral, setSaleGeneral] = useState({ saleDate: getTodayDate(), shippingCost: '', shippingPrice: '', source: 'Instagram', isReseller: 'No' });
-  const [cartInput, setCartInput] = useState({ batchId: '', itemId: '', quantity: 1, unitPrice: '' });
-
   // ESTADOS PARA FILTROS DE VENTAS
   const [salesSearch, setSalesSearch] = useState('');
   const [salesSort, setSalesSort] = useState({ key: 'createdAt', direction: 'desc' });
+
+  // --- NUEVOS ESTADOS PARA VENTA SIMPLE MULTIPRODUCTO ---
+  const [saleGeneral, setSaleGeneral] = useState({ saleDate: getTodayDate(), shippingCost: '', shippingPrice: '', source: 'Instagram', isReseller: 'No' });
+  const [saleItems, setSaleItems] = useState([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
+
+  const updateSaleItem = (id, field, value) => {
+    setSaleItems(saleItems.map(item => item.id === id ? { ...item, [field]: value } : item));
+  };
+  const addSaleItem = () => {
+    setSaleItems([...saleItems, { id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
+  };
+  const removeSaleItem = (id) => {
+    setSaleItems(saleItems.filter(item => item.id !== id));
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -733,7 +742,6 @@ export default function App() {
     };
   }, [selectedBatchStats, sales, batches, expenses]);
 
-  // LÓGICA DE BÚSQUEDA Y ORDENAMIENTO (TABLA)
   const processedSales = useMemo(() => {
     let result = [...sales].filter(s => s != null);
 
@@ -820,123 +828,6 @@ export default function App() {
       showToast('Inventario descargado', 'success');
   };
 
-  // --- LÓGICA DEL CARRITO MULTIPRODUCTO ---
-
-  const handleAddToCart = () => {
-    if (!cartInput.batchId) return showToast("Selecciona una Carpeta de origen.", 'error');
-    if (!cartInput.itemId) return showToast("Selecciona un Producto.", 'error');
-    if (!cartInput.unitPrice) return showToast("Ingresa el Precio unitario.", 'error');
-
-    const batch = batches.find(b => b.id === cartInput.batchId);
-    if (!batch) return;
-    const item = batch.items.find(i => i.id === cartInput.itemId);
-    if (!item) return;
-
-    const qty = parseInt(cartInput.quantity) || 1;
-    if (qty < 1) return showToast("La cantidad mínima es 1.", 'error');
-
-    // Verificamos que el total en el carrito + lo que intenta sumar no supere el stock
-    const alreadyInCart = cart.filter(c => c.itemId === item.id).reduce((acc, c) => acc + c.quantity, 0);
-    if (item.currentStock < (qty + alreadyInCart)) return showToast(`Stock insuficiente. Disponibles: ${item.currentStock - alreadyInCart}.`, 'error');
-
-    setCart([...cart, {
-      batchId: batch.id,
-      batchName: batch.name,
-      itemId: item.id,
-      productName: item.product,
-      variant: item.variant,
-      costArs: item.costArs,
-      quantity: qty,
-      unitPrice: parseFloat(cartInput.unitPrice)
-    }]);
-
-    // Reseteamos solo la parte del producto para cargar el siguiente rápido
-    setCartInput({ ...cartInput, itemId: '', quantity: 1, unitPrice: '' });
-  };
-
-  const handleProcessSale = async () => {
-    if (cart.length === 0) return showToast("El carrito está vacío.", "error");
-
-    const shippingProfit = parseFloat(saleGeneral.shippingPrice || 0) - parseFloat(saleGeneral.shippingCost || 0);
-    const [year, month, day] = saleGeneral.saleDate.split('-').map(Number);
-    const saleDateObj = new Date(year, month - 1, day, new Date().getHours(), new Date().getMinutes());
-    const createdAtStr = new Date().toISOString();
-    const dateStr = saleDateObj.toISOString();
-    
-    // Un ticket ID que agrupa todas las ventas si a futuro lo necesitas
-    const ticketId = Date.now().toString(); 
-
-    let totalCashIn = 0;
-
-    try {
-      // Agrupamos las actualizaciones de las carpetas para no saturar la base de datos
-      const batchUpdates = {};
-
-      for (let i = 0; i < cart.length; i++) {
-        const cartItem = cart[i];
-        const isFirstItem = i === 0;
-        
-        // Sumamos la ganancia del envío SOLO al primer producto para no duplicar plata
-        const itemShippingProfit = isFirstItem ? shippingProfit : 0;
-        const itemTotalRaw = (cartItem.unitPrice * cartItem.quantity) + itemShippingProfit;
-        totalCashIn += itemTotalRaw;
-
-        const saleData = {
-          ticketId,
-          createdAt: createdAtStr,
-          date: dateStr,
-          batchId: cartItem.batchId,
-          batchName: cartItem.batchName,
-          itemId: cartItem.itemId,
-          productName: cartItem.productName,
-          variant: cartItem.variant,
-          quantity: cartItem.quantity,
-          unitPrice: cartItem.unitPrice,
-          totalSaleRaw: itemTotalRaw,
-          costArsAtSale: cartItem.costArs,
-          shippingCostArs: isFirstItem ? parseFloat(saleGeneral.shippingCost || 0) : 0,
-          source: saleGeneral.source,
-          isReseller: saleGeneral.isReseller === 'Si'
-        };
-
-        // Guardamos la venta individual
-        await addDoc(collection(db, 'sales'), saleData);
-
-        // Preparamos el descuento de stock
-        if (!batchUpdates[cartItem.batchId]) {
-          const originalBatch = batches.find(b => b.id === cartItem.batchId);
-          batchUpdates[cartItem.batchId] = { items: [...originalBatch.items], finalizedAt: originalBatch.finalizedAt, name: originalBatch.name };
-        }
-        
-        const bUpdate = batchUpdates[cartItem.batchId];
-        const itemIdx = bUpdate.items.findIndex(x => x.id === cartItem.itemId);
-        if (itemIdx !== -1) {
-          bUpdate.items[itemIdx].currentStock -= cartItem.quantity;
-        }
-      }
-
-      // Aplicamos todos los descuentos de stock a las carpetas correspondientes
-      for (const bId in batchUpdates) {
-         const bData = batchUpdates[bId];
-         const allZero = bData.items.every(x => x.currentStock <= 0);
-         const updates = { items: bData.items };
-         if (allZero && !bData.finalizedAt) updates.finalizedAt = new Date().toISOString();
-         await updateDoc(doc(db, 'batches', bId), updates);
-      }
-
-      showToast(`Pedido registrado con éxito. Ingreso: ${formatMoney(totalCashIn)}`, 'success');
-      
-      // Limpiamos todo el carrito
-      setCart([]);
-      setSaleGeneral({ ...saleGeneral, shippingCost: '', shippingPrice: '' }); 
-      setCartInput({ batchId: '', itemId: '', quantity: 1, unitPrice: '' });
-
-    } catch (e) {
-      showToast('Error: ' + e.message, 'error');
-    }
-  };
-
-  // --- RESTO DE FUNCIONES ---
   const handleCreateBatch = async () => {
     if (!newBatchName) return showToast("Debes ingresar un nombre para el lote", 'error');
     try { await addDoc(collection(db, 'batches'), { name: newBatchName, createdAt: new Date().toISOString(), items: [] }); setNewBatchName(''); showToast("Lote creado correctamente", 'success'); } catch (e) { showToast("Error: " + e.message, 'error'); }
@@ -977,6 +868,115 @@ export default function App() {
     if (!batch) return;
     const updatedItems = batch.items.filter(i => i.id !== itemId);
     try { await updateDoc(doc(db, 'batches', batchId), { items: updatedItems }); showToast("Producto eliminado", 'success'); } catch (e) { showToast("Error al borrar: " + e.message, 'error'); }
+  };
+
+  // --- NUEVA LÓGICA DE PROCESAMIENTO (MÚLTIPLES PRODUCTOS) ---
+  const handleAddSale = async () => {
+    // 1. Validaciones
+    for (let i = 0; i < saleItems.length; i++) {
+        const item = saleItems[i];
+        if (!item.batchId) return showToast(`Falta seleccionar la carpeta en el producto ${i + 1}.`, 'error');
+        if (!item.itemId) return showToast(`Falta seleccionar el artículo en el producto ${i + 1}.`, 'error');
+        if (!item.unitPrice) return showToast(`Ingresa el precio del producto ${i + 1}.`, 'error');
+        const qty = parseInt(item.quantity) || 1;
+        if (qty < 1) return showToast(`La cantidad mínima es 1 en el producto ${i + 1}.`, 'error');
+    }
+
+    // 2. Control de Stock Total 
+    // (Por si eligen 2 veces el mismo producto en distintas cajas y se quedan sin stock)
+    const stockNeeds = {};
+    saleItems.forEach(si => {
+        stockNeeds[si.itemId] = (stockNeeds[si.itemId] || 0) + (parseInt(si.quantity) || 1);
+    });
+
+    for (const itemId in stockNeeds) {
+        let foundItem = null;
+        batches.forEach(b => {
+            const it = b.items?.find(i => i.id === itemId);
+            if (it) foundItem = it;
+        });
+        if (!foundItem) return showToast("Producto no encontrado.", "error");
+        if (foundItem.currentStock < stockNeeds[itemId]) {
+            return showToast(`Stock insuficiente de ${foundItem.product}. Disponibles: ${foundItem.currentStock}.`, 'error');
+        }
+    }
+
+    // 3. Variables generales
+    const shippingProfit = parseFloat(saleGeneral.shippingPrice || 0) - parseFloat(saleGeneral.shippingCost || 0);
+    const [year, month, day] = saleGeneral.saleDate.split('-').map(Number);
+    const saleDateObj = new Date(year, month - 1, day, new Date().getHours(), new Date().getMinutes());
+    
+    const createdAtStr = new Date().toISOString();
+    const dateStr = saleDateObj.toISOString();
+    const ticketId = Date.now().toString(); // Agrupa todos estos ítems si a futuro quieres ver el "ticket" completo
+
+    let totalCashIn = 0;
+    const batchUpdates = {};
+
+    try {
+        // 4. Procesar y guardar cada producto
+        for (let i = 0; i < saleItems.length; i++) {
+            const si = saleItems[i];
+            const isFirstItem = i === 0; // Solo le cobramos el envío al primer producto para no duplicar datos
+            const qty = parseInt(si.quantity) || 1;
+            const uPrice = parseFloat(si.unitPrice) || 0;
+
+            const batch = batches.find(b => b.id === si.batchId);
+            const item = batch.items.find(it => it.id === si.itemId);
+
+            const itemShippingProfit = isFirstItem ? shippingProfit : 0;
+            const itemTotalRaw = (uPrice * qty) + itemShippingProfit;
+            totalCashIn += itemTotalRaw;
+
+            const saleData = {
+                ticketId,
+                createdAt: createdAtStr,
+                date: dateStr,
+                batchId: batch.id,
+                batchName: batch.name,
+                itemId: item.id,
+                productName: item.product,
+                variant: item.variant,
+                quantity: qty,
+                unitPrice: uPrice,
+                totalSaleRaw: itemTotalRaw,
+                costArsAtSale: item.costArs,
+                shippingCostArs: isFirstItem ? parseFloat(saleGeneral.shippingCost || 0) : 0,
+                source: saleGeneral.source,
+                isReseller: saleGeneral.isReseller === 'Si'
+            };
+
+            await addDoc(collection(db, 'sales'), saleData);
+
+            // Descontamos stock temporalmente en memoria
+            if (!batchUpdates[batch.id]) {
+                batchUpdates[batch.id] = { items: [...batch.items], finalizedAt: batch.finalizedAt };
+            }
+            const bUpdate = batchUpdates[batch.id];
+            const itemIdx = bUpdate.items.findIndex(x => x.id === item.id);
+            if (itemIdx !== -1) {
+                bUpdate.items[itemIdx].currentStock -= qty;
+            }
+        }
+
+        // 5. Guardar el nuevo stock en Firebase (una sola vez por carpeta)
+        for (const bId in batchUpdates) {
+            const bData = batchUpdates[bId];
+            const allZero = bData.items.every(x => x.currentStock <= 0);
+            const updates = { items: bData.items };
+            if (allZero && !bData.finalizedAt) updates.finalizedAt = new Date().toISOString();
+            await updateDoc(doc(db, 'batches', bId), updates);
+        }
+
+        showToast(`Venta registrada con éxito. Ingreso total: ${formatMoney(totalCashIn)}`, 'success');
+        
+        // 6. Resetear todo al estado original
+        setSaleGeneral({ ...saleGeneral, shippingCost: '', shippingPrice: '' });
+        setSaleItems([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
+
+    } catch (e) {
+        showToast('Error al guardar: ' + e.message, 'error');
+    }
   };
 
   const handleDeleteSale = async (sale) => {
@@ -1286,114 +1286,113 @@ export default function App() {
                 </div>
             )}
 
-            {/* --- PESTAÑA VENTAS (SISTEMA DE CARRITO MULTIPRODUCTO) --- */}
+            {/* --- PESTAÑA VENTAS (SISTEMA DE VENTA MÚLTIPLE EN UNA PANTALLA) --- */}
             {activeTab === 'sales' && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 animate-in fade-in duration-300">
                 
-                {/* Columna Izquierda: Formulario y Carrito */}
-                <div className="lg:col-span-4 flex flex-col gap-4">
-                    <Card darkMode={darkMode} className="p-5">
-                        <h2 className="text-base font-bold mb-4 flex items-center gap-2"><ShoppingCart size={18} className="text-indigo-500"/> Nuevo Pedido</h2>
-                        
-                        {/* DATOS GENERALES DEL TICKET */}
-                        <div className="space-y-3">
-                            <Input darkMode={darkMode} label="Fecha de Operación" type="date" value={saleGeneral.saleDate} onChange={e => setSaleGeneral({...saleGeneral, saleDate: e.target.value})} />
-                            <div className="grid grid-cols-2 gap-3">
-                                <Select darkMode={darkMode} label="Canal" value={saleGeneral.source} onChange={e => setSaleGeneral({...saleGeneral, source: e.target.value})} options={[{value:'Instagram', label:'Instagram'}, {value:'Whatsapp', label:'Whatsapp'}, {value:'Personal', label:'Personal'}, {value:'Web', label:'Web'}]} />
-                                <Select darkMode={darkMode} label="Cliente" value={saleGeneral.isReseller} onChange={e => setSaleGeneral({...saleGeneral, isReseller: e.target.value})} options={[{value:'No', label:'Consumidor'}, {value:'Si', label:'Revendedor'}]} />
-                            </div>
-                            <div className={`p-3 rounded-lg border grid grid-cols-2 gap-3 ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
-                                <Input darkMode={darkMode} label="Costo Envío" type="number" symbol="$" value={saleGeneral.shippingCost} onChange={e => setSaleGeneral({...saleGeneral, shippingCost: e.target.value})} />
-                                <Input darkMode={darkMode} label="Cobro Envío" type="number" symbol="$" value={saleGeneral.shippingPrice} onChange={e => setSaleGeneral({...saleGeneral, shippingPrice: e.target.value})} />
-                            </div>
-                        </div>
-
-                        <hr className={`my-5 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}/>
-
-                        {/* SECCIÓN AGREGAR AL CARRITO */}
-                        <div className="space-y-3">
-                            <h3 className={`text-xs font-bold uppercase tracking-wider mb-2 ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>Sumar Productos</h3>
+                {/* Columna Izquierda: Formulario Multiproducto */}
+                <div className="lg:col-span-4">
+                    <div className="sticky top-6 space-y-4">
+                        <Card darkMode={darkMode} className="p-5">
+                            <h2 className="text-base font-bold mb-4 flex items-center gap-2"><ShoppingCart size={18} className="text-indigo-500"/> Registrar Ingreso</h2>
                             
-                            <CustomSelect 
-                                darkMode={darkMode} 
-                                label="1. Carpeta de Origen" 
-                                value={cartInput.batchId} 
-                                onChange={e => setCartInput({...cartInput, batchId: e.target.value, itemId: ''})} 
-                                options={batches.map(b => ({
-                                    value: b.id, 
-                                    label: b.name || 'Sin nombre',
-                                    renderDropdown: (
-                                        <div className="flex items-center justify-between w-full">
-                                            <span className="font-medium text-xs truncate">{b.name || 'Sin nombre'}</span>
-                                            {b.finalizedAt && <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded bg-zinc-500/20 text-zinc-500 ml-2">Archivado</span>}
-                                        </div>
-                                    )
-                                }))} 
-                            />
-                            
-                            {cartInput.batchId && (
-                                <div className="animate-in slide-in-from-top-2">
-                                   <CustomSelect 
-                                      darkMode={darkMode} 
-                                      label="2. Artículo Vendido" 
-                                      value={cartInput.itemId} 
-                                      onChange={e => setCartInput({...cartInput, itemId: e.target.value})} 
-                                      options={(batches.find(b => b.id === cartInput.batchId)?.items || []).map(item => ({
-                                          value: item.id, 
-                                          label: `${item.product || 'Desconocido'} - ${item.variant || ''} (${item.currentStock || 0})`, 
-                                          disabled: (item.currentStock || 0) <= 0,
-                                          renderDropdown: (
-                                              <div className="flex flex-col w-full gap-0.5">
-                                                  <div className="flex justify-between items-center">
-                                                      <span className={`font-semibold text-xs truncate ${cartInput.itemId === item.id ? 'text-indigo-400' : ''}`}>{item.product || 'Desconocido'}</span>
-                                                      <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase whitespace-nowrap ml-2 ${(item.currentStock || 0) > 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
-                                                          Disp: {item.currentStock || 0}
-                                                      </span>
-                                                  </div>
-                                                  {item.variant && <span className="text-[10px] opacity-60 leading-tight">{item.variant}</span>}
-                                              </div>
-                                          )
-                                      }))} 
-                                  />
+                            <div className="space-y-4">
+                                {/* Datos Generales (Arriba) */}
+                                <Input darkMode={darkMode} label="Fecha de Operación" type="date" value={saleGeneral.saleDate} onChange={e => setSaleGeneral({...saleGeneral, saleDate: e.target.value})} />
+                                <div className="grid grid-cols-2 gap-3">
+                                    <Select darkMode={darkMode} label="Canal" value={saleGeneral.source} onChange={e => setSaleGeneral({...saleGeneral, source: e.target.value})} options={[{value:'Instagram', label:'Instagram'}, {value:'Whatsapp', label:'Whatsapp'}, {value:'Personal', label:'Personal'}, {value:'Web', label:'Web'}]} />
+                                    <Select darkMode={darkMode} label="Cliente" value={saleGeneral.isReseller} onChange={e => setSaleGeneral({...saleGeneral, isReseller: e.target.value})} options={[{value:'No', label:'Consumidor'}, {value:'Si', label:'Revendedor'}]} />
                                 </div>
-                            )}
-                            <div className="grid grid-cols-2 gap-3">
-                                <Input darkMode={darkMode} label="Cantidad" type="number" value={cartInput.quantity} onChange={e => setCartInput({...cartInput, quantity: e.target.value})} />
-                                <Input darkMode={darkMode} label="Precio Un." type="number" symbol="$" value={cartInput.unitPrice} onChange={e => setCartInput({...cartInput, unitPrice: e.target.value})} />
-                            </div>
-                            <Button darkMode={darkMode} onClick={handleAddToCart} variant="outline" className="w-full mt-2"><Plus size={16}/> Agregar al Pedido</Button>
-                        </div>
-                    </Card>
+                                
+                                <hr className={`border-dashed ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`} />
 
-                    {/* VISTA DEL CARRITO Y TOTAL */}
-                    {cart.length > 0 && (
-                        <Card darkMode={darkMode} className="p-0 overflow-hidden animate-in slide-in-from-bottom-2 border-indigo-500 ring-1 ring-indigo-500/20 shadow-lg shadow-indigo-500/10 sticky top-6">
-                            <div className={`p-3 text-xs font-bold uppercase tracking-wider text-center ${darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-50 text-indigo-700'}`}>
-                                Ticket de Compra ({cart.length})
-                            </div>
-                            <div className={`divide-y max-h-48 overflow-y-auto custom-scrollbar ${darkMode ? 'divide-zinc-800 bg-[#0a0c10]' : 'divide-zinc-200 bg-white'}`}>
-                                {cart.map((c, i) => (
-                                    <div key={i} className="p-3 flex justify-between items-center text-sm">
-                                        <div className="flex flex-col">
-                                            <span className="font-bold">{c.quantity}x {c.productName}</span>
-                                            <span className={`text-[10px] ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{c.variant}</span>
+                                {/* Lista de Productos a Vender */}
+                                <div className="space-y-4">
+                                    {saleItems.map((item, index) => (
+                                        <div key={item.id} className={`p-4 rounded-xl border relative ${darkMode ? 'bg-[#0f1115] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+                                            {/* Cabecera del ítem */}
+                                            <div className="flex justify-between items-center mb-3">
+                                                <span className={`text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Producto {index + 1}</span>
+                                                {saleItems.length > 1 && (
+                                                    <button onClick={() => removeSaleItem(item.id)} className="text-red-500 hover:bg-red-500/10 p-1 rounded-md transition-colors">
+                                                        <XCircle size={14} />
+                                                    </button>
+                                                )}
+                                            </div>
+
+                                            {/* Formulario del ítem */}
+                                            <div className="space-y-3">
+                                                <CustomSelect 
+                                                    darkMode={darkMode} 
+                                                    label="Carpeta de Origen" 
+                                                    value={item.batchId} 
+                                                    onChange={e => {
+                                                        updateSaleItem(item.id, 'batchId', e.target.value);
+                                                        updateSaleItem(item.id, 'itemId', ''); // Reset item if batch changes
+                                                    }} 
+                                                    options={batches.map(b => ({
+                                                        value: b.id, 
+                                                        label: b.name || 'Sin nombre',
+                                                        renderDropdown: (
+                                                            <div className="flex items-center justify-between w-full">
+                                                                <span className="font-medium text-xs truncate">{b.name || 'Sin nombre'}</span>
+                                                                {b.finalizedAt && <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded bg-zinc-500/20 text-zinc-500 ml-2">Archivado</span>}
+                                                            </div>
+                                                        )
+                                                    }))} 
+                                                />
+                                                
+                                                {item.batchId && (
+                                                    <div className="animate-in slide-in-from-top-2">
+                                                        <CustomSelect 
+                                                            darkMode={darkMode} 
+                                                            label="Artículo Vendido" 
+                                                            value={item.itemId} 
+                                                            onChange={e => updateSaleItem(item.id, 'itemId', e.target.value)} 
+                                                            options={(batches.find(b => b.id === item.batchId)?.items || []).map(bItem => ({
+                                                                value: bItem.id, 
+                                                                label: `${bItem.product || 'Desconocido'} - ${bItem.variant || ''} (${bItem.currentStock || 0})`, 
+                                                                disabled: (bItem.currentStock || 0) <= 0,
+                                                                renderDropdown: (
+                                                                    <div className="flex flex-col w-full gap-0.5">
+                                                                        <div className="flex justify-between items-center">
+                                                                            <span className={`font-semibold text-xs truncate ${item.itemId === bItem.id ? 'text-indigo-400' : ''}`}>{bItem.product || 'Desconocido'}</span>
+                                                                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase whitespace-nowrap ml-2 ${(bItem.currentStock || 0) > 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
+                                                                                Disp: {bItem.currentStock || 0}
+                                                                            </span>
+                                                                        </div>
+                                                                        {bItem.variant && <span className="text-[10px] opacity-60 leading-tight">{bItem.variant}</span>}
+                                                                    </div>
+                                                                )
+                                                            }))} 
+                                                        />
+                                                    </div>
+                                                )}
+
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <Input darkMode={darkMode} label="Cantidad" type="number" value={item.quantity} onChange={e => updateSaleItem(item.id, 'quantity', e.target.value)} />
+                                                    <Input darkMode={darkMode} label="Precio Un." type="number" symbol="$" value={item.unitPrice} onChange={e => updateSaleItem(item.id, 'unitPrice', e.target.value)} />
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div className="flex items-center gap-3">
-                                            <span className="font-bold text-emerald-500">{formatMoney(c.unitPrice * c.quantity)}</span>
-                                            <button onClick={() => setCart(cart.filter((_, idx) => idx !== i))} className="text-red-500 opacity-50 hover:opacity-100 transition-opacity"><Trash2 size={14}/></button>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                            <div className="p-4">
-                                <div className="flex justify-between items-center mb-4">
-                                    <span className={`text-xs font-bold uppercase ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Total a cobrar</span>
-                                    <span className="text-xl font-black text-indigo-500">{formatMoney(cart.reduce((acc, c) => acc + (c.unitPrice * c.quantity), 0) + (parseFloat(saleGeneral.shippingPrice || 0) - parseFloat(saleGeneral.shippingCost || 0)))}</span>
+                                    ))}
+                                    
+                                    <Button darkMode={darkMode} onClick={addSaleItem} variant="outline" className="w-full text-xs h-9 border-dashed"><Plus size={14}/> Sumar otro producto</Button>
                                 </div>
-                                <Button darkMode={darkMode} onClick={handleProcessSale} className="w-full">Confirmar Pedido Completo</Button>
+
+                                <hr className={`border-dashed ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`} />
+
+                                {/* Costos de Envío (Abajo) */}
+                                <div className={`p-3 rounded-lg border grid grid-cols-2 gap-3 ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+                                    <Input darkMode={darkMode} label="Costo Envío" type="number" symbol="$" value={saleGeneral.shippingCost} onChange={e => setSaleGeneral({...saleGeneral, shippingCost: e.target.value})} />
+                                    <Input darkMode={darkMode} label="Cobro Envío" type="number" symbol="$" value={saleGeneral.shippingPrice} onChange={e => setSaleGeneral({...saleGeneral, shippingPrice: e.target.value})} />
+                                </div>
+
+                                {/* Botón Maestro para enviar TODO */}
+                                <Button darkMode={darkMode} onClick={handleAddSale} className="w-full mt-4 h-12 text-base">Procesar Venta</Button>
                             </div>
                         </Card>
-                    )}
+                    </div>
                 </div>
 
                 {/* Columna Derecha: Historial con Filtros */}
