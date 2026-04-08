@@ -401,17 +401,18 @@ export default function App() {
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '' });
   const [newExpense, setNewExpense] = useState({ description: '', amount: '', batchId: '', date: getTodayDate() });
   
+  // NUEVO ESTADO PARA EDITAR PRODUCTOS
+  const [editingItem, setEditingItem] = useState(null);
+
   const [selectedBatchStats, setSelectedBatchStats] = useState(null);
   const [hiddenSuggestions, setHiddenSuggestions] = useState({ products: [], variants: [] });
 
   const [salesSearch, setSalesSearch] = useState('');
   const [salesSort, setSalesSort] = useState({ key: 'createdAt', direction: 'desc' });
 
-  // ESTADOS PARA VENTA SIMPLE MULTIPRODUCTO
   const [saleGeneral, setSaleGeneral] = useState({ saleDate: getTodayDate(), shippingCost: '', shippingPrice: '', source: 'Instagram', isReseller: 'No' });
   const [saleItems, setSaleItems] = useState([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
 
-  // Aquí está tu corrección aplicada usando `prev` para que no falle al elegir carpeta
   const updateSaleItem = (id, field, value) => {
     setSaleItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
   };
@@ -744,7 +745,6 @@ export default function App() {
     };
   }, [selectedBatchStats, sales, batches, expenses]);
 
-  // LÓGICA DE BÚSQUEDA Y ORDENAMIENTO (TABLA)
   const processedSales = useMemo(() => {
     let result = [...sales].filter(s => s != null);
 
@@ -797,12 +797,11 @@ export default function App() {
     return result;
   }, [sales, salesSearch, salesSort]);
 
-  // EL NUEVO AGRUPADOR: Une los productos que se vendieron en el mismo ticket
   const groupedSales = useMemo(() => {
     const map = {};
     const result = [];
     processedSales.forEach(s => {
-      const key = s.ticketId || s.id; // Usa ticketId si existe, sino usa el id suelto
+      const key = s.ticketId || s.id; 
       if (!map[key]) {
         map[key] = {
           ticketId: key,
@@ -813,7 +812,7 @@ export default function App() {
           items: [],
           originalSales: []
         };
-        result.push(map[key]); // Para mantener el orden de processedSales
+        result.push(map[key]); 
       }
       map[key].items.push({
         quantity: s.quantity,
@@ -905,9 +904,56 @@ export default function App() {
     try { await updateDoc(doc(db, 'batches', batchId), { items: updatedItems }); showToast("Producto eliminado", 'success'); } catch (e) { showToast("Error al borrar: " + e.message, 'error'); }
   };
 
-  // NUEVA FUNCIÓN PARA GUARDAR MÚLTIPLES PRODUCTOS EN UN SOLO CLIC
+  // --- NUEVA FUNCIÓN PARA GUARDAR EDICIÓN EN LOTE Y EN VENTAS (CASCADA) ---
+  const handleSaveEditItem = async (batchId) => {
+    if (!editingItem) return;
+    const batch = batches.find(b => b.id === batchId);
+    if (!batch) return;
+
+    const oldItem = batch.items.find(i => i.id === editingItem.id);
+    if (!oldItem) return;
+
+    const newInitialStock = parseInt(editingItem.initialStock) || 0;
+    const newCost = parseFloat(editingItem.costArs) || 0;
+    
+    // Calculamos cuánto cambió el stock inicial para ajustar el actual
+    const diffStock = newInitialStock - (oldItem.initialStock || 0);
+    let newCurrentStock = (oldItem.currentStock || 0) + diffStock;
+    if (newCurrentStock < 0) newCurrentStock = 0;
+
+    const updatedItem = {
+      ...oldItem,
+      product: editingItem.product,
+      variant: editingItem.variant,
+      costArs: newCost,
+      initialStock: newInitialStock,
+      currentStock: newCurrentStock
+    };
+
+    const newItems = batch.items.map(i => i.id === oldItem.id ? updatedItem : i);
+    
+    try {
+      // 1. Actualizamos el Lote
+      await updateDoc(doc(db, 'batches', batchId), { items: newItems });
+      
+      // 2. Buscamos todas las ventas con este producto y las actualizamos (Cascada)
+      const salesToUpdate = sales.filter(s => s.itemId === oldItem.id);
+      for (const s of salesToUpdate) {
+        await updateDoc(doc(db, 'sales', s.id), {
+          productName: updatedItem.product,
+          variant: updatedItem.variant,
+          costArsAtSale: newCost, 
+        });
+      }
+
+      setEditingItem(null);
+      showToast(`Actualizado. Se reflejó en ${salesToUpdate.length} venta(s) histórica(s).`, "success");
+    } catch (e) {
+      showToast("Error al actualizar: " + e.message, "error");
+    }
+  };
+
   const handleAddSale = async () => {
-    // 1. Validar que todos los formcitos estén llenos
     for (let i = 0; i < saleItems.length; i++) {
         const item = saleItems[i];
         if (!item.batchId) return showToast(`Falta seleccionar la carpeta en el producto ${i + 1}.`, 'error');
@@ -917,7 +963,6 @@ export default function App() {
         if (qty < 1) return showToast(`La cantidad mínima es 1 en el producto ${i + 1}.`, 'error');
     }
 
-    // 2. Comprobar que no intentes vender más stock del que tienes
     const stockNeeds = {};
     saleItems.forEach(si => {
         stockNeeds[si.itemId] = (stockNeeds[si.itemId] || 0) + (parseInt(si.quantity) || 1);
@@ -935,23 +980,21 @@ export default function App() {
         }
     }
 
-    // 3. Crear variables comunes a todo el ticket
     const shippingProfit = parseFloat(saleGeneral.shippingPrice || 0) - parseFloat(saleGeneral.shippingCost || 0);
     const [year, month, day] = saleGeneral.saleDate.split('-').map(Number);
     const saleDateObj = new Date(year, month - 1, day, new Date().getHours(), new Date().getMinutes());
     
     const createdAtStr = new Date().toISOString();
     const dateStr = saleDateObj.toISOString();
-    const ticketId = Date.now().toString(); // La llave maestra que agrupa la venta
+    const ticketId = Date.now().toString(); 
 
     let totalCashIn = 0;
     const batchUpdates = {};
 
     try {
-        // 4. Guardar cada producto del ticket en Firebase
         for (let i = 0; i < saleItems.length; i++) {
             const si = saleItems[i];
-            const isFirstItem = i === 0; // Solo cobramos el envío en el primero para no inflar la ganancia
+            const isFirstItem = i === 0; 
             const qty = parseInt(si.quantity) || 1;
             const uPrice = parseFloat(si.unitPrice) || 0;
 
@@ -982,7 +1025,6 @@ export default function App() {
 
             await addDoc(collection(db, 'sales'), saleData);
 
-            // Descontar stock (memoria temporal)
             if (!batchUpdates[batch.id]) {
                 batchUpdates[batch.id] = { items: [...batch.items], finalizedAt: batch.finalizedAt };
             }
@@ -993,7 +1035,6 @@ export default function App() {
             }
         }
 
-        // 5. Aplicar los descuentos de stock a Firebase
         for (const bId in batchUpdates) {
             const bData = batchUpdates[bId];
             const allZero = bData.items.every(x => x.currentStock <= 0);
@@ -1004,7 +1045,6 @@ export default function App() {
 
         showToast(`Pedido registrado. Ingreso total: ${formatMoney(totalCashIn)}`, 'success');
         
-        // 6. Resetear el form
         setSaleGeneral({ ...saleGeneral, shippingCost: '', shippingPrice: '' });
         setSaleItems([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
 
@@ -1016,7 +1056,6 @@ export default function App() {
   const handleDeleteTicket = async (group) => {
     if (!window.confirm(`¿Anular pedido completo (${group.items.length} productos)? Se devolverá el stock.`)) return;
     try {
-      // Elimina todos los productos que estaban dentro de ese ticketId
       for (const sale of group.originalSales) {
         await deleteDoc(doc(db, 'sales', sale.id));
         if (sale.batchId && sale.itemId) {
@@ -1105,7 +1144,6 @@ export default function App() {
   return (
     <div className={`flex h-screen overflow-hidden font-sans transition-colors duration-300 ${darkMode ? 'bg-[#0B0F19] text-zinc-100' : 'bg-slate-50 text-zinc-900'}`}>
       
-      {/* TOASTS */}
       {toast && (
           <div className={`fixed bottom-24 md:bottom-8 right-4 md:right-8 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-in slide-in-from-bottom-5 z-50 border ${toast.type === 'error' ? 'bg-red-600/95 border-red-500 text-white' : 'bg-zinc-900/95 border-zinc-800 text-white'}`}>
              {toast.type === 'error' ? <XCircle size={18} className="text-red-200"/> : <CheckCircle size={18} className="text-emerald-400"/>}
@@ -1113,11 +1151,9 @@ export default function App() {
           </div>
       )}
 
-      {/* DATALISTS */}
       <datalist id="products-list">{uniqueProducts.map(p => <option key={p} value={p} />)}</datalist>
       <datalist id="variants-list">{uniqueVariants.map(v => <option key={v} value={v} />)}</datalist>
 
-      {/* --- DESKTOP SIDEBAR --- */}
       <aside className={`hidden md:flex flex-col w-60 border-r flex-shrink-0 transition-colors z-20 ${darkMode ? 'bg-[#0f1115] border-zinc-800/80' : 'bg-white border-zinc-200 shadow-sm'}`}>
         <div className="p-5 pb-2 border-b dark:border-zinc-800/80">
             <div className="flex items-center gap-3 mb-5">
@@ -1166,7 +1202,6 @@ export default function App() {
         </div>
       </aside>
 
-      {/* --- MOBILE BOTTOM NAV --- */}
       <nav className={`md:hidden fixed bottom-0 w-full z-40 border-t pb-safe transition-colors ${darkMode ? 'bg-[#0f1115]/90 backdrop-blur-xl border-zinc-800/80 text-zinc-400' : 'bg-white/90 backdrop-blur-xl border-zinc-200 text-zinc-500'}`}>
           <div className="flex justify-around items-center h-16 px-2">
             {TABS.map(tab => (
@@ -1182,10 +1217,8 @@ export default function App() {
           </div>
       </nav>
 
-      {/* --- MAIN CONTENT AREA --- */}
       <main className="flex-1 overflow-y-auto relative w-full custom-scrollbar">
         
-        {/* MOBILE TOP HEADER */}
         <header className={`md:hidden sticky top-0 z-30 flex justify-between items-center px-4 py-3 border-b backdrop-blur-xl ${darkMode ? 'bg-[#0B0F19]/80 border-zinc-800/80' : 'bg-slate-50/80 border-zinc-200'}`}>
             <div className="flex items-center gap-3">
                 <div className="bg-indigo-600 p-1.5 rounded-md text-white"><Package size={16} /></div>
@@ -1199,7 +1232,6 @@ export default function App() {
 
         <div className="p-4 md:p-8 pb-24 md:pb-8 max-w-6xl mx-auto space-y-6">
             
-            {/* HEADER DE LA PÁGINA (SOLO DESKTOP) */}
             <div className="hidden md:flex justify-between items-end mb-6">
                 <div>
                     <h2 className="text-2xl font-bold tracking-tight">{TABS.find(t => t.id === activeTab)?.label}</h2>
@@ -1322,18 +1354,18 @@ export default function App() {
                 </div>
             )}
 
-            {/* --- PESTAÑA VENTAS (NUEVA: FORMULARIO MULTIPRODUCTO Y TABLA AGRUPADA) --- */}
+            {/* --- PESTAÑA VENTAS (SISTEMA MULTIPRODUCTO + TABLA AGRUPADA) --- */}
             {activeTab === 'sales' && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 animate-in fade-in duration-300">
                 
-                {/* Columna Izquierda: Formulario Multiproducto con Scroll Interno */}
+                {/* Columna Izquierda: Formulario Multiproducto con SCROLL INTERNO */}
                 <div className="lg:col-span-4">
-                    <div className="sticky top-6 space-y-4 max-h-[calc(100vh-80px)] overflow-y-auto custom-scrollbar pr-2 pb-4">
+                    {/* SCROLL INTERNO APLICADO AQUI: max-h-[calc(100vh-100px)] overflow-y-auto */}
+                    <div className="sticky top-6 space-y-4 max-h-[calc(100vh-100px)] overflow-y-auto custom-scrollbar pr-2 pb-4">
                         <Card darkMode={darkMode} className="p-5">
-                            <h2 className="text-base font-bold mb-4 flex items-center gap-2"><ShoppingCart size={18} className="text-indigo-500"/> Registrar Ingreso</h2>
+                            <h2 className="text-base font-bold mb-4 flex items-center gap-2"><ShoppingCart size={18} className="text-indigo-500"/> Nuevo Pedido</h2>
                             
                             <div className="space-y-4">
-                                {/* Datos Generales (Arriba) */}
                                 <Input darkMode={darkMode} label="Fecha de Operación" type="date" value={saleGeneral.saleDate} onChange={e => setSaleGeneral({...saleGeneral, saleDate: e.target.value})} />
                                 <div className="grid grid-cols-2 gap-3">
                                     <Select darkMode={darkMode} label="Canal" value={saleGeneral.source} onChange={e => setSaleGeneral({...saleGeneral, source: e.target.value})} options={[{value:'Instagram', label:'Instagram'}, {value:'Whatsapp', label:'Whatsapp'}, {value:'Personal', label:'Personal'}, {value:'Web', label:'Web'}]} />
@@ -1342,11 +1374,9 @@ export default function App() {
                                 
                                 <hr className={`border-dashed ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`} />
 
-                                {/* Lista de Productos a Vender */}
                                 <div className="space-y-4">
                                     {saleItems.map((item, index) => (
                                         <div key={item.id} className={`p-4 rounded-xl border relative ${darkMode ? 'bg-[#0f1115] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
-                                            {/* Cabecera del ítem */}
                                             <div className="flex justify-between items-center mb-3">
                                                 <span className={`text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Producto {index + 1}</span>
                                                 {saleItems.length > 1 && (
@@ -1356,7 +1386,6 @@ export default function App() {
                                                 )}
                                             </div>
 
-                                            {/* Formulario del ítem */}
                                             <div className="space-y-3">
                                                 <CustomSelect 
                                                     darkMode={darkMode} 
@@ -1418,20 +1447,18 @@ export default function App() {
 
                                 <hr className={`border-dashed ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`} />
 
-                                {/* Costos de Envío (Abajo) */}
                                 <div className={`p-3 rounded-lg border grid grid-cols-2 gap-3 ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
                                     <Input darkMode={darkMode} label="Costo Envío" type="number" symbol="$" value={saleGeneral.shippingCost} onChange={e => setSaleGeneral({...saleGeneral, shippingCost: e.target.value})} />
                                     <Input darkMode={darkMode} label="Cobro Envío" type="number" symbol="$" value={saleGeneral.shippingPrice} onChange={e => setSaleGeneral({...saleGeneral, shippingPrice: e.target.value})} />
                                 </div>
 
-                                {/* Botón Maestro para enviar TODO */}
                                 <Button darkMode={darkMode} onClick={handleAddSale} className="w-full mt-4 h-12 text-base shadow-lg shadow-indigo-600/30">Procesar Venta</Button>
                             </div>
                         </Card>
                     </div>
                 </div>
 
-                {/* Columna Derecha: Historial Agrupado con Filtros */}
+                {/* Columna Derecha: Historial Agrupado */}
                 <div className="lg:col-span-8">
                   <Card darkMode={darkMode} className="h-full flex flex-col p-0 overflow-hidden border-zinc-200 dark:border-zinc-800">
                     <div className={`p-4 border-b flex flex-col sm:flex-row justify-between gap-4 sm:items-center ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-white border-zinc-200'}`}>
@@ -1501,7 +1528,7 @@ export default function App() {
               </div>
             )}
 
-            {/* --- PESTAÑA LOTES --- */}
+            {/* --- PESTAÑA LOTES (CON BOTÓN DE EDICIÓN EN LÍNEA Y CASCADA) --- */}
             {activeTab === 'batches' && (
               <div className="space-y-6 animate-in fade-in duration-300">
                 <Card darkMode={darkMode} className="p-0 overflow-hidden">
@@ -1564,26 +1591,54 @@ export default function App() {
                             </thead>
                             <tbody className={`divide-y ${darkMode ? 'divide-zinc-800/50' : 'divide-zinc-200'}`}>
                               {(b.items || []).length === 0 && <tr><td colSpan="4" className="p-8 text-center text-sm font-medium opacity-50 italic">La carpeta está vacía.</td></tr>}
-                              {(b.items || []).map((item, idx) => (
-                                <tr key={idx} className={`transition-colors group ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-white'}`}>
-                                  <td className="px-5 py-3">
-                                      <div className="font-semibold text-sm">{item.product || 'Sin nombre'}</div>
-                                      <div className={`text-xs font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{item.variant || ''}</div>
-                                  </td>
-                                  <td className="px-5 py-3 font-mono font-medium text-sm text-zinc-500">{formatMoney(item.costArs)}</td>
-                                  <td className="px-5 py-3">
-                                      <div className="flex items-center gap-2">
-                                          <div className={`h-2 w-16 rounded-full overflow-hidden ${darkMode ? 'bg-zinc-800' : 'bg-zinc-200'}`}>
-                                              <div className={`h-full rounded-full ${(item.currentStock || 0) === 0 ? 'bg-red-500' : 'bg-emerald-500'}`} style={{width: `${((item.currentStock || 0)/(item.initialStock || 1))*100}%`}}></div>
-                                          </div>
-                                          <span className="font-bold text-xs">{item.currentStock || 0} <span className="opacity-50 font-normal">/ {item.initialStock || 0}</span></span>
-                                      </div>
-                                  </td>
-                                  <td className="px-5 py-3 text-right">
-                                      <button onClick={() => handleDeleteItemFromBatch(b.id, item.id)} className={`p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:bg-red-500/10 hover:text-red-400' : 'text-zinc-400 hover:bg-red-50 hover:text-red-600'}`}><Trash2 size={16} /></button>
-                                  </td>
+                              {(b.items || []).map((item, idx) => {
+                                const isEditing = editingItem?.id === item.id;
+                                return (
+                                <tr key={item.id} className={`transition-colors group ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-white'}`}>
+                                  {isEditing ? (
+                                      <>
+                                          <td className="px-5 py-3">
+                                              <input className={`w-full p-1.5 mb-1 text-sm border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0a0c10] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`} value={editingItem.product} onChange={e => setEditingItem({...editingItem, product: e.target.value})} placeholder="Producto"/>
+                                              <input className={`w-full p-1.5 text-xs border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0a0c10] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`} value={editingItem.variant} onChange={e => setEditingItem({...editingItem, variant: e.target.value})} placeholder="Variante"/>
+                                          </td>
+                                          <td className="px-5 py-3">
+                                              <input type="number" className={`w-20 p-1.5 text-sm border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0a0c10] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`} value={editingItem.costArs} onChange={e => setEditingItem({...editingItem, costArs: e.target.value})} />
+                                          </td>
+                                          <td className="px-5 py-3">
+                                              <input type="number" className={`w-16 p-1.5 text-sm border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0a0c10] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`} value={editingItem.initialStock} onChange={e => setEditingItem({...editingItem, initialStock: e.target.value})} title="Editar stock total comprado"/>
+                                          </td>
+                                          <td className="px-5 py-3 text-right">
+                                              <div className="flex justify-end gap-1">
+                                                  <button onClick={() => handleSaveEditItem(b.id)} className={`p-2 rounded-lg ${darkMode ? 'text-emerald-400 hover:bg-emerald-500/10' : 'text-emerald-600 hover:bg-emerald-50'}`} title="Guardar Cambios"><Save size={16} /></button>
+                                                  <button onClick={() => setEditingItem(null)} className={`p-2 rounded-lg ${darkMode ? 'text-zinc-500 hover:bg-zinc-800' : 'text-zinc-400 hover:bg-zinc-100'}`} title="Cancelar"><XCircle size={16} /></button>
+                                              </div>
+                                          </td>
+                                      </>
+                                  ) : (
+                                      <>
+                                          <td className="px-5 py-3">
+                                              <div className="font-semibold text-sm">{item.product || 'Sin nombre'}</div>
+                                              <div className={`text-xs font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{item.variant || ''}</div>
+                                          </td>
+                                          <td className="px-5 py-3 font-mono font-medium text-sm text-zinc-500">{formatMoney(item.costArs)}</td>
+                                          <td className="px-5 py-3">
+                                              <div className="flex items-center gap-2">
+                                                  <div className={`h-2 w-16 rounded-full overflow-hidden ${darkMode ? 'bg-zinc-800' : 'bg-zinc-200'}`}>
+                                                      <div className={`h-full rounded-full ${(item.currentStock || 0) === 0 ? 'bg-red-500' : 'bg-emerald-500'}`} style={{width: `${((item.currentStock || 0)/(item.initialStock || 1))*100}%`}}></div>
+                                                  </div>
+                                                  <span className="font-bold text-xs">{item.currentStock || 0} <span className="opacity-50 font-normal">/ {item.initialStock || 0}</span></span>
+                                              </div>
+                                          </td>
+                                          <td className="px-5 py-3 text-right">
+                                              <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                                  <button onClick={() => setEditingItem(item)} className={`p-2 rounded-lg ${darkMode ? 'text-indigo-400 hover:bg-indigo-500/10' : 'text-indigo-600 hover:bg-indigo-50'}`} title="Editar Producto"><Settings size={16} /></button>
+                                                  <button onClick={() => handleDeleteItemFromBatch(b.id, item.id)} className={`p-2 rounded-lg ${darkMode ? 'text-red-400 hover:bg-red-500/10' : 'text-red-600 hover:bg-red-50'}`} title="Eliminar Producto"><Trash2 size={16} /></button>
+                                              </div>
+                                          </td>
+                                      </>
+                                  )}
                                 </tr>
-                              ))}
+                              )})}
                             </tbody>
                           </table>
                           
