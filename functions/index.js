@@ -45,17 +45,50 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                         const cantidad = parseInt(partes[3]) || 1;
                         
                         const limpiarNum = (texto) => parseFloat(String(texto).replace(/[^0-9,-]+/g,"").replace(",", ".")) || 0;
-                        
                         const precioUnitario = limpiarNum(partes[4]);
-                        const fechaManual = partes[5];
-                        const costoEnvioMio = limpiarNum(partes[6]);
-                        const precioEnvioCliente = limpiarNum(partes[7]);
                         
-                        // NUEVO: Verificamos si es revendedor (SI, REV, TRUE son válidos)
-                        const revStr = String(partes[8] || "").toLowerCase();
-                        const esRevendedor = (revStr === "si" || revStr === "rev" || revStr === "true");
+                        // --- LÓGICA INTELIGENTE DE CAMPOS OPCIONALES ---
+                        let fechaManual = "hoy"; // Por defecto usa el día actual
+                        let costoEnvioMio = 0;
+                        let precioEnvioCliente = 0;
+                        let esRevendedor = false;
+                        let esNuevo = false;
+                        let numerosEncontrados = 0;
 
-                        await procesarVenta(productoRaw, varianteRaw, cantidad, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor);
+                        // Evaluamos todo lo que haya del índice 5 en adelante
+                        for (let i = 5; i < partes.length; i++) {
+                            let dato = String(partes[i]).trim();
+                            let datoUpper = dato.toUpperCase();
+
+                            if (datoUpper === "") continue;
+
+                            // 1. Detectar si es una fecha
+                            if (dato.includes("/") || dato.includes("-")) {
+                                fechaManual = dato;
+                            } 
+                            // 2. Detectar si es Revendedor
+                            else if (datoUpper === "SI" || datoUpper === "REV" || datoUpper === "TRUE") {
+                                esRevendedor = true;
+                            } 
+                            // 3. Detectar si es Cliente Nuevo
+                            else if (datoUpper === "NUEVO") {
+                                esNuevo = true;
+                            } 
+                            // 4. Detectar si son los valores de Envío
+                            else if (/[0-9]/.test(dato)) {
+                                let posibleNum = limpiarNum(dato);
+                                if (!isNaN(posibleNum)) {
+                                    if (numerosEncontrados === 0) {
+                                        costoEnvioMio = posibleNum;
+                                        numerosEncontrados++;
+                                    } else {
+                                        precioEnvioCliente = posibleNum;
+                                    }
+                                }
+                            }
+                        }
+
+                        await procesarVenta(productoRaw, varianteRaw, cantidad, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo);
                     }
                 }
             }
@@ -66,7 +99,7 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
     }
 });
 
-async function procesarVenta(userProducto, userVariante, cantARestar, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor) {
+async function procesarVenta(userProducto, userVariante, cantARestar, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo) {
     if (isNaN(cantARestar) || cantARestar <= 0) return;
 
     const pBuscar = normalizarParaComparar(userProducto);
@@ -154,7 +187,8 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
             costArsAtSale: costoUnitarioOficial, 
             createdAt: fechaCreacionReal,   
             date: fechaFinalVenta,
-            isReseller: esRevendedor,   // <--- AHORA USA EL DATO DEL MENSAJE
+            isReseller: esRevendedor,
+            isNewClient: esNuevo,       // <--- REGISTRO DEL CLIENTE NUEVO
             itemId: itemIdOficial,   
             productName: nombreOficial, 
             quantity: cantARestar,

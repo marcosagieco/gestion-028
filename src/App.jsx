@@ -1,375 +1,741 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import {
-  Plus, Trash2, Save, TrendingUp, DollarSign, Package,
-  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown
-} from 'lucide-react';
-
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-
-import { initializeApp } from "firebase/app";
-import {
-  initializeFirestore, collection, addDoc, deleteDoc, doc, updateDoc, setDoc,
-  onSnapshot, query, orderBy
-} from 'firebase/firestore';
-
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
-};
-
-let db;
-try {
-  const app = initializeApp(firebaseConfig);
-  db = initializeFirestore(app, { experimentalForceLongPolling: true });
-} catch (error) {
-  console.error("Error inicializando Firebase:", error);
-}
-
-// --- UTILIDADES ---
-const formatMoney = (val) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(val || 0);
-const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val || 0);
-const formatPercent = (val) => new Intl.NumberFormat('es-AR', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format((val || 0) / 100);
-
-const safeDateStr = (dateStr, options) => {
-  if (!dateStr) return 'Sin fecha';
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return 'Fecha inv.';
-  return d.toLocaleDateString(undefined, options);
-};
-
-const safeDateTime = (dateStr) => {
-  if (!dateStr) return 0;
-  const d = new Date(dateStr);
-  return isNaN(d.getTime()) ? 0 : d.getTime();
-};
-
-const exportToCSV = (filename, rows) => {
-  const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.map(item => `"${String(item).replace(/"/g, '""')}"`).join(",")).join("\n");
-  const encodedUri = encodeURI(csvContent);
-  const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
-  link.setAttribute("download", filename);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-};
-
-const getTodayDate = () => {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-};
-
-const getPreviousDayStr = (dateStr) => {
-  const [y, m, d] = dateStr.split('-');
-  const date = new Date(y, m - 1, d, 12, 0, 0);
-  date.setDate(date.getDate() - 1);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-};
-
-// --- COMPONENTES UI ---
-const Card = ({ children, className = '', darkMode }) => (
-  <div className={`rounded-xl border shadow-sm transition-colors duration-200 ${
-    darkMode ? 'bg-[#0f1115] border-zinc-800 text-zinc-100' : 'bg-white border-zinc-200 text-zinc-900'
-  } ${className}`}>
-    {children}
-  </div>
-);
-
-const MetricCard = ({ title, value, subtitle, icon: Icon, trend, color = 'zinc', darkMode }) => {
-  const colorStyles = {
-    blue: darkMode ? 'bg-blue-900/10 border-blue-900/50 hover:bg-blue-900/20 hover:border-blue-800' : 'bg-blue-50/80 border-blue-200 hover:bg-blue-100/50 hover:border-blue-300',
-    emerald: darkMode ? 'bg-emerald-900/10 border-emerald-900/50 hover:bg-emerald-900/20 hover:border-emerald-800' : 'bg-emerald-50/80 border-emerald-200 hover:bg-emerald-100/50 hover:border-emerald-300',
-    rose: darkMode ? 'bg-rose-900/10 border-rose-900/50 hover:bg-rose-900/20 hover:border-rose-800' : 'bg-rose-50/80 border-rose-200 hover:bg-rose-100/50 hover:border-rose-300',
-    amber: darkMode ? 'bg-amber-900/10 border-amber-900/50 hover:bg-amber-900/20 hover:border-amber-800' : 'bg-amber-50/80 border-amber-200 hover:bg-amber-100/50 hover:border-amber-300',
-    violet: darkMode ? 'bg-violet-900/10 border-violet-900/50 hover:bg-violet-900/20 hover:border-violet-800' : 'bg-violet-50/80 border-violet-200 hover:bg-violet-100/50 hover:border-violet-300',
-    indigo: darkMode ? 'bg-indigo-900/10 border-indigo-900/50 hover:bg-indigo-900/20 hover:border-indigo-800' : 'bg-indigo-50/80 border-indigo-200 hover:bg-indigo-100/50 hover:border-indigo-300',
-    zinc: darkMode ? 'bg-[#0f1115] border-zinc-800 hover:border-zinc-700' : 'bg-white border-zinc-200 hover:border-zinc-300',
-  };
-
-  const iconColors = {
-    blue: darkMode ? 'text-blue-400 bg-blue-500/20' : 'text-blue-600 bg-blue-200/50',
-    emerald: darkMode ? 'text-emerald-400 bg-emerald-500/20' : 'text-emerald-700 bg-emerald-200/50',
-    rose: darkMode ? 'text-rose-400 bg-rose-500/20' : 'text-rose-600 bg-rose-200/50',
-    amber: darkMode ? 'text-amber-400 bg-amber-500/20' : 'text-amber-600 bg-amber-200/50',
-    violet: darkMode ? 'text-violet-400 bg-violet-500/20' : 'text-violet-600 bg-violet-200/50',
-    indigo: darkMode ? 'text-indigo-400 bg-indigo-500/20' : 'text-indigo-600 bg-indigo-200/50',
-    zinc: darkMode ? 'text-zinc-400 bg-zinc-800' : 'text-zinc-600 bg-zinc-100',
-  };
+const TABS = [
+      { id: 'home', icon: Activity, label: 'Inicio' }, 
+      { id: 'sales', icon: ShoppingCart, label: 'Ventas' }, 
+      { id: 'batches', icon: FolderOpen, label: 'Lotes' }, 
+      { id: 'analysis', icon: BarChart3, label: 'Análisis' }, 
+      { id: 'expenses', icon: Wallet, label: 'Gastos' }
+  ];
 
   return (
-    <div className={`flex flex-col p-4 rounded-xl border shadow-sm transition-all duration-200 group ${colorStyles[color]} ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>
-       <div className="flex items-center justify-between mb-3">
-          <span className={`text-xs font-bold uppercase tracking-wider ${darkMode ? 'opacity-60' : 'text-zinc-600'}`}>{title}</span>
-          <div className={`p-1.5 rounded-md transition-colors ${iconColors[color]}`}>
-              <Icon size={16} strokeWidth={2.5} />
-          </div>
-       </div>
-       <div>
-          <div className="text-2xl font-bold tracking-tight">{value}</div>
-          <div className="flex items-center justify-between mt-2">
-             <span className={`text-xs font-medium ${darkMode ? 'opacity-50' : 'text-zinc-500'}`}>{subtitle}</span>
-             {trend}
-          </div>
-       </div>
-    </div>
-  );
-};
-
-const Button = ({ onClick, children, variant = 'primary', className = '', disabled = false, darkMode }) => {
-  const baseStyle = "h-10 px-4 rounded-lg font-semibold transition-all duration-200 flex items-center justify-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed";
-  const variants = {
-    primary: "bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm",
-    danger: darkMode ? "bg-red-500/10 text-red-500 hover:bg-red-500/20" : "bg-red-50 text-red-600 hover:bg-red-100",
-    success: "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm",
-    outline: darkMode ? "border border-zinc-700 text-zinc-300 bg-transparent hover:bg-zinc-800" : "border border-zinc-300 text-zinc-700 bg-transparent hover:bg-zinc-50"
-  };
-  return <button onClick={onClick} disabled={disabled} className={`${baseStyle} ${variants[variant]} ${className}`}>{children}</button>;
-};
-
-const Input = ({ label, symbol, darkMode, list, ...props }) => (
-  <div className="flex flex-col gap-1.5 w-full">
-    {label && <label className={`text-xs font-semibold ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>{label}</label>}
-    <div className="relative">
-      {symbol && <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><span className={`text-sm font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{symbol}</span></div>}
-      {props.type === 'search' && <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search size={16} className={`${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}/></div>}
-      <input list={list} className={`h-10 border rounded-lg px-3 w-full text-sm outline-none transition-colors duration-200 ${darkMode ? 'bg-[#0a0c10] border-zinc-800 text-zinc-100 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50' : 'bg-white border-zinc-300 text-zinc-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50'} ${symbol || props.type === 'search' ? 'pl-9' : ''}`} {...props} />
-    </div>
-  </div>
-);
-
-const Select = ({ label, options = [], darkMode, ...props }) => (
-  <div className="flex flex-col gap-1.5 w-full">
-    {label && <label className={`text-xs font-semibold ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>{label}</label>}
-    <div className="relative">
-      <select className={`h-10 appearance-none w-full border rounded-lg px-3 pr-8 text-sm outline-none cursor-pointer transition-colors duration-200 ${darkMode ? 'bg-[#0a0c10] border-zinc-800 text-zinc-100 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50' : 'bg-white border-zinc-300 text-zinc-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50'}`} {...props}>
-        {options.map((opt, idx) => <option key={idx} value={opt.value}>{opt.label}</option>)}
-      </select>
-      <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-          <ChevronDown size={14} className={darkMode ? "text-zinc-500" : "text-zinc-400"} />
-      </div>
-    </div>
-  </div>
-);
-
-const CustomSelect = ({ label, options = [], value, onChange, darkMode, placeholder = "-- Elegir --" }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const dropdownRef = useRef(null);
-
-  const selectedOption = options.find(opt => opt.value === value);
-
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) setIsOpen(false);
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  return (
-    <div className="flex flex-col gap-1.5 w-full relative" ref={dropdownRef}>
-      {label && <label className={`text-xs font-semibold ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>{label}</label>}
+    <div className={`flex h-screen overflow-hidden font-sans transition-colors duration-300 ${darkMode ? 'bg-[#0B0F19] text-zinc-100' : 'bg-slate-50 text-zinc-900'}`}>
       
-      <div
-        onClick={() => setIsOpen(!isOpen)}
-        className={`min-h-10 flex items-center justify-between border rounded-lg px-3 py-2 text-sm outline-none cursor-pointer transition-all duration-200 select-none shadow-sm
-          ${darkMode ? 'bg-[#0a0c10] border-zinc-800 text-zinc-100 hover:border-zinc-700' : 'bg-white border-zinc-300 text-zinc-900 hover:border-zinc-400'}
-          ${isOpen ? 'border-indigo-500 ring-1 ring-indigo-500/50' : ''}`}
-      >
-        <div className={!selectedOption ? (darkMode ? 'text-zinc-500' : 'text-zinc-400') : 'truncate flex-1'}>
-          {selectedOption ? (selectedOption.renderLabel || selectedOption.label) : placeholder}
-        </div>
-        <ChevronDown size={14} className={`transition-transform duration-200 ml-2 flex-shrink-0 ${isOpen ? 'rotate-180 text-indigo-500' : (darkMode ? 'text-zinc-500' : 'text-zinc-400')}`} />
-      </div>
-
-      {isOpen && (
-        <div className={`absolute top-[100%] mt-1 z-50 w-full max-h-64 overflow-y-auto rounded-lg shadow-xl custom-scrollbar animate-in fade-in slide-in-from-top-1 p-1.5 
-          ${darkMode ? 'bg-[#0f1115] border border-zinc-800' : 'bg-zinc-100 border border-zinc-300'}`}
-        >
-          {options.length === 0 ? (
-            <div className={`p-3 text-xs text-center font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>No hay opciones disponibles</div>
-          ) : (
-            <div className="flex flex-col gap-1"> 
-              {options.map((opt, idx) => (
-                <div
-                  key={idx}
-                  onClick={() => {
-                    if (!opt.disabled) {
-                      onChange({ target: { value: opt.value } });
-                      setIsOpen(false);
-                    }
-                  }}
-                  className={`px-2.5 py-1.5 rounded-md text-sm transition-all duration-200 border shadow-sm
-                    ${opt.disabled 
-                      ? (darkMode ? 'opacity-40 cursor-not-allowed bg-[#131824] border-zinc-800/50' : 'opacity-50 cursor-not-allowed bg-white border-zinc-200/50') 
-                      : (darkMode ? 'cursor-pointer bg-[#131824] border-zinc-700 hover:border-indigo-500/50 hover:bg-[#1c2235]' : 'cursor-pointer bg-white border-zinc-200 hover:border-indigo-400/50 hover:bg-indigo-50')}
-                    ${value === opt.value && !opt.disabled ? (darkMode ? 'ring-1 ring-indigo-500 bg-indigo-500/10 border-indigo-500' : 'ring-1 ring-indigo-500 bg-indigo-50 border-indigo-500') : ''}`}
-                >
-                  {opt.renderDropdown ? opt.renderDropdown : <span className={value === opt.value ? 'font-bold text-indigo-500' : ''}>{opt.label}</span>}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+      {toast && (
+          <div className={`fixed bottom-24 md:bottom-8 right-4 md:right-8 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-in slide-in-from-bottom-5 z-50 border ${toast.type === 'error' ? 'bg-red-600/95 border-red-500 text-white' : 'bg-zinc-900/95 border-zinc-800 text-white'}`}>
+             {toast.type === 'error' ? <XCircle size={18} className="text-red-200"/> : <CheckCircle size={18} className="text-emerald-400"/>}
+             <span className="font-medium text-sm tracking-wide">{toast.message}</span>
+          </div>
       )}
-    </div>
-  );
-};
 
-// --- GRÁFICOS RECHARTS ---
-const CustomTooltip = ({ active, payload, label, darkMode }) => {
-  if (active && payload && payload.length) {
-    return (
-      <div className={`p-3 rounded-lg shadow-xl border ${darkMode ? 'bg-zinc-800 border-zinc-700 text-white' : 'bg-white border-zinc-200 text-zinc-900'}`}>
-        <p className="text-xs font-semibold mb-1 opacity-70">{label}</p>
-        {payload.map((entry, index) => (
-          <p key={index} className="text-sm font-bold" style={{ color: entry.color }}>
-            {entry.name}: {entry.name === 'Ingresos' ? new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(entry.value) : `${entry.value} un.`}
-          </p>
-        ))}
-      </div>
-    );
-  }
-  return null;
-};
+      <datalist id="products-list">{uniqueProducts.map(p => <option key={p} value={p} />)}</datalist>
+      <datalist id="variants-list">{uniqueVariants.map(v => <option key={v} value={v} />)}</datalist>
 
-const SalesAreaChart = ({ sales, globalMonth, darkMode }) => {
-  const [metric, setMetric] = useState('revenue');
-  const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val);
+      <aside className={`hidden md:flex flex-col w-60 border-r flex-shrink-0 transition-colors z-20 ${darkMode ? 'bg-[#0f1115] border-zinc-800/80' : 'bg-white border-zinc-200 shadow-sm'}`}>
+        <div className="p-5 pb-2 border-b dark:border-zinc-800/80">
+            <div className="flex items-center gap-3 mb-5">
+                <div className="bg-indigo-600 p-2 rounded-lg text-white shadow-sm shadow-indigo-600/20"><Package size={20} strokeWidth={2.5} /></div>
+                <div>
+                    <h1 className="text-lg font-black tracking-tight leading-none">028 IMPORT</h1>
+                    <p className={`text-[10px] font-bold uppercase tracking-wider mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Workspace</p>
+                </div>
+            </div>
+        </div>
 
-  const chartData = useMemo(() => {
-    const map = {};
-    const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-
-    const generateDays = (daysBack) => {
-        const today = new Date();
-        for (let i = daysBack - 1; i >= 0; i--) {
-            const d = new Date(today);
-            d.setDate(d.getDate() - i);
-            const yStr = d.getFullYear();
-            const mStr = String(d.getMonth() + 1).padStart(2, '0');
-            const dayStr = String(d.getDate()).padStart(2, '0');
-            const key = `${yStr}-${mStr}-${dayStr}`;
-            map[key] = { key, name: `${dayStr}/${mStr}`, fullLabel: `${dayStr} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0 };
-        }
-    };
-
-    if (globalMonth === 'today') { generateDays(1); }
-    else if (globalMonth === 'week') { generateDays(7); }
-    else if (globalMonth === '15days') { generateDays(15); }
-    else if (globalMonth === '30days') { generateDays(30); }
-    else if (globalMonth !== 'all') {
-      const [yStr, mStr] = globalMonth.split('-');
-      const y = parseInt(yStr);
-      const m = parseInt(mStr);
-      const daysInMonth = new Date(y, m, 0).getDate();
-      for (let i = 1; i <= daysInMonth; i++) {
-        const dayStr = String(i).padStart(2, '0');
-        const key = `${yStr}-${mStr}-${dayStr}`;
-        map[key] = { key, name: `${dayStr}/${mStr}`, fullLabel: `${i} de ${monthNames[m - 1]}`, Ingresos: 0, Unidades: 0 };
-      }
-    } else {
-      if (!sales || sales.length === 0) return [];
-      const dates = sales.map(s => s.date ? new Date(s.date) : new Date());
-      const minDate = new Date(Math.min(...dates.map(d => isNaN(d.getTime()) ? new Date().getTime() : d.getTime())));
-      const maxDate = new Date(Math.max(...dates.map(d => isNaN(d.getTime()) ? new Date().getTime() : d.getTime())));
-      
-      for (let d = new Date(minDate.getFullYear(), minDate.getMonth(), minDate.getDate()); d <= maxDate; d.setDate(d.getDate() + 1)) {
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        const key = `${y}-${m}-${day}`;
-        map[key] = { key, name: `${day}/${m}`, fullLabel: `${day} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0 };
-      }
-    }
-
-    sales.forEach(s => {
-      if(!s.date) return;
-      const d = new Date(s.date);
-      if(isNaN(d.getTime())) return;
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      if (map[key]) {
-        map[key].Ingresos += s.totalSaleRaw || 0;
-        map[key].Unidades += s.quantity || 0;
-      }
-    });
-
-    return Object.values(map).sort((a, b) => a.key.localeCompare(b.key));
-  }, [sales, globalMonth]);
-
-  if (chartData.length === 0) return <div className="h-[300px] flex items-center justify-center text-sm font-medium opacity-50">No hay transacciones en este periodo.</div>;
-
-  const themeColor = darkMode ? '#818cf8' : '#4f46e5'; 
-  const gridColor = darkMode ? '#27272a' : '#e4e4e7';
-  const textColor = darkMode ? '#71717a' : '#a1a1aa';
-
-  return (
-    <div className="w-full flex flex-col space-y-4">
-      <div className="flex justify-end mb-1">
-          <div className={`flex items-center p-1 rounded-lg border ${darkMode ? 'bg-[#0f1115] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
-              <button onClick={() => setMetric('revenue')} className={`px-4 py-1.5 text-xs font-semibold rounded-md transition-all ${metric === 'revenue' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Ingresos</button>
-              <button onClick={() => setMetric('quantity')} className={`px-4 py-1.5 text-xs font-semibold rounded-md transition-all ${metric === 'quantity' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Unidades</button>
-          </div>
-      </div>
-      
-      <div className={`w-full h-[300px] p-2 rounded-xl border ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-white border-zinc-200'}`}>
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData} margin={{ top: 20, right: 20, left: 0, bottom: 0 }}>
-            <defs>
-              <linearGradient id="colorMetric" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor={themeColor} stopOpacity={0.3}/>
-                <stop offset="95%" stopColor={themeColor} stopOpacity={0}/>
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridColor} />
-            <XAxis dataKey="name" stroke={textColor} fontSize={12} tickLine={false} axisLine={false} dy={10} minTickGap={30} />
-            <YAxis 
-              stroke={textColor} fontSize={12} tickLine={false} axisLine={false} 
-              tickFormatter={(value) => metric === 'revenue' ? formatCompact(value) : value} 
-              width={60}
-            />
-            <RechartsTooltip content={<CustomTooltip darkMode={darkMode} />} cursor={{ stroke: textColor, strokeWidth: 1, strokeDasharray: '3 3' }} />
-            <Area type="monotone" dataKey={metric === 'revenue' ? 'Ingresos' : 'Unidades'} stroke={themeColor} strokeWidth={3} fillOpacity={1} fill="url(#colorMetric)" activeDot={{ r: 6, strokeWidth: 0 }} />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
-};
-
-const CustomPieChart = ({ data, colors, darkMode }) => {
-  if (!data || data.length === 0) return <div className="h-[160px] flex items-center justify-center text-sm font-medium opacity-50">Sin datos</div>;
-  
-  return (
-    <div className="h-[180px] w-full">
-      <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie
-            data={data}
-            cx="50%"
-            cy="50%"
-            innerRadius={60}
-            outerRadius={80}
-            paddingAngle={5}
-            dataKey="value"
-            stroke="none"
-          >
-            {data.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />
+        <div className="flex-1 overflow-y-auto py-5 px-3 space-y-1 custom-scrollbar">
+            <div className={`text-xs font-semibold px-3 mb-2 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Navegación</div>
+            {TABS.map(tab => (
+            <button 
+                key={tab.id} 
+                onClick={() => setActiveTab(tab.id)} 
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg font-medium text-sm transition-all duration-200 ${activeTab === tab.id ? (darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-50 text-indigo-700') : (darkMode ? 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200' : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900')}`}
+            >
+                <tab.icon size={18} strokeWidth={activeTab === tab.id ? 2.5 : 2} /> {tab.label}
+            </button>
             ))}
-          </Pie>
-          <RechartsTooltip 
-            contentStyle={{ backgroundColor: darkMode ? '#27272a' : '#fff', borderColor: darkMode ? '#3f3f46' : '#e4e4e7', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', color: darkMode ? '#fff' : '#000' }}
-            itemStyle={{ color: darkMode ? '#fff' : '#000' }}
-          />
-        </PieChart>
-      </ResponsiveContainer>
+        </div>
+
+        <div className="p-4 border-t dark:border-zinc-800/80 space-y-2">
+            {isOffline && (
+                <div className="flex items-center justify-center gap-2 text-xs font-bold text-red-500 bg-red-500/10 p-2 rounded-lg mb-2">
+                    <WifiOff size={14}/> Modo Offline
+                </div>
+            )}
+            <div className={`flex items-center justify-between p-2 rounded-lg border ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+                <div className="flex items-center gap-3">
+                    <div className={`w-8 h-8 rounded-md flex items-center justify-center font-bold text-xs ${darkMode ? 'bg-indigo-900/50 text-indigo-400' : 'bg-indigo-100 text-indigo-700'}`}>{user?.charAt(0)}</div>
+                    <div className="flex flex-col items-start">
+                        <span className="text-xs font-bold">{user}</span>
+                        <span className={`text-[10px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Admin</span>
+                    </div>
+                </div>
+                <button onClick={() => { localStorage.removeItem('028_user'); setUser(null); }} className={`p-2 rounded-md transition-colors ${darkMode ? 'text-zinc-500 hover:bg-red-500/10 hover:text-red-400' : 'text-zinc-400 hover:bg-red-50 hover:text-red-600'}`} title="Cerrar sesión">
+                    <LogOut size={16} />
+                </button>
+            </div>
+            <button onClick={() => setDarkMode(!darkMode)} className={`w-full flex items-center justify-center gap-2 h-10 rounded-lg font-medium text-sm border transition-colors ${darkMode ? 'border-zinc-800 hover:bg-zinc-800/50 text-zinc-300' : 'border-zinc-200 hover:bg-zinc-50 text-zinc-600'}`}>
+                {darkMode ? <><Sun size={14}/> Modo Claro</> : <><Moon size={14}/> Modo Oscuro</>}
+            </button>
+        </div>
+      </aside>
+
+      <nav className={`md:hidden fixed bottom-0 w-full z-40 border-t pb-safe transition-colors ${darkMode ? 'bg-[#0f1115]/90 backdrop-blur-xl border-zinc-800/80 text-zinc-400' : 'bg-white/90 backdrop-blur-xl border-zinc-200 text-zinc-500'}`}>
+          <div className="flex justify-around items-center h-16 px-2">
+            {TABS.map(tab => (
+              <button 
+                  key={tab.id} 
+                  onClick={() => setActiveTab(tab.id)} 
+                  className={`flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors ${activeTab === tab.id ? (darkMode ? 'text-indigo-400' : 'text-indigo-600') : 'hover:text-zinc-900 dark:hover:text-zinc-200'}`}
+              >
+                  <tab.icon size={20} strokeWidth={activeTab === tab.id ? 2.5 : 2} />
+                  <span className={`text-[10px] font-medium ${activeTab === tab.id ? 'font-bold' : ''}`}>{tab.label}</span>
+              </button>
+            ))}
+          </div>
+      </nav>
+
+      <main className="flex-1 overflow-y-auto relative w-full custom-scrollbar">
+        
+        <header className={`md:hidden sticky top-0 z-30 flex justify-between items-center px-4 py-3 border-b backdrop-blur-xl ${darkMode ? 'bg-[#0B0F19]/80 border-zinc-800/80' : 'bg-slate-50/80 border-zinc-200'}`}>
+            <div className="flex items-center gap-3">
+                <div className="bg-indigo-600 p-1.5 rounded-md text-white"><Package size={16} /></div>
+                <h1 className="font-bold tracking-tight text-base">028 IMPORT</h1>
+            </div>
+            <div className="flex items-center gap-3">
+                {isOffline && <WifiOff size={16} className="text-red-500" />}
+                <button onClick={() => setDarkMode(!darkMode)} className={darkMode ? 'text-zinc-400' : 'text-zinc-500'}>{darkMode ? <Sun size={18} /> : <Moon size={18} />}</button>
+            </div>
+        </header>
+
+        <div className="p-4 md:p-8 pb-24 md:pb-8 max-w-6xl mx-auto space-y-6">
+            
+            <div className="hidden md:flex justify-between items-end mb-6">
+                <div>
+                    <h2 className="text-2xl font-bold tracking-tight">{TABS.find(t => t.id === activeTab)?.label}</h2>
+                    <p className={`text-sm font-medium mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Gestiona y analiza tus datos de negocio.</p>
+                </div>
+            </div>
+
+            {/* --- PESTAÑA INICIO --- */}
+            {activeTab === 'home' && (
+                <div className="space-y-6 animate-in fade-in duration-300">
+                    <div className={`p-4 rounded-xl border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 ${darkMode ? 'bg-[#131824] border-zinc-800/80' : 'bg-white border-zinc-200'}`}>
+                        <div className="flex items-center gap-3">
+                            <div className="p-2.5 rounded-lg bg-indigo-500/10 text-indigo-500"><Calendar size={20}/></div>
+                            <div>
+                                <h3 className="font-bold text-sm">Periodo de Análisis</h3>
+                                <p className={`text-xs ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Selecciona el rango de tiempo a evaluar</p>
+                            </div>
+                        </div>
+                        <div className="w-full sm:w-64">
+                            <Select 
+                                darkMode={darkMode}
+                                value={globalMonth} 
+                                onChange={e => setGlobalMonth(e.target.value)}
+                                options={periodOptions}
+                            />
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <MetricCard 
+                            color="blue"
+                            darkMode={darkMode} title={`Ingresos ${globalMonth === 'all' ? 'Totales' : ''}`} value={formatMoney(globalAnalysis.totalRevenue)} subtitle="Bruto facturado" icon={DollarSign}
+                            trend={globalAnalysis.prevRevenue !== null && globalAnalysis.prevRevenue > 0 ? (
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${globalAnalysis.totalRevenue >= globalAnalysis.prevRevenue ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 text-red-600 dark:text-red-400'}`}>
+                                    {globalAnalysis.totalRevenue >= globalAnalysis.prevRevenue ? '↑' : '↓'} {Math.abs(((globalAnalysis.totalRevenue - globalAnalysis.prevRevenue)/globalAnalysis.prevRevenue)*100).toFixed(0)}%
+                                </span>
+                            ) : null}
+                        />
+                        <MetricCard color="emerald" darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(globalAnalysis.grossProfit)} subtitle="Ingresos - Costo Mercadería" icon={TrendingUp} trend={<span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/50 text-zinc-600 dark:bg-black/50 dark:text-zinc-400">{formatPercent(globalAnalysis.grossMargin)}</span>} />
+                        <MetricCard color="rose" darkMode={darkMode} title="Gastos Fijos" value={formatMoney(globalAnalysis.totalGlobalExpenses)} subtitle="Logística y operativos" icon={Wallet} />
+                        <MetricCard 
+                            color="violet"
+                            darkMode={darkMode} title="Beneficio Neto" value={formatMoney(globalAnalysis.netProfit)} subtitle="Capital libre" icon={Award}
+                            trend={
+                                <div className="flex gap-1 items-center">
+                                    {globalAnalysis.prevNetProfit !== null && globalAnalysis.prevNetProfit > 0 && (
+                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${globalAnalysis.netProfit >= globalAnalysis.prevNetProfit ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 text-red-600 dark:text-red-400'}`}>
+                                            {globalAnalysis.netProfit >= globalAnalysis.prevNetProfit ? '↑' : '↓'} {Math.abs(((globalAnalysis.netProfit - globalAnalysis.prevNetProfit)/globalAnalysis.prevNetProfit)*100).toFixed(0)}%
+                                        </span>
+                                    )}
+                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md bg-white/50 text-violet-700 dark:bg-black/50 dark:text-violet-400`}>{formatPercent(globalAnalysis.netMargin)}</span>
+                                </div>
+                            }
+                        />
+                        <MetricCard color="amber" darkMode={darkMode} title="Inversión" value={formatMoney(globalAnalysis.totalInvestment)} subtitle="Capital apostado" icon={Box} />
+                        <MetricCard color="indigo" darkMode={darkMode} title="Valor Inventario" value={formatMoney(globalAnalysis.currentStockValue)} subtitle="Activo retenido actual" icon={Package} />
+                        <MetricCard color="emerald" darkMode={darkMode} title="Flujo Efectivo" value={formatMoney(globalAnalysis.cashBalance)} subtitle="Diferencia real en caja" icon={Activity} />
+                        <MetricCard 
+                            color="amber"
+                            darkMode={darkMode} title="Promedio Ventas" value={globalAnalysis.dailyAvgItems.toFixed(1)} subtitle="Unidades por día activo" icon={Flame}
+                            trend={globalAnalysis.currentStreak > 0 ? <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/50 text-orange-600 dark:bg-black/50 dark:text-orange-400 flex items-center gap-1"><Flame size={12}/> {globalAnalysis.currentStreak} días</span> : null}
+                        />
+                    </div>
+
+                    <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                        <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                            <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><TrendingUp size={18}/></div>
+                            <h3 className="font-bold tracking-tight text-sm">Evolución de Ingresos</h3>
+                        </div>
+                        <div className="p-5">
+                            <SalesAreaChart sales={globalAnalysis.filteredSales} globalMonth={globalMonth} darkMode={darkMode} />
+                        </div>
+                    </Card>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                          <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                              <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><Users size={18}/></div>
+                              <h3 className="font-bold tracking-tight text-sm">Tráfico por Canales</h3>
+                          </div>
+                          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+                            <CustomPieChart data={globalAnalysis.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} />
+                            <div className="space-y-3">
+                              {globalAnalysis.pieSourceData.map((d, i) => {
+                                const colors = ['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b'];
+                                return (
+                                  <div key={d.name} className="flex justify-between items-center text-sm">
+                                    <div className="flex items-center gap-2">
+                                      <div className="w-3 h-3 rounded-full" style={{backgroundColor: colors[i % colors.length]}}></div>
+                                      <span className="font-medium">{d.name}</span>
+                                    </div>
+                                    <span className="font-bold text-zinc-500">{d.value}</span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        </Card>
+
+                        <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                          <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                              <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><BarChart3 size={18}/></div>
+                              <h3 className="font-bold tracking-tight text-sm">Segmentación B2B / B2C</h3>
+                          </div>
+                          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+                            <CustomPieChart data={globalAnalysis.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} />
+                            <div className="space-y-3">
+                               <div className="flex justify-between items-center text-sm">
+                                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500"></div><span className="font-medium">Consumidor</span></div>
+                                  <span className="font-bold text-zinc-500">{globalAnalysis.typeCounts.Final}</span>
+                               </div>
+                               <div className="flex justify-between items-center text-sm">
+                                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-indigo-500"></div><span className="font-medium">Revendedor</span></div>
+                                  <span className="font-bold text-zinc-500">{globalAnalysis.typeCounts.Revendedor}</span>
+                               </div>
+                            </div>
+                          </div>
+                        </Card>
+                    </div>
+                </div>
+            )}
+
+            {/* --- PESTAÑA VENTAS (SISTEMA MULTIPRODUCTO + TABLA AGRUPADA) --- */}
+            {activeTab === 'sales' && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 animate-in fade-in duration-300">
+                
+                {/* Columna Izquierda: Formulario Multiproducto con SCROLL INTERNO */}
+                <div className="lg:col-span-4">
+                    <div className="sticky top-6 space-y-4 max-h-[calc(100vh-100px)] overflow-y-auto custom-scrollbar pr-2 pb-4">
+                        <Card darkMode={darkMode} className="p-5">
+                            <h2 className="text-base font-bold mb-4 flex items-center gap-2"><ShoppingCart size={18} className="text-indigo-500"/> Nuevo Pedido</h2>
+                            
+                            <div className="space-y-4">
+                                <Input darkMode={darkMode} label="Fecha de Operación" type="date" value={saleGeneral.saleDate} onChange={e => setSaleGeneral({...saleGeneral, saleDate: e.target.value})} />
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                    <Select darkMode={darkMode} label="Canal" value={saleGeneral.source} onChange={e => setSaleGeneral({...saleGeneral, source: e.target.value})} options={[{value:'Instagram', label:'Instagram'}, {value:'Whatsapp', label:'Whatsapp'}, {value:'Personal', label:'Personal'}, {value:'Web', label:'Web'}]} />
+                                    <Select darkMode={darkMode} label="Tipo" value={saleGeneral.isReseller} onChange={e => setSaleGeneral({...saleGeneral, isReseller: e.target.value})} options={[{value:'No', label:'Consumidor'}, {value:'Si', label:'Revendedor'}]} />
+                                    <Select darkMode={darkMode} label="Historial" value={saleGeneral.isNewClient} onChange={e => setSaleGeneral({...saleGeneral, isNewClient: e.target.value})} options={[{value:'No', label:'Frecuente'}, {value:'Si', label:'Nuevo'}]} />
+                                </div>
+                                
+                                <hr className={`border-dashed ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`} />
+
+                                <div className="space-y-4">
+                                    {saleItems.map((item, index) => (
+                                        <div key={item.id} className={`p-4 rounded-xl border relative ${darkMode ? 'bg-[#0f1115] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+                                            <div className="flex justify-between items-center mb-3">
+                                                <span className={`text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Producto {index + 1}</span>
+                                                {saleItems.length > 1 && (
+                                                    <button onClick={() => removeSaleItem(item.id)} className="text-red-500 hover:bg-red-500/10 p-1 rounded-md transition-colors">
+                                                        <XCircle size={14} />
+                                                    </button>
+                                                )}
+                                            </div>
+
+                                            <div className="space-y-3">
+                                                <CustomSelect 
+                                                    darkMode={darkMode} 
+                                                    label="Carpeta de Origen" 
+                                                    value={item.batchId} 
+                                                    onChange={e => {
+                                                        updateSaleItem(item.id, 'batchId', e.target.value);
+                                                        updateSaleItem(item.id, 'itemId', ''); 
+                                                    }} 
+                                                    options={batches.map(b => ({
+                                                        value: b.id, 
+                                                        label: b.name || 'Sin nombre',
+                                                        renderDropdown: (
+                                                            <div className="flex items-center justify-between w-full">
+                                                                <span className="font-medium text-xs truncate">{b.name || 'Sin nombre'}</span>
+                                                                {b.finalizedAt && <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded bg-zinc-500/20 text-zinc-500 ml-2">Archivado</span>}
+                                                            </div>
+                                                        )
+                                                    }))} 
+                                                />
+                                                
+                                                {item.batchId && (
+                                                    <div className="animate-in slide-in-from-top-2">
+                                                        <CustomSelect 
+                                                            darkMode={darkMode} 
+                                                            label="Artículo Vendido" 
+                                                            value={item.itemId} 
+                                                            onChange={e => updateSaleItem(item.id, 'itemId', e.target.value)} 
+                                                            options={(batches.find(b => b.id === item.batchId)?.items || []).map(bItem => ({
+                                                                value: bItem.id, 
+                                                                label: `${bItem.product || 'Desconocido'} - ${bItem.variant || ''} (${bItem.currentStock || 0})`, 
+                                                                disabled: (bItem.currentStock || 0) <= 0,
+                                                                renderDropdown: (
+                                                                    <div className="flex flex-col w-full gap-0.5">
+                                                                        <div className="flex justify-between items-center">
+                                                                            <span className={`font-semibold text-xs truncate ${item.itemId === bItem.id ? 'text-indigo-400' : ''}`}>{bItem.product || 'Desconocido'}</span>
+                                                                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase whitespace-nowrap ml-2 ${(bItem.currentStock || 0) > 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
+                                                                                Disp: {bItem.currentStock || 0}
+                                                                            </span>
+                                                                        </div>
+                                                                        {bItem.variant && <span className="text-[10px] opacity-60 leading-tight">{bItem.variant}</span>}
+                                                                    </div>
+                                                                )
+                                                            }))} 
+                                                        />
+                                                    </div>
+                                                )}
+
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <Input darkMode={darkMode} label="Cantidad" type="number" value={item.quantity} onChange={e => updateSaleItem(item.id, 'quantity', e.target.value)} />
+                                                    <Input darkMode={darkMode} label="Precio Un." type="number" symbol="$" value={item.unitPrice} onChange={e => updateSaleItem(item.id, 'unitPrice', e.target.value)} />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    
+                                    <Button darkMode={darkMode} onClick={addSaleItem} variant="outline" className="w-full text-xs h-9 border-dashed"><Plus size={14}/> Sumar otro producto</Button>
+                                </div>
+
+                                <hr className={`border-dashed ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`} />
+
+                                <div className={`p-3 rounded-lg border grid grid-cols-2 gap-3 ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+                                    <Input darkMode={darkMode} label="Costo Envío" type="number" symbol="$" value={saleGeneral.shippingCost} onChange={e => setSaleGeneral({...saleGeneral, shippingCost: e.target.value})} />
+                                    <Input darkMode={darkMode} label="Cobro Envío" type="number" symbol="$" value={saleGeneral.shippingPrice} onChange={e => setSaleGeneral({...saleGeneral, shippingPrice: e.target.value})} />
+                                </div>
+
+                                <Button darkMode={darkMode} onClick={handleAddSale} className="w-full mt-4 h-12 text-base shadow-lg shadow-indigo-600/30">Procesar Venta</Button>
+                            </div>
+                        </Card>
+                    </div>
+                </div>
+
+                {/* Columna Derecha: Historial Agrupado */}
+                <div className="lg:col-span-8">
+                  <Card darkMode={darkMode} className="h-full flex flex-col p-0 overflow-hidden border-zinc-200 dark:border-zinc-800">
+                    <div className={`p-4 border-b flex flex-col sm:flex-row justify-between gap-4 sm:items-center ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                        <h3 className="font-bold text-base flex-shrink-0">Libro de Ventas</h3>
+                        <div className="flex gap-2 w-full sm:w-auto">
+                            <div className="flex-1 sm:w-64">
+                                <Input 
+                                  darkMode={darkMode} 
+                                  type="search" 
+                                  placeholder="Buscar producto, lote o fecha..." 
+                                  value={salesSearch}
+                                  onChange={(e) => setSalesSearch(e.target.value)}
+                                />
+                            </div>
+                            <Button darkMode={darkMode} onClick={handleExportSales} variant="outline" className="h-10 px-3 flex-shrink-0" title="Exportar CSV"><Download size={16}/></Button>
+                        </div>
+                    </div>
+                    
+                    <div className="overflow-x-auto flex-1 h-[700px] custom-scrollbar">
+                      <table className="w-full text-left text-sm border-collapse">
+                          <thead className={`sticky top-0 z-10 text-xs font-semibold ${darkMode ? 'bg-[#0f1115] text-zinc-400 border-b border-zinc-800 shadow-sm' : 'bg-zinc-50 text-zinc-500 border-b border-zinc-200 shadow-sm'}`}>
+                              <tr>
+                                <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors" onClick={() => toggleSort('createdAt')}>
+                                  <div className="flex items-center gap-1">Registro <span className="opacity-50">{salesSort.key === 'createdAt' ? (salesSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></div>
+                                </th>
+                                <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors" onClick={() => toggleSort('productName')}>
+                                  <div className="flex items-center gap-1">Operación <span className="opacity-50">{salesSort.key === 'productName' ? (salesSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></div>
+                                </th>
+                                <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-emerald-500" onClick={() => toggleSort('profit')}>
+                                  <div className="flex items-center gap-1">Neto <span className="opacity-50">{salesSort.key === 'profit' ? (salesSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></div>
+                                </th>
+                                <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors" onClick={() => toggleSort('totalSaleRaw')}>
+                                  <div className="flex items-center gap-1">Total Fac. <span className="opacity-50">{salesSort.key === 'totalSaleRaw' ? (salesSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></div>
+                                </th>
+                                <th className="px-4 py-3"></th>
+                              </tr>
+                          </thead>
+                          <tbody className={`divide-y ${darkMode ? 'divide-zinc-800/80' : 'divide-zinc-100'}`}>
+                            {groupedSales.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-sm font-medium opacity-50 italic">No se encontraron ventas con esos filtros.</td></tr>}
+                            {groupedSales.map(group => (
+                                <tr key={group.ticketId} className={`transition-colors group ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-zinc-50'}`}>
+                                  <td className={`px-4 py-3 text-xs font-medium whitespace-nowrap align-top pt-4 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                                      {safeDateStr(group.date, {month:'short', day:'numeric'})}
+                                      <div className="flex flex-col gap-1 mt-1.5 items-start">
+                                          {group.isNewClient === 'Si' && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-100 text-amber-600'}`}>Nuevo</span>}
+                                          {group.isReseller && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-100 text-indigo-600'}`}>Revendedor</span>}
+                                      </div>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                      <div className="flex flex-col gap-2 mt-1">
+                                          {group.items.map((item, idx) => (
+                                              <div key={idx} className="flex flex-col">
+                                                  <div className="font-semibold text-sm">{item.quantity || 0}x {item.productName || 'Sin nombre'} <span className="font-normal opacity-70 ml-1">{item.variant || ''}</span></div>
+                                                  <div className={`text-[10px] font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Lote: {item.batchName || 'S/N'}</div>
+                                              </div>
+                                          ))}
+                                      </div>
+                                  </td>
+                                  <td className="px-4 py-3 font-medium text-emerald-500 text-sm align-top pt-4">{formatMoney(group.totalProfit)}</td>
+                                  <td className="px-4 py-3 font-bold font-mono tracking-tight align-top pt-4">{formatMoney(group.totalSaleRaw)}</td>
+                                  <td className="px-4 py-3 text-right align-top pt-3">
+                                      <button onClick={() => handleDeleteTicket(group)} className={`p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:bg-red-500/10 hover:text-red-400' : 'text-zinc-400 hover:bg-red-50 hover:text-red-600'}`}><Trash2 size={16} /></button>
+                                  </td>
+                                </tr>
+                            ))}
+                          </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                </div>
+              </div>
+            )}
+
+            {/* --- PESTAÑA LOTES (CON BOTÓN DE EDICIÓN DE LOTE, ITEMS Y CASCADA) --- */}
+            {activeTab === 'batches' && (
+              <div className="space-y-6 animate-in fade-in duration-300">
+                <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                  <div className={`p-5 border-b flex flex-col md:flex-row justify-between md:items-center gap-4 ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                      <div>
+                          <h2 className="text-xl font-bold mb-1">Inventario de Lotes</h2>
+                          <p className={`text-sm ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Administra tus importaciones y catálogos de productos.</p>
+                      </div>
+                      <div className="flex gap-3 items-end w-full md:w-auto">
+                        <div className="flex-1 md:w-64"><Input darkMode={darkMode} placeholder="Nombre del nuevo lote..." value={newBatchName} onChange={e => setNewBatchName(e.target.value)} /></div>
+                        <Button darkMode={darkMode} onClick={handleCreateBatch} className="shrink-0"><Plus size={16}/> Crear Lote</Button>
+                      </div>
+                  </div>
+                  <div className={`px-5 py-3 flex justify-end bg-zinc-50 dark:bg-[#0a0c10]`}>
+                      <Button darkMode={darkMode} onClick={handleExportBatches} variant="outline" className="h-9"><Download size={14}/> Bajar CSV Completo</Button>
+                  </div>
+                </Card>
+
+                <div className="grid grid-cols-1 gap-4">
+                  {batches.map((b) => (
+                    <Card key={b.id} darkMode={darkMode} className={`p-0 overflow-hidden transition-all duration-300 group ${expandedBatchId === b.id ? 'ring-2 ring-indigo-500/50 border-transparent' : ''}`}>
+                      <div className={`p-5 flex justify-between items-center cursor-pointer transition-colors ${darkMode ? 'hover:bg-[#1a1f2e]' : 'hover:bg-zinc-50'}`} onClick={() => setExpandedBatchId(expandedBatchId === b.id ? null : b.id)}>
+                        <div className="flex items-center gap-4">
+                            <div className={`w-12 h-12 flex items-center justify-center rounded-xl ${b.finalizedAt ? (darkMode ? 'bg-emerald-500/10 text-emerald-500' : 'bg-emerald-100 text-emerald-600') : (darkMode ? 'bg-indigo-500/10 text-indigo-500' : 'bg-indigo-100 text-indigo-600')}`}>
+                                <FolderOpen size={24} strokeWidth={2} />
+                            </div>
+                            
+                            {/* LÓGICA AGREGADA: EDICIÓN DE NOMBRE DE LOTE */}
+                            <div>
+                                {editingBatchId === b.id ? (
+                                    <div className="flex items-center gap-2 mb-1" onClick={e => e.stopPropagation()}>
+                                        <input
+                                            autoFocus
+                                            className={`px-2 py-1 text-sm border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0a0c10] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`}
+                                            value={editingBatchName}
+                                            onChange={(e) => setEditingBatchName(e.target.value)}
+                                        />
+                                        <button onClick={() => handleSaveEditBatchName(b.id)} className={`p-1.5 rounded-lg ${darkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-600'}`}><Save size={14}/></button>
+                                        <button onClick={() => setEditingBatchId(null)} className={`p-1.5 rounded-lg ${darkMode ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-200 text-zinc-600'}`}><XCircle size={14}/></button>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-2">
+                                        <h3 className={`font-bold text-base ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{b.name || 'Sin nombre'}</h3>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); setEditingBatchId(b.id); setEditingBatchName(b.name || ''); }} 
+                                            className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md ${darkMode ? 'hover:bg-zinc-800 text-zinc-400' : 'hover:bg-zinc-200 text-zinc-500'}`}
+                                        >
+                                            <Settings size={14}/>
+                                        </button>
+                                    </div>
+                                )}
+
+                                <div className="flex items-center gap-3 mt-1">
+                                    <span className={`text-xs font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{(b.items || []).length} Ítems</span>
+                                    <span className="text-zinc-300 dark:text-zinc-700">•</span>
+                                    <span className={`text-xs font-bold ${b.finalizedAt ? (darkMode ? 'text-zinc-500' : 'text-zinc-500') : (darkMode ? 'text-emerald-400' : 'text-emerald-600')}`}>{b.finalizedAt ? 'Archivado' : 'En Venta'}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className={`p-2 rounded-full transition-colors ${darkMode ? 'text-zinc-500 bg-[#0f1115]' : 'text-zinc-400 bg-zinc-100'}`}>
+                            {expandedBatchId === b.id ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+                        </div>
+                      </div>
+                      
+                      {expandedBatchId === b.id && (
+                        <div className={`border-t animate-in slide-in-from-top-2 ${darkMode ? 'border-zinc-800 bg-[#0f1115]' : 'border-zinc-200 bg-zinc-50/50'}`}>
+                          
+                          {/* Agregar Item Form */}
+                          <div className={`p-5 m-5 rounded-xl border border-dashed ${darkMode ? 'border-zinc-700 bg-[#131824]' : 'border-zinc-300 bg-white'}`}>
+                            <h4 className={`text-xs font-bold uppercase tracking-wider mb-4 flex items-center gap-2 ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`}><Plus size={14}/> Agregar Mercadería</h4>
+                            <div className="grid grid-cols-2 md:grid-cols-12 gap-3 items-end">
+                              <div className="col-span-2 md:col-span-4"><Input darkMode={darkMode} list="products-list" label="Producto" placeholder="Ej: iPhone 15" value={newItem.product} onChange={e => setNewItem({...newItem, product: e.target.value})} /></div>
+                              <div className="col-span-2 md:col-span-3"><Input darkMode={darkMode} list="variants-list" label="Variante" placeholder="Ej: 128GB Black" value={newItem.variant} onChange={e => setNewItem({...newItem, variant: e.target.value})} /></div>
+                              <div className="col-span-1 md:col-span-2"><Input darkMode={darkMode} label="Costo ($)" type="number" value={newItem.costArs} onChange={e => setNewItem({...newItem, costArs: e.target.value})} /></div>
+                              <div className="col-span-1 md:col-span-1"><Input darkMode={darkMode} label="Cant." type="number" value={newItem.initialStock} onChange={e => setNewItem({...newItem, initialStock: e.target.value})} /></div>
+                              <div className="col-span-2 md:col-span-2"><Button darkMode={darkMode} onClick={() => handleAddItemToBatch(b.id)} className="w-full">Añadir</Button></div>
+                            </div>
+                          </div>
+
+                          {/* Tabla de Items */}
+                          <table className="w-full text-left text-sm border-t dark:border-zinc-800">
+                            <thead className={`text-xs font-semibold ${darkMode ? 'bg-[#131824] text-zinc-500' : 'bg-zinc-100 text-zinc-500'}`}>
+                                <tr><th className="px-5 py-3">Descripción del Artículo</th><th className="px-5 py-3">Costo Un.</th><th className="px-5 py-3">Disponibilidad</th><th className="px-5 py-3 text-right"></th></tr>
+                            </thead>
+                            <tbody className={`divide-y ${darkMode ? 'divide-zinc-800/50' : 'divide-zinc-200'}`}>
+                              {(b.items || []).length === 0 && <tr><td colSpan="4" className="p-8 text-center text-sm font-medium opacity-50 italic">La carpeta está vacía.</td></tr>}
+                              {(b.items || []).map((item, idx) => {
+                                const isEditing = editingItem?.id === item.id;
+                                return (
+                                <tr key={item.id} className={`transition-colors group/item ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-white'}`}>
+                                  {isEditing ? (
+                                      <>
+                                          <td className="px-5 py-3">
+                                              <input className={`w-full p-1.5 mb-1 text-sm border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0a0c10] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`} value={editingItem.product} onChange={e => setEditingItem({...editingItem, product: e.target.value})} placeholder="Producto"/>
+                                              <input className={`w-full p-1.5 text-xs border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0a0c10] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`} value={editingItem.variant} onChange={e => setEditingItem({...editingItem, variant: e.target.value})} placeholder="Variante"/>
+                                          </td>
+                                          <td className="px-5 py-3">
+                                              <input type="number" className={`w-20 p-1.5 text-sm border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0a0c10] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`} value={editingItem.costArs} onChange={e => setEditingItem({...editingItem, costArs: e.target.value})} />
+                                          </td>
+                                          <td className="px-5 py-3">
+                                              <input type="number" className={`w-16 p-1.5 text-sm border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0a0c10] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`} value={editingItem.initialStock} onChange={e => setEditingItem({...editingItem, initialStock: e.target.value})} title="Editar stock total comprado"/>
+                                          </td>
+                                          <td className="px-5 py-3 text-right">
+                                              <div className="flex justify-end gap-1">
+                                                  <button onClick={() => handleSaveEditItem(b.id)} className={`p-2 rounded-lg ${darkMode ? 'text-emerald-400 hover:bg-emerald-500/10' : 'text-emerald-600 hover:bg-emerald-50'}`} title="Guardar Cambios"><Save size={16} /></button>
+                                                  <button onClick={() => setEditingItem(null)} className={`p-2 rounded-lg ${darkMode ? 'text-zinc-500 hover:bg-zinc-800' : 'text-zinc-400 hover:bg-zinc-100'}`} title="Cancelar"><XCircle size={16} /></button>
+                                              </div>
+                                          </td>
+                                      </>
+                                  ) : (
+                                      <>
+                                          <td className="px-5 py-3">
+                                              <div className="font-semibold text-sm">{item.product || 'Sin nombre'}</div>
+                                              <div className={`text-xs font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{item.variant || ''}</div>
+                                          </td>
+                                          <td className="px-5 py-3 font-mono font-medium text-sm text-zinc-500">{formatMoney(item.costArs)}</td>
+                                          <td className="px-5 py-3">
+                                              <div className="flex items-center gap-2">
+                                                  <div className={`h-2 w-16 rounded-full overflow-hidden ${darkMode ? 'bg-zinc-800' : 'bg-zinc-200'}`}>
+                                                      <div className={`h-full rounded-full ${(item.currentStock || 0) === 0 ? 'bg-red-500' : 'bg-emerald-500'}`} style={{width: `${((item.currentStock || 0)/(item.initialStock || 1))*100}%`}}></div>
+                                                  </div>
+                                                  <span className="font-bold text-xs">{item.currentStock || 0} <span className="opacity-50 font-normal">/ {item.initialStock || 0}</span></span>
+                                              </div>
+                                          </td>
+                                          <td className="px-5 py-3 text-right">
+                                              <div className="flex justify-end gap-1 opacity-0 group-hover/item:opacity-100 transition-all">
+                                                  <button onClick={() => setEditingItem(item)} className={`p-2 rounded-lg ${darkMode ? 'text-indigo-400 hover:bg-indigo-500/10' : 'text-indigo-600 hover:bg-indigo-50'}`} title="Editar Producto"><Settings size={16} /></button>
+                                                  <button onClick={() => handleDeleteItemFromBatch(b.id, item.id)} className={`p-2 rounded-lg ${darkMode ? 'text-red-400 hover:bg-red-500/10' : 'text-red-600 hover:bg-red-50'}`} title="Eliminar Producto"><Trash2 size={16} /></button>
+                                              </div>
+                                          </td>
+                                      </>
+                                  )}
+                                </tr>
+                              )})}
+                            </tbody>
+                          </table>
+                          
+                          <div className={`p-4 flex justify-end border-t ${darkMode ? 'border-zinc-800 bg-[#0a0c10]' : 'border-zinc-200 bg-zinc-100'}`}>
+                              <button onClick={(e) => { e.stopPropagation(); handleDeleteBatch(b.id); }} className={`text-sm font-semibold flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${darkMode ? 'text-red-500 hover:bg-red-500/10' : 'text-red-600 hover:bg-red-50'}`}><Trash2 size={16}/> Eliminar Carpeta Definitivamente</button>
+                          </div>
+                        </div>
+                      )}
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* --- PESTAÑA ANÁLISIS DE LOTE --- */}
+            {activeTab === 'analysis' && (
+              <div className="space-y-6 animate-in fade-in duration-300">
+                <Card darkMode={darkMode} className="p-5">
+                    <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between">
+                        <div>
+                            <h2 className="text-xl font-bold tracking-tight flex items-center gap-2"><BarChart3 size={20} className="text-indigo-500"/> Auditoría de Lotes</h2>
+                            <p className={`text-sm font-medium mt-1 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>Selecciona una importación para ver su rendimiento exacto.</p>
+                        </div>
+                        <div className="w-full md:w-80">
+                            <Select
+                                darkMode={darkMode}
+                                onChange={(e) => setSelectedBatchStats(e.target.value)}
+                                value={selectedBatchStats || ''}
+                                options={[{value: '', label: '-- Selecciona un lote de la lista --'}, ...batches.map(b => ({value: b.id, label: `${b.name || 'Sin nombre'} ${b.finalizedAt ? '(Archivado)' : ''}`}))]}
+                            />
+                        </div>
+                    </div>
+                </Card>
+
+                {batchAnalysis ? (
+                    <div className="space-y-6 animate-in slide-in-from-bottom-4">
+                       <div className={`p-4 rounded-xl border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 ${batchAnalysis.batch.finalizedAt ? (darkMode ? 'border-zinc-800 bg-[#0f1115]' : 'border-zinc-300 bg-zinc-100') : (darkMode ? 'border-indigo-500/30 bg-indigo-500/5' : 'border-indigo-200 bg-indigo-50')}`}>
+                          <div>
+                            <h3 className="font-bold text-sm flex items-center gap-2">
+                                <Settings size={18} className={darkMode ? 'text-zinc-400' : 'text-zinc-500'}/> Estado Operativo: 
+                                <span className={`px-2.5 py-1 rounded-lg text-xs font-bold ${batchAnalysis.batch.finalizedAt ? 'bg-zinc-500/20 text-zinc-500' : 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'}`}>
+                                    {batchAnalysis.batch.finalizedAt ? "Archivado" : "Activo"}
+                                </span>
+                            </h3>
+                            {batchAnalysis.batch.finalizedAt && <div className={`text-xs font-medium mt-2 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Se marcó como agotado el {safeDateStr(batchAnalysis.batch.finalizedAt)}</div>}
+                          </div>
+
+                          {batchAnalysis.batch.finalizedAt ? (
+                              <Button darkMode={darkMode} onClick={() => handleUpdateBatchStatus(batchAnalysis.batch.id, false)} variant="outline">🔄 Reabrir Operación</Button>
+                              ) : (
+                              <div className="flex gap-3 items-end w-full sm:w-auto">
+                                  <Input darkMode={darkMode} type="date" label="Cierre Manual" value={manualFinalizeDate} onChange={e => setManualFinalizeDate(e.target.value)} />
+                                  <Button darkMode={darkMode} onClick={() => handleUpdateBatchStatus(batchAnalysis.batch.id, true)}>Archivar Lote</Button>
+                              </div>
+                          )}
+                       </div>
+
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                          <MetricCard color="amber" darkMode={darkMode} title="Inversión Base" value={formatMoney(batchAnalysis.totalInvestment)} subtitle="Costo original" icon={Box} />
+                          <MetricCard color="blue" darkMode={darkMode} title="Retorno Bruto" value={formatMoney(batchAnalysis.totalRevenue)} subtitle="Ventas totales" icon={DollarSign} />
+                          <MetricCard color="rose" darkMode={darkMode} title="Gastos Adicionales" value={formatMoney(batchAnalysis.totalBatchExpenses)} subtitle="Costos operativos" icon={Wallet} />
+                          
+                          <MetricCard 
+                              color="emerald" darkMode={darkMode} title="Flujo de Caja Real" value={formatMoney(batchAnalysis.cashBalance)} subtitle="Liquidez generada" icon={Activity} 
+                          />
+
+                          <MetricCard color="indigo" darkMode={darkMode} title="Stock Remanente" value={formatMoney(batchAnalysis.currentStockValue)} subtitle="Activo sin liquidar" icon={Package} />
+                          
+                          <MetricCard 
+                              color="emerald" darkMode={darkMode} title="Beneficio Bruto" value={formatMoney(batchAnalysis.grossProfit)} subtitle="Previo a gastos" icon={TrendingUp}
+                              trend={<span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/50 text-emerald-700 dark:bg-black/50 dark:text-emerald-400">{formatPercent(batchAnalysis.grossMargin)}</span>}
+                          />
+
+                            <MetricCard color="amber" darkMode={darkMode} title="Resultado Envíos" value={formatMoney(batchAnalysis.totalShippingProfit)} subtitle="Cobrado vs Pagado" icon={Truck} />
+                          
+                          <MetricCard 
+                              color="violet" darkMode={darkMode} title="Beneficio Neto" value={formatMoney(batchAnalysis.netProfit)} subtitle="Utilidad limpia" icon={Award}
+                              trend={<span className={`text-[10px] font-bold px-2 py-0.5 rounded-md bg-white/50 text-violet-700 dark:bg-black/50 dark:text-violet-400`}>{formatPercent(batchAnalysis.netMargin)}</span>}
+                          />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                          <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                              <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><Users size={18}/></div>
+                              <h3 className="font-bold tracking-tight text-sm">Distribución de Canales</h3>
+                          </div>
+                          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+                            <CustomPieChart data={batchAnalysis.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} />
+                            <div className="space-y-3">
+                              {batchAnalysis.pieSourceData.map((d, i) => {
+                                const colors = ['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b'];
+                                return (
+                                  <div key={d.name} className="flex justify-between items-center text-sm">
+                                    <div className="flex items-center gap-2">
+                                      <div className="w-3 h-3 rounded-full" style={{backgroundColor: colors[i % colors.length]}}></div>
+                                      <span className="font-medium">{d.name}</span>
+                                    </div>
+                                    <span className="font-bold text-zinc-500">{d.value}</span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        </Card>
+
+                        <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                          <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                              <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><BarChart3 size={18}/></div>
+                              <h3 className="font-bold tracking-tight text-sm">Perfil de Comprador</h3>
+                          </div>
+                          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+                            <CustomPieChart data={batchAnalysis.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} />
+                            <div className="space-y-3">
+                               <div className="flex justify-between items-center text-sm">
+                                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500"></div><span className="font-medium">Consumidor</span></div>
+                                  <span className="font-bold text-zinc-500">{batchAnalysis.typeCounts.Final}</span>
+                               </div>
+                               <div className="flex justify-between items-center text-sm">
+                                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-indigo-500"></div><span className="font-medium">Revendedor</span></div>
+                                  <span className="font-bold text-zinc-500">{batchAnalysis.typeCounts.Revendedor}</span>
+                               </div>
+                            </div>
+                          </div>
+                        </Card>
+                      </div>
+                    </div>
+                ) : (
+                    <div className={`py-24 text-center rounded-xl border border-dashed ${darkMode ? 'border-zinc-800 bg-[#0f1115]' : 'border-zinc-300 bg-zinc-50'}`}>
+                        <BarChart3 size={48} className={`mx-auto mb-4 ${darkMode ? 'text-zinc-800' : 'text-zinc-200'}`}/>
+                        <p className={`text-sm font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Elige un lote en el menú superior para comenzar el análisis.</p>
+                    </div>
+                )}
+              </div>
+            )}
+
+            {/* --- PESTAÑA GASTOS --- */}
+            {activeTab === 'expenses' && (
+                <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in duration-300">
+                <Card darkMode={darkMode} className="border-t-4 border-t-rose-500 p-5 md:p-6">
+                    <h2 className="text-xl font-bold tracking-tight mb-5 flex items-center gap-2"><Wallet size={20} className="text-rose-500"/> Declarar Egreso</h2>
+                    <div className="flex flex-col gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
+                            <div className="sm:col-span-3"><Input darkMode={darkMode} type="date" label="Fecha" value={newExpense.date} onChange={e => setNewExpense({...newExpense, date: e.target.value})} /></div>
+                            <div className="sm:col-span-6"><Input darkMode={darkMode} label="Descripción del Gasto" placeholder="Ej: Publicidad Ads, Envío Extra..." value={newExpense.description} onChange={e => setNewExpense({...newExpense, description: e.target.value})} /></div>
+                            <div className="sm:col-span-3"><Input darkMode={darkMode} label="Importe" type="number" symbol="$" value={newExpense.amount} onChange={e => setNewExpense({...newExpense, amount: e.target.value})} /></div>
+                        </div>
+                        <div className="flex flex-col sm:flex-row gap-4 items-end">
+                              <div className="flex-1 w-full">
+                                 <Select 
+                                    darkMode={darkMode} 
+                                    label="Asignación Contable (Opcional)"
+                                    value={newExpense.batchId} 
+                                    onChange={e => setNewExpense({...newExpense, batchId: e.target.value})}
+                                    options={[
+                                        { value: '', label: '-- Gasto General del Negocio --' },
+                                        ...batches.map(b => ({ value: b.id, label: b.name || 'Sin nombre' }))
+                                    ]}
+                                 />
+                              </div>
+                              <Button darkMode={darkMode} onClick={handleAddExpense} variant="danger" className="w-full sm:w-48">Registrar Salida</Button>
+                        </div>
+                    </div>
+                </Card>
+
+                <Card darkMode={darkMode} className="p-0 overflow-hidden border-zinc-200 dark:border-zinc-800">
+                    <div className={`p-4 md:p-5 border-b ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                        <h3 className="font-bold text-base tracking-tight">Registro de Egresos</h3>
+                    </div>
+                    <div className={`divide-y ${darkMode ? 'divide-zinc-800' : 'divide-zinc-100'}`}>
+                        {expenses.length === 0 && <div className="p-12 text-center text-sm font-medium opacity-50">No hay movimientos de salida registrados.</div>}
+                        {expenses.map(e => (
+                        <div key={e.id} className={`flex justify-between items-center p-4 md:p-5 transition-colors group ${darkMode ? 'hover:bg-zinc-900/50 bg-[#0f1115]' : 'hover:bg-zinc-50 bg-white'}`}>
+                            <div className="flex items-center gap-4">
+                                <div className={`p-2.5 rounded-lg ${darkMode ? 'bg-red-500/10 text-red-500' : 'bg-red-50 text-red-600'}`}><Wallet size={20}/></div>
+                                <div>
+                                    <div className="font-semibold text-sm">{e.description || 'Sin descripción'}</div>
+                                    <div className="flex items-center gap-2 mt-1">
+                                        <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{safeDateStr(e.date, {month:'long', day:'numeric'})}</span>
+                                        {e.batchName && (
+                                            <>
+                                                <span className="text-zinc-300 dark:text-zinc-700">•</span>
+                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-zinc-700 text-zinc-400' : 'border-zinc-200 text-zinc-500'}`}>{e.batchName}</span>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-6">
+                                <span className="font-bold tracking-tight text-red-500 text-lg">-{formatMoney(e.amount)}</span> 
+                                <button onClick={()=>handleDeleteExpense(e.id)} className={`p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}><Trash2 size={18}/></button>
+                            </div>
+                        </div>
+                        ))}
+                    </div>
+                </Card>
+                </div>
+            )}
+
+        </div>
+      </main>
     </div>
   );
-}
+
 // --- APP PRINCIPAL ---
 export default function App() {
   const [user, setUser] = useState(() => localStorage.getItem('028_user') || null);
@@ -401,8 +767,11 @@ export default function App() {
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '' });
   const [newExpense, setNewExpense] = useState({ description: '', amount: '', batchId: '', date: getTodayDate() });
   
-  // NUEVO ESTADO PARA EDITAR PRODUCTOS
   const [editingItem, setEditingItem] = useState(null);
+  
+  // NUEVO ESTADO PARA EDITAR EL NOMBRE DEL LOTE
+  const [editingBatchId, setEditingBatchId] = useState(null);
+  const [editingBatchName, setEditingBatchName] = useState('');
 
   const [selectedBatchStats, setSelectedBatchStats] = useState(null);
   const [hiddenSuggestions, setHiddenSuggestions] = useState({ products: [], variants: [] });
@@ -410,7 +779,7 @@ export default function App() {
   const [salesSearch, setSalesSearch] = useState('');
   const [salesSort, setSalesSort] = useState({ key: 'createdAt', direction: 'desc' });
 
-  const [saleGeneral, setSaleGeneral] = useState({ saleDate: getTodayDate(), shippingCost: '', shippingPrice: '', source: 'Instagram', isReseller: 'No' });
+  const [saleGeneral, setSaleGeneral] = useState({ saleDate: getTodayDate(), shippingCost: '', shippingPrice: '', source: 'Instagram', isReseller: 'No', isNewClient: 'No' });
   const [saleItems, setSaleItems] = useState([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
 
   const updateSaleItem = (id, field, value) => {
@@ -809,6 +1178,8 @@ export default function App() {
           createdAt: s.createdAt || s.date,
           totalSaleRaw: 0,
           totalProfit: 0,
+          isReseller: s.isReseller, 
+          isNewClient: s.isNewClient, 
           items: [],
           originalSales: []
         };
@@ -836,11 +1207,11 @@ export default function App() {
   };
 
   const handleExportSales = () => {
-      const headers = ['Fecha', 'Lote', 'Producto', 'Variante', 'Cantidad', 'Precio Unitario', 'Total Venta', 'Costo Unitario', 'Ganancia Envio', 'Origen', 'Revendedor'];
+      const headers = ['Fecha', 'Lote', 'Producto', 'Variante', 'Cantidad', 'Precio Unitario', 'Total Venta', 'Costo Unitario', 'Ganancia Envio', 'Origen', 'Revendedor', 'Cliente Nuevo'];
       const rows = processedSales.map(s => [
           safeDateStr(s.date), s.batchName || '', s.productName || '', s.variant || '', 
           s.quantity || 0, s.unitPrice || 0, s.totalSaleRaw || 0, s.costArsAtSale || 0, 
-          ((s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0))), s.source || '', s.isReseller ? 'Si' : 'No'
+          ((s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0))), s.source || '', s.isReseller ? 'Si' : 'No', s.isNewClient ? 'Si' : 'No'
       ]);
       exportToCSV('historial_ventas.csv', [headers, ...rows]);
       showToast('Historial descargado con éxito', 'success');
@@ -868,6 +1239,31 @@ export default function App() {
   };
 
   const handleDeleteBatch = async (id) => { if (window.confirm('¿Borrar carpeta completa? Se perderá el historial interno.')) await deleteDoc(doc(db, 'batches', id)); };
+
+  // NUEVA FUNCIÓN: Guardar edición del Nombre de Lote (CASCADA)
+  const handleSaveEditBatchName = async (batchId) => {
+    if (!editingBatchName.trim()) return showToast("El nombre no puede estar vacío", "error");
+    try {
+        await updateDoc(doc(db, 'batches', batchId), { name: editingBatchName });
+        
+        // Cascada a Ventas
+        const salesToUpdate = sales.filter(s => s.batchId === batchId);
+        for (const s of salesToUpdate) {
+            await updateDoc(doc(db, 'sales', s.id), { batchName: editingBatchName });
+        }
+        
+        // Cascada a Gastos
+        const expensesToUpdate = expenses.filter(e => e.batchId === batchId);
+        for (const e of expensesToUpdate) {
+            await updateDoc(doc(db, 'expenses', e.id), { batchName: editingBatchName });
+        }
+        
+        setEditingBatchId(null);
+        showToast("Nombre actualizado en todos los registros", "success");
+    } catch (e) {
+        showToast("Error al renombrar: " + e.message, "error");
+    }
+  };
 
   const handleUpdateBatchStatus = async (batchId, isFinalizing) => {
     if (isFinalizing) {
@@ -904,7 +1300,6 @@ export default function App() {
     try { await updateDoc(doc(db, 'batches', batchId), { items: updatedItems }); showToast("Producto eliminado", 'success'); } catch (e) { showToast("Error al borrar: " + e.message, 'error'); }
   };
 
-  // --- NUEVA FUNCIÓN PARA GUARDAR EDICIÓN EN LOTE Y EN VENTAS (CASCADA) ---
   const handleSaveEditItem = async (batchId) => {
     if (!editingItem) return;
     const batch = batches.find(b => b.id === batchId);
@@ -916,7 +1311,6 @@ export default function App() {
     const newInitialStock = parseInt(editingItem.initialStock) || 0;
     const newCost = parseFloat(editingItem.costArs) || 0;
     
-    // Calculamos cuánto cambió el stock inicial para ajustar el actual
     const diffStock = newInitialStock - (oldItem.initialStock || 0);
     let newCurrentStock = (oldItem.currentStock || 0) + diffStock;
     if (newCurrentStock < 0) newCurrentStock = 0;
@@ -933,10 +1327,8 @@ export default function App() {
     const newItems = batch.items.map(i => i.id === oldItem.id ? updatedItem : i);
     
     try {
-      // 1. Actualizamos el Lote
       await updateDoc(doc(db, 'batches', batchId), { items: newItems });
       
-      // 2. Buscamos todas las ventas con este producto y las actualizamos (Cascada)
       const salesToUpdate = sales.filter(s => s.itemId === oldItem.id);
       for (const s of salesToUpdate) {
         await updateDoc(doc(db, 'sales', s.id), {
@@ -1020,7 +1412,8 @@ export default function App() {
                 costArsAtSale: item.costArs,
                 shippingCostArs: isFirstItem ? parseFloat(saleGeneral.shippingCost || 0) : 0,
                 source: saleGeneral.source,
-                isReseller: saleGeneral.isReseller === 'Si'
+                isReseller: saleGeneral.isReseller === 'Si',
+                isNewClient: saleGeneral.isNewClient === 'Si' // AGREGADO AL GUARDAR
             };
 
             await addDoc(collection(db, 'sales'), saleData);
@@ -1132,7 +1525,6 @@ export default function App() {
       </div>
     </div>
   );
-
   const TABS = [
       { id: 'home', icon: Activity, label: 'Inicio' }, 
       { id: 'sales', icon: ShoppingCart, label: 'Ventas' }, 
@@ -1360,16 +1752,16 @@ export default function App() {
                 
                 {/* Columna Izquierda: Formulario Multiproducto con SCROLL INTERNO */}
                 <div className="lg:col-span-4">
-                    {/* SCROLL INTERNO APLICADO AQUI: max-h-[calc(100vh-100px)] overflow-y-auto */}
                     <div className="sticky top-6 space-y-4 max-h-[calc(100vh-100px)] overflow-y-auto custom-scrollbar pr-2 pb-4">
                         <Card darkMode={darkMode} className="p-5">
                             <h2 className="text-base font-bold mb-4 flex items-center gap-2"><ShoppingCart size={18} className="text-indigo-500"/> Nuevo Pedido</h2>
                             
                             <div className="space-y-4">
                                 <Input darkMode={darkMode} label="Fecha de Operación" type="date" value={saleGeneral.saleDate} onChange={e => setSaleGeneral({...saleGeneral, saleDate: e.target.value})} />
-                                <div className="grid grid-cols-2 gap-3">
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                     <Select darkMode={darkMode} label="Canal" value={saleGeneral.source} onChange={e => setSaleGeneral({...saleGeneral, source: e.target.value})} options={[{value:'Instagram', label:'Instagram'}, {value:'Whatsapp', label:'Whatsapp'}, {value:'Personal', label:'Personal'}, {value:'Web', label:'Web'}]} />
-                                    <Select darkMode={darkMode} label="Cliente" value={saleGeneral.isReseller} onChange={e => setSaleGeneral({...saleGeneral, isReseller: e.target.value})} options={[{value:'No', label:'Consumidor'}, {value:'Si', label:'Revendedor'}]} />
+                                    <Select darkMode={darkMode} label="Tipo" value={saleGeneral.isReseller} onChange={e => setSaleGeneral({...saleGeneral, isReseller: e.target.value})} options={[{value:'No', label:'Consumidor'}, {value:'Si', label:'Revendedor'}]} />
+                                    <Select darkMode={darkMode} label="Historial" value={saleGeneral.isNewClient} onChange={e => setSaleGeneral({...saleGeneral, isNewClient: e.target.value})} options={[{value:'No', label:'Frecuente'}, {value:'Si', label:'Nuevo'}]} />
                                 </div>
                                 
                                 <hr className={`border-dashed ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`} />
@@ -1502,9 +1894,13 @@ export default function App() {
                                 <tr key={group.ticketId} className={`transition-colors group ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-zinc-50'}`}>
                                   <td className={`px-4 py-3 text-xs font-medium whitespace-nowrap align-top pt-4 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
                                       {safeDateStr(group.date, {month:'short', day:'numeric'})}
+                                      <div className="flex flex-col gap-1 mt-1.5 items-start">
+                                          {group.isNewClient === 'Si' && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-100 text-amber-600'}`}>Nuevo</span>}
+                                          {group.isReseller && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-100 text-indigo-600'}`}>Revendedor</span>}
+                                      </div>
                                   </td>
                                   <td className="px-4 py-3">
-                                      <div className="flex flex-col gap-2">
+                                      <div className="flex flex-col gap-2 mt-1">
                                           {group.items.map((item, idx) => (
                                               <div key={idx} className="flex flex-col">
                                                   <div className="font-semibold text-sm">{item.quantity || 0}x {item.productName || 'Sin nombre'} <span className="font-normal opacity-70 ml-1">{item.variant || ''}</span></div>
@@ -1528,7 +1924,7 @@ export default function App() {
               </div>
             )}
 
-            {/* --- PESTAÑA LOTES (CON BOTÓN DE EDICIÓN EN LÍNEA Y CASCADA) --- */}
+            {/* --- PESTAÑA LOTES (CON BOTÓN DE EDICIÓN DE LOTE, ITEMS Y CASCADA) --- */}
             {activeTab === 'batches' && (
               <div className="space-y-6 animate-in fade-in duration-300">
                 <Card darkMode={darkMode} className="p-0 overflow-hidden">
@@ -1549,14 +1945,38 @@ export default function App() {
 
                 <div className="grid grid-cols-1 gap-4">
                   {batches.map((b) => (
-                    <Card key={b.id} darkMode={darkMode} className={`p-0 overflow-hidden transition-all duration-300 ${expandedBatchId === b.id ? 'ring-2 ring-indigo-500/50 border-transparent' : ''}`}>
+                    <Card key={b.id} darkMode={darkMode} className={`p-0 overflow-hidden transition-all duration-300 group ${expandedBatchId === b.id ? 'ring-2 ring-indigo-500/50 border-transparent' : ''}`}>
                       <div className={`p-5 flex justify-between items-center cursor-pointer transition-colors ${darkMode ? 'hover:bg-[#1a1f2e]' : 'hover:bg-zinc-50'}`} onClick={() => setExpandedBatchId(expandedBatchId === b.id ? null : b.id)}>
                         <div className="flex items-center gap-4">
                             <div className={`w-12 h-12 flex items-center justify-center rounded-xl ${b.finalizedAt ? (darkMode ? 'bg-emerald-500/10 text-emerald-500' : 'bg-emerald-100 text-emerald-600') : (darkMode ? 'bg-indigo-500/10 text-indigo-500' : 'bg-indigo-100 text-indigo-600')}`}>
                                 <FolderOpen size={24} strokeWidth={2} />
                             </div>
+                            
+                            {/* LÓGICA AGREGADA: EDICIÓN DE NOMBRE DE LOTE */}
                             <div>
-                                <h3 className={`font-bold text-base ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{b.name || 'Sin nombre'}</h3>
+                                {editingBatchId === b.id ? (
+                                    <div className="flex items-center gap-2 mb-1" onClick={e => e.stopPropagation()}>
+                                        <input
+                                            autoFocus
+                                            className={`px-2 py-1 text-sm border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0a0c10] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`}
+                                            value={editingBatchName}
+                                            onChange={(e) => setEditingBatchName(e.target.value)}
+                                        />
+                                        <button onClick={() => handleSaveEditBatchName(b.id)} className={`p-1.5 rounded-lg ${darkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-600'}`}><Save size={14}/></button>
+                                        <button onClick={() => setEditingBatchId(null)} className={`p-1.5 rounded-lg ${darkMode ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-200 text-zinc-600'}`}><XCircle size={14}/></button>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-2">
+                                        <h3 className={`font-bold text-base ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{b.name || 'Sin nombre'}</h3>
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); setEditingBatchId(b.id); setEditingBatchName(b.name || ''); }} 
+                                            className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md ${darkMode ? 'hover:bg-zinc-800 text-zinc-400' : 'hover:bg-zinc-200 text-zinc-500'}`}
+                                        >
+                                            <Settings size={14}/>
+                                        </button>
+                                    </div>
+                                )}
+
                                 <div className="flex items-center gap-3 mt-1">
                                     <span className={`text-xs font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{(b.items || []).length} Ítems</span>
                                     <span className="text-zinc-300 dark:text-zinc-700">•</span>
@@ -1594,7 +2014,7 @@ export default function App() {
                               {(b.items || []).map((item, idx) => {
                                 const isEditing = editingItem?.id === item.id;
                                 return (
-                                <tr key={item.id} className={`transition-colors group ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-white'}`}>
+                                <tr key={item.id} className={`transition-colors group/item ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-white'}`}>
                                   {isEditing ? (
                                       <>
                                           <td className="px-5 py-3">
@@ -1630,7 +2050,7 @@ export default function App() {
                                               </div>
                                           </td>
                                           <td className="px-5 py-3 text-right">
-                                              <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                              <div className="flex justify-end gap-1 opacity-0 group-hover/item:opacity-100 transition-all">
                                                   <button onClick={() => setEditingItem(item)} className={`p-2 rounded-lg ${darkMode ? 'text-indigo-400 hover:bg-indigo-500/10' : 'text-indigo-600 hover:bg-indigo-50'}`} title="Editar Producto"><Settings size={16} /></button>
                                                   <button onClick={() => handleDeleteItemFromBatch(b.id, item.id)} className={`p-2 rounded-lg ${darkMode ? 'text-red-400 hover:bg-red-500/10' : 'text-red-600 hover:bg-red-50'}`} title="Eliminar Producto"><Trash2 size={16} /></button>
                                               </div>
