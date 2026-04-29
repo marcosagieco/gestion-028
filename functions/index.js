@@ -6,6 +6,62 @@ const db = admin.firestore();
 
 const VERIFY_TOKEN = "028_Import_Master_2026";
 
+// 👇 TUS DATOS REALES DE META 👇
+const META_TOKEN = "EAANhs8CZCMhUBRfllbvBZCzHH83H31sZCZC6ISpFo1ylsq3XOTEQXZCd1dIyUPXVHNjCfNDmG4Jnrnk4G7U9kBTsFdhkOs7WUiVrchrLLomAZAy4ydcSrNhlbzPTbVlMDpxZAVfKBj4uePi2xFjYuPW1hLAKcAlr98EHPkKWDS2TaFlb1TKVxmFDCvmkzNqZCmCZC1wZDZD";
+const PHONE_ID = "984636221409591";
+
+const https = require('https');
+
+// Función nativa para enviar mensajes con LOGS
+async function enviarMensajeWhatsApp(telefonoDestino, texto) {
+    if (META_TOKEN === "PONE_ACA_TU_TOKEN_DE_META") {
+        console.log("❌ ERROR INTERNO: El token de Meta no fue configurado.");
+        return;
+    }
+
+    console.log(`Intentando enviar WhatsApp a: ${telefonoDestino}...`);
+
+    const data = JSON.stringify({
+        messaging_product: "whatsapp",
+        to: telefonoDestino,
+        type: "text",
+        text: { body: texto }
+    });
+
+    const options = {
+        hostname: 'graph.facebook.com',
+        path: `/v17.0/${PHONE_ID}/messages`,
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${META_TOKEN}`,
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(data)
+        }
+    };
+
+    return new Promise((resolve, reject) => {
+        const req = https.request(options, (res) => {
+            let responseBody = '';
+            res.on('data', (chunk) => responseBody += chunk);
+            res.on('end', () => {
+                console.log(`Respuesta de Meta (Status ${res.statusCode}):`, responseBody);
+                if (res.statusCode >= 400) {
+                    console.error("❌ Error de Meta:", responseBody);
+                }
+                resolve(responseBody);
+            });
+        });
+
+        req.on('error', (e) => {
+            console.error("❌ Error enviando WhatsApp:", e);
+            reject(e);
+        });
+
+        req.write(data);
+        req.end();
+    });
+}
+
 // Función para limpiar textos (quita emojis, tildes y símbolos)
 const normalizarParaComparar = (texto) => {
     return String(texto || "")
@@ -30,7 +86,20 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
             const body = req.body;
             if (body.object === "whatsapp_business_account" && body.entry?.[0]?.changes?.[0]?.value?.messages?.[0]) {
                 const msg = body.entry[0].changes[0].value.messages[0];
-                const textoOriginal = msg.text.body;
+                // REEMPLAZALO POR ESTO (El parche argentino 🇦🇷):
+const textoOriginal = msg.text.body;
+let numeroRemitente = msg.from;
+
+// Si el número es de Argentina y Meta se comió el 9, se lo ponemos a la fuerza
+if (numeroRemitente.startsWith("54") && numeroRemitente.length === 12) {
+    numeroRemitente = numeroRemitente.replace(/^54/, "549");
+    console.log(`🔧 Corrigiendo número argentino a: ${numeroRemitente}`);
+} else if (numeroRemitente.startsWith("549") && numeroRemitente.length === 13) {
+    // A veces Meta lo pide sin el 9, si te tira error de vuelta, 
+    // invertimos esta lógica sacándole el 9.
+}
+
+                console.log(`📩 Mensaje recibido de ${numeroRemitente}: ${textoOriginal}`);
 
                 const lineas = textoOriginal.split('\n');
 
@@ -40,6 +109,8 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                     const partes = linea.split("|").map(t => t.trim());
 
                     if (partes.length >= 5 && partes[0].toUpperCase() === "VENTA") {
+                        console.log("✅ Formato VENTA detectado. Procesando...");
+                        
                         const productoRaw = String(partes[1] || "");
                         const varianteRaw = String(partes[2] || "");
                         const cantidad = parseInt(partes[3]) || 1;
@@ -47,34 +118,28 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                         const limpiarNum = (texto) => parseFloat(String(texto).replace(/[^0-9,-]+/g,"").replace(",", ".")) || 0;
                         const precioUnitario = limpiarNum(partes[4]);
                         
-                        // --- LÓGICA INTELIGENTE DE CAMPOS OPCIONALES ---
-                        let fechaManual = "hoy"; // Por defecto usa el día actual
+                        let fechaManual = "hoy"; 
                         let costoEnvioMio = 0;
                         let precioEnvioCliente = 0;
                         let esRevendedor = false;
                         let esNuevo = false;
                         let numerosEncontrados = 0;
 
-                        // Evaluamos todo lo que haya del índice 5 en adelante
                         for (let i = 5; i < partes.length; i++) {
                             let dato = String(partes[i]).trim();
                             let datoUpper = dato.toUpperCase();
 
                             if (datoUpper === "") continue;
 
-                            // 1. Detectar si es una fecha
                             if (dato.includes("/") || dato.includes("-")) {
                                 fechaManual = dato;
                             } 
-                            // 2. Detectar si es Revendedor
                             else if (datoUpper === "SI" || datoUpper === "REV" || datoUpper === "TRUE") {
                                 esRevendedor = true;
                             } 
-                            // 3. Detectar si es Cliente Nuevo
                             else if (datoUpper === "NUEVO") {
                                 esNuevo = true;
                             } 
-                            // 4. Detectar si son los valores de Envío
                             else if (/[0-9]/.test(dato)) {
                                 let posibleNum = limpiarNum(dato);
                                 if (!isNaN(posibleNum)) {
@@ -88,19 +153,40 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                             }
                         }
 
-                        await procesarVenta(productoRaw, varianteRaw, cantidad, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo);
+                        console.log(`Buscando producto: ${productoRaw} | Variante: ${varianteRaw} | Cantidad: ${cantidad}`);
+                        
+                        const resultado = await procesarVenta(productoRaw, varianteRaw, cantidad, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo);
+                        
+                        console.log("Resultado de la búsqueda:", resultado);
+
+                        if (resultado && resultado.exito === false) {
+    console.log("⚠️ Stock insuficiente o producto no encontrado. Disparando aviso a WhatsApp...");
+    
+    // 🇦🇷 EL PARCHE ARGENTINO DEFINITIVO: Le amputamos el 9 a la fuerza
+    let numeroParaMeta = numeroRemitente;
+    if (numeroParaMeta.startsWith("549") && numeroParaMeta.length === 13) {
+        numeroParaMeta = numeroParaMeta.replace(/^549/, "54");
+        console.log(`🔧 Meta odia el 9. Forzando envío a: ${numeroParaMeta}`);
+    }
+
+    await enviarMensajeWhatsApp(numeroParaMeta, resultado.error_msg);
+} else {
+    console.log("✅ Venta anotada con éxito. No se requiere aviso.");
+}
+                    } else {
+                        console.log("❌ El mensaje no cumple el formato VENTA | Producto | Variante | Cantidad | Precio");
                     }
                 }
             }
         } catch (error) {
-            console.error("Error crítico en el bot:", error);
+            console.error("❌ Error crítico en el bot:", error);
         }
         return res.sendStatus(200);
     }
 });
 
 async function procesarVenta(userProducto, userVariante, cantARestar, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo) {
-    if (isNaN(cantARestar) || cantARestar <= 0) return;
+    if (isNaN(cantARestar) || cantARestar <= 0) return { exito: false, error_msg: "❌ La cantidad ingresada no es válida." };
 
     const pBuscar = normalizarParaComparar(userProducto);
     const vBuscar = normalizarParaComparar(userVariante);
@@ -124,6 +210,11 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
     let restante = cantARestar;
     let itemsActualizados = false;
     
+    // Variables de validación para responderte
+    let productoEncontrado = false;
+    let stockInsuficiente = false;
+    let stockMascercanoDisponible = 0;
+    
     let batchNameOficial = "Venta por WhatsApp";
     let batchIdOficial = null; 
     let itemIdOficial = null;
@@ -135,7 +226,6 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
         if (restante <= 0) break;
         const batchData = doc.data();
 
-        // Filtro de lotes archivados
         if (batchData.finalizedAt) {
             continue; 
         }
@@ -150,33 +240,38 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
             const dbProd = normalizarParaComparar(item.product);
             const dbVar = normalizarParaComparar(item.variant);
 
-            // Buscador con tolerancia a errores (Levenshtein)
             const productMatches = esParecido(pBuscar, dbProd);
             const variantMatches = esParecido(vBuscar, dbVar);
 
-            if (productMatches && variantMatches && item.currentStock > 0) {
-                let cantidadADescontar = Math.min(item.currentStock, restante);
-                
-                item.currentStock -= cantidadADescontar;
-                restante -= cantidadADescontar;
-                
-                batchModificado = true;
-                itemsActualizados = true;
-                
-                batchNameOficial = batchData.batchName || "Venta por WhatsApp";
-                batchIdOficial = doc.id; 
-                itemIdOficial = item.id; 
-                nombreOficial = item.product || userProducto; 
-                varianteOficial = item.variant || userVariante; 
-                
-                costoUnitarioOficial = item.costArs || 0; 
+            if (productMatches && variantMatches) {
+                productoEncontrado = true;
+                stockMascercanoDisponible = item.currentStock; // Guardamos cuánto queda para avisarte si te quedás corto
+
+                if (item.currentStock >= restante) {
+                    let cantidadADescontar = Math.min(item.currentStock, restante);
+                    
+                    item.currentStock -= cantidadADescontar;
+                    restante -= cantidadADescontar;
+                    
+                    batchModificado = true;
+                    itemsActualizados = true;
+                    
+                    batchNameOficial = batchData.name || "Venta por WhatsApp";
+                    batchIdOficial = doc.id; 
+                    itemIdOficial = item.id; 
+                    nombreOficial = item.product || userProducto; 
+                    varianteOficial = item.variant || userVariante; 
+                    costoUnitarioOficial = item.costArs || 0; 
+                } else {
+                    stockInsuficiente = true;
+                }
             }
         }
         if (batchModificado) await doc.ref.update({ items: items });
     }
 
+    // SI TODO SALIÓ BIEN Y SE DESCONTÓ EL STOCK
     if (itemsActualizados) {
-        // CÁLCULO: (Precio Unitario * Cantidad Total) + Lo que pagó el cliente de envío
         const totalVentaCalculado = (precioUnitario * cantARestar) + precioEnvioCliente;
         const ticketIdGenerado = Date.now().toString(); 
         const fechaCreacionReal = new Date().toISOString(); 
@@ -188,7 +283,7 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
             createdAt: fechaCreacionReal,   
             date: fechaFinalVenta,
             isReseller: esRevendedor,
-            isNewClient: esNuevo,       // <--- REGISTRO DEL CLIENTE NUEVO
+            isNewClient: esNuevo,       
             itemId: itemIdOficial,   
             productName: nombreOficial, 
             quantity: cantARestar,
@@ -199,6 +294,18 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
             unitPrice: precioUnitario,
             variant: varianteOficial    
         });
+
+        return { exito: true };
+    } 
+    // SI NO SE ENCONTRÓ EL PRODUCTO O NO HAY STOCK, DEVOLVEMOS EL ERROR
+    else {
+        if (!productoEncontrado) {
+            return { exito: false, error_msg: `⚠️ *Error de Inventario:*\nEl producto *"${userProducto}"* (Variante: ${userVariante || 'Única'}) no existe en ninguna de tus carpetas activas o está mal escrito.` };
+        } else if (stockInsuficiente) {
+            return { exito: false, error_msg: `🛑 *Stock Insuficiente:*\nIntentaste vender ${cantARestar} unidades de *"${userProducto}"*, pero solo te quedan *${stockMascercanoDisponible}* en stock.` };
+        } else {
+            return { exito: false, error_msg: `⚠️ *Error desconocido* al intentar procesar la venta de ${userProducto}.` };
+        }
     }
 }
 
