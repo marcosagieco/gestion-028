@@ -1490,7 +1490,6 @@ export default function App() {
       await deleteDoc(doc(db, 'expenses', id));
       showToast('Gasto eliminado', 'success');
   }
-
   const handleLogin = (e) => { 
     e.preventDefault(); 
     const val = e.target.password.value; 
