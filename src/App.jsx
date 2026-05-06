@@ -236,7 +236,7 @@ const CustomTooltip = ({ active, payload, label, darkMode }) => {
   return null;
 };
 
-const SalesAreaChart = ({ sales, globalMonth, customDateRange, darkMode }) => {
+const SalesAreaChart = ({ sales, globalMonth, customDateRange, compareDateRange, darkMode }) => {
   const [metric, setMetric] = useState('revenue');
   const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val);
 
@@ -261,7 +261,7 @@ const SalesAreaChart = ({ sales, globalMonth, customDateRange, darkMode }) => {
     else if (globalMonth === 'week') { generateDays(7); }
     else if (globalMonth === '15days') { generateDays(15); }
     else if (globalMonth === '30days') { generateDays(30); }
-    else if (globalMonth === 'custom') {
+    else if (globalMonth === 'custom' || globalMonth === 'compare') {
       const start = new Date(customDateRange.start + 'T00:00:00');
       const end = new Date(customDateRange.end + 'T00:00:00');
       if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && start <= end) {
@@ -311,7 +311,7 @@ const SalesAreaChart = ({ sales, globalMonth, customDateRange, darkMode }) => {
     });
 
     return Object.values(map).sort((a, b) => a.key.localeCompare(b.key));
-  }, [sales, globalMonth, customDateRange]);
+  }, [sales, globalMonth, customDateRange, compareDateRange]);
 
   if (chartData.length === 0) return <div className="h-[300px] flex items-center justify-center text-sm font-medium opacity-50">No hay transacciones en este periodo.</div>;
 
@@ -412,8 +412,9 @@ export default function App() {
   const [manualFinalizeDate, setManualFinalizeDate] = useState(getTodayDate());
   const [globalMonth, setGlobalMonth] = useState('30days'); 
   
-  // NUEVO: ESTADO PARA FECHAS PERSONALIZADAS
+  // ESTADOS PARA FECHAS PERSONALIZADAS Y COMPARACIONES
   const [customDateRange, setCustomDateRange] = useState({ start: getTodayDate(), end: getTodayDate() });
+  const [compareDateRange, setCompareDateRange] = useState({ start: getPreviousDayStr(getTodayDate()), end: getPreviousDayStr(getTodayDate()) });
 
   const [newBatchName, setNewBatchName] = useState('');
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '' });
@@ -517,7 +518,8 @@ export default function App() {
       { value: 'week', label: 'Últimos 7 días' },
       { value: '15days', label: 'Últimos 15 días' },
       { value: '30days', label: 'Últimos 30 días' },
-      { value: 'custom', label: 'Rango Personalizado' }, // <-- AGREGADO
+      { value: 'custom', label: 'Rango Personalizado' },
+      { value: 'compare', label: 'Comparar Fechas (Vs)' }, // <-- AGREGADO
       { value: 'all', label: '-- Histórico Completo --' },
       ...sortedMonths.map(m => {
         const [year, month] = m.split('-');
@@ -554,7 +556,7 @@ export default function App() {
               currentStart = new Date(todayStart); currentStart.setDate(currentStart.getDate() - 29);
               prevStart = new Date(currentStart); prevStart.setDate(prevStart.getDate() - 30);
               prevEnd = new Date(currentStart); prevEnd.setMilliseconds(-1);
-          } else if (filter === 'custom') { // NUEVA LÓGICA PERSONALIZADA
+          } else if (filter === 'custom') { 
               const [sy, sm, sd] = customDateRange.start.split('-').map(Number);
               const [ey, em, ed] = customDateRange.end.split('-').map(Number);
               currentStart = new Date(sy, sm - 1, sd, 0, 0, 0);
@@ -563,6 +565,16 @@ export default function App() {
               const diffTime = currentEnd.getTime() - currentStart.getTime();
               prevEnd = new Date(currentStart.getTime() - 1);
               prevStart = new Date(prevEnd.getTime() - diffTime);
+          } else if (filter === 'compare') { // NUEVO MODO COMPARACIÓN
+              const [s1y, s1m, s1d] = customDateRange.start.split('-').map(Number);
+              const [e1y, e1m, e1d] = customDateRange.end.split('-').map(Number);
+              currentStart = new Date(s1y, s1m - 1, s1d, 0, 0, 0);
+              currentEnd = new Date(e1y, e1m - 1, e1d, 23, 59, 59, 999);
+              
+              const [s2y, s2m, s2d] = compareDateRange.start.split('-').map(Number);
+              const [e2y, e2m, e2d] = compareDateRange.end.split('-').map(Number);
+              prevStart = new Date(s2y, s2m - 1, s2d, 0, 0, 0);
+              prevEnd = new Date(e2y, e2m - 1, e2d, 23, 59, 59, 999);
           } else if (filter !== 'all') {
               const [y, m] = filter.split('-').map(Number);
               currentStart = new Date(y, m - 1, 1);
@@ -581,7 +593,7 @@ export default function App() {
           const d = new Date(dateString);
           if (isNaN(d.getTime())) return false;
           
-          if (globalMonth === 'custom') {
+          if (globalMonth === 'custom' || globalMonth === 'compare') {
               return d >= currentStart && d <= currentEnd;
           }
           if (globalMonth.includes('-')) { 
@@ -661,7 +673,7 @@ export default function App() {
       else if (globalMonth === 'week') daysActive = 7;
       else if (globalMonth === '15days') daysActive = 15;
       else if (globalMonth === '30days') daysActive = 30;
-      else if (globalMonth === 'custom') { // NUEVO CALCULO
+      else if (globalMonth === 'custom' || globalMonth === 'compare') { 
           daysActive = Math.max(1, Math.ceil((currentEnd - currentStart) / (1000 * 60 * 60 * 24)));
       }
       else {
@@ -705,7 +717,7 @@ export default function App() {
           itemsSold, salesCount: filteredSales.length, sourceCounts, typeCounts, dailyAvgItems,
           daysActive, currentStreak, filteredSales, prevRevenue, prevNetProfit, pieSourceData, pieTypeData
       };
-  }, [sales, batches, expenses, globalMonth, customDateRange]);
+  }, [sales, batches, expenses, globalMonth, customDateRange, compareDateRange]);
 
   const batchAnalysis = useMemo(() => {
     if (!selectedBatchStats) return null;
@@ -1301,15 +1313,15 @@ export default function App() {
             {activeTab === 'home' && (
                 <div className="space-y-6 animate-in fade-in duration-300">
                     <div className={`p-4 rounded-xl border flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 ${darkMode ? 'bg-[#131824] border-zinc-800/80' : 'bg-white border-zinc-200'}`}>
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-3 flex-shrink-0">
                             <div className="p-2.5 rounded-lg bg-indigo-500/10 text-indigo-500"><Calendar size={20}/></div>
                             <div>
                                 <h3 className="font-bold text-sm">Periodo de Análisis</h3>
                                 <p className={`text-xs ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Selecciona el rango de tiempo a evaluar</p>
                             </div>
                         </div>
-                        <div className="w-full lg:w-auto flex flex-col sm:flex-row gap-3">
-                            <div className="w-full sm:w-64">
+                        <div className="w-full lg:w-auto flex flex-col md:flex-row gap-4 lg:items-center">
+                            <div className="w-full md:w-64 flex-shrink-0">
                                 <Select 
                                     darkMode={darkMode}
                                     value={globalMonth} 
@@ -1318,22 +1330,30 @@ export default function App() {
                                 />
                             </div>
                             
-                            {/* NUEVO: LOS DOS CALENDARIOS PARA FECHAS PERSONALIZADAS */}
+                            {/* RANGO SIMPLE */}
                             {globalMonth === 'custom' && (
-                                <div className="flex items-center gap-2 animate-in slide-in-from-right-2">
-                                    <Input 
-                                        darkMode={darkMode} 
-                                        type="date" 
-                                        value={customDateRange.start} 
-                                        onChange={e => setCustomDateRange({...customDateRange, start: e.target.value})} 
-                                    />
+                                <div className="flex items-center gap-2 animate-in slide-in-from-right-2 w-full md:w-auto">
+                                    <Input darkMode={darkMode} type="date" value={customDateRange.start} onChange={e => setCustomDateRange({...customDateRange, start: e.target.value})} />
                                     <span className={`font-bold ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>-</span>
-                                    <Input 
-                                        darkMode={darkMode} 
-                                        type="date" 
-                                        value={customDateRange.end} 
-                                        onChange={e => setCustomDateRange({...customDateRange, end: e.target.value})} 
-                                    />
+                                    <Input darkMode={darkMode} type="date" value={customDateRange.end} onChange={e => setCustomDateRange({...customDateRange, end: e.target.value})} />
+                                </div>
+                            )}
+
+                            {/* MODO COMPARACIÓN (Vs) */}
+                            {globalMonth === 'compare' && (
+                                <div className="flex flex-col gap-2 animate-in slide-in-from-right-2 w-full md:w-auto">
+                                    <div className="flex items-center gap-2">
+                                        <span className={`text-[10px] font-bold uppercase w-10 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Base</span>
+                                        <Input darkMode={darkMode} type="date" value={customDateRange.start} onChange={e => setCustomDateRange({...customDateRange, start: e.target.value})} />
+                                        <span className={`font-bold ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>-</span>
+                                        <Input darkMode={darkMode} type="date" value={customDateRange.end} onChange={e => setCustomDateRange({...customDateRange, end: e.target.value})} />
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className={`text-[10px] font-bold uppercase w-10 ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>Vs</span>
+                                        <Input darkMode={darkMode} type="date" value={compareDateRange.start} onChange={e => setCompareDateRange({...compareDateRange, start: e.target.value})} />
+                                        <span className={`font-bold ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>-</span>
+                                        <Input darkMode={darkMode} type="date" value={compareDateRange.end} onChange={e => setCompareDateRange({...compareDateRange, end: e.target.value})} />
+                                    </div>
                                 </div>
                             )}
                         </div>
@@ -1342,7 +1362,7 @@ export default function App() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                         <MetricCard 
                             color="blue"
-                            darkMode={darkMode} title={`Ingresos ${globalMonth === 'all' ? 'Totales' : ''}`} value={formatMoney(globalAnalysis.totalRevenue)} subtitle="Bruto facturado" icon={DollarSign}
+                            darkMode={darkMode} title={`Ingresos ${globalMonth === 'all' ? 'Totales' : ''}`} value={formatMoney(globalAnalysis.totalRevenue)} subtitle={globalMonth === 'compare' ? 'Rango base vs Rango comparado' : 'Bruto facturado'} icon={DollarSign}
                             trend={globalAnalysis.prevRevenue !== null && globalAnalysis.prevRevenue > 0 ? (
                                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${globalAnalysis.totalRevenue >= globalAnalysis.prevRevenue ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 text-red-600 dark:text-red-400'}`}>
                                     {globalAnalysis.totalRevenue >= globalAnalysis.prevRevenue ? '↑' : '↓'} {Math.abs(((globalAnalysis.totalRevenue - globalAnalysis.prevRevenue)/globalAnalysis.prevRevenue)*100).toFixed(0)}%
@@ -1381,7 +1401,7 @@ export default function App() {
                             <h3 className="font-bold tracking-tight text-sm">Evolución de Ingresos</h3>
                         </div>
                         <div className="p-5">
-                            <SalesAreaChart sales={globalAnalysis.filteredSales} globalMonth={globalMonth} customDateRange={customDateRange} darkMode={darkMode} />
+                            <SalesAreaChart sales={globalAnalysis.filteredSales} globalMonth={globalMonth} customDateRange={customDateRange} compareDateRange={compareDateRange} darkMode={darkMode} />
                         </div>
                     </Card>
 
