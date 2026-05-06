@@ -236,7 +236,7 @@ const CustomTooltip = ({ active, payload, label, darkMode }) => {
   return null;
 };
 
-const SalesAreaChart = ({ sales, globalMonth, darkMode }) => {
+const SalesAreaChart = ({ sales, globalMonth, customDateRange, darkMode }) => {
   const [metric, setMetric] = useState('revenue');
   const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val);
 
@@ -261,6 +261,19 @@ const SalesAreaChart = ({ sales, globalMonth, darkMode }) => {
     else if (globalMonth === 'week') { generateDays(7); }
     else if (globalMonth === '15days') { generateDays(15); }
     else if (globalMonth === '30days') { generateDays(30); }
+    else if (globalMonth === 'custom') {
+      const start = new Date(customDateRange.start + 'T00:00:00');
+      const end = new Date(customDateRange.end + 'T00:00:00');
+      if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && start <= end) {
+        for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+          const y = d.getFullYear();
+          const m = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          const key = `${y}-${m}-${day}`;
+          map[key] = { key, name: `${day}/${m}`, fullLabel: `${day} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0 };
+        }
+      }
+    }
     else if (globalMonth !== 'all') {
       const [yStr, mStr] = globalMonth.split('-');
       const y = parseInt(yStr);
@@ -298,7 +311,7 @@ const SalesAreaChart = ({ sales, globalMonth, darkMode }) => {
     });
 
     return Object.values(map).sort((a, b) => a.key.localeCompare(b.key));
-  }, [sales, globalMonth]);
+  }, [sales, globalMonth, customDateRange]);
 
   if (chartData.length === 0) return <div className="h-[300px] flex items-center justify-center text-sm font-medium opacity-50">No hay transacciones en este periodo.</div>;
 
@@ -398,11 +411,14 @@ export default function App() {
   const [expandedBatchId, setExpandedBatchId] = useState(null);
   const [manualFinalizeDate, setManualFinalizeDate] = useState(getTodayDate());
   const [globalMonth, setGlobalMonth] = useState('30days'); 
+  
+  // NUEVO: ESTADO PARA FECHAS PERSONALIZADAS
+  const [customDateRange, setCustomDateRange] = useState({ start: getTodayDate(), end: getTodayDate() });
+
   const [newBatchName, setNewBatchName] = useState('');
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '' });
   const [newExpense, setNewExpense] = useState({ description: '', amount: '', batchId: '', date: getTodayDate() });
   
-  // NUEVO ESTADO PARA EDITAR PRODUCTOS
   const [editingItem, setEditingItem] = useState(null);
   const [editingBatchId, setEditingBatchId] = useState(null);
   const [editingBatchName, setEditingBatchName] = useState('');
@@ -501,6 +517,7 @@ export default function App() {
       { value: 'week', label: 'Últimos 7 días' },
       { value: '15days', label: 'Últimos 15 días' },
       { value: '30days', label: 'Últimos 30 días' },
+      { value: 'custom', label: 'Rango Personalizado' }, // <-- AGREGADO
       { value: 'all', label: '-- Histórico Completo --' },
       ...sortedMonths.map(m => {
         const [year, month] = m.split('-');
@@ -517,6 +534,7 @@ export default function App() {
 
       const getRanges = (filter) => {
           let currentStart = null;
+          let currentEnd = new Date(); // Por defecto hasta ahora
           let prevStart = null;
           let prevEnd = null;
 
@@ -536,22 +554,36 @@ export default function App() {
               currentStart = new Date(todayStart); currentStart.setDate(currentStart.getDate() - 29);
               prevStart = new Date(currentStart); prevStart.setDate(prevStart.getDate() - 30);
               prevEnd = new Date(currentStart); prevEnd.setMilliseconds(-1);
+          } else if (filter === 'custom') { // NUEVA LÓGICA PERSONALIZADA
+              const [sy, sm, sd] = customDateRange.start.split('-').map(Number);
+              const [ey, em, ed] = customDateRange.end.split('-').map(Number);
+              currentStart = new Date(sy, sm - 1, sd, 0, 0, 0);
+              currentEnd = new Date(ey, em - 1, ed, 23, 59, 59, 999);
+              
+              const diffTime = currentEnd.getTime() - currentStart.getTime();
+              prevEnd = new Date(currentStart.getTime() - 1);
+              prevStart = new Date(prevEnd.getTime() - diffTime);
           } else if (filter !== 'all') {
               const [y, m] = filter.split('-').map(Number);
               currentStart = new Date(y, m - 1, 1);
+              currentEnd = new Date(y, m, 0, 23, 59, 59, 999);
               prevStart = new Date(y, m - 2, 1);
               prevEnd = new Date(y, m - 1, 0, 23, 59, 59, 999);
           }
-          return { currentStart, prevStart, prevEnd };
+          return { currentStart, currentEnd, prevStart, prevEnd };
       };
 
-      const { currentStart, prevStart, prevEnd } = getRanges(globalMonth);
+      const { currentStart, currentEnd, prevStart, prevEnd } = getRanges(globalMonth);
 
       const isCurrentRange = (dateString) => {
           if (!dateString) return false;
           if (globalMonth === 'all') return true;
           const d = new Date(dateString);
           if (isNaN(d.getTime())) return false;
+          
+          if (globalMonth === 'custom') {
+              return d >= currentStart && d <= currentEnd;
+          }
           if (globalMonth.includes('-')) { 
              return d.getFullYear() === currentStart.getFullYear() && d.getMonth() === currentStart.getMonth();
           }
@@ -629,6 +661,9 @@ export default function App() {
       else if (globalMonth === 'week') daysActive = 7;
       else if (globalMonth === '15days') daysActive = 15;
       else if (globalMonth === '30days') daysActive = 30;
+      else if (globalMonth === 'custom') { // NUEVO CALCULO
+          daysActive = Math.max(1, Math.ceil((currentEnd - currentStart) / (1000 * 60 * 60 * 24)));
+      }
       else {
           const [y, m] = globalMonth.split('-').map(Number);
           daysActive = (now.getFullYear() === y && now.getMonth() + 1 === m) ? now.getDate() : new Date(y, m, 0).getDate();
@@ -670,7 +705,7 @@ export default function App() {
           itemsSold, salesCount: filteredSales.length, sourceCounts, typeCounts, dailyAvgItems,
           daysActive, currentStreak, filteredSales, prevRevenue, prevNetProfit, pieSourceData, pieTypeData
       };
-  }, [sales, batches, expenses, globalMonth]);
+  }, [sales, batches, expenses, globalMonth, customDateRange]);
 
   const batchAnalysis = useMemo(() => {
     if (!selectedBatchStats) return null;
@@ -840,7 +875,6 @@ export default function App() {
     }));
   };
   const handleExportSales = () => {
-      // AGREGADO Cliente Nuevo a las cabeceras del CSV
       const headers = ['Fecha', 'Lote', 'Producto', 'Variante', 'Cantidad', 'Precio Unitario', 'Total Venta', 'Costo Unitario', 'Ganancia Envio', 'Origen', 'Revendedor', 'Cliente Nuevo'];
       const rows = processedSales.map(s => [
           safeDateStr(s.date), s.batchName || '', s.productName || '', s.variant || '', 
@@ -872,19 +906,16 @@ export default function App() {
     try { await addDoc(collection(db, 'batches'), { name: newBatchName, createdAt: new Date().toISOString(), items: [] }); setNewBatchName(''); showToast("Lote creado correctamente", 'success'); } catch (e) { showToast("Error: " + e.message, 'error'); }
   };
 
-  // NUEVA FUNCIÓN: Guardar edición del Nombre de Lote (CASCADA)
   const handleSaveEditBatchName = async (batchId) => {
     if (!editingBatchName.trim()) return showToast("El nombre no puede estar vacío", "error");
     try {
         await updateDoc(doc(db, 'batches', batchId), { name: editingBatchName });
         
-        // Cascada a Ventas
         const salesToUpdate = sales.filter(s => s.batchId === batchId);
         for (const s of salesToUpdate) {
             await updateDoc(doc(db, 'sales', s.id), { batchName: editingBatchName });
         }
         
-        // Cascada a Gastos
         const expensesToUpdate = expenses.filter(e => e.batchId === batchId);
         for (const e of expensesToUpdate) {
             await updateDoc(doc(db, 'expenses', e.id), { batchName: editingBatchName });
@@ -1047,7 +1078,7 @@ export default function App() {
                 shippingCostArs: isFirstItem ? parseFloat(saleGeneral.shippingCost || 0) : 0,
                 source: saleGeneral.source,
                 isReseller: saleGeneral.isReseller === 'Si',
-                isNewClient: saleGeneral.isNewClient === 'Si' // AGREGADO AL GUARDAR
+                isNewClient: saleGeneral.isNewClient === 'Si'
             };
 
             await addDoc(collection(db, 'sales'), saleData);
@@ -1120,7 +1151,6 @@ export default function App() {
     showToast('Gasto asentado', 'success');
   };
 
-  // FUNCION DE BORRAR GASTOS RECUPERADA AQUÍ
   const handleDeleteExpense = async (id) => {
       await deleteDoc(doc(db, 'expenses', id));
       showToast('Gasto eliminado', 'success');
@@ -1270,7 +1300,7 @@ export default function App() {
             {/* --- PESTAÑA INICIO --- */}
             {activeTab === 'home' && (
                 <div className="space-y-6 animate-in fade-in duration-300">
-                    <div className={`p-4 rounded-xl border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 ${darkMode ? 'bg-[#131824] border-zinc-800/80' : 'bg-white border-zinc-200'}`}>
+                    <div className={`p-4 rounded-xl border flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 ${darkMode ? 'bg-[#131824] border-zinc-800/80' : 'bg-white border-zinc-200'}`}>
                         <div className="flex items-center gap-3">
                             <div className="p-2.5 rounded-lg bg-indigo-500/10 text-indigo-500"><Calendar size={20}/></div>
                             <div>
@@ -1278,13 +1308,34 @@ export default function App() {
                                 <p className={`text-xs ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Selecciona el rango de tiempo a evaluar</p>
                             </div>
                         </div>
-                        <div className="w-full sm:w-64">
-                            <Select 
-                                darkMode={darkMode}
-                                value={globalMonth} 
-                                onChange={e => setGlobalMonth(e.target.value)}
-                                options={periodOptions}
-                            />
+                        <div className="w-full lg:w-auto flex flex-col sm:flex-row gap-3">
+                            <div className="w-full sm:w-64">
+                                <Select 
+                                    darkMode={darkMode}
+                                    value={globalMonth} 
+                                    onChange={e => setGlobalMonth(e.target.value)}
+                                    options={periodOptions}
+                                />
+                            </div>
+                            
+                            {/* NUEVO: LOS DOS CALENDARIOS PARA FECHAS PERSONALIZADAS */}
+                            {globalMonth === 'custom' && (
+                                <div className="flex items-center gap-2 animate-in slide-in-from-right-2">
+                                    <Input 
+                                        darkMode={darkMode} 
+                                        type="date" 
+                                        value={customDateRange.start} 
+                                        onChange={e => setCustomDateRange({...customDateRange, start: e.target.value})} 
+                                    />
+                                    <span className={`font-bold ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>-</span>
+                                    <Input 
+                                        darkMode={darkMode} 
+                                        type="date" 
+                                        value={customDateRange.end} 
+                                        onChange={e => setCustomDateRange({...customDateRange, end: e.target.value})} 
+                                    />
+                                </div>
+                            )}
                         </div>
                     </div>
 
@@ -1330,7 +1381,7 @@ export default function App() {
                             <h3 className="font-bold tracking-tight text-sm">Evolución de Ingresos</h3>
                         </div>
                         <div className="p-5">
-                            <SalesAreaChart sales={globalAnalysis.filteredSales} globalMonth={globalMonth} darkMode={darkMode} />
+                            <SalesAreaChart sales={globalAnalysis.filteredSales} globalMonth={globalMonth} customDateRange={customDateRange} darkMode={darkMode} />
                         </div>
                     </Card>
 

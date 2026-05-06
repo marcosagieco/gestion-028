@@ -1,5 +1,7 @@
 const functions = require("firebase-functions");
+const { onSchedule } = require("firebase-functions/v2/scheduler"); // 👈 El import nuevo para los resúmenes
 const admin = require("firebase-admin");
+const { google } = require("googleapis"); 
 admin.initializeApp();
 
 const db = admin.firestore();
@@ -10,9 +12,39 @@ const VERIFY_TOKEN = "028_Import_Master_2026";
 const META_TOKEN = "EAANhs8CZCMhUBRfllbvBZCzHH83H31sZCZC6ISpFo1ylsq3XOTEQXZCd1dIyUPXVHNjCfNDmG4Jnrnk4G7U9kBTsFdhkOs7WUiVrchrLLomAZAy4ydcSrNhlbzPTbVlMDpxZAVfKBj4uePi2xFjYuPW1hLAKcAlr98EHPkKWDS2TaFlb1TKVxmFDCvmkzNqZCmCZC1wZDZD";
 const PHONE_ID = "984636221409591";
 
+// 👇 TUS DATOS PARA GOOGLE SHEETS Y RESÚMENES 👇
+const SPREADSHEET_ID = "1f5r9oYyUyB3GTI62fn1uvAJuiOUdWDLkVRm7LBhzMNc";
+const ADMIN_NUMBER = "541153412358"; 
+
 const https = require('https');
 
-// Función nativa para enviar mensajes con LOGS
+// ==========================================
+// FUNCIONES PARA GOOGLE SHEETS
+// ==========================================
+async function getSheetsClient() {
+    const auth = new google.auth.GoogleAuth({
+        keyFile: "service-account.json",
+        scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+    });
+    const client = await auth.getClient();
+    return google.sheets({ version: "v4", auth: client });
+}
+
+async function registrarEnSheet(pestaña, fila) {
+    try {
+        const sheets = await getSheetsClient();
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `${pestaña}!A1`,
+            valueInputOption: "USER_ENTERED",
+            resource: { values: [fila] },
+        });
+    } catch (e) {
+        console.error("❌ Error escribiendo en Sheets:", e);
+    }
+}
+
+// Función nativa para enviar mensajes con LOGS (TUYA ORIGINAL)
 async function enviarMensajeWhatsApp(telefonoDestino, texto) {
     if (META_TOKEN === "PONE_ACA_TU_TOKEN_DE_META") {
         console.log("❌ ERROR INTERNO: El token de Meta no fue configurado.");
@@ -62,7 +94,7 @@ async function enviarMensajeWhatsApp(telefonoDestino, texto) {
     });
 }
 
-// Función para limpiar textos (quita emojis, tildes y símbolos)
+// Función para limpiar textos (TUYA ORIGINAL)
 const normalizarParaComparar = (texto) => {
     return String(texto || "")
         .trim()
@@ -86,18 +118,17 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
             const body = req.body;
             if (body.object === "whatsapp_business_account" && body.entry?.[0]?.changes?.[0]?.value?.messages?.[0]) {
                 const msg = body.entry[0].changes[0].value.messages[0];
-                // REEMPLAZALO POR ESTO (El parche argentino 🇦🇷):
-const textoOriginal = msg.text.body;
-let numeroRemitente = msg.from;
+                
+                const textoOriginal = msg.text.body;
+                let numeroRemitente = msg.from;
+                const fechaHoySheet = new Date().toLocaleString("es-AR", {timeZone: "America/Argentina/Buenos_Aires"});
 
-// Si el número es de Argentina y Meta se comió el 9, se lo ponemos a la fuerza
-if (numeroRemitente.startsWith("54") && numeroRemitente.length === 12) {
-    numeroRemitente = numeroRemitente.replace(/^54/, "549");
-    console.log(`🔧 Corrigiendo número argentino a: ${numeroRemitente}`);
-} else if (numeroRemitente.startsWith("549") && numeroRemitente.length === 13) {
-    // A veces Meta lo pide sin el 9, si te tira error de vuelta, 
-    // invertimos esta lógica sacándole el 9.
-}
+                if (numeroRemitente.startsWith("54") && numeroRemitente.length === 12) {
+                    numeroRemitente = numeroRemitente.replace(/^54/, "549");
+                    console.log(`🔧 Corrigiendo número argentino a: ${numeroRemitente}`);
+                } else if (numeroRemitente.startsWith("549") && numeroRemitente.length === 13) {
+                    // A veces Meta lo pide sin el 9
+                }
 
                 console.log(`📩 Mensaje recibido de ${numeroRemitente}: ${textoOriginal}`);
 
@@ -118,6 +149,7 @@ if (numeroRemitente.startsWith("54") && numeroRemitente.length === 12) {
                         const limpiarNum = (texto) => parseFloat(String(texto).replace(/[^0-9,-]+/g,"").replace(",", ".")) || 0;
                         const precioUnitario = limpiarNum(partes[4]);
                         
+                        // TU LÓGICA DE VARIABLES EXTRAS INTACTA
                         let fechaManual = "hoy"; 
                         let costoEnvioMio = 0;
                         let precioEnvioCliente = 0;
@@ -159,22 +191,29 @@ if (numeroRemitente.startsWith("54") && numeroRemitente.length === 12) {
                         
                         console.log("Resultado de la búsqueda:", resultado);
 
-                        if (resultado && resultado.exito === false) {
-    console.log("⚠️ Stock insuficiente o producto no encontrado. Disparando aviso a WhatsApp...");
-    
-    // 🇦🇷 EL PARCHE ARGENTINO DEFINITIVO: Le amputamos el 9 a la fuerza
-    let numeroParaMeta = numeroRemitente;
-    if (numeroParaMeta.startsWith("549") && numeroParaMeta.length === 13) {
-        numeroParaMeta = numeroParaMeta.replace(/^549/, "54");
-        console.log(`🔧 Meta odia el 9. Forzando envío a: ${numeroParaMeta}`);
-    }
+                        let numeroParaMeta = numeroRemitente;
+                        if (numeroParaMeta.startsWith("549") && numeroParaMeta.length === 13) {
+                            numeroParaMeta = numeroParaMeta.replace(/^549/, "54");
+                        }
 
-    await enviarMensajeWhatsApp(numeroParaMeta, resultado.error_msg);
-} else {
-    console.log("✅ Venta anotada con éxito. No se requiere aviso.");
-}
+                        if (resultado && resultado.exito === false) {
+                            console.log("⚠️ Stock insuficiente o producto no encontrado. Disparando aviso a WhatsApp...");
+                            await enviarMensajeWhatsApp(numeroParaMeta, resultado.error_msg);
+                            
+                            // REGISTRAR ERROR EN SHEET
+                            await registrarEnSheet("Intentos", [fechaHoySheet, numeroRemitente, linea, resultado.error_msg]);
+                        } else {
+                            console.log("✅ Venta anotada con éxito. No se requiere aviso.");
+                            
+                            // REGISTRAR VENTA EXITOSA EN SHEET
+                            await registrarEnSheet("Ventas", [fechaHoySheet, numeroRemitente, productoRaw, varianteRaw, cantidad, precioUnitario, "ÉXITO"]);
+                        }
                     } else {
                         console.log("❌ El mensaje no cumple el formato VENTA | Producto | Variante | Cantidad | Precio");
+                        
+                        // REGISTRAR FORMATO INCORRECTO EN SHEET
+                        let numFallo = numeroRemitente.startsWith("549") ? numeroRemitente.replace(/^549/, "54") : numeroRemitente;
+                        await registrarEnSheet("Intentos", [fechaHoySheet, numFallo, linea, "Formato Incorrecto"]);
                     }
                 }
             }
@@ -185,13 +224,125 @@ if (numeroRemitente.startsWith("54") && numeroRemitente.length === 12) {
     }
 });
 
+
+// ==========================================
+// ⏰ RESÚMENES AUTOMÁTICOS (CORREGIDOS PARA ARGENTINA)
+// ==========================================
+
+// RESUMEN DIARIO (23:50 Argentina)
+exports.resumenDiario = onSchedule({
+    schedule: "50 23 * * *",
+    timeZone: "America/Argentina/Buenos_Aires"
+}, async (event) => {
+    // Calculamos el inicio del día en Argentina
+    const ahoraAR = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Argentina/Buenos_Aires"}));
+    const inicioHoyAR = new Date(ahoraAR);
+    inicioHoyAR.setHours(0,0,0,0);
+    
+    // Lo pasamos a formato ISO para comparar con la base de datos
+    // Restamos 3 horas manualmente para que coincida con el UTC de Firebase
+    const inicioUTC = new Date(inicioHoyAR.getTime() + (3 * 60 * 60 * 1000)).toISOString();
+
+    const ventasSnapshot = await db.collection("sales")
+        .where("createdAt", ">=", inicioHoyAR.toISOString()) // Buscamos todo lo creado hoy
+        .get();
+
+    let totalPlata = 0;
+    let resumenText = `📊 *RESUMEN DIARIO (${inicioHoyAR.toLocaleDateString('es-AR')})*\n\n`;
+
+    if (ventasSnapshot.empty) {
+        resumenText += "No hubo ventas registradas hoy.";
+    } else {
+        ventasSnapshot.forEach(doc => {
+            const v = doc.data();
+            resumenText += `• ${v.quantity}x ${v.productName} (${v.variant}) - $${v.totalSaleRaw}\n`;
+            totalPlata += (v.totalSaleRaw || 0);
+        });
+        resumenText += `\n💰 *TOTAL DEL DÍA: $${totalPlata}*`;
+    }
+
+    let numeroParaMeta = ADMIN_NUMBER;
+    if (numeroParaMeta.startsWith("549") && numeroParaMeta.length === 13) {
+        numeroParaMeta = numeroParaMeta.replace(/^549/, "54");
+    }
+    await enviarMensajeWhatsApp(numeroParaMeta, resumenText);
+});
+
+// RESUMEN SEMANAL (Domingos 23:59 Argentina)
+exports.resumenSemanal = onSchedule({
+    schedule: "59 23 * * 0",
+    timeZone: "America/Argentina/Buenos_Aires"
+}, async (event) => {
+    const ahoraAR = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Argentina/Buenos_Aires"}));
+    const haceSieteDias = new Date(ahoraAR);
+    haceSieteDias.setDate(haceSieteDias.getDate() - 7);
+    haceSieteDias.setHours(0,0,0,0);
+    
+    const ventasSnapshot = await db.collection("sales")
+        .where("createdAt", ">=", haceSieteDias.toISOString())
+        .get();
+
+    let totalSemana = 0;
+    ventasSnapshot.forEach(doc => {
+        totalSemana += (doc.data().totalSaleRaw || 0);
+    });
+
+    const msg = `📅 *RESUMEN SEMANAL*\n\nTotal acumulado de la semana: *$${totalSemana}*\n\n¡Buen comienzo de semana, Marcos! 🚀`;
+    
+    let numeroParaMeta = ADMIN_NUMBER;
+    if (numeroParaMeta.startsWith("549") && numeroParaMeta.length === 13) {
+        numeroParaMeta = numeroParaMeta.replace(/^549/, "54");
+    }
+    await enviarMensajeWhatsApp(numeroParaMeta, msg);
+});
+
+// RESUMEN SEMANAL (Domingos 23:59 Argentina)
+exports.resumenSemanal = onSchedule({
+    schedule: "59 23 * * 0",
+    timeZone: "America/Argentina/Buenos_Aires"
+}, async (event) => {
+    // Calculamos el momento actual en Argentina
+    const ahoraAR = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Argentina/Buenos_Aires"}));
+    
+    // Calculamos hace exactamente 7 días a las 00:00:00
+    const haceSieteDias = new Date(ahoraAR);
+    haceSieteDias.setDate(haceSieteDias.getDate() - 7);
+    haceSieteDias.setHours(0,0,0,0);
+    
+    // Buscamos en Firebase todas las ventas desde ese momento
+    const ventasSnapshot = await db.collection("sales")
+        .where("createdAt", ">=", haceSieteDias.toISOString())
+        .get();
+
+    let totalSemana = 0;
+    let cantidadVentas = 0;
+
+    ventasSnapshot.forEach(doc => {
+        totalSemana += (doc.data().totalSaleRaw || 0);
+        cantidadVentas++;
+    });
+
+    const msg = `📅 *RESUMEN SEMANAL (Cierre Domingo)*\n\n` +
+                `✅ Ventas procesadas: *${cantidadVentas}*\n` +
+                `💰 Total acumulado: *$${totalSemana}*\n\n` +
+                `¡Buen comienzo de semana para el equipo de 028! 🚀`;
+    
+    let numeroParaMeta = ADMIN_NUMBER;
+    if (numeroParaMeta.startsWith("549") && numeroParaMeta.length === 13) {
+        numeroParaMeta = numeroParaMeta.replace(/^549/, "54");
+    }
+    await enviarMensajeWhatsApp(numeroParaMeta, msg);
+});
+
+// ==========================================
+// TU FUNCIÓN PROCESAR VENTA INTACTA
+// ==========================================
 async function procesarVenta(userProducto, userVariante, cantARestar, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo) {
     if (isNaN(cantARestar) || cantARestar <= 0) return { exito: false, error_msg: "❌ La cantidad ingresada no es válida." };
 
     const pBuscar = normalizarParaComparar(userProducto);
     const vBuscar = normalizarParaComparar(userVariante);
 
-    // Lógica de fechas
     let fechaFinalVenta = new Date().toISOString();
     if (fechaManual && String(fechaManual).trim().toLowerCase() !== "hoy") {
         const partesF = String(fechaManual).split(/[\/\-]/); 
@@ -210,7 +361,6 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
     let restante = cantARestar;
     let itemsActualizados = false;
     
-    // Variables de validación para responderte
     let productoEncontrado = false;
     let stockInsuficiente = false;
     let stockMascercanoDisponible = 0;
@@ -245,7 +395,7 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
 
             if (productMatches && variantMatches) {
                 productoEncontrado = true;
-                stockMascercanoDisponible = item.currentStock; // Guardamos cuánto queda para avisarte si te quedás corto
+                stockMascercanoDisponible = item.currentStock;
 
                 if (item.currentStock >= restante) {
                     let cantidadADescontar = Math.min(item.currentStock, restante);
@@ -270,7 +420,6 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
         if (batchModificado) await doc.ref.update({ items: items });
     }
 
-    // SI TODO SALIÓ BIEN Y SE DESCONTÓ EL STOCK
     if (itemsActualizados) {
         const totalVentaCalculado = (precioUnitario * cantARestar) + precioEnvioCliente;
         const ticketIdGenerado = Date.now().toString(); 
@@ -297,7 +446,6 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
 
         return { exito: true };
     } 
-    // SI NO SE ENCONTRÓ EL PRODUCTO O NO HAY STOCK, DEVOLVEMOS EL ERROR
     else {
         if (!productoEncontrado) {
             return { exito: false, error_msg: `⚠️ *Error de Inventario:*\nEl producto *"${userProducto}"* (Variante: ${userVariante || 'Única'}) no existe en ninguna de tus carpetas activas o está mal escrito.` };
@@ -309,7 +457,9 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
     }
 }
 
-// === FÓRMULAS MATEMÁTICAS PARA ERRORES DE TIPEO (LEVENSHTEIN) ===
+// ==========================================
+// TUS FÓRMULAS MATEMÁTICAS INTACTAS
+// ==========================================
 
 function distanciaLevenshtein(a, b) {
     const matriz = [];
