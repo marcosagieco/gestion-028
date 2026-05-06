@@ -110,8 +110,8 @@ const MetricCard = ({ title, value, subtitle, icon: Icon, trend, color = 'zinc',
        </div>
        <div>
           <div className="text-2xl font-bold tracking-tight">{value}</div>
-          <div className="flex items-center justify-between mt-2">
-             <span className={`text-xs font-medium ${darkMode ? 'opacity-50' : 'text-zinc-500'}`}>{subtitle}</span>
+          <div className="flex items-center justify-between mt-2 gap-2">
+             <span className={`text-xs font-medium truncate ${darkMode ? 'opacity-50' : 'text-zinc-500'}`}>{subtitle}</span>
              {trend}
           </div>
        </div>
@@ -236,7 +236,7 @@ const CustomTooltip = ({ active, payload, label, darkMode }) => {
   return null;
 };
 
-const SalesAreaChart = ({ sales, globalMonth, customDateRange, compareDateRange, darkMode }) => {
+const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = false }) => {
   const [metric, setMetric] = useState('revenue');
   const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val);
 
@@ -257,13 +257,13 @@ const SalesAreaChart = ({ sales, globalMonth, customDateRange, compareDateRange,
         }
     };
 
-    if (globalMonth === 'today') { generateDays(1); }
-    else if (globalMonth === 'week') { generateDays(7); }
-    else if (globalMonth === '15days') { generateDays(15); }
-    else if (globalMonth === '30days') { generateDays(30); }
-    else if (globalMonth === 'custom' || globalMonth === 'compare') {
-      const start = new Date(customDateRange.start + 'T00:00:00');
-      const end = new Date(customDateRange.end + 'T00:00:00');
+    if (mode === 'today') { generateDays(1); }
+    else if (mode === 'week') { generateDays(7); }
+    else if (mode === '15days') { generateDays(15); }
+    else if (mode === '30days') { generateDays(30); }
+    else if (mode === 'custom') {
+      const start = new Date(customRange.start + 'T00:00:00');
+      const end = new Date(customRange.end + 'T00:00:00');
       if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && start <= end) {
         for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
           const y = d.getFullYear();
@@ -274,8 +274,8 @@ const SalesAreaChart = ({ sales, globalMonth, customDateRange, compareDateRange,
         }
       }
     }
-    else if (globalMonth !== 'all') {
-      const [yStr, mStr] = globalMonth.split('-');
+    else if (mode !== 'all') {
+      const [yStr, mStr] = mode.split('-');
       const y = parseInt(yStr);
       const m = parseInt(mStr);
       const daysInMonth = new Date(y, m, 0).getDate();
@@ -311,11 +311,12 @@ const SalesAreaChart = ({ sales, globalMonth, customDateRange, compareDateRange,
     });
 
     return Object.values(map).sort((a, b) => a.key.localeCompare(b.key));
-  }, [sales, globalMonth, customDateRange, compareDateRange]);
+  }, [sales, mode, customRange]);
 
-  if (chartData.length === 0) return <div className="h-[300px] flex items-center justify-center text-sm font-medium opacity-50">No hay transacciones en este periodo.</div>;
+  if (chartData.length === 0) return <div className="h-[250px] flex items-center justify-center text-sm font-medium opacity-50">No hay transacciones en este periodo.</div>;
 
-  const themeColor = darkMode ? '#818cf8' : '#4f46e5'; 
+  // Cambiar el color si es el gráfico de la derecha (Vs)
+  const themeColor = isCompareMode ? (darkMode ? '#f43f5e' : '#e11d48') : (darkMode ? '#818cf8' : '#4f46e5'); 
   const gridColor = darkMode ? '#27272a' : '#e4e4e7';
   const textColor = darkMode ? '#71717a' : '#a1a1aa';
 
@@ -323,29 +324,29 @@ const SalesAreaChart = ({ sales, globalMonth, customDateRange, compareDateRange,
     <div className="w-full flex flex-col space-y-4">
       <div className="flex justify-end mb-1">
           <div className={`flex items-center p-1 rounded-lg border ${darkMode ? 'bg-[#0f1115] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
-              <button onClick={() => setMetric('revenue')} className={`px-4 py-1.5 text-xs font-semibold rounded-md transition-all ${metric === 'revenue' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Ingresos</button>
-              <button onClick={() => setMetric('quantity')} className={`px-4 py-1.5 text-xs font-semibold rounded-md transition-all ${metric === 'quantity' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Unidades</button>
+              <button onClick={() => setMetric('revenue')} className={`px-4 py-1 text-xs font-semibold rounded-md transition-all ${metric === 'revenue' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Ingresos</button>
+              <button onClick={() => setMetric('quantity')} className={`px-4 py-1 text-xs font-semibold rounded-md transition-all ${metric === 'quantity' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Unidades</button>
           </div>
       </div>
       
-      <div className={`w-full h-[300px] p-2 rounded-xl border ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+      <div className={`w-full h-[250px] p-2 rounded-xl border ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-white border-zinc-200'}`}>
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData} margin={{ top: 20, right: 20, left: 0, bottom: 0 }}>
+          <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
             <defs>
-              <linearGradient id="colorMetric" x1="0" y1="0" x2="0" y2="1">
+              <linearGradient id={`colorMetric-${isCompareMode ? 'vs' : 'base'}`} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor={themeColor} stopOpacity={0.3}/>
                 <stop offset="95%" stopColor={themeColor} stopOpacity={0}/>
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridColor} />
-            <XAxis dataKey="name" stroke={textColor} fontSize={12} tickLine={false} axisLine={false} dy={10} minTickGap={30} />
+            <XAxis dataKey="name" stroke={textColor} fontSize={10} tickLine={false} axisLine={false} dy={10} minTickGap={20} />
             <YAxis 
-              stroke={textColor} fontSize={12} tickLine={false} axisLine={false} 
+              stroke={textColor} fontSize={10} tickLine={false} axisLine={false} 
               tickFormatter={(value) => metric === 'revenue' ? formatCompact(value) : value} 
-              width={60}
+              width={45}
             />
             <RechartsTooltip content={<CustomTooltip darkMode={darkMode} />} cursor={{ stroke: textColor, strokeWidth: 1, strokeDasharray: '3 3' }} />
-            <Area type="monotone" dataKey={metric === 'revenue' ? 'Ingresos' : 'Unidades'} stroke={themeColor} strokeWidth={3} fillOpacity={1} fill="url(#colorMetric)" activeDot={{ r: 6, strokeWidth: 0 }} />
+            <Area type="monotone" dataKey={metric === 'revenue' ? 'Ingresos' : 'Unidades'} stroke={themeColor} strokeWidth={3} fillOpacity={1} fill={`url(#colorMetric-${isCompareMode ? 'vs' : 'base'})`} activeDot={{ r: 6, strokeWidth: 0 }} />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -354,18 +355,18 @@ const SalesAreaChart = ({ sales, globalMonth, customDateRange, compareDateRange,
 };
 
 const CustomPieChart = ({ data, colors, darkMode }) => {
-  if (!data || data.length === 0) return <div className="h-[160px] flex items-center justify-center text-sm font-medium opacity-50">Sin datos</div>;
+  if (!data || data.length === 0) return <div className="h-[140px] flex items-center justify-center text-sm font-medium opacity-50">Sin datos</div>;
   
   return (
-    <div className="h-[180px] w-full">
+    <div className="h-[140px] w-full">
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
           <Pie
             data={data}
             cx="50%"
             cy="50%"
-            innerRadius={60}
-            outerRadius={80}
+            innerRadius={45}
+            outerRadius={65}
             paddingAngle={5}
             dataKey="value"
             stroke="none"
@@ -519,7 +520,7 @@ export default function App() {
       { value: '15days', label: 'Últimos 15 días' },
       { value: '30days', label: 'Últimos 30 días' },
       { value: 'custom', label: 'Rango Personalizado' },
-      { value: 'compare', label: 'Comparar Fechas (Vs)' }, // <-- AGREGADO
+      { value: 'compare', label: 'Comparar Fechas (Mano a Mano)' }, // <-- ACTUALIZADO
       { value: 'all', label: '-- Histórico Completo --' },
       ...sortedMonths.map(m => {
         const [year, month] = m.split('-');
@@ -530,194 +531,139 @@ export default function App() {
     ];
   }, [sales, expenses, batches]);
 
-  const globalAnalysis = useMemo(() => {
+  // LÓGICA REFACTORIZADA PARA PODER COMPARAR DOS PERIODOS A LA VEZ
+  const analysisData = useMemo(() => {
       const now = new Date();
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-      const getRanges = (filter) => {
-          let currentStart = null;
-          let currentEnd = new Date(); // Por defecto hasta ahora
-          let prevStart = null;
-          let prevEnd = null;
+      // Función ayudante que calcula todo para CUALQUIER rango de fechas que le pasemos
+      const calculateForRange = (start, end, isAll = false) => {
+          const inRange = (dateString) => {
+              if (!dateString) return false;
+              if (isAll) return true;
+              const d = new Date(dateString);
+              if (isNaN(d.getTime())) return false;
+              return d >= start && d <= end;
+          };
 
-          if (filter === 'today') {
-              currentStart = todayStart;
-              prevStart = new Date(todayStart); prevStart.setDate(prevStart.getDate() - 1);
-              prevEnd = new Date(todayStart); prevEnd.setMilliseconds(-1);
-          } else if (filter === 'week') {
-              currentStart = new Date(todayStart); currentStart.setDate(currentStart.getDate() - 6);
-              prevStart = new Date(currentStart); prevStart.setDate(prevStart.getDate() - 7);
-              prevEnd = new Date(currentStart); prevEnd.setMilliseconds(-1);
-          } else if (filter === '15days') {
-              currentStart = new Date(todayStart); currentStart.setDate(currentStart.getDate() - 14);
-              prevStart = new Date(currentStart); prevStart.setDate(prevStart.getDate() - 15);
-              prevEnd = new Date(currentStart); prevEnd.setMilliseconds(-1);
-          } else if (filter === '30days') {
-              currentStart = new Date(todayStart); currentStart.setDate(currentStart.getDate() - 29);
-              prevStart = new Date(currentStart); prevStart.setDate(prevStart.getDate() - 30);
-              prevEnd = new Date(currentStart); prevEnd.setMilliseconds(-1);
-          } else if (filter === 'custom') { 
-              const [sy, sm, sd] = customDateRange.start.split('-').map(Number);
-              const [ey, em, ed] = customDateRange.end.split('-').map(Number);
-              currentStart = new Date(sy, sm - 1, sd, 0, 0, 0);
-              currentEnd = new Date(ey, em - 1, ed, 23, 59, 59, 999);
-              
-              const diffTime = currentEnd.getTime() - currentStart.getTime();
-              prevEnd = new Date(currentStart.getTime() - 1);
-              prevStart = new Date(prevEnd.getTime() - diffTime);
-          } else if (filter === 'compare') { // NUEVO MODO COMPARACIÓN
-              const [s1y, s1m, s1d] = customDateRange.start.split('-').map(Number);
-              const [e1y, e1m, e1d] = customDateRange.end.split('-').map(Number);
-              currentStart = new Date(s1y, s1m - 1, s1d, 0, 0, 0);
-              currentEnd = new Date(e1y, e1m - 1, e1d, 23, 59, 59, 999);
-              
-              const [s2y, s2m, s2d] = compareDateRange.start.split('-').map(Number);
-              const [e2y, e2m, e2d] = compareDateRange.end.split('-').map(Number);
-              prevStart = new Date(s2y, s2m - 1, s2d, 0, 0, 0);
-              prevEnd = new Date(e2y, e2m - 1, e2d, 23, 59, 59, 999);
-          } else if (filter !== 'all') {
-              const [y, m] = filter.split('-').map(Number);
-              currentStart = new Date(y, m - 1, 1);
-              currentEnd = new Date(y, m, 0, 23, 59, 59, 999);
-              prevStart = new Date(y, m - 2, 1);
-              prevEnd = new Date(y, m - 1, 0, 23, 59, 59, 999);
-          }
-          return { currentStart, currentEnd, prevStart, prevEnd };
-      };
+          const fSales = sales.filter(s => inRange(s.date));
+          const fExp = expenses.filter(e => inRange(e.date));
+          const fBatches = batches.filter(b => inRange(b.createdAt));
 
-      const { currentStart, currentEnd, prevStart, prevEnd } = getRanges(globalMonth);
+          let totalRevenue = 0, itemsSold = 0, totalShippingProfit = 0;
+          const sourceCounts = {};
+          const typeCounts = { Revendedor: 0, Final: 0 };
 
-      const isCurrentRange = (dateString) => {
-          if (!dateString) return false;
-          if (globalMonth === 'all') return true;
-          const d = new Date(dateString);
-          if (isNaN(d.getTime())) return false;
-          
-          if (globalMonth === 'custom' || globalMonth === 'compare') {
-              return d >= currentStart && d <= currentEnd;
-          }
-          if (globalMonth.includes('-')) { 
-             return d.getFullYear() === currentStart.getFullYear() && d.getMonth() === currentStart.getMonth();
-          }
-          return d >= currentStart;
-      };
+          fSales.forEach(s => {
+              totalRevenue += s.totalSaleRaw || 0;
+              itemsSold += s.quantity || 0;
+              totalShippingProfit += (s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0));
+              const src = s.source || 'Otro';
+              sourceCounts[src] = (sourceCounts[src] || 0) + 1;
+              if (s.isReseller === 'Si' || s.isReseller === true) typeCounts.Revendedor++; else typeCounts.Final++;
+          });
 
-      const isPrevRange = (dateString) => {
-          if (!dateString || globalMonth === 'all' || !prevStart) return false;
-          const d = new Date(dateString);
-          if (isNaN(d.getTime())) return false;
-          return d >= prevStart && d <= prevEnd;
-      };
+          const totalInvestment = fBatches.reduce((acc, b) => acc + (b.items || []).reduce((a, i) => a + ((i.costArs || 0) * (i.initialStock || 0)), 0), 0);
+          const totalGlobalExpenses = fExp.reduce((acc, e) => acc + (e.amount || 0), 0);
+          const costOfSoldFiltered = fSales.reduce((acc, s) => acc + ((s.costArsAtSale || 0) * (s.quantity || 0)), 0);
 
-      const filteredSales = sales.filter(s => isCurrentRange(s.date));
-      const filteredExpenses = expenses.filter(e => isCurrentRange(e.date));
-      const filteredBatches = batches.filter(b => isCurrentRange(b.createdAt));
+          const grossProfit = totalRevenue - costOfSoldFiltered;
+          const netProfit = grossProfit - totalGlobalExpenses;
+          const cashBalance = totalRevenue - totalInvestment - totalGlobalExpenses;
 
-      let totalRevenue = 0, itemsSold = 0, totalShippingProfit = 0;
-      const sourceCounts = {};
-      const typeCounts = { Revendedor: 0, Final: 0 };
+          const currentStockValue = batches.filter(b => !b.finalizedAt).reduce((acc, b) => acc + (b.items || []).reduce((a, i) => a + ((i.costArs || 0) * (i.currentStock || 0)), 0), 0);
 
-      filteredSales.forEach(s => {
-          totalRevenue += s.totalSaleRaw || 0;
-          itemsSold += s.quantity || 0;
-          const saleShippingProfit = (s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0));
-          totalShippingProfit += saleShippingProfit;
-          const src = s.source || 'Otro';
-          sourceCounts[src] = (sourceCounts[src] || 0) + 1;
-          if (s.isReseller === 'Si' || s.isReseller === true) typeCounts.Revendedor++; else typeCounts.Final++;
-      });
+          const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+          const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
-      const totalInvestment = filteredBatches.reduce((accBatch, batch) => {
-          return accBatch + (batch.items || []).reduce((accItem, item) => accItem + ((item.costArs || 0) * (item.initialStock || 0)), 0);
-      }, 0);
+          let daysActive = isAll ? 1 : Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24)));
+          const dailyAvgItems = daysActive > 0 ? itemsSold / daysActive : 0;
 
-      const totalGlobalExpenses = filteredExpenses.reduce((acc, e) => acc + (e.amount || 0), 0);
-      const costOfSoldFiltered = filteredSales.reduce((acc, s) => acc + ((s.costArsAtSale || 0) * (s.quantity || 0)), 0);
-      
-      const grossProfit = totalRevenue - costOfSoldFiltered;
-      const netProfit = grossProfit - totalGlobalExpenses;
-      const cashBalance = totalRevenue - totalInvestment - totalGlobalExpenses;
-      
-      const currentStockValue = batches
-          .filter(b => !b.finalizedAt)
-          .reduce((accBatch, batch) => accBatch + (batch.items || []).reduce((accItem, item) => accItem + ((item.costArs || 0) * (item.currentStock || 0)), 0), 0);
+          const pieSourceData = Object.entries(sourceCounts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
+          const pieTypeData = [{ name: 'Consumidor', value: typeCounts.Final }, { name: 'Revendedor', value: typeCounts.Revendedor }].filter(d => d.value > 0);
 
-      const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
-      const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+          // Calcular racha de días vendiendo (streak)
+          const uniqueDateStrs = [...new Set(fSales.filter(s => s.date).map(s => {
+              const d = new Date(s.date);
+              return isNaN(d.getTime()) ? null : `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+          }).filter(Boolean))].sort((a, b) => b.localeCompare(a));
 
-      let prevRevenue = null;
-      let prevNetProfit = null;
-      
-      if (globalMonth !== 'all') {
-          const prevSales = sales.filter(s => isPrevRange(s.date));
-          const prevExpenses = expenses.filter(e => isPrevRange(e.date));
-          let pRev = 0, pCostSold = 0;
-          prevSales.forEach(s => { pRev += s.totalSaleRaw || 0; pCostSold += ((s.costArsAtSale || 0) * (s.quantity || 0)); });
-          const pExp = prevExpenses.reduce((acc, e) => acc + (e.amount || 0), 0);
-          prevRevenue = pRev;
-          prevNetProfit = (pRev - pCostSold) - pExp;
-      }
+          let currentStreak = 0;
+          if (uniqueDateStrs.length > 0) {
+              const todayStr = getTodayDate();
+              const yesterdayStr = getPreviousDayStr(todayStr);
+              let checkDate = '';
+              if (uniqueDateStrs[0] === todayStr) { currentStreak = 1; checkDate = todayStr; } 
+              else if (uniqueDateStrs[0] === yesterdayStr) { currentStreak = 1; checkDate = yesterdayStr; }
 
-      let daysActive = 0;
-      if (globalMonth === 'all') {
-          if (batches.length > 0 && batches[0].createdAt) {
-              const sortedBatches = [...batches].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-              const firstDate = new Date(sortedBatches[0].createdAt);
-              if (!isNaN(firstDate.getTime())) {
-                daysActive = Math.ceil(Math.abs(now - firstDate) / (1000 * 60 * 60 * 24)) || 1;
-              } else { daysActive = 1; }
-          } else {
-              daysActive = 1;
-          }
-      } else if (globalMonth === 'today') daysActive = 1;
-      else if (globalMonth === 'week') daysActive = 7;
-      else if (globalMonth === '15days') daysActive = 15;
-      else if (globalMonth === '30days') daysActive = 30;
-      else if (globalMonth === 'custom' || globalMonth === 'compare') { 
-          daysActive = Math.max(1, Math.ceil((currentEnd - currentStart) / (1000 * 60 * 60 * 24)));
-      }
-      else {
-          const [y, m] = globalMonth.split('-').map(Number);
-          daysActive = (now.getFullYear() === y && now.getMonth() + 1 === m) ? now.getDate() : new Date(y, m, 0).getDate();
-      }
-      
-      const dailyAvgItems = daysActive > 0 ? itemsSold / daysActive : 0;
-
-      const uniqueDateStrs = [...new Set(filteredSales.filter(s => s.date).map(s => {
-          const d = new Date(s.date);
-          return isNaN(d.getTime()) ? null : `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-      }).filter(Boolean))].sort((a, b) => b.localeCompare(a));
-
-      let currentStreak = 0;
-      if (uniqueDateStrs.length > 0) {
-          const todayStr = getTodayDate();
-          const yesterdayStr = getPreviousDayStr(todayStr);
-          let checkDate = '';
-          if (uniqueDateStrs[0] === todayStr) { currentStreak = 1; checkDate = todayStr; } 
-          else if (uniqueDateStrs[0] === yesterdayStr) { currentStreak = 1; checkDate = yesterdayStr; }
-
-          if (currentStreak === 1) {
-              for (let i = 1; i < uniqueDateStrs.length; i++) {
-                  const expectedStr = getPreviousDayStr(checkDate);
-                  if (uniqueDateStrs[i] === expectedStr) { currentStreak++; checkDate = expectedStr; } 
-                  else break;
+              if (currentStreak === 1) {
+                  for (let i = 1; i < uniqueDateStrs.length; i++) {
+                      const expectedStr = getPreviousDayStr(checkDate);
+                      if (uniqueDateStrs[i] === expectedStr) { currentStreak++; checkDate = expectedStr; } 
+                      else break;
+                  }
               }
           }
+
+          return {
+              totalRevenue, totalInvestment, totalGlobalExpenses, grossProfit, grossMargin,
+              totalShippingProfit, netProfit, netMargin, cashBalance, currentStockValue,
+              itemsSold, salesCount: fSales.length, sourceCounts, typeCounts, dailyAvgItems,
+              daysActive, currentStreak, filteredSales: fSales, pieSourceData, pieTypeData
+          };
+      };
+
+      // 1. DETERMINAR RANGO BASE (El de la izquierda)
+      let bStart, bEnd, isAll = false;
+      if (globalMonth === 'today') {
+          bStart = todayStart; bEnd = new Date(todayStart); bEnd.setHours(23,59,59,999);
+      } else if (globalMonth === 'week') {
+          bStart = new Date(todayStart); bStart.setDate(bStart.getDate() - 6);
+          bEnd = new Date(todayStart); bEnd.setHours(23,59,59,999);
+      } else if (globalMonth === '15days') {
+           bStart = new Date(todayStart); bStart.setDate(bStart.getDate() - 14);
+           bEnd = new Date(todayStart); bEnd.setHours(23,59,59,999);
+      } else if (globalMonth === '30days') {
+           bStart = new Date(todayStart); bStart.setDate(bStart.getDate() - 29);
+           bEnd = new Date(todayStart); bEnd.setHours(23,59,59,999);
+      } else if (globalMonth === 'custom' || globalMonth === 'compare') {
+           const [sy, sm, sd] = customDateRange.start.split('-').map(Number);
+           const [ey, em, ed] = customDateRange.end.split('-').map(Number);
+           bStart = new Date(sy, sm - 1, sd, 0, 0, 0);
+           bEnd = new Date(ey, em - 1, ed, 23, 59, 59, 999);
+      } else if (globalMonth === 'all') {
+           isAll = true; bStart = new Date(0); bEnd = new Date();
+      } else {
+           const [y, m] = globalMonth.split('-').map(Number);
+           bStart = new Date(y, m - 1, 1);
+           bEnd = new Date(y, m, 0, 23, 59, 59, 999);
       }
 
-      const pieSourceData = Object.entries(sourceCounts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
-      const pieTypeData = [
-        { name: 'Consumidor', value: typeCounts.Final },
-        { name: 'Revendedor', value: typeCounts.Revendedor }
-      ].filter(d => d.value > 0);
+      // Calculamos las estadísticas del periodo Base
+      const baseStats = calculateForRange(bStart, bEnd, isAll);
 
-      return {
-          totalRevenue, totalInvestment, totalGlobalExpenses, grossProfit, grossMargin,
-          totalShippingProfit, netProfit, netMargin, cashBalance, currentStockValue, 
-          itemsSold, salesCount: filteredSales.length, sourceCounts, typeCounts, dailyAvgItems,
-          daysActive, currentStreak, filteredSales, prevRevenue, prevNetProfit, pieSourceData, pieTypeData
-      };
+      // 2. DETERMINAR RANGO DE COMPARACIÓN (Si estamos en modo normal, calculamos el previo para la flechita)
+      let prevBaseStats = null;
+      let compareStats = null;
+
+      if (globalMonth === 'compare') {
+           // Si el usuario eligió "Mano a Mano", calculamos el rango que eligió en el 2do calendario
+           const [csy, csm, csd] = compareDateRange.start.split('-').map(Number);
+           const [cey, cem, ced] = compareDateRange.end.split('-').map(Number);
+           const cStart = new Date(csy, csm - 1, csd, 0, 0, 0);
+           const cEnd = new Date(cey, cem - 1, ced, 23, 59, 59, 999);
+           compareStats = calculateForRange(cStart, cEnd, false);
+      } else if (globalMonth !== 'all' && globalMonth !== 'custom') {
+           // Si es una vista normal (30 días, etc), calculamos los 30 días anteriores solo para la flechita chica
+           const diffTime = bEnd.getTime() - bStart.getTime();
+           const pEnd = new Date(bStart.getTime() - 1);
+           const pStart = new Date(pEnd.getTime() - diffTime);
+           prevBaseStats = calculateForRange(pStart, pEnd, false);
+      }
+
+      return { baseStats, compareStats, prevBaseStats };
   }, [sales, batches, expenses, globalMonth, customDateRange, compareDateRange]);
+
 
   const batchAnalysis = useMemo(() => {
     if (!selectedBatchStats) return null;
@@ -1300,7 +1246,7 @@ export default function App() {
             </div>
         </header>
 
-        <div className="p-4 md:p-8 pb-24 md:pb-8 max-w-6xl mx-auto space-y-6">
+        <div className="p-4 md:p-8 pb-24 md:pb-8 max-w-[1400px] mx-auto space-y-6">
             
             <div className="hidden md:flex justify-between items-end mb-6">
                 <div>
@@ -1349,7 +1295,7 @@ export default function App() {
                                         <Input darkMode={darkMode} type="date" value={customDateRange.end} onChange={e => setCustomDateRange({...customDateRange, end: e.target.value})} />
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <span className={`text-[10px] font-bold uppercase w-10 ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>Vs</span>
+                                        <span className={`text-[10px] font-bold uppercase w-10 ${darkMode ? 'text-rose-400' : 'text-rose-600'}`}>Vs</span>
                                         <Input darkMode={darkMode} type="date" value={compareDateRange.start} onChange={e => setCompareDateRange({...compareDateRange, start: e.target.value})} />
                                         <span className={`font-bold ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>-</span>
                                         <Input darkMode={darkMode} type="date" value={compareDateRange.end} onChange={e => setCompareDateRange({...compareDateRange, end: e.target.value})} />
@@ -1359,97 +1305,197 @@ export default function App() {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                        <MetricCard 
-                            color="blue"
-                            darkMode={darkMode} title={`Ingresos ${globalMonth === 'all' ? 'Totales' : ''}`} value={formatMoney(globalAnalysis.totalRevenue)} subtitle={globalMonth === 'compare' ? 'Rango base vs Rango comparado' : 'Bruto facturado'} icon={DollarSign}
-                            trend={globalAnalysis.prevRevenue !== null && globalAnalysis.prevRevenue > 0 ? (
-                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${globalAnalysis.totalRevenue >= globalAnalysis.prevRevenue ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 text-red-600 dark:text-red-400'}`}>
-                                    {globalAnalysis.totalRevenue >= globalAnalysis.prevRevenue ? '↑' : '↓'} {Math.abs(((globalAnalysis.totalRevenue - globalAnalysis.prevRevenue)/globalAnalysis.prevRevenue)*100).toFixed(0)}%
-                                </span>
-                            ) : null}
-                        />
-                        <MetricCard color="emerald" darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(globalAnalysis.grossProfit)} subtitle="Ingresos - Costo Mercadería" icon={TrendingUp} trend={<span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/50 text-zinc-600 dark:bg-black/50 dark:text-zinc-400">{formatPercent(globalAnalysis.grossMargin)}</span>} />
-                        <MetricCard color="rose" darkMode={darkMode} title="Gastos Fijos" value={formatMoney(globalAnalysis.totalGlobalExpenses)} subtitle="Logística y operativos" icon={Wallet} />
-                        <MetricCard 
-                            color="violet"
-                            darkMode={darkMode} title="Beneficio Neto" value={formatMoney(globalAnalysis.netProfit)} subtitle="Capital libre" icon={Award}
-                            trend={
-                                <div className="flex gap-1 items-center">
-                                    {globalAnalysis.prevNetProfit !== null && globalAnalysis.prevNetProfit > 0 && (
-                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${globalAnalysis.netProfit >= globalAnalysis.prevNetProfit ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 text-red-600 dark:text-red-400'}`}>
-                                            {globalAnalysis.netProfit >= globalAnalysis.prevNetProfit ? '↑' : '↓'} {Math.abs(((globalAnalysis.netProfit - globalAnalysis.prevNetProfit)/globalAnalysis.prevNetProfit)*100).toFixed(0)}%
-                                        </span>
-                                    )}
-                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md bg-white/50 text-violet-700 dark:bg-black/50 dark:text-violet-400`}>{formatPercent(globalAnalysis.netMargin)}</span>
+                    {/* VISTA DIVIDIDA (MANO A MANO) */}
+                    {globalMonth === 'compare' ? (
+                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+                            
+                            {/* COLUMNA 1: PERIODO BASE */}
+                            <div className="space-y-6 border-b xl:border-b-0 xl:border-r border-zinc-200 dark:border-zinc-800 pb-8 xl:pb-0 xl:pr-8">
+                                <h3 className="text-xl font-black text-indigo-500 flex items-center gap-2">
+                                    <Calendar size={20}/> Periodo Base
+                                </h3>
+                                
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <MetricCard color="blue" darkMode={darkMode} title="Ingresos" value={formatMoney(analysisData.baseStats.totalRevenue)} subtitle="Bruto facturado" icon={DollarSign} />
+                                    <MetricCard color="emerald" darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(analysisData.baseStats.grossProfit)} subtitle="Ingresos - Costo" icon={TrendingUp} trend={<span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/50 text-zinc-600 dark:bg-black/50 dark:text-zinc-400">{formatPercent(analysisData.baseStats.grossMargin)}</span>} />
+                                    <MetricCard color="rose" darkMode={darkMode} title="Gastos Fijos" value={formatMoney(analysisData.baseStats.totalGlobalExpenses)} subtitle="Logística" icon={Wallet} />
+                                    <MetricCard color="violet" darkMode={darkMode} title="Beneficio Neto" value={formatMoney(analysisData.baseStats.netProfit)} subtitle="Capital libre" icon={Award} trend={<span className={`text-[10px] font-bold px-2 py-0.5 rounded-md bg-white/50 text-violet-700 dark:bg-black/50 dark:text-violet-400`}>{formatPercent(analysisData.baseStats.netMargin)}</span>} />
+                                    <MetricCard color="amber" darkMode={darkMode} title="Inversión" value={formatMoney(analysisData.baseStats.totalInvestment)} subtitle="Capital apostado" icon={Box} />
+                                    <MetricCard color="indigo" darkMode={darkMode} title="Valor Inventario" value={formatMoney(analysisData.baseStats.currentStockValue)} subtitle="Activo retenido" icon={Package} />
+                                    <MetricCard color="emerald" darkMode={darkMode} title="Flujo Efectivo" value={formatMoney(analysisData.baseStats.cashBalance)} subtitle="Caja real" icon={Activity} />
+                                    <MetricCard color="amber" darkMode={darkMode} title="Promedio Ventas" value={analysisData.baseStats.dailyAvgItems.toFixed(1)} subtitle="Unidades por día" icon={Flame} />
                                 </div>
-                            }
-                        />
-                        <MetricCard color="amber" darkMode={darkMode} title="Inversión" value={formatMoney(globalAnalysis.totalInvestment)} subtitle="Capital apostado" icon={Box} />
-                        <MetricCard color="indigo" darkMode={darkMode} title="Valor Inventario" value={formatMoney(globalAnalysis.currentStockValue)} subtitle="Activo retenido actual" icon={Package} />
-                        <MetricCard color="emerald" darkMode={darkMode} title="Flujo Efectivo" value={formatMoney(globalAnalysis.cashBalance)} subtitle="Diferencia real en caja" icon={Activity} />
-                        <MetricCard 
-                            color="amber"
-                            darkMode={darkMode} title="Promedio Ventas" value={globalAnalysis.dailyAvgItems.toFixed(1)} subtitle="Unidades por día activo" icon={Flame}
-                            trend={globalAnalysis.currentStreak > 0 ? <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/50 text-orange-600 dark:bg-black/50 dark:text-orange-400 flex items-center gap-1"><Flame size={12}/> {globalAnalysis.currentStreak} días</span> : null}
-                        />
-                    </div>
 
-                    <Card darkMode={darkMode} className="p-0 overflow-hidden">
-                        <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
-                            <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><TrendingUp size={18}/></div>
-                            <h3 className="font-bold tracking-tight text-sm">Evolución de Ingresos</h3>
-                        </div>
-                        <div className="p-5">
-                            <SalesAreaChart sales={globalAnalysis.filteredSales} globalMonth={globalMonth} customDateRange={customDateRange} compareDateRange={compareDateRange} darkMode={darkMode} />
-                        </div>
-                    </Card>
-
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <Card darkMode={darkMode} className="p-0 overflow-hidden">
-                          <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
-                              <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><Users size={18}/></div>
-                              <h3 className="font-bold tracking-tight text-sm">Tráfico por Canales</h3>
-                          </div>
-                          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
-                            <CustomPieChart data={globalAnalysis.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} />
-                            <div className="space-y-3">
-                              {globalAnalysis.pieSourceData.map((d, i) => {
-                                const colors = ['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b'];
-                                return (
-                                  <div key={d.name} className="flex justify-between items-center text-sm">
-                                    <div className="flex items-center gap-2">
-                                      <div className="w-3 h-3 rounded-full" style={{backgroundColor: colors[i % colors.length]}}></div>
-                                      <span className="font-medium">{d.name}</span>
+                                <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                                    <div className={`p-4 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                        <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><TrendingUp size={16}/></div>
+                                        <h3 className="font-bold tracking-tight text-sm">Ingresos (Base)</h3>
                                     </div>
-                                    <span className="font-bold text-zinc-500">{d.value}</span>
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          </div>
-                        </Card>
+                                    <div className="p-4">
+                                        <SalesAreaChart sales={analysisData.baseStats.filteredSales} mode="custom" customRange={customDateRange} darkMode={darkMode} isCompareMode={false} />
+                                    </div>
+                                </Card>
 
-                        <Card darkMode={darkMode} className="p-0 overflow-hidden">
-                          <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
-                              <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><BarChart3 size={18}/></div>
-                              <h3 className="font-bold tracking-tight text-sm">Segmentación B2B / B2C</h3>
-                          </div>
-                          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
-                            <CustomPieChart data={globalAnalysis.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} />
-                            <div className="space-y-3">
-                               <div className="flex justify-between items-center text-sm">
-                                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500"></div><span className="font-medium">Consumidor</span></div>
-                                  <span className="font-bold text-zinc-500">{globalAnalysis.typeCounts.Final}</span>
-                               </div>
-                               <div className="flex justify-between items-center text-sm">
-                                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-indigo-500"></div><span className="font-medium">Revendedor</span></div>
-                                  <span className="font-bold text-zinc-500">{globalAnalysis.typeCounts.Revendedor}</span>
-                               </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                                        <div className={`p-4 border-b flex items-center gap-2 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                            <div className="bg-indigo-500/10 text-indigo-500 p-1.5 rounded-md"><Users size={14}/></div>
+                                            <h3 className="font-bold tracking-tight text-xs">Canales (Base)</h3>
+                                        </div>
+                                        <div className="p-4"><CustomPieChart data={analysisData.baseStats.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} /></div>
+                                    </Card>
+                                    <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                                        <div className={`p-4 border-b flex items-center gap-2 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                            <div className="bg-indigo-500/10 text-indigo-500 p-1.5 rounded-md"><BarChart3 size={14}/></div>
+                                            <h3 className="font-bold tracking-tight text-xs">B2B/B2C (Base)</h3>
+                                        </div>
+                                        <div className="p-4"><CustomPieChart data={analysisData.baseStats.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} /></div>
+                                    </Card>
+                                </div>
                             </div>
-                          </div>
-                        </Card>
-                    </div>
+
+                            {/* COLUMNA 2: PERIODO A COMPARAR (VS) */}
+                            <div className="space-y-6">
+                                <h3 className="text-xl font-black text-rose-500 flex items-center gap-2">
+                                    <ArrowUpDown size={20}/> Periodo a Comparar (Vs)
+                                </h3>
+                                
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <MetricCard color="blue" darkMode={darkMode} title="Ingresos" value={formatMoney(analysisData.compareStats.totalRevenue)} subtitle="Bruto facturado" icon={DollarSign} />
+                                    <MetricCard color="emerald" darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(analysisData.compareStats.grossProfit)} subtitle="Ingresos - Costo" icon={TrendingUp} trend={<span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/50 text-zinc-600 dark:bg-black/50 dark:text-zinc-400">{formatPercent(analysisData.compareStats.grossMargin)}</span>} />
+                                    <MetricCard color="rose" darkMode={darkMode} title="Gastos Fijos" value={formatMoney(analysisData.compareStats.totalGlobalExpenses)} subtitle="Logística" icon={Wallet} />
+                                    <MetricCard color="violet" darkMode={darkMode} title="Beneficio Neto" value={formatMoney(analysisData.compareStats.netProfit)} subtitle="Capital libre" icon={Award} trend={<span className={`text-[10px] font-bold px-2 py-0.5 rounded-md bg-white/50 text-violet-700 dark:bg-black/50 dark:text-violet-400`}>{formatPercent(analysisData.compareStats.netMargin)}</span>} />
+                                    <MetricCard color="amber" darkMode={darkMode} title="Inversión" value={formatMoney(analysisData.compareStats.totalInvestment)} subtitle="Capital apostado" icon={Box} />
+                                    <MetricCard color="indigo" darkMode={darkMode} title="Valor Inventario" value={formatMoney(analysisData.compareStats.currentStockValue)} subtitle="Activo retenido" icon={Package} />
+                                    <MetricCard color="emerald" darkMode={darkMode} title="Flujo Efectivo" value={formatMoney(analysisData.compareStats.cashBalance)} subtitle="Caja real" icon={Activity} />
+                                    <MetricCard color="amber" darkMode={darkMode} title="Promedio Ventas" value={analysisData.compareStats.dailyAvgItems.toFixed(1)} subtitle="Unidades por día" icon={Flame} />
+                                </div>
+
+                                <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                                    <div className={`p-4 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                        <div className="bg-rose-500/10 text-rose-500 p-2 rounded-lg"><TrendingUp size={16}/></div>
+                                        <h3 className="font-bold tracking-tight text-sm">Ingresos (Vs)</h3>
+                                    </div>
+                                    <div className="p-4">
+                                        <SalesAreaChart sales={analysisData.compareStats.filteredSales} mode="custom" customRange={compareDateRange} darkMode={darkMode} isCompareMode={true} />
+                                    </div>
+                                </Card>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                                        <div className={`p-4 border-b flex items-center gap-2 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                            <div className="bg-rose-500/10 text-rose-500 p-1.5 rounded-md"><Users size={14}/></div>
+                                            <h3 className="font-bold tracking-tight text-xs">Canales (Vs)</h3>
+                                        </div>
+                                        <div className="p-4"><CustomPieChart data={analysisData.compareStats.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} /></div>
+                                    </Card>
+                                    <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                                        <div className={`p-4 border-b flex items-center gap-2 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                            <div className="bg-rose-500/10 text-rose-500 p-1.5 rounded-md"><BarChart3 size={14}/></div>
+                                            <h3 className="font-bold tracking-tight text-xs">B2B/B2C (Vs)</h3>
+                                        </div>
+                                        <div className="p-4"><CustomPieChart data={analysisData.compareStats.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} /></div>
+                                    </Card>
+                                </div>
+                            </div>
+
+                        </div>
+                    ) : (
+                        /* VISTA NORMAL (UN SOLO PERIODO) */
+                        <>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                                <MetricCard 
+                                    color="blue"
+                                    darkMode={darkMode} title={`Ingresos ${globalMonth === 'all' ? 'Totales' : ''}`} value={formatMoney(analysisData.baseStats.totalRevenue)} subtitle="Bruto facturado" icon={DollarSign}
+                                    trend={analysisData.prevBaseStats && analysisData.prevBaseStats.totalRevenue > 0 ? (
+                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${analysisData.baseStats.totalRevenue >= analysisData.prevBaseStats.totalRevenue ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 text-red-600 dark:text-red-400'}`}>
+                                            {analysisData.baseStats.totalRevenue >= analysisData.prevBaseStats.totalRevenue ? '↑' : '↓'} {Math.abs(((analysisData.baseStats.totalRevenue - analysisData.prevBaseStats.totalRevenue)/analysisData.prevBaseStats.totalRevenue)*100).toFixed(0)}%
+                                        </span>
+                                    ) : null}
+                                />
+                                <MetricCard color="emerald" darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(analysisData.baseStats.grossProfit)} subtitle="Ingresos - Costo Mercadería" icon={TrendingUp} trend={<span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/50 text-zinc-600 dark:bg-black/50 dark:text-zinc-400">{formatPercent(analysisData.baseStats.grossMargin)}</span>} />
+                                <MetricCard color="rose" darkMode={darkMode} title="Gastos Fijos" value={formatMoney(analysisData.baseStats.totalGlobalExpenses)} subtitle="Logística y operativos" icon={Wallet} />
+                                <MetricCard 
+                                    color="violet"
+                                    darkMode={darkMode} title="Beneficio Neto" value={formatMoney(analysisData.baseStats.netProfit)} subtitle="Capital libre" icon={Award}
+                                    trend={
+                                        <div className="flex gap-1 items-center">
+                                            {analysisData.prevBaseStats && analysisData.prevBaseStats.netProfit > 0 && (
+                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${analysisData.baseStats.netProfit >= analysisData.prevBaseStats.netProfit ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 text-red-600 dark:text-red-400'}`}>
+                                                    {analysisData.baseStats.netProfit >= analysisData.prevBaseStats.netProfit ? '↑' : '↓'} {Math.abs(((analysisData.baseStats.netProfit - analysisData.prevBaseStats.netProfit)/analysisData.prevBaseStats.netProfit)*100).toFixed(0)}%
+                                                </span>
+                                            )}
+                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md bg-white/50 text-violet-700 dark:bg-black/50 dark:text-violet-400`}>{formatPercent(analysisData.baseStats.netMargin)}</span>
+                                        </div>
+                                    }
+                                />
+                                <MetricCard color="amber" darkMode={darkMode} title="Inversión" value={formatMoney(analysisData.baseStats.totalInvestment)} subtitle="Capital apostado" icon={Box} />
+                                <MetricCard color="indigo" darkMode={darkMode} title="Valor Inventario" value={formatMoney(analysisData.baseStats.currentStockValue)} subtitle="Activo retenido actual" icon={Package} />
+                                <MetricCard color="emerald" darkMode={darkMode} title="Flujo Efectivo" value={formatMoney(analysisData.baseStats.cashBalance)} subtitle="Diferencia real en caja" icon={Activity} />
+                                <MetricCard 
+                                    color="amber"
+                                    darkMode={darkMode} title="Promedio Ventas" value={analysisData.baseStats.dailyAvgItems.toFixed(1)} subtitle="Unidades por día activo" icon={Flame}
+                                    trend={analysisData.baseStats.currentStreak > 0 ? <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/50 text-orange-600 dark:bg-black/50 dark:text-orange-400 flex items-center gap-1"><Flame size={12}/> {analysisData.baseStats.currentStreak} días</span> : null}
+                                />
+                            </div>
+
+                            <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                                <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                    <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><TrendingUp size={18}/></div>
+                                    <h3 className="font-bold tracking-tight text-sm">Evolución de Ingresos</h3>
+                                </div>
+                                <div className="p-5">
+                                    <SalesAreaChart sales={analysisData.baseStats.filteredSales} mode={globalMonth === 'custom' ? 'custom' : globalMonth} customRange={customDateRange} darkMode={darkMode} />
+                                </div>
+                            </Card>
+
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                                <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                    <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><Users size={18}/></div>
+                                    <h3 className="font-bold tracking-tight text-sm">Tráfico por Canales</h3>
+                                </div>
+                                <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+                                    <CustomPieChart data={analysisData.baseStats.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} />
+                                    <div className="space-y-3">
+                                    {analysisData.baseStats.pieSourceData.map((d, i) => {
+                                        const colors = ['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b'];
+                                        return (
+                                        <div key={d.name} className="flex justify-between items-center text-sm">
+                                            <div className="flex items-center gap-2">
+                                            <div className="w-3 h-3 rounded-full" style={{backgroundColor: colors[i % colors.length]}}></div>
+                                            <span className="font-medium">{d.name}</span>
+                                            </div>
+                                            <span className="font-bold text-zinc-500">{d.value}</span>
+                                        </div>
+                                        )
+                                    })}
+                                    </div>
+                                </div>
+                                </Card>
+
+                                <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                                <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                    <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><BarChart3 size={18}/></div>
+                                    <h3 className="font-bold tracking-tight text-sm">Segmentación B2B / B2C</h3>
+                                </div>
+                                <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+                                    <CustomPieChart data={analysisData.baseStats.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} />
+                                    <div className="space-y-3">
+                                    <div className="flex justify-between items-center text-sm">
+                                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500"></div><span className="font-medium">Consumidor</span></div>
+                                        <span className="font-bold text-zinc-500">{analysisData.baseStats.typeCounts.Final}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-sm">
+                                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-indigo-500"></div><span className="font-medium">Revendedor</span></div>
+                                        <span className="font-bold text-zinc-500">{analysisData.baseStats.typeCounts.Revendedor}</span>
+                                    </div>
+                                    </div>
+                                </div>
+                                </Card>
+                            </div>
+                        </>
+                    )}
                 </div>
             )}
 
