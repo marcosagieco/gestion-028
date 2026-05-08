@@ -1,5 +1,5 @@
 const functions = require("firebase-functions");
-const { onSchedule } = require("firebase-functions/v2/scheduler"); // 👈 El import nuevo para los resúmenes
+const { onSchedule } = require("firebase-functions/v2/scheduler"); 
 const admin = require("firebase-admin");
 const { google } = require("googleapis"); 
 admin.initializeApp();
@@ -44,7 +44,7 @@ async function registrarEnSheet(pestaña, fila) {
     }
 }
 
-// Función nativa para enviar mensajes con LOGS (TUYA ORIGINAL)
+// Función nativa para enviar mensajes con LOGS
 async function enviarMensajeWhatsApp(telefonoDestino, texto) {
     if (META_TOKEN === "PONE_ACA_TU_TOKEN_DE_META") {
         console.log("❌ ERROR INTERNO: El token de Meta no fue configurado.");
@@ -94,7 +94,7 @@ async function enviarMensajeWhatsApp(telefonoDestino, texto) {
     });
 }
 
-// Función para limpiar textos (TUYA ORIGINAL)
+// Función para limpiar textos
 const normalizarParaComparar = (texto) => {
     return String(texto || "")
         .trim()
@@ -125,10 +125,7 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
 
                 if (numeroRemitente.startsWith("54") && numeroRemitente.length === 12) {
                     numeroRemitente = numeroRemitente.replace(/^54/, "549");
-                    console.log(`🔧 Corrigiendo número argentino a: ${numeroRemitente}`);
-                } else if (numeroRemitente.startsWith("549") && numeroRemitente.length === 13) {
-                    // A veces Meta lo pide sin el 9
-                }
+                } 
 
                 console.log(`📩 Mensaje recibido de ${numeroRemitente}: ${textoOriginal}`);
 
@@ -142,12 +139,18 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                     if (partes.length >= 5 && partes[0].toUpperCase() === "VENTA") {
                         console.log("✅ Formato VENTA detectado. Procesando...");
                         
-                        // LÓGICA NUEVA: Detectar si hay un vendedor indicado por 1 o 2 letras
-                        let vendedor = "Marcos"; 
+                        // LÓGICA NUEVA: Identificador de vendedor mejorado
+                        let vendedor = "028 Import"; // Ahora el default es 028 Import
                         let indexOffset = 0;
 
+                        // Si la segunda palabra tiene 1 o 2 letras, es el vendedor
                         if (partes[1] && partes[1].length <= 2) {
-                            vendedor = partes[1].toUpperCase();
+                            let letra = partes[1].toUpperCase();
+                            if (letra === "B") {
+                                vendedor = "Buono"; // Convertimos la B en Buono
+                            } else {
+                                vendedor = letra; // Si es otra letra, la deja
+                            }
                             indexOffset = 1;
                         }
 
@@ -158,7 +161,6 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                         const limpiarNum = (texto) => parseFloat(String(texto).replace(/[^0-9,-]+/g,"").replace(",", ".")) || 0;
                         const precioUnitario = limpiarNum(partes[4 + indexOffset]);
                         
-                        // TU LÓGICA DE VARIABLES EXTRAS INTACTA
                         let fechaManual = "hoy"; 
                         let costoEnvioMio = 0;
                         let precioEnvioCliente = 0;
@@ -198,29 +200,21 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                         
                         const resultado = await procesarVenta(productoRaw, varianteRaw, cantidad, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor);
                         
-                        console.log("Resultado de la búsqueda:", resultado);
-
                         let numeroParaMeta = numeroRemitente;
                         if (numeroParaMeta.startsWith("549") && numeroParaMeta.length === 13) {
                             numeroParaMeta = numeroParaMeta.replace(/^549/, "54");
                         }
 
                         if (resultado && resultado.exito === false) {
-                            console.log("⚠️ Stock insuficiente o producto no encontrado. Disparando aviso a WhatsApp...");
+                            console.log("⚠️ Error procesando la venta. Avisando...");
                             await enviarMensajeWhatsApp(numeroParaMeta, resultado.error_msg);
-                            
-                            // REGISTRAR ERROR EN SHEET
                             await registrarEnSheet("Intentos", [fechaHoySheet, numeroRemitente, linea, resultado.error_msg]);
                         } else {
-                            console.log("✅ Venta anotada con éxito. No se requiere aviso.");
-                            
-                            // REGISTRAR VENTA EXITOSA EN SHEET (con el vendedor marcado)
+                            console.log("✅ Venta anotada con éxito.");
                             await registrarEnSheet("Ventas", [fechaHoySheet, numeroRemitente, productoRaw, varianteRaw, cantidad, precioUnitario, `ÉXITO (${vendedor})`]);
                         }
                     } else {
-                        console.log("❌ El mensaje no cumple el formato VENTA | Producto | Variante | Cantidad | Precio");
-                        
-                        // REGISTRAR FORMATO INCORRECTO EN SHEET
+                        console.log("❌ El mensaje no cumple el formato VENTA");
                         let numFallo = numeroRemitente.startsWith("549") ? numeroRemitente.replace(/^549/, "54") : numeroRemitente;
                         await registrarEnSheet("Intentos", [fechaHoySheet, numFallo, linea, "Formato Incorrecto"]);
                     }
@@ -235,25 +229,19 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
 
 
 // ==========================================
-// ⏰ RESÚMENES AUTOMÁTICOS (CORREGIDOS PARA ARGENTINA)
+// RESÚMENES AUTOMÁTICOS
 // ==========================================
 
-// RESUMEN DIARIO (23:50 Argentina)
 exports.resumenDiario = onSchedule({
     schedule: "50 23 * * *",
     timeZone: "America/Argentina/Buenos_Aires"
 }, async (event) => {
-    // Calculamos el inicio del día en Argentina
     const ahoraAR = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Argentina/Buenos_Aires"}));
     const inicioHoyAR = new Date(ahoraAR);
     inicioHoyAR.setHours(0,0,0,0);
-    
-    // Lo pasamos a formato ISO para comparar con la base de datos
-    // Restamos 3 horas manualmente para que coincida con el UTC de Firebase
-    const inicioUTC = new Date(inicioHoyAR.getTime() + (3 * 60 * 60 * 1000)).toISOString();
 
     const ventasSnapshot = await db.collection("sales")
-        .where("createdAt", ">=", inicioHoyAR.toISOString()) // Buscamos todo lo creado hoy
+        .where("createdAt", ">=", inicioHoyAR.toISOString())
         .get();
 
     let totalPlata = 0;
@@ -264,7 +252,12 @@ exports.resumenDiario = onSchedule({
     } else {
         ventasSnapshot.forEach(doc => {
             const v = doc.data();
-            const etiquetaVendedor = v.seller && v.seller !== "Marcos" ? `[${v.seller}] ` : "";
+            
+            // Lógica para que en el WhatsApp no te ponga [028 Import] a cada rato, pero sí ponga [Buono]
+            let nomVend = v.seller || "028 Import";
+            if (nomVend.toUpperCase() === "B") nomVend = "Buono"; // Por si quedó alguno viejo
+            const etiquetaVendedor = (nomVend !== "028 Import" && nomVend.toLowerCase() !== "marcos") ? `[${nomVend}] ` : "";
+            
             resumenText += `• ${etiquetaVendedor}${v.quantity}x ${v.productName} (${v.variant}) - $${v.totalSaleRaw}\n`;
             totalPlata += (v.totalSaleRaw || 0);
         });
@@ -278,20 +271,15 @@ exports.resumenDiario = onSchedule({
     await enviarMensajeWhatsApp(numeroParaMeta, resumenText);
 });
 
-// RESUMEN SEMANAL (Domingos 23:59 Argentina)
 exports.resumenSemanal = onSchedule({
     schedule: "59 23 * * 0",
     timeZone: "America/Argentina/Buenos_Aires"
 }, async (event) => {
-    // Calculamos el momento actual en Argentina
     const ahoraAR = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Argentina/Buenos_Aires"}));
-    
-    // Calculamos hace exactamente 7 días a las 00:00:00
     const haceSieteDias = new Date(ahoraAR);
     haceSieteDias.setDate(haceSieteDias.getDate() - 7);
     haceSieteDias.setHours(0,0,0,0);
     
-    // Buscamos en Firebase todas las ventas desde ese momento
     const ventasSnapshot = await db.collection("sales")
         .where("createdAt", ">=", haceSieteDias.toISOString())
         .get();
@@ -317,7 +305,7 @@ exports.resumenSemanal = onSchedule({
 });
 
 // ==========================================
-// TU FUNCIÓN PROCESAR VENTA INTACTA
+// FUNCIÓN PROCESAR VENTA
 // ==========================================
 async function procesarVenta(userProducto, userVariante, cantARestar, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor) {
     if (isNaN(cantARestar) || cantARestar <= 0) return { exito: false, error_msg: "❌ La cantidad ingresada no es válida." };
@@ -358,9 +346,7 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
         if (restante <= 0) break;
         const batchData = doc.data();
 
-        if (batchData.finalizedAt) {
-            continue; 
-        }
+        if (batchData.finalizedAt) continue; 
 
         let items = batchData.items || [];
         let batchModificado = false;
@@ -424,24 +410,24 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
             totalSaleRaw: totalVentaCalculado, 
             unitPrice: precioUnitario,
             variant: varianteOficial,
-            seller: vendedor || "Marcos"  // 👈 NUEVO: Guardamos el vendedor en la BD
+            seller: vendedor // 👈 Guarda correctamente "028 Import" o "Buono"
         });
 
         return { exito: true };
     } 
     else {
         if (!productoEncontrado) {
-            return { exito: false, error_msg: `⚠️ *Error de Inventario:*\nEl producto *"${userProducto}"* (Variante: ${userVariante || 'Única'}) no existe en ninguna de tus carpetas activas o está mal escrito.` };
+            return { exito: false, error_msg: `⚠️ *Error de Inventario:*\nEl producto *"${userProducto}"* (Variante: ${userVariante || 'Única'}) no existe o está mal escrito.` };
         } else if (stockInsuficiente) {
-            return { exito: false, error_msg: `🛑 *Stock Insuficiente:*\nIntentaste vender ${cantARestar} unidades de *"${userProducto}"*, pero solo te quedan *${stockMascercanoDisponible}* en stock.` };
+            return { exito: false, error_msg: `🛑 *Stock Insuficiente:*\nIntentaste vender ${cantARestar} unidades de *"${userProducto}"*, pero solo quedan *${stockMascercanoDisponible}* en stock.` };
         } else {
-            return { exito: false, error_msg: `⚠️ *Error desconocido* al intentar procesar la venta de ${userProducto}.` };
+            return { exito: false, error_msg: `⚠️ *Error desconocido* al procesar la venta.` };
         }
     }
 }
 
 // ==========================================
-// TUS FÓRMULAS MATEMÁTICAS INTACTAS
+// FÓRMULAS MATEMÁTICAS INTACTAS
 // ==========================================
 
 function distanciaLevenshtein(a, b) {

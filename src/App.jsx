@@ -70,6 +70,15 @@ const getPreviousDayStr = (dateStr) => {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 };
 
+// --- NORMALIZADOR DE VENDEDORES ---
+const normalizeSellerName = (name) => {
+  if (!name) return "028 Import";
+  const lower = name.toLowerCase().trim();
+  if (lower === "marcos" || lower === "028import" || lower === "028 import") return "028 Import";
+  if (lower === "b" || lower === "buono") return "Buono";
+  return name;
+};
+
 // --- COMPONENTES UI ---
 const Card = ({ children, className = '', darkMode }) => (
   <div className={`rounded-xl border shadow-sm transition-colors duration-200 ${
@@ -412,7 +421,6 @@ export default function App() {
   const [manualFinalizeDate, setManualFinalizeDate] = useState(getTodayDate());
   const [globalMonth, setGlobalMonth] = useState('30days'); 
   
-  // ESTADOS PARA FECHAS PERSONALIZADAS Y COMPARACIONES
   const [customDateRange, setCustomDateRange] = useState({ start: getTodayDate(), end: getTodayDate() });
   const [compareDateRange, setCompareDateRange] = useState({ start: getPreviousDayStr(getTodayDate()), end: getPreviousDayStr(getTodayDate()) });
 
@@ -655,11 +663,10 @@ export default function App() {
       return { baseStats, compareStats, prevBaseStats };
   }, [sales, batches, expenses, globalMonth, customDateRange, compareDateRange]);
 
-  // NUEVO: Cálculos para el Rendimiento del Equipo (Vendedores)
   const teamStats = useMemo(() => {
       const stats = {};
       analysisData.baseStats.filteredSales.forEach(s => {
-          const seller = s.seller || '028IMPORT';
+          const seller = normalizeSellerName(s.seller);
           if (!stats[seller]) stats[seller] = { count: 0, revenue: 0, items: 0 };
           stats[seller].count += 1;
           stats[seller].revenue += s.totalSaleRaw || 0;
@@ -668,10 +675,10 @@ export default function App() {
       return Object.entries(stats).map(([name, data]) => ({ name, ...data })).sort((a,b) => b.revenue - a.revenue);
   }, [analysisData.baseStats.filteredSales]);
 
-  // NUEVO: Lista de Clientes Nuevos Captados
   const newClientsList = useMemo(() => {
       return analysisData.baseStats.filteredSales
           .filter(s => s.isNewClient === true || s.isNewClient === 'Si')
+          .map(s => ({...s, seller: normalizeSellerName(s.seller)}))
           .sort((a,b) => new Date(b.date) - new Date(a.date));
   }, [analysisData.baseStats.filteredSales]);
 
@@ -758,11 +765,12 @@ export default function App() {
       const lowerQuery = salesSearch.toLowerCase();
       result = result.filter(s => {
         const dateStrSafe = safeDateStr(s.date);
+        const normalizedSeller = normalizeSellerName(s.seller).toLowerCase();
         return (
           (s.productName || '').toLowerCase().includes(lowerQuery) ||
           (s.batchName || '').toLowerCase().includes(lowerQuery) ||
           dateStrSafe.toLowerCase().includes(lowerQuery) ||
-          (s.seller || '').toLowerCase().includes(lowerQuery)
+          normalizedSeller.includes(lowerQuery)
         );
       });
     }
@@ -818,7 +826,7 @@ export default function App() {
           totalProfit: 0,
           isReseller: s.isReseller, 
           isNewClient: s.isNewClient, 
-          seller: s.seller || 'Marcos',
+          seller: normalizeSellerName(s.seller),
           items: [],
           originalSales: []
         };
@@ -850,7 +858,7 @@ export default function App() {
       const rows = processedSales.map(s => [
           safeDateStr(s.date), s.batchName || '', s.productName || '', s.variant || '', 
           s.quantity || 0, s.unitPrice || 0, s.totalSaleRaw || 0, s.costArsAtSale || 0, 
-          ((s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0))), s.source || '', s.isReseller ? 'Si' : 'No', s.isNewClient ? 'Si' : 'No', s.seller || 'Marcos'
+          ((s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0))), s.source || '', s.isReseller ? 'Si' : 'No', s.isNewClient ? 'Si' : 'No', normalizeSellerName(s.seller)
       ]);
       exportToCSV('historial_ventas.csv', [headers, ...rows]);
       showToast('Historial descargado con éxito', 'success');
@@ -1050,7 +1058,7 @@ export default function App() {
                 source: saleGeneral.source,
                 isReseller: saleGeneral.isReseller === 'Si',
                 isNewClient: saleGeneral.isNewClient === 'Si',
-                seller: '028import' 
+                seller: '028 Import' 
             };
 
             await addDoc(collection(db, 'sales'), saleData);
@@ -1574,14 +1582,14 @@ export default function App() {
                                             <div key={nc.id} className={`p-4 rounded-xl border flex justify-between items-center transition-colors ${darkMode ? 'bg-[#0a0c10] border-zinc-800 hover:border-zinc-700' : 'bg-zinc-50 border-zinc-200 hover:border-zinc-300'}`}>
                                                 <div className="flex items-center gap-4">
                                                     <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm ${darkMode ? 'bg-zinc-800 text-zinc-300' : 'bg-white border text-zinc-600 shadow-sm'}`}>
-                                                        {nc.seller ? nc.seller.charAt(0) : 'M'}
+                                                        {nc.seller ? nc.seller.charAt(0) : '0'}
                                                     </div>
                                                     <div>
                                                         <div className="font-bold text-sm mb-0.5">{nc.productName} <span className="font-normal opacity-70">({nc.variant})</span></div>
                                                         <div className={`text-[11px] font-medium flex items-center gap-2 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
                                                             <span>{safeDateStr(nc.date, {day:'numeric', month:'short'})}</span>
                                                             <span>•</span>
-                                                            <span>Por: {nc.seller || '028import'}</span>
+                                                            <span>Por: {nc.seller || '028 Import'}</span>
                                                         </div>
                                                     </div>
                                                 </div>
