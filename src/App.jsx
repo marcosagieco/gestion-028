@@ -4,7 +4,7 @@ import {
   ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star
 } from 'lucide-react';
 
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 
 import { initializeApp } from "firebase/app";
 import {
@@ -228,7 +228,7 @@ const CustomSelect = ({ label, options = [], value, onChange, darkMode, placehol
   );
 };
 
-// --- GRÁFICOS RECHARTS ---
+// --- GRÁFICOS RECHARTS Y BARRAS MODERNAS ---
 const CustomTooltip = ({ active, payload, label, darkMode }) => {
   if (active && payload && payload.length) {
     return (
@@ -362,36 +362,40 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
   );
 };
 
-const CustomPieChart = ({ data, colors, darkMode }) => {
-  if (!data || data.length === 0) return <div className="h-[140px] flex items-center justify-center text-sm font-medium opacity-50">Sin datos</div>;
-  
+// NUEVO COMPONENTE: Barras de distribución ultra modernas
+const ModernDistribution = ({ data, colors, darkMode }) => {
+  if (!data || data.length === 0) return <div className="p-8 flex items-center justify-center text-sm font-medium opacity-50">Sin datos registrados</div>;
+
+  const total = data.reduce((acc, curr) => acc + curr.value, 0);
+
   return (
-    <div className="h-[140px] w-full">
-      <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie
-            data={data}
-            cx="50%"
-            cy="50%"
-            innerRadius={45}
-            outerRadius={65}
-            paddingAngle={5}
-            dataKey="value"
-            stroke="none"
-          >
-            {data.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />
-            ))}
-          </Pie>
-          <RechartsTooltip 
-            contentStyle={{ backgroundColor: darkMode ? '#27272a' : '#fff', borderColor: darkMode ? '#3f3f46' : '#e4e4e7', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', color: darkMode ? '#fff' : '#000' }}
-            itemStyle={{ color: darkMode ? '#fff' : '#000' }}
-          />
-        </PieChart>
-      </ResponsiveContainer>
+    <div className="flex flex-col gap-5 p-5">
+      {data.map((item, index) => {
+        const percent = total > 0 ? ((item.value / total) * 100).toFixed(1) : 0;
+        return (
+          <div key={item.name} className="flex flex-col gap-2">
+            <div className="flex justify-between items-end">
+              <div className="flex items-center gap-2.5">
+                <div className="w-3 h-3 rounded-full shadow-sm" style={{ backgroundColor: colors[index % colors.length] }}></div>
+                <span className={`text-sm font-bold ${darkMode ? 'text-zinc-200' : 'text-zinc-700'}`}>{item.name}</span>
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-sm font-black">{item.value}</span>
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${darkMode ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-100 text-zinc-500'}`}>{percent}%</span>
+              </div>
+            </div>
+            <div className={`h-2 w-full rounded-full overflow-hidden ${darkMode ? 'bg-zinc-800' : 'bg-zinc-100'}`}>
+              <div 
+                className="h-full rounded-full transition-all duration-500 ease-out" 
+                style={{ width: `${percent}%`, backgroundColor: colors[index % colors.length] }}
+              ></div>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
-}
+};
 
 // --- APP PRINCIPAL ---
 export default function App() {
@@ -1364,14 +1368,14 @@ export default function App() {
                                             <div className="bg-indigo-500/10 text-indigo-500 p-1.5 rounded-md"><Users size={14}/></div>
                                             <h3 className="font-bold tracking-tight text-xs">Canales (Base)</h3>
                                         </div>
-                                        <div className="p-4"><CustomPieChart data={analysisData.baseStats.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} /></div>
+                                        <ModernDistribution data={analysisData.baseStats.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} />
                                     </Card>
                                     <Card darkMode={darkMode} className="p-0 overflow-hidden">
                                         <div className={`p-4 border-b flex items-center gap-2 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
                                             <div className="bg-indigo-500/10 text-indigo-500 p-1.5 rounded-md"><BarChart3 size={14}/></div>
                                             <h3 className="font-bold tracking-tight text-xs">B2B/B2C (Base)</h3>
                                         </div>
-                                        <div className="p-4"><CustomPieChart data={analysisData.baseStats.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} /></div>
+                                        <ModernDistribution data={analysisData.baseStats.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} />
                                     </Card>
                                 </div>
                             </div>
@@ -1409,14 +1413,14 @@ export default function App() {
                                             <div className="bg-rose-500/10 text-rose-500 p-1.5 rounded-md"><Users size={14}/></div>
                                             <h3 className="font-bold tracking-tight text-xs">Canales (Vs)</h3>
                                         </div>
-                                        <div className="p-4"><CustomPieChart data={analysisData.compareStats.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} /></div>
+                                        <ModernDistribution data={analysisData.compareStats.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} />
                                     </Card>
                                     <Card darkMode={darkMode} className="p-0 overflow-hidden">
                                         <div className={`p-4 border-b flex items-center gap-2 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
                                             <div className="bg-rose-500/10 text-rose-500 p-1.5 rounded-md"><BarChart3 size={14}/></div>
                                             <h3 className="font-bold tracking-tight text-xs">B2B/B2C (Vs)</h3>
                                         </div>
-                                        <div className="p-4"><CustomPieChart data={analysisData.compareStats.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} /></div>
+                                        <ModernDistribution data={analysisData.compareStats.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} />
                                     </Card>
                                 </div>
                             </div>
@@ -1477,23 +1481,7 @@ export default function App() {
                                     <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><Users size={18}/></div>
                                     <h3 className="font-bold tracking-tight text-sm">Tráfico por Canales</h3>
                                 </div>
-                                <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
-                                    <CustomPieChart data={analysisData.baseStats.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} />
-                                    <div className="space-y-3">
-                                    {analysisData.baseStats.pieSourceData.map((d, i) => {
-                                        const colors = ['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b'];
-                                        return (
-                                        <div key={d.name} className="flex justify-between items-center text-sm">
-                                            <div className="flex items-center gap-2">
-                                            <div className="w-3 h-3 rounded-full" style={{backgroundColor: colors[i % colors.length]}}></div>
-                                            <span className="font-medium">{d.name}</span>
-                                            </div>
-                                            <span className="font-bold text-zinc-500">{d.value}</span>
-                                        </div>
-                                        )
-                                    })}
-                                    </div>
-                                </div>
+                                <ModernDistribution data={analysisData.baseStats.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} />
                                 </Card>
 
                                 <Card darkMode={darkMode} className="p-0 overflow-hidden">
@@ -1501,19 +1489,7 @@ export default function App() {
                                     <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><BarChart3 size={18}/></div>
                                     <h3 className="font-bold tracking-tight text-sm">Segmentación B2B / B2C</h3>
                                 </div>
-                                <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
-                                    <CustomPieChart data={analysisData.baseStats.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} />
-                                    <div className="space-y-3">
-                                    <div className="flex justify-between items-center text-sm">
-                                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500"></div><span className="font-medium">Consumidor</span></div>
-                                        <span className="font-bold text-zinc-500">{analysisData.baseStats.typeCounts.Final}</span>
-                                    </div>
-                                    <div className="flex justify-between items-center text-sm">
-                                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-indigo-500"></div><span className="font-medium">Revendedor</span></div>
-                                        <span className="font-bold text-zinc-500">{analysisData.baseStats.typeCounts.Revendedor}</span>
-                                    </div>
-                                    </div>
-                                </div>
+                                <ModernDistribution data={analysisData.baseStats.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} />
                                 </Card>
                             </div>
                         </>
@@ -2001,23 +1977,7 @@ export default function App() {
                               <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><Users size={18}/></div>
                               <h3 className="font-bold tracking-tight text-sm">Distribución de Canales</h3>
                           </div>
-                          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
-                            <CustomPieChart data={batchAnalysis.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} />
-                            <div className="space-y-3">
-                              {batchAnalysis.pieSourceData.map((d, i) => {
-                                const colors = ['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b'];
-                                return (
-                                  <div key={d.name} className="flex justify-between items-center text-sm">
-                                    <div className="flex items-center gap-2">
-                                      <div className="w-3 h-3 rounded-full" style={{backgroundColor: colors[i % colors.length]}}></div>
-                                      <span className="font-medium">{d.name}</span>
-                                    </div>
-                                    <span className="font-bold text-zinc-500">{d.value}</span>
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          </div>
+                          <ModernDistribution data={batchAnalysis.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} />
                         </Card>
 
                         <Card darkMode={darkMode} className="p-0 overflow-hidden">
@@ -2025,19 +1985,7 @@ export default function App() {
                               <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><BarChart3 size={18}/></div>
                               <h3 className="font-bold tracking-tight text-sm">Perfil de Comprador</h3>
                           </div>
-                          <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
-                            <CustomPieChart data={batchAnalysis.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} />
-                            <div className="space-y-3">
-                               <div className="flex justify-between items-center text-sm">
-                                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500"></div><span className="font-medium">Consumidor</span></div>
-                                  <span className="font-bold text-zinc-500">{batchAnalysis.typeCounts.Final}</span>
-                               </div>
-                               <div className="flex justify-between items-center text-sm">
-                                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-indigo-500"></div><span className="font-medium">Revendedor</span></div>
-                                  <span className="font-bold text-zinc-500">{batchAnalysis.typeCounts.Revendedor}</span>
-                               </div>
-                            </div>
-                          </div>
+                          <ModernDistribution data={batchAnalysis.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} />
                         </Card>
                       </div>
                     </div>
