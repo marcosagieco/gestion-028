@@ -659,7 +659,7 @@ export default function App() {
   const teamStats = useMemo(() => {
       const stats = {};
       analysisData.baseStats.filteredSales.forEach(s => {
-          const seller = s.seller || 'Marcos';
+          const seller = s.seller || '028IMPORT';
           if (!stats[seller]) stats[seller] = { count: 0, revenue: 0, items: 0 };
           stats[seller].count += 1;
           stats[seller].revenue += s.totalSaleRaw || 0;
@@ -1050,7 +1050,7 @@ export default function App() {
                 source: saleGeneral.source,
                 isReseller: saleGeneral.isReseller === 'Si',
                 isNewClient: saleGeneral.isNewClient === 'Si',
-                seller: 'Marcos' 
+                seller: '028import' 
             };
 
             await addDoc(collection(db, 'sales'), saleData);
@@ -1581,7 +1581,7 @@ export default function App() {
                                                         <div className={`text-[11px] font-medium flex items-center gap-2 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
                                                             <span>{safeDateStr(nc.date, {day:'numeric', month:'short'})}</span>
                                                             <span>•</span>
-                                                            <span>Por: {nc.seller || 'Marcos'}</span>
+                                                            <span>Por: {nc.seller || '028import'}</span>
                                                         </div>
                                                     </div>
                                                 </div>
