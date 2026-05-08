@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
-  Plus, Trash2, Save, TrendingUp, DollarSign, Package,
-  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown
+  Plus, Trash2, Save, TrendingUp, DollarSign, Package, UserCircle,
+  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star
 } from 'lucide-react';
 
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -315,7 +315,6 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
 
   if (chartData.length === 0) return <div className="h-[250px] flex items-center justify-center text-sm font-medium opacity-50">No hay transacciones en este periodo.</div>;
 
-  // Cambiar el color si es el gráfico de la derecha (Vs)
   const themeColor = isCompareMode ? (darkMode ? '#f43f5e' : '#e11d48') : (darkMode ? '#818cf8' : '#4f46e5'); 
   const gridColor = darkMode ? '#27272a' : '#e4e4e7';
   const textColor = darkMode ? '#71717a' : '#a1a1aa';
@@ -520,7 +519,7 @@ export default function App() {
       { value: '15days', label: 'Últimos 15 días' },
       { value: '30days', label: 'Últimos 30 días' },
       { value: 'custom', label: 'Rango Personalizado' },
-      { value: 'compare', label: 'Comparar Fechas (Mano a Mano)' }, // <-- ACTUALIZADO
+      { value: 'compare', label: 'Comparar Fechas (Mano a Mano)' },
       { value: 'all', label: '-- Histórico Completo --' },
       ...sortedMonths.map(m => {
         const [year, month] = m.split('-');
@@ -531,12 +530,10 @@ export default function App() {
     ];
   }, [sales, expenses, batches]);
 
-  // LÓGICA REFACTORIZADA PARA PODER COMPARAR DOS PERIODOS A LA VEZ
   const analysisData = useMemo(() => {
       const now = new Date();
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-      // Función ayudante que calcula todo para CUALQUIER rango de fechas que le pasemos
       const calculateForRange = (start, end, isAll = false) => {
           const inRange = (dateString) => {
               if (!dateString) return false;
@@ -582,7 +579,6 @@ export default function App() {
           const pieSourceData = Object.entries(sourceCounts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
           const pieTypeData = [{ name: 'Consumidor', value: typeCounts.Final }, { name: 'Revendedor', value: typeCounts.Revendedor }].filter(d => d.value > 0);
 
-          // Calcular racha de días vendiendo (streak)
           const uniqueDateStrs = [...new Set(fSales.filter(s => s.date).map(s => {
               const d = new Date(s.date);
               return isNaN(d.getTime()) ? null : `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -613,7 +609,6 @@ export default function App() {
           };
       };
 
-      // 1. DETERMINAR RANGO BASE (El de la izquierda)
       let bStart, bEnd, isAll = false;
       if (globalMonth === 'today') {
           bStart = todayStart; bEnd = new Date(todayStart); bEnd.setHours(23,59,59,999);
@@ -639,22 +634,18 @@ export default function App() {
            bEnd = new Date(y, m, 0, 23, 59, 59, 999);
       }
 
-      // Calculamos las estadísticas del periodo Base
       const baseStats = calculateForRange(bStart, bEnd, isAll);
 
-      // 2. DETERMINAR RANGO DE COMPARACIÓN (Si estamos en modo normal, calculamos el previo para la flechita)
       let prevBaseStats = null;
       let compareStats = null;
 
       if (globalMonth === 'compare') {
-           // Si el usuario eligió "Mano a Mano", calculamos el rango que eligió en el 2do calendario
            const [csy, csm, csd] = compareDateRange.start.split('-').map(Number);
            const [cey, cem, ced] = compareDateRange.end.split('-').map(Number);
            const cStart = new Date(csy, csm - 1, csd, 0, 0, 0);
            const cEnd = new Date(cey, cem - 1, ced, 23, 59, 59, 999);
            compareStats = calculateForRange(cStart, cEnd, false);
       } else if (globalMonth !== 'all' && globalMonth !== 'custom') {
-           // Si es una vista normal (30 días, etc), calculamos los 30 días anteriores solo para la flechita chica
            const diffTime = bEnd.getTime() - bStart.getTime();
            const pEnd = new Date(bStart.getTime() - 1);
            const pStart = new Date(pEnd.getTime() - diffTime);
@@ -664,6 +655,25 @@ export default function App() {
       return { baseStats, compareStats, prevBaseStats };
   }, [sales, batches, expenses, globalMonth, customDateRange, compareDateRange]);
 
+  // NUEVO: Cálculos para el Rendimiento del Equipo (Vendedores)
+  const teamStats = useMemo(() => {
+      const stats = {};
+      analysisData.baseStats.filteredSales.forEach(s => {
+          const seller = s.seller || 'Marcos';
+          if (!stats[seller]) stats[seller] = { count: 0, revenue: 0, items: 0 };
+          stats[seller].count += 1;
+          stats[seller].revenue += s.totalSaleRaw || 0;
+          stats[seller].items += s.quantity || 0;
+      });
+      return Object.entries(stats).map(([name, data]) => ({ name, ...data })).sort((a,b) => b.revenue - a.revenue);
+  }, [analysisData.baseStats.filteredSales]);
+
+  // NUEVO: Lista de Clientes Nuevos Captados
+  const newClientsList = useMemo(() => {
+      return analysisData.baseStats.filteredSales
+          .filter(s => s.isNewClient === true || s.isNewClient === 'Si')
+          .sort((a,b) => new Date(b.date) - new Date(a.date));
+  }, [analysisData.baseStats.filteredSales]);
 
   const batchAnalysis = useMemo(() => {
     if (!selectedBatchStats) return null;
@@ -751,7 +761,8 @@ export default function App() {
         return (
           (s.productName || '').toLowerCase().includes(lowerQuery) ||
           (s.batchName || '').toLowerCase().includes(lowerQuery) ||
-          dateStrSafe.toLowerCase().includes(lowerQuery)
+          dateStrSafe.toLowerCase().includes(lowerQuery) ||
+          (s.seller || '').toLowerCase().includes(lowerQuery)
         );
       });
     }
@@ -807,6 +818,7 @@ export default function App() {
           totalProfit: 0,
           isReseller: s.isReseller, 
           isNewClient: s.isNewClient, 
+          seller: s.seller || 'Marcos',
           items: [],
           originalSales: []
         };
@@ -832,12 +844,13 @@ export default function App() {
       direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
     }));
   };
+  
   const handleExportSales = () => {
-      const headers = ['Fecha', 'Lote', 'Producto', 'Variante', 'Cantidad', 'Precio Unitario', 'Total Venta', 'Costo Unitario', 'Ganancia Envio', 'Origen', 'Revendedor', 'Cliente Nuevo'];
+      const headers = ['Fecha', 'Lote', 'Producto', 'Variante', 'Cantidad', 'Precio Unitario', 'Total Venta', 'Costo Unitario', 'Ganancia Envio', 'Origen', 'Revendedor', 'Cliente Nuevo', 'Vendedor'];
       const rows = processedSales.map(s => [
           safeDateStr(s.date), s.batchName || '', s.productName || '', s.variant || '', 
           s.quantity || 0, s.unitPrice || 0, s.totalSaleRaw || 0, s.costArsAtSale || 0, 
-          ((s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0))), s.source || '', s.isReseller ? 'Si' : 'No', s.isNewClient ? 'Si' : 'No'
+          ((s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0))), s.source || '', s.isReseller ? 'Si' : 'No', s.isNewClient ? 'Si' : 'No', s.seller || 'Marcos'
       ]);
       exportToCSV('historial_ventas.csv', [headers, ...rows]);
       showToast('Historial descargado con éxito', 'success');
@@ -1036,7 +1049,8 @@ export default function App() {
                 shippingCostArs: isFirstItem ? parseFloat(saleGeneral.shippingCost || 0) : 0,
                 source: saleGeneral.source,
                 isReseller: saleGeneral.isReseller === 'Si',
-                isNewClient: saleGeneral.isNewClient === 'Si'
+                isNewClient: saleGeneral.isNewClient === 'Si',
+                seller: 'Marcos' 
             };
 
             await addDoc(collection(db, 'sales'), saleData);
@@ -1496,6 +1510,90 @@ export default function App() {
                             </div>
                         </>
                     )}
+
+                    {/* NUEVO: SECCIÓN DE RENDIMIENTO DE EQUIPO Y CLIENTES NUEVOS */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8 pt-8 border-t border-zinc-200 dark:border-zinc-800">
+                        
+                        {/* TARJETA RENDIMIENTO DE EQUIPO */}
+                        <Card darkMode={darkMode} className="p-5 flex flex-col h-full">
+                            <div className={`border-b pb-4 mb-4 flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><UserCircle size={18}/></div>
+                                <div>
+                                    <h3 className="font-bold tracking-tight text-sm">Rendimiento del Equipo</h3>
+                                    <p className={`text-xs ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Comparativa de ventas en el periodo actual</p>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 flex-1">
+                                {teamStats.map((member, index) => (
+                                    <div key={member.name} className={`p-4 rounded-xl border flex flex-col justify-between ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+                                        <div>
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="flex items-center gap-2">
+                                                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${index === 0 ? 'bg-amber-100 text-amber-600' : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400'}`}>
+                                                        {index + 1}
+                                                    </div>
+                                                    <span className="font-bold text-sm">{member.name}</span>
+                                                </div>
+                                            </div>
+                                            <div className="text-2xl font-black mb-1">{formatMoney(member.revenue)}</div>
+                                            <div className={`text-xs font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Facturado</div>
+                                        </div>
+                                        <div className="mt-4 flex items-center gap-2">
+                                            <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-100 text-indigo-600'}`}>{member.count} pedidos</span>
+                                            <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${darkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-100 text-emerald-600'}`}>{member.items} un.</span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </Card>
+
+                        {/* TARJETA CLIENTES NUEVOS */}
+                        <Card darkMode={darkMode} className="p-5 flex flex-col h-full">
+                            <div className={`border-b pb-4 mb-4 flex items-center justify-between gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                <div className="flex items-center gap-3">
+                                    <div className="bg-emerald-500/10 text-emerald-500 p-2 rounded-lg"><Star size={18}/></div>
+                                    <div>
+                                        <h3 className="font-bold tracking-tight text-sm">Nuevos Clientes Captados</h3>
+                                        <p className={`text-xs ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Historial de primeras compras</p>
+                                    </div>
+                                </div>
+                                <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${darkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-600'}`}>
+                                    {newClientsList.length} total
+                                </span>
+                            </div>
+                            
+                            <div className="max-h-[300px] overflow-y-auto custom-scrollbar flex-1 pr-2">
+                                {newClientsList.length === 0 ? (
+                                    <div className="flex flex-col items-center justify-center h-full opacity-50 py-8">
+                                        <Star size={32} className="mb-2" />
+                                        <span className="text-sm font-medium">No hay clientes nuevos registrados en este periodo.</span>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {newClientsList.map(nc => (
+                                            <div key={nc.id} className={`p-4 rounded-xl border flex justify-between items-center transition-colors ${darkMode ? 'bg-[#0a0c10] border-zinc-800 hover:border-zinc-700' : 'bg-zinc-50 border-zinc-200 hover:border-zinc-300'}`}>
+                                                <div className="flex items-center gap-4">
+                                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm ${darkMode ? 'bg-zinc-800 text-zinc-300' : 'bg-white border text-zinc-600 shadow-sm'}`}>
+                                                        {nc.seller ? nc.seller.charAt(0) : 'M'}
+                                                    </div>
+                                                    <div>
+                                                        <div className="font-bold text-sm mb-0.5">{nc.productName} <span className="font-normal opacity-70">({nc.variant})</span></div>
+                                                        <div className={`text-[11px] font-medium flex items-center gap-2 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                                            <span>{safeDateStr(nc.date, {day:'numeric', month:'short'})}</span>
+                                                            <span>•</span>
+                                                            <span>Por: {nc.seller || 'Marcos'}</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="font-black text-emerald-500">{formatMoney(nc.totalSaleRaw)}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </Card>
+                    </div>
+
                 </div>
             )}
 
@@ -1613,7 +1711,7 @@ export default function App() {
                                 <Input 
                                   darkMode={darkMode} 
                                   type="search" 
-                                  placeholder="Buscar producto, lote o fecha..." 
+                                  placeholder="Buscar producto, vendedor o fecha..." 
                                   value={salesSearch}
                                   onChange={(e) => setSalesSearch(e.target.value)}
                                 />
@@ -1649,6 +1747,7 @@ export default function App() {
                                       {safeDateStr(group.date, {month:'short', day:'numeric'})}
                                       {/* ETIQUETAS VISUALES */}
                                       <div className="flex flex-col gap-1 mt-1.5 items-start">
+                                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-zinc-800 text-zinc-300' : 'bg-zinc-200 text-zinc-700'}`}>👤 {group.seller}</span>
                                           {group.isNewClient && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-100 text-amber-600'}`}>Nuevo</span>}
                                           {group.isReseller && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-100 text-indigo-600'}`}>Revendedor</span>}
                                       </div>
@@ -1872,7 +1971,7 @@ export default function App() {
                           <MetricCard color="amber" darkMode={darkMode} title="Inversión Base" value={formatMoney(batchAnalysis.totalInvestment)} subtitle="Costo original" icon={Box} />
                           <MetricCard color="blue" darkMode={darkMode} title="Retorno Bruto" value={formatMoney(batchAnalysis.totalRevenue)} subtitle="Ventas totales" icon={DollarSign} />
                           <MetricCard color="rose" darkMode={darkMode} title="Gastos Adicionales" value={formatMoney(batchAnalysis.totalBatchExpenses)} subtitle="Costos operativos" icon={Wallet} />
-                          <MetricCard color="emerald" darkMode={darkMode} title="Flujo de Caja Real" value={formatMoney(batchAnalysis.cashBalance)} subtitle="Liquidez generada" icon={Activity} />
+                          <MetricCard color="emerald" darkMode={darkMode} title="Flujo Efectivo" value={formatMoney(batchAnalysis.cashBalance)} subtitle="Liquidez generada" icon={Activity} />
                           <MetricCard color="indigo" darkMode={darkMode} title="Stock Remanente" value={formatMoney(batchAnalysis.currentStockValue)} subtitle="Activo sin liquidar" icon={Package} />
                           
                           <MetricCard 

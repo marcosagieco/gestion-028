@@ -142,12 +142,21 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                     if (partes.length >= 5 && partes[0].toUpperCase() === "VENTA") {
                         console.log("✅ Formato VENTA detectado. Procesando...");
                         
-                        const productoRaw = String(partes[1] || "");
-                        const varianteRaw = String(partes[2] || "");
-                        const cantidad = parseInt(partes[3]) || 1;
+                        // LÓGICA NUEVA: Detectar si hay un vendedor indicado por 1 o 2 letras
+                        let vendedor = "Marcos"; 
+                        let indexOffset = 0;
+
+                        if (partes[1] && partes[1].length <= 2) {
+                            vendedor = partes[1].toUpperCase();
+                            indexOffset = 1;
+                        }
+
+                        const productoRaw = String(partes[1 + indexOffset] || "");
+                        const varianteRaw = String(partes[2 + indexOffset] || "");
+                        const cantidad = parseInt(partes[3 + indexOffset]) || 1;
                         
                         const limpiarNum = (texto) => parseFloat(String(texto).replace(/[^0-9,-]+/g,"").replace(",", ".")) || 0;
-                        const precioUnitario = limpiarNum(partes[4]);
+                        const precioUnitario = limpiarNum(partes[4 + indexOffset]);
                         
                         // TU LÓGICA DE VARIABLES EXTRAS INTACTA
                         let fechaManual = "hoy"; 
@@ -157,7 +166,7 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                         let esNuevo = false;
                         let numerosEncontrados = 0;
 
-                        for (let i = 5; i < partes.length; i++) {
+                        for (let i = 5 + indexOffset; i < partes.length; i++) {
                             let dato = String(partes[i]).trim();
                             let datoUpper = dato.toUpperCase();
 
@@ -185,9 +194,9 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                             }
                         }
 
-                        console.log(`Buscando producto: ${productoRaw} | Variante: ${varianteRaw} | Cantidad: ${cantidad}`);
+                        console.log(`Buscando producto: ${productoRaw} | Variante: ${varianteRaw} | Cantidad: ${cantidad} | Vendedor: ${vendedor}`);
                         
-                        const resultado = await procesarVenta(productoRaw, varianteRaw, cantidad, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo);
+                        const resultado = await procesarVenta(productoRaw, varianteRaw, cantidad, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor);
                         
                         console.log("Resultado de la búsqueda:", resultado);
 
@@ -205,8 +214,8 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                         } else {
                             console.log("✅ Venta anotada con éxito. No se requiere aviso.");
                             
-                            // REGISTRAR VENTA EXITOSA EN SHEET
-                            await registrarEnSheet("Ventas", [fechaHoySheet, numeroRemitente, productoRaw, varianteRaw, cantidad, precioUnitario, "ÉXITO"]);
+                            // REGISTRAR VENTA EXITOSA EN SHEET (con el vendedor marcado)
+                            await registrarEnSheet("Ventas", [fechaHoySheet, numeroRemitente, productoRaw, varianteRaw, cantidad, precioUnitario, `ÉXITO (${vendedor})`]);
                         }
                     } else {
                         console.log("❌ El mensaje no cumple el formato VENTA | Producto | Variante | Cantidad | Precio");
@@ -255,7 +264,8 @@ exports.resumenDiario = onSchedule({
     } else {
         ventasSnapshot.forEach(doc => {
             const v = doc.data();
-            resumenText += `• ${v.quantity}x ${v.productName} (${v.variant}) - $${v.totalSaleRaw}\n`;
+            const etiquetaVendedor = v.seller && v.seller !== "Marcos" ? `[${v.seller}] ` : "";
+            resumenText += `• ${etiquetaVendedor}${v.quantity}x ${v.productName} (${v.variant}) - $${v.totalSaleRaw}\n`;
             totalPlata += (v.totalSaleRaw || 0);
         });
         resumenText += `\n💰 *TOTAL DEL DÍA: $${totalPlata}*`;
@@ -266,34 +276,6 @@ exports.resumenDiario = onSchedule({
         numeroParaMeta = numeroParaMeta.replace(/^549/, "54");
     }
     await enviarMensajeWhatsApp(numeroParaMeta, resumenText);
-});
-
-// RESUMEN SEMANAL (Domingos 23:59 Argentina)
-exports.resumenSemanal = onSchedule({
-    schedule: "59 23 * * 0",
-    timeZone: "America/Argentina/Buenos_Aires"
-}, async (event) => {
-    const ahoraAR = new Date(new Date().toLocaleString("en-US", {timeZone: "America/Argentina/Buenos_Aires"}));
-    const haceSieteDias = new Date(ahoraAR);
-    haceSieteDias.setDate(haceSieteDias.getDate() - 7);
-    haceSieteDias.setHours(0,0,0,0);
-    
-    const ventasSnapshot = await db.collection("sales")
-        .where("createdAt", ">=", haceSieteDias.toISOString())
-        .get();
-
-    let totalSemana = 0;
-    ventasSnapshot.forEach(doc => {
-        totalSemana += (doc.data().totalSaleRaw || 0);
-    });
-
-    const msg = `📅 *RESUMEN SEMANAL*\n\nTotal acumulado de la semana: *$${totalSemana}*\n\n¡Buen comienzo de semana, Marcos! 🚀`;
-    
-    let numeroParaMeta = ADMIN_NUMBER;
-    if (numeroParaMeta.startsWith("549") && numeroParaMeta.length === 13) {
-        numeroParaMeta = numeroParaMeta.replace(/^549/, "54");
-    }
-    await enviarMensajeWhatsApp(numeroParaMeta, msg);
 });
 
 // RESUMEN SEMANAL (Domingos 23:59 Argentina)
@@ -337,7 +319,7 @@ exports.resumenSemanal = onSchedule({
 // ==========================================
 // TU FUNCIÓN PROCESAR VENTA INTACTA
 // ==========================================
-async function procesarVenta(userProducto, userVariante, cantARestar, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo) {
+async function procesarVenta(userProducto, userVariante, cantARestar, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor) {
     if (isNaN(cantARestar) || cantARestar <= 0) return { exito: false, error_msg: "❌ La cantidad ingresada no es válida." };
 
     const pBuscar = normalizarParaComparar(userProducto);
@@ -441,7 +423,8 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
             ticketId: ticketIdGenerado,     
             totalSaleRaw: totalVentaCalculado, 
             unitPrice: precioUnitario,
-            variant: varianteOficial    
+            variant: varianteOficial,
+            seller: vendedor || "Marcos"  // 👈 NUEVO: Guardamos el vendedor en la BD
         });
 
         return { exito: true };
