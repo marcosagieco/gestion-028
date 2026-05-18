@@ -765,16 +765,60 @@ export default function App() {
   const processedSales = useMemo(() => {
     let result = [...sales].filter(s => s != null);
 
-    if (salesSearch) {
-      const lowerQuery = salesSearch.toLowerCase();
+    const normalizeText = (value) => String(value ?? '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+
+    const normalizeMoney = (value) => String(value ?? '').replace(/[^0-9]/g, '');
+
+    if (salesSearch.trim()) {
+      const textQuery = normalizeText(salesSearch);
+      const compactQuery = textQuery.replace(/\s+/g, '');
+      const moneyQuery = normalizeMoney(salesSearch);
+
       result = result.filter(s => {
-        const dateStrSafe = safeDateStr(s.date);
-        const normalizedSeller = normalizeSellerName(s.seller).toLowerCase();
+        const seller = normalizeSellerName(s.seller);
+        const resellerLabel = s.isReseller === true || s.isReseller === 'Si' ? 'revendedor si mayorista' : 'consumidor final no';
+        const newClientLabel = s.isNewClient === true || s.isNewClient === 'Si' ? 'cliente nuevo primera compra' : 'cliente frecuente recurrente';
+        const profit = (s.totalSaleRaw || 0) - ((s.costArsAtSale || 0) * (s.quantity || 0));
+        const shippingProfit = (s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0));
+
+        const searchableText = normalizeText([
+          s.productName,          // nombre del producto
+          s.variant,              // sabor / variante
+          s.batchName,            // lote
+          s.source,               // Instagram, WhatsApp, etc.
+          seller,                 // 028 Import / Buono
+          resellerLabel,          // revendedor / consumidor final
+          newClientLabel,         // cliente nuevo / frecuente
+          safeDateStr(s.date),
+          safeDateStr(s.createdAt || s.date),
+          `cantidad ${s.quantity || 0}`,
+          `precio ${s.unitPrice || 0}`,
+          `total ${s.totalSaleRaw || 0}`,
+          `costo ${s.costArsAtSale || 0}`,
+          `ganancia ${profit}`,
+          `envio ${shippingProfit}`
+        ].join(' '));
+
+        const searchableNumbers = [
+          s.quantity,
+          s.unitPrice,
+          s.totalSaleRaw,
+          s.costArsAtSale,
+          profit,
+          shippingProfit
+        ].map(normalizeMoney).join(' ');
+
+        const compactSearchableText = searchableText.replace(/\s+/g, '');
+
         return (
-          (s.productName || '').toLowerCase().includes(lowerQuery) ||
-          (s.batchName || '').toLowerCase().includes(lowerQuery) ||
-          dateStrSafe.toLowerCase().includes(lowerQuery) ||
-          normalizedSeller.includes(lowerQuery)
+          searchableText.includes(textQuery) ||
+          compactSearchableText.includes(compactQuery) ||
+          (moneyQuery && searchableNumbers.includes(moneyQuery))
         );
       });
     }
@@ -1487,7 +1531,7 @@ export default function App() {
                                 <Card darkMode={darkMode} className="p-0 overflow-hidden">
                                 <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
                                     <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><BarChart3 size={18}/></div>
-                                    <h3 className="font-bold tracking-tight text-sm">Segmentación B2B / B2C</h3>
+                                    <h3 className="font-bold tracking-tight text-sm">Clientes</h3>
                                 </div>
                                 <ModernDistribution data={analysisData.baseStats.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} />
                                 </Card>
@@ -1695,7 +1739,7 @@ export default function App() {
                                 <Input 
                                   darkMode={darkMode} 
                                   type="search" 
-                                  placeholder="Buscar producto, vendedor o fecha..." 
+                                  placeholder="Buscar producto, sabor, precio, vendedor, origen..." 
                                   value={salesSearch}
                                   onChange={(e) => setSalesSearch(e.target.value)}
                                 />
