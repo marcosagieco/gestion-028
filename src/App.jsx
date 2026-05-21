@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package, UserCircle,
-  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star
+  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy
 } from 'lucide-react';
 
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
@@ -418,6 +418,8 @@ export default function App() {
   const [batches, setBatches] = useState([]);
   const [sales, setSales] = useState([]);
   const [expenses, setExpenses] = useState([]);
+  const [neutralStockEntries, setNeutralStockEntries] = useState([]);
+  const [consignments, setConsignments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [configError, setConfigError] = useState(false);
   
@@ -431,6 +433,24 @@ export default function App() {
   const [newBatchName, setNewBatchName] = useState('');
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '' });
   const [newExpense, setNewExpense] = useState({ description: '', amount: '', batchId: '', date: getTodayDate() });
+  const [newNeutralStock, setNewNeutralStock] = useState({
+    batchId: '',
+    itemId: '',
+    quantity: 1,
+    unitPrice: '',
+    reason: 'Stock perdido',
+    note: ''
+  });
+
+  const [newConsignment, setNewConsignment] = useState({
+    clientName: '',
+    batchId: '',
+    itemId: '',
+    quantity: 1,
+    unitPrice: '',
+    dueDate: '',
+    note: ''
+  });
   
   const [editingItem, setEditingItem] = useState(null);
   const [editingBatchId, setEditingBatchId] = useState(null);
@@ -439,10 +459,17 @@ export default function App() {
   const [selectedBatchStats, setSelectedBatchStats] = useState(null);
   const [hiddenSuggestions, setHiddenSuggestions] = useState({ products: [], variants: [] });
 
+  // --- CONCILIADOR DE STOCK REAL ---
+  const [stockSyncText, setStockSyncText] = useState('');
+  const [stockSyncAnalysis, setStockSyncAnalysis] = useState(null);
+  const [isApplyingStockSync, setIsApplyingStockSync] = useState(false);
+
   const [salesSearch, setSalesSearch] = useState('');
   const [salesSort, setSalesSort] = useState({ key: 'createdAt', direction: 'desc' });
+  const [selectedSaleTickets, setSelectedSaleTickets] = useState({});
+  const [salesDisplayLimit, setSalesDisplayLimit] = useState(120);
 
-  const [saleGeneral, setSaleGeneral] = useState({ saleDate: getTodayDate(), shippingCost: '', shippingPrice: '', source: 'Instagram', isReseller: 'No', isNewClient: 'No' });
+  const [saleGeneral, setSaleGeneral] = useState({ saleDate: getTodayDate(), accountingType: 'Normal', shippingCost: '', shippingPrice: '', source: 'Instagram', isReseller: 'No', isNewClient: 'No' });
   const [saleItems, setSaleItems] = useState([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
 
   const updateSaleItem = (id, field, value) => {
@@ -477,13 +504,29 @@ export default function App() {
             setIsOffline(false);
         }, (error) => setIsOffline(true));
 
+        const unsubNeutralStock = onSnapshot(query(collection(db, 'neutral_stock'), orderBy('createdAt', 'desc')), (snap) => {
+            setNeutralStockEntries(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            setIsOffline(false);
+        }, (error) => {
+            console.error('Error neutral_stock:', error);
+            setNeutralStockEntries([]);
+        });
+
+        const unsubConsignments = onSnapshot(query(collection(db, 'consignments'), orderBy('createdAt', 'desc')), (snap) => {
+            setConsignments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            setIsOffline(false);
+        }, (error) => {
+            console.error('Error consignments:', error);
+            setConsignments([]);
+        });
+
         const unsubSettings = onSnapshot(doc(db, 'settings', 'autocomplete'), (docSnap) => {
             if (docSnap.exists()) setHiddenSuggestions(docSnap.data());
             else setHiddenSuggestions({ products: [], variants: [] });
         }, (error) => console.error("Error settings:", error));
         
         setLoading(false);
-        return () => { unsubBatches(); unsubSales(); unsubExp(); unsubSettings(); };
+        return () => { unsubBatches(); unsubSales(); unsubExp(); unsubNeutralStock(); unsubConsignments(); unsubSettings(); };
     } catch (e) {
         setIsOffline(true);
         setLoading(false);
@@ -511,6 +554,113 @@ export default function App() {
       });
       return { uniqueProducts: Array.from(prodsMap.values()).sort(), uniqueVariants: Array.from(varsMap.values()).sort() };
   }, [batches, hiddenSuggestions]);
+
+  const neutralSelectedBatch = useMemo(() => {
+      return batches.find(b => b.id === newNeutralStock.batchId) || null;
+  }, [batches, newNeutralStock.batchId]);
+
+  const neutralAvailableItems = useMemo(() => {
+      return (neutralSelectedBatch?.items || []).filter(item => (Number(item.currentStock) || 0) > 0);
+  }, [neutralSelectedBatch]);
+
+  const neutralSelectedItem = useMemo(() => {
+      return neutralAvailableItems.find(item => item.id === newNeutralStock.itemId) || null;
+  }, [neutralAvailableItems, newNeutralStock.itemId]);
+
+  const neutralStockStats = useMemo(() => {
+      return neutralStockEntries.reduce((acc, entry) => {
+        const quantity = Number(entry.quantity) || 0;
+        const revenue = Number(entry.totalSaleRaw) || 0;
+        const cost = Number(entry.totalCostRaw) || 0;
+        const profit = Number(entry.grossProfitRaw) || 0;
+        acc.quantity += quantity;
+        acc.revenue += revenue;
+        acc.cost += cost;
+        acc.profit += profit;
+        acc.count += 1;
+        return acc;
+      }, { quantity: 0, revenue: 0, cost: 0, profit: 0, count: 0 });
+  }, [neutralStockEntries]);
+
+  const consignmentSelectedBatch = useMemo(() => {
+      return batches.find(b => b.id === newConsignment.batchId) || null;
+  }, [batches, newConsignment.batchId]);
+
+  const consignmentAvailableItems = useMemo(() => {
+      return (consignmentSelectedBatch?.items || []).filter(item => (Number(item.currentStock) || 0) > 0);
+  }, [consignmentSelectedBatch]);
+
+  const consignmentSelectedItem = useMemo(() => {
+      return consignmentAvailableItems.find(item => item.id === newConsignment.itemId) || null;
+  }, [consignmentAvailableItems, newConsignment.itemId]);
+
+  const consignmentStats = useMemo(() => {
+      return consignments.reduce((acc, entry) => {
+        const delivered = Number(entry.quantityDelivered) || 0;
+        const pending = Number(entry.quantityPending) || 0;
+        const paid = Number(entry.quantityPaid) || 0;
+        const returned = Number(entry.quantityReturned) || 0;
+        const lost = Number(entry.quantityLost) || 0;
+        const unitPrice = Number(entry.unitPrice) || 0;
+        const unitCost = Number(entry.unitCost) || 0;
+
+        acc.entries += 1;
+        acc.delivered += delivered;
+        acc.pending += pending;
+        acc.paid += paid;
+        acc.returned += returned;
+        acc.lost += lost;
+        acc.valuePending += pending * unitPrice;
+        acc.valuePaid += paid * unitPrice;
+        acc.estimatedProfitPending += pending * (unitPrice - unitCost);
+        acc.profitPaid += paid * (unitPrice - unitCost);
+        if (pending > 0) acc.activeEntries += 1;
+        return acc;
+      }, {
+        entries: 0,
+        activeEntries: 0,
+        delivered: 0,
+        pending: 0,
+        paid: 0,
+        returned: 0,
+        lost: 0,
+        valuePending: 0,
+        valuePaid: 0,
+        estimatedProfitPending: 0,
+        profitPaid: 0
+      });
+  }, [consignments]);
+
+  const consignmentsByClient = useMemo(() => {
+      const map = {};
+      consignments.forEach(entry => {
+        const client = String(entry.clientName || 'Sin cliente').trim();
+        if (!map[client]) {
+          map[client] = {
+            clientName: client,
+            entries: [],
+            pending: 0,
+            paid: 0,
+            valuePending: 0,
+            valuePaid: 0,
+            profitPaid: 0
+          };
+        }
+        const pending = Number(entry.quantityPending) || 0;
+        const paid = Number(entry.quantityPaid) || 0;
+        const unitPrice = Number(entry.unitPrice) || 0;
+        const unitCost = Number(entry.unitCost) || 0;
+
+        map[client].entries.push(entry);
+        map[client].pending += pending;
+        map[client].paid += paid;
+        map[client].valuePending += pending * unitPrice;
+        map[client].valuePaid += paid * unitPrice;
+        map[client].profitPaid += paid * (unitPrice - unitCost);
+      });
+
+      return Object.values(map).sort((a, b) => (b.valuePending + b.valuePaid) - (a.valuePending + a.valuePaid));
+  }, [consignments]);
 
   const periodOptions = useMemo(() => {
     const getLocalMonth = (isoString) => {
@@ -559,6 +709,12 @@ export default function App() {
           const fExp = expenses.filter(e => inRange(e.date));
           const fBatches = batches.filter(b => inRange(b.createdAt));
 
+          // Stock neutro: no entra por día/mes. Solo suma en Histórico Completo.
+          const fNeutral = isAll ? neutralStockEntries : [];
+          const neutralRevenue = fNeutral.reduce((acc, n) => acc + (Number(n.totalSaleRaw) || 0), 0);
+          const neutralCost = fNeutral.reduce((acc, n) => acc + (Number(n.totalCostRaw) || 0), 0);
+          const neutralProfit = fNeutral.reduce((acc, n) => acc + (Number(n.grossProfitRaw) || 0), 0);
+
           let totalRevenue = 0, itemsSold = 0, totalShippingProfit = 0;
           const sourceCounts = {};
           const typeCounts = { Revendedor: 0, Final: 0 };
@@ -576,9 +732,10 @@ export default function App() {
           const totalGlobalExpenses = fExp.reduce((acc, e) => acc + (e.amount || 0), 0);
           const costOfSoldFiltered = fSales.reduce((acc, s) => acc + ((s.costArsAtSale || 0) * (s.quantity || 0)), 0);
 
-          const grossProfit = totalRevenue - costOfSoldFiltered;
+          // La ganancia neutra no modifica ventas diarias/mensuales, pero sí el global histórico.
+          const grossProfit = (totalRevenue - costOfSoldFiltered) + neutralProfit;
           const netProfit = grossProfit - totalGlobalExpenses;
-          const cashBalance = totalRevenue - totalInvestment - totalGlobalExpenses;
+          const cashBalance = (totalRevenue + neutralRevenue) - totalInvestment - totalGlobalExpenses;
 
           const currentStockValue = batches.filter(b => !b.finalizedAt).reduce((acc, b) => acc + (b.items || []).reduce((a, i) => a + ((i.costArs || 0) * (i.currentStock || 0)), 0), 0);
 
@@ -614,7 +771,7 @@ export default function App() {
           }
 
           return {
-              totalRevenue, totalInvestment, totalGlobalExpenses, grossProfit, grossMargin,
+              totalRevenue, neutralRevenue, neutralCost, neutralProfit, totalInvestment, totalGlobalExpenses, grossProfit, grossMargin,
               totalShippingProfit, netProfit, netMargin, cashBalance, currentStockValue,
               itemsSold, salesCount: fSales.length, sourceCounts, typeCounts, dailyAvgItems,
               daysActive, currentStreak, filteredSales: fSales, pieSourceData, pieTypeData
@@ -665,7 +822,7 @@ export default function App() {
       }
 
       return { baseStats, compareStats, prevBaseStats };
-  }, [sales, batches, expenses, globalMonth, customDateRange, compareDateRange]);
+  }, [sales, batches, expenses, neutralStockEntries, globalMonth, customDateRange, compareDateRange]);
 
   const teamStats = useMemo(() => {
       const stats = {};
@@ -894,6 +1051,56 @@ export default function App() {
     return result;
   }, [processedSales]);
 
+  useEffect(() => {
+    setSalesDisplayLimit(120);
+  }, [salesSearch, salesSort.key, salesSort.direction]);
+
+  const selectedSaleGroups = useMemo(() => {
+    return groupedSales.filter(group => selectedSaleTickets[group.ticketId]);
+  }, [groupedSales, selectedSaleTickets]);
+
+  const selectedSalesSummary = useMemo(() => {
+    return selectedSaleGroups.reduce((acc, group) => {
+      acc.salesCount += 1;
+      acc.linesCount += group.originalSales.length;
+      acc.productsCount += group.originalSales.reduce((sum, sale) => sum + (Number(sale.quantity) || 0), 0);
+      acc.revenue += group.totalSaleRaw || 0;
+      acc.profit += group.totalProfit || 0;
+      return acc;
+    }, { salesCount: 0, linesCount: 0, productsCount: 0, revenue: 0, profit: 0 });
+  }, [selectedSaleGroups]);
+
+  const visibleGroupedSales = useMemo(() => {
+    return groupedSales.slice(0, salesDisplayLimit);
+  }, [groupedSales, salesDisplayLimit]);
+
+  const hasMoreGroupedSales = groupedSales.length > visibleGroupedSales.length;
+
+  const allVisibleSalesSelected = visibleGroupedSales.length > 0 && visibleGroupedSales.every(group => selectedSaleTickets[group.ticketId]);
+
+  const toggleSaleTicketSelection = (ticketId) => {
+    setSelectedSaleTickets(prev => {
+      const next = { ...prev };
+      if (next[ticketId]) delete next[ticketId];
+      else next[ticketId] = true;
+      return next;
+    });
+  };
+
+  const toggleAllVisibleSalesSelection = () => {
+    setSelectedSaleTickets(prev => {
+      const next = { ...prev };
+      if (allVisibleSalesSelected) {
+        visibleGroupedSales.forEach(group => delete next[group.ticketId]);
+      } else {
+        visibleGroupedSales.forEach(group => { next[group.ticketId] = true; });
+      }
+      return next;
+    });
+  };
+
+  const clearSelectedSales = () => setSelectedSaleTickets({});
+
   const toggleSort = (key) => {
     setSalesSort(prev => ({
       key,
@@ -927,6 +1134,386 @@ export default function App() {
       exportToCSV('inventario_lotes.csv', [headers, ...rows]);
       showToast('Inventario descargado', 'success');
   };
+
+  const formatBatchForCopy = (batch, mode = 'simple') => {
+      const items = batch?.items || [];
+      const header = [
+        `LOTE: ${batch?.name || 'Sin nombre'}`,
+        `ESTADO: ${batch?.finalizedAt ? 'Archivado' : 'Activo'}`,
+        `FECHA: ${safeDateStr(batch?.createdAt)}`,
+        `ITEMS: ${items.length}`,
+        ''
+      ];
+
+      if (!items.length) return `${header.join('\n')}Lote vacío.`;
+
+      const grouped = new Map();
+      items.forEach(item => {
+        const product = String(item.product || 'SIN PRODUCTO').trim();
+        if (!grouped.has(product)) grouped.set(product, []);
+        grouped.get(product).push(item);
+      });
+
+      const body = [];
+
+      Array.from(grouped.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .forEach(([product, groupItems]) => {
+          body.push(product);
+
+          groupItems
+            .slice()
+            .sort((a, b) => String(a.variant || '').localeCompare(String(b.variant || '')))
+            .forEach(item => {
+              const variant = String(item.variant || 'Único').trim();
+              const currentStock = Number(item.currentStock) || 0;
+              const initialStock = Number(item.initialStock) || 0;
+              const cost = Number(item.costArs) || 0;
+
+              if (mode === 'detailed') {
+                body.push(`- ${variant} (${currentStock}) | inicial ${initialStock} | costo ${formatMoney(cost)}`);
+              } else {
+                body.push(`${variant} (${currentStock})`);
+              }
+            });
+
+          body.push('');
+        });
+
+      return [...header, ...body].join('\n').trim();
+  };
+
+  const formatAllBatchesForCopy = (onlyActive = false) => {
+      const source = onlyActive ? batches.filter(b => !b.finalizedAt) : batches;
+      if (!source.length) return 'No hay lotes cargados.';
+      return source.map(batch => formatBatchForCopy(batch, 'simple')).join('\n\n------------------------------\n\n');
+  };
+
+  const copyTextToClipboard = async (textToCopy, successMessage = 'Copiado al portapapeles') => {
+      try {
+        if (navigator?.clipboard?.writeText) {
+          await navigator.clipboard.writeText(textToCopy);
+        } else {
+          const textarea = document.createElement('textarea');
+          textarea.value = textToCopy;
+          textarea.style.position = 'fixed';
+          textarea.style.opacity = '0';
+          document.body.appendChild(textarea);
+          textarea.focus();
+          textarea.select();
+          document.execCommand('copy');
+          document.body.removeChild(textarea);
+        }
+        showToast(successMessage, 'success');
+      } catch (e) {
+        showToast('No pude copiar automáticamente. Seleccioná el texto y copialo manualmente.', 'error');
+      }
+  };
+
+  const copyBatchToClipboard = (batch, mode = 'simple') => {
+      copyTextToClipboard(formatBatchForCopy(batch, mode), `Lote "${batch?.name || 'Sin nombre'}" copiado`);
+  };
+
+  const copyAllBatchesToClipboard = (onlyActive = false) => {
+      copyTextToClipboard(
+        formatAllBatchesForCopy(onlyActive),
+        onlyActive ? 'Todos los lotes activos copiados' : 'Todos los lotes copiados'
+      );
+  };
+
+  const handleCreateConsignment = async () => {
+    if (!newConsignment.clientName.trim()) return showToast('Escribí el nombre del cliente/consignatario.', 'error');
+    if (!newConsignment.batchId) return showToast('Elegí el lote de origen.', 'error');
+    if (!newConsignment.itemId) return showToast('Elegí el producto.', 'error');
+
+    const batch = batches.find(b => b.id === newConsignment.batchId);
+    if (!batch) return showToast('Lote no encontrado.', 'error');
+
+    const item = (batch.items || []).find(i => i.id === newConsignment.itemId);
+    if (!item) return showToast('Producto no encontrado en el lote.', 'error');
+
+    const quantity = parseInt(newConsignment.quantity) || 0;
+    if (quantity <= 0) return showToast('La cantidad tiene que ser mayor a 0.', 'error');
+
+    const currentStock = Number(item.currentStock) || 0;
+    if (quantity > currentStock) return showToast(`Stock insuficiente. Disponible: ${currentStock}.`, 'error');
+
+    const unitPrice = parseFloat(newConsignment.unitPrice || 0);
+    if (unitPrice <= 0 || Number.isNaN(unitPrice)) return showToast('Cargá el precio acordado por unidad.', 'error');
+
+    if (!window.confirm(`Entregar ${quantity} unidad(es) a ${newConsignment.clientName}?\\n\\nEsto descuenta stock del lote, pero NO crea venta todavía.`)) return;
+
+    try {
+      const newItems = (batch.items || []).map(i => {
+        if (i.id !== item.id) return i;
+        return { ...i, currentStock: Math.max(0, (Number(i.currentStock) || 0) - quantity) };
+      });
+
+      await updateDoc(doc(db, 'batches', batch.id), { items: newItems });
+
+      await addDoc(collection(db, 'consignments'), {
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        status: 'active',
+        clientName: newConsignment.clientName.trim(),
+        batchId: batch.id,
+        batchName: batch.name || 'Sin lote',
+        itemId: item.id,
+        productName: item.product || 'Sin producto',
+        variant: item.variant || 'Único',
+        quantityDelivered: quantity,
+        quantityPending: quantity,
+        quantityPaid: 0,
+        quantityReturned: 0,
+        quantityLost: 0,
+        unitCost: Number(item.costArs) || 0,
+        unitPrice,
+        dueDate: newConsignment.dueDate || '',
+        note: String(newConsignment.note || '').trim()
+      });
+
+      setNewConsignment({
+        clientName: '',
+        batchId: '',
+        itemId: '',
+        quantity: 1,
+        unitPrice: '',
+        dueDate: '',
+        note: ''
+      });
+
+      showToast('Entrega a consignación registrada. No se creó venta.', 'success');
+    } catch (e) {
+      showToast('Error creando consignación: ' + e.message, 'error');
+    }
+  };
+
+  const updateConsignmentStatus = async (entry, patch = {}) => {
+    const nextPending = Number(patch.quantityPending ?? entry.quantityPending) || 0;
+    const nextStatus = nextPending <= 0 ? 'closed' : 'active';
+    await updateDoc(doc(db, 'consignments', entry.id), {
+      ...patch,
+      status: patch.status || nextStatus,
+      updatedAt: new Date().toISOString()
+    });
+  };
+
+  const handleConsignmentPayment = async (entry) => {
+    const pending = Number(entry.quantityPending) || 0;
+    if (pending <= 0) return showToast('Este producto ya no tiene pendientes.', 'error');
+
+    const qtyRaw = window.prompt(`¿Cuántas unidades te pagó? Pendientes: ${pending}`, '1');
+    if (qtyRaw === null) return;
+
+    const quantity = parseInt(qtyRaw) || 0;
+    if (quantity <= 0 || quantity > pending) return showToast(`Cantidad inválida. Pendientes: ${pending}.`, 'error');
+
+    const priceRaw = window.prompt('Precio unitario cobrado', String(entry.unitPrice || ''));
+    if (priceRaw === null) return;
+
+    const unitPrice = parseFloat(String(priceRaw).replace(/[^0-9,-]+/g, '').replace(',', '.')) || 0;
+    if (unitPrice <= 0) return showToast('Precio inválido.', 'error');
+
+    const dateRaw = window.prompt('Fecha de cobro YYYY-MM-DD. Dejá vacío para hoy.', getTodayDate());
+    const dateValue = dateRaw && dateRaw.trim() ? dateRaw.trim() : getTodayDate();
+
+    const [year, month, day] = dateValue.split('-').map(Number);
+    const saleDateObj = new Date(year, month - 1, day, new Date().getHours(), new Date().getMinutes());
+    const saleDate = isNaN(saleDateObj.getTime()) ? new Date().toISOString() : saleDateObj.toISOString();
+
+    try {
+      const ticketId = `CONS-${Date.now()}`;
+      const saleData = {
+        ticketId,
+        createdAt: new Date().toISOString(),
+        date: saleDate,
+        batchId: entry.batchId,
+        batchName: entry.batchName,
+        itemId: entry.itemId,
+        productName: entry.productName,
+        variant: entry.variant,
+        quantity,
+        unitPrice,
+        totalSaleRaw: unitPrice * quantity,
+        costArsAtSale: Number(entry.unitCost) || 0,
+        shippingCostArs: 0,
+        source: 'Consignación',
+        consignmentId: entry.id,
+        consignmentClient: entry.clientName,
+        isReseller: true,
+        isNewClient: false,
+        seller: '028 Import'
+      };
+
+      await addDoc(collection(db, 'sales'), saleData);
+
+      await updateConsignmentStatus(entry, {
+        quantityPending: pending - quantity,
+        quantityPaid: (Number(entry.quantityPaid) || 0) + quantity,
+        lastPaidAt: new Date().toISOString()
+      });
+
+      showToast(`Pago parcial registrado: ${quantity} unidad(es). Ahora sí figura como venta.`, 'success');
+    } catch (e) {
+      showToast('Error registrando pago de consignación: ' + e.message, 'error');
+    }
+  };
+
+  const handleConsignmentReturn = async (entry) => {
+    const pending = Number(entry.quantityPending) || 0;
+    if (pending <= 0) return showToast('No hay unidades pendientes para devolver.', 'error');
+
+    const qtyRaw = window.prompt(`¿Cuántas unidades devolvió? Pendientes: ${pending}`, '1');
+    if (qtyRaw === null) return;
+
+    const quantity = parseInt(qtyRaw) || 0;
+    if (quantity <= 0 || quantity > pending) return showToast(`Cantidad inválida. Pendientes: ${pending}.`, 'error');
+
+    if (!window.confirm(`Devolver ${quantity} unidad(es) al lote original?`)) return;
+
+    try {
+      const batch = batches.find(b => b.id === entry.batchId);
+      if (batch) {
+        const newItems = (batch.items || []).map(item => {
+          if (item.id !== entry.itemId) return item;
+          return { ...item, currentStock: (Number(item.currentStock) || 0) + quantity };
+        });
+        await updateDoc(doc(db, 'batches', entry.batchId), { items: newItems });
+      }
+
+      await updateConsignmentStatus(entry, {
+        quantityPending: pending - quantity,
+        quantityReturned: (Number(entry.quantityReturned) || 0) + quantity,
+        lastReturnedAt: new Date().toISOString()
+      });
+
+      showToast('Producto devuelto al lote.', 'success');
+    } catch (e) {
+      showToast('Error registrando devolución: ' + e.message, 'error');
+    }
+  };
+
+  const handleConsignmentLost = async (entry) => {
+    const pending = Number(entry.quantityPending) || 0;
+    if (pending <= 0) return showToast('No hay unidades pendientes para marcar como perdidas.', 'error');
+
+    const qtyRaw = window.prompt(`¿Cuántas unidades se perdieron? Pendientes: ${pending}`, '1');
+    if (qtyRaw === null) return;
+
+    const quantity = parseInt(qtyRaw) || 0;
+    if (quantity <= 0 || quantity > pending) return showToast(`Cantidad inválida. Pendientes: ${pending}.`, 'error');
+
+    if (!window.confirm(`Marcar ${quantity} unidad(es) como perdidas? No vuelve al lote y no crea venta.`)) return;
+
+    try {
+      await updateConsignmentStatus(entry, {
+        quantityPending: pending - quantity,
+        quantityLost: (Number(entry.quantityLost) || 0) + quantity,
+        lastLostAt: new Date().toISOString()
+      });
+
+      showToast('Producto marcado como perdido dentro de consignación.', 'success');
+    } catch (e) {
+      showToast('Error marcando pérdida: ' + e.message, 'error');
+    }
+  };
+
+  const handleAddNeutralStock = async () => {
+    if (!newNeutralStock.batchId) return showToast('Elegí el lote de donde sale el stock neutro.', 'error');
+    if (!newNeutralStock.itemId) return showToast('Elegí el producto del lote.', 'error');
+
+    const batch = batches.find(b => b.id === newNeutralStock.batchId);
+    if (!batch) return showToast('Lote no encontrado.', 'error');
+
+    const item = (batch.items || []).find(i => i.id === newNeutralStock.itemId);
+    if (!item) return showToast('Producto no encontrado en el lote.', 'error');
+
+    const quantity = parseInt(newNeutralStock.quantity) || 0;
+    if (quantity <= 0) return showToast('La cantidad tiene que ser mayor a 0.', 'error');
+
+    const currentStock = Number(item.currentStock) || 0;
+    if (quantity > currentStock) return showToast(`Stock insuficiente. Disponible: ${currentStock}.`, 'error');
+
+    const unitPrice = parseFloat(newNeutralStock.unitPrice || 0);
+    if (unitPrice < 0 || Number.isNaN(unitPrice)) return showToast('Precio inválido.', 'error');
+
+    const unitCost = Number(item.costArs) || 0;
+    const totalSaleRaw = unitPrice * quantity;
+    const totalCostRaw = unitCost * quantity;
+    const grossProfitRaw = totalSaleRaw - totalCostRaw;
+
+    const reason = newNeutralStock.reason || 'Stock perdido';
+    const note = String(newNeutralStock.note || '').trim();
+
+    if (!window.confirm(`Registrar ${quantity} unidad(es) como stock neutro? Se descuenta del lote, pero NO aparece como venta diaria ni mensual.`)) return;
+
+    try {
+      const newItems = (batch.items || []).map(i => {
+        if (i.id !== item.id) return i;
+        return { ...i, currentStock: Math.max(0, (Number(i.currentStock) || 0) - quantity) };
+      });
+
+      await updateDoc(doc(db, 'batches', batch.id), { items: newItems });
+
+      await addDoc(collection(db, 'neutral_stock'), {
+        createdAt: new Date().toISOString(),
+        accountingType: 'neutral',
+        reason,
+        note,
+        batchId: batch.id,
+        batchName: batch.name || 'Sin lote',
+        itemId: item.id,
+        productName: item.product || 'Sin producto',
+        variant: item.variant || 'Único',
+        quantity,
+        unitPrice,
+        costArsAtEntry: unitCost,
+        totalSaleRaw,
+        totalCostRaw,
+        grossProfitRaw,
+        seller: '028 Import'
+      });
+
+      setNewNeutralStock({
+        batchId: '',
+        itemId: '',
+        quantity: 1,
+        unitPrice: '',
+        reason: 'Stock perdido',
+        note: ''
+      });
+
+      showToast(`Stock neutro registrado. Ganancia neutral: ${formatMoney(grossProfitRaw)}`, 'success');
+    } catch (e) {
+      showToast('Error registrando stock neutro: ' + e.message, 'error');
+    }
+  };
+
+  const handleDeleteNeutralStock = async (entry) => {
+    if (!window.confirm('¿Eliminar este registro neutro y devolver el stock al lote original si existe?')) return;
+
+    try {
+      if (entry.batchId && entry.itemId) {
+        const batch = batches.find(b => b.id === entry.batchId);
+        if (batch) {
+          const newItems = (batch.items || []).map(item => {
+            if (item.id !== entry.itemId) return item;
+            return {
+              ...item,
+              currentStock: (Number(item.currentStock) || 0) + (Number(entry.quantity) || 0)
+            };
+          });
+          await updateDoc(doc(db, 'batches', entry.batchId), { items: newItems });
+        }
+      }
+
+      await deleteDoc(doc(db, 'neutral_stock', entry.id));
+      showToast('Registro neutro eliminado y stock devuelto si correspondía.', 'success');
+    } catch (e) {
+      showToast('Error eliminando registro neutro: ' + e.message, 'error');
+    }
+  };
+
 
   const handleCreateBatch = async () => {
     if (!newBatchName) return showToast("Debes ingresar un nombre para el lote", 'error');
@@ -1064,7 +1651,8 @@ export default function App() {
         }
     }
 
-    const shippingProfit = parseFloat(saleGeneral.shippingPrice || 0) - parseFloat(saleGeneral.shippingCost || 0);
+    const isNeutralSale = (saleGeneral.accountingType || 'Normal') === 'Neutro';
+    const shippingProfit = isNeutralSale ? 0 : (parseFloat(saleGeneral.shippingPrice || 0) - parseFloat(saleGeneral.shippingCost || 0));
     const [year, month, day] = saleGeneral.saleDate.split('-').map(Number);
     const saleDateObj = new Date(year, month - 1, day, new Date().getHours(), new Date().getMinutes());
     
@@ -1085,7 +1673,7 @@ export default function App() {
             const batch = batches.find(b => b.id === si.batchId);
             const item = batch.items.find(it => it.id === si.itemId);
 
-            const itemShippingProfit = isFirstItem ? shippingProfit : 0;
+            const itemShippingProfit = (!isNeutralSale && isFirstItem) ? shippingProfit : 0;
             const itemTotalRaw = (uPrice * qty) + itemShippingProfit;
             totalCashIn += itemTotalRaw;
 
@@ -1109,7 +1697,29 @@ export default function App() {
                 seller: '028 Import' 
             };
 
-            await addDoc(collection(db, 'sales'), saleData);
+            if (isNeutralSale) {
+                await addDoc(collection(db, 'neutral_stock'), {
+                    createdAt: createdAtStr,
+                    accountingType: 'neutral',
+                    reason: 'Venta neutra',
+                    note: `Registrado desde Ventas · Canal: ${saleGeneral.source || 'Sin canal'}`,
+                    batchId: batch.id,
+                    batchName: batch.name,
+                    itemId: item.id,
+                    productName: item.product,
+                    variant: item.variant,
+                    quantity: qty,
+                    unitPrice: uPrice,
+                    costArsAtEntry: item.costArs || 0,
+                    totalSaleRaw: itemTotalRaw,
+                    totalCostRaw: (item.costArs || 0) * qty,
+                    grossProfitRaw: itemTotalRaw - ((item.costArs || 0) * qty),
+                    source: 'Ventas / Neutro',
+                    seller: '028 Import'
+                });
+            } else {
+                await addDoc(collection(db, 'sales'), saleData);
+            }
 
             if (!batchUpdates[batch.id]) {
                 batchUpdates[batch.id] = { items: [...batch.items], finalizedAt: batch.finalizedAt };
@@ -1129,7 +1739,7 @@ export default function App() {
             await updateDoc(doc(db, 'batches', bId), updates);
         }
 
-        showToast(`Pedido registrado. Ingreso total: ${formatMoney(totalCashIn)}`, 'success');
+        showToast(isNeutralSale ? `Stock neutro registrado. Ganancia global estimada: ${formatMoney(totalCashIn)}` : `Pedido registrado. Ingreso total: ${formatMoney(totalCashIn)}`, 'success');
         
         setSaleGeneral({ ...saleGeneral, shippingCost: '', shippingPrice: '' });
         setSaleItems([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
@@ -1139,25 +1749,71 @@ export default function App() {
     }
   };
 
-  const handleDeleteTicket = async (group) => {
-    if (!window.confirm(`¿Anular pedido completo (${group.items.length} productos)? Se devolverá el stock.`)) return;
+  const deleteSaleGroups = async (groupsToDelete, askConfirm = true) => {
+    const validGroups = (groupsToDelete || []).filter(Boolean);
+    if (!validGroups.length) return showToast('No hay ventas seleccionadas.', 'error');
+
+    const summary = validGroups.reduce((acc, group) => {
+      acc.salesCount += 1;
+      acc.linesCount += group.originalSales.length;
+      acc.productsCount += group.originalSales.reduce((sum, sale) => sum + (Number(sale.quantity) || 0), 0);
+      acc.revenue += group.totalSaleRaw || 0;
+      return acc;
+    }, { salesCount: 0, linesCount: 0, productsCount: 0, revenue: 0 });
+
+    if (askConfirm) {
+      const msg = `¿Borrar ${summary.salesCount} venta(s) seleccionada(s)?\n\nProductos/unidades: ${summary.productsCount}\nLíneas internas: ${summary.linesCount}\nTotal facturado: ${formatMoney(summary.revenue)}\n\nSe eliminarán del historial y se devolverá el stock a sus lotes.`;
+      if (!window.confirm(msg)) return;
+    }
+
     try {
-      for (const sale of group.originalSales) {
-        await deleteDoc(doc(db, 'sales', sale.id));
-        if (sale.batchId && sale.itemId) {
-          const batch = batches.find(b => b.id === sale.batchId);
-          if (batch) {
-            const itemIndex = batch.items.findIndex(i => i.id === sale.itemId);
-            if (itemIndex !== -1) {
-              const newItems = [...batch.items];
-              newItems[itemIndex].currentStock += sale.quantity;
-              await updateDoc(doc(db, 'batches', batch.id), { items: newItems });
-            }
-          }
-        }
+      const stockToReturnByBatch = {};
+      const salesToDelete = validGroups.flatMap(group => group.originalSales);
+
+      salesToDelete.forEach(sale => {
+        // Las ventas de consignación NO devuelven stock al lote al borrarlas,
+        // porque el stock ya había salido cuando se entregó a consignación.
+        if (sale.consignmentId || sale.source === 'Consignación') return;
+        if (!sale.batchId || !sale.itemId) return;
+        if (!stockToReturnByBatch[sale.batchId]) stockToReturnByBatch[sale.batchId] = {};
+        stockToReturnByBatch[sale.batchId][sale.itemId] = (stockToReturnByBatch[sale.batchId][sale.itemId] || 0) + (Number(sale.quantity) || 0);
+      });
+
+      for (const batchId of Object.keys(stockToReturnByBatch)) {
+        const batch = batches.find(b => b.id === batchId);
+        if (!batch) continue;
+
+        const returns = stockToReturnByBatch[batchId];
+        const newItems = (batch.items || []).map(item => ({
+          ...item,
+          currentStock: (Number(item.currentStock) || 0) + (Number(returns[item.id]) || 0)
+        }));
+
+        await updateDoc(doc(db, 'batches', batchId), { items: newItems });
       }
-      showToast("Pedido anulado correctamente", 'success');
-    } catch (e) { showToast('Error: ' + e.message, 'error'); }
+
+      for (const sale of salesToDelete) {
+        await deleteDoc(doc(db, 'sales', sale.id));
+      }
+
+      setSelectedSaleTickets(prev => {
+        const next = { ...prev };
+        validGroups.forEach(group => delete next[group.ticketId]);
+        return next;
+      });
+
+      showToast(`${summary.salesCount} venta(s) borrada(s). Se devolvieron ${summary.productsCount} producto(s) al stock.`, 'success');
+    } catch (e) {
+      showToast('Error al borrar ventas: ' + e.message, 'error');
+    }
+  };
+
+  const handleDeleteTicket = async (group) => {
+    await deleteSaleGroups([group], true);
+  };
+
+  const handleDeleteSelectedSales = async () => {
+    await deleteSaleGroups(selectedSaleGroups, true);
   };
 
   const handleAddExpense = async () => {
@@ -1183,6 +1839,472 @@ export default function App() {
       await deleteDoc(doc(db, 'expenses', id));
       showToast('Gasto eliminado', 'success');
   };
+
+
+  // --- CONCILIADOR DE STOCK REAL ---
+  const normalizeStockString = (value) => {
+    return String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      // Correcciones comunes, pero no dependemos solo de esto: abajo hay fuzzy general.
+      .replace(/\bpinneaple\b/g, 'pineapple')
+      .replace(/\bpinnapple\b/g, 'pineapple')
+      .replace(/\bpineaple\b/g, 'pineapple')
+      .replace(/\bpinnaple\b/g, 'pineapple')
+      .replace(/\bpacion\b/g, 'passion')
+      .replace(/\bpasion\b/g, 'passion')
+      .replace(/\bpasión\b/g, 'passion')
+      .replace(/\bpassionfrut\b/g, 'passion fruit')
+      .replace(/\bfrut\b/g, 'fruit')
+      .replace(/\bstraberry\b/g, 'strawberry')
+      .replace(/\bstrawbery\b/g, 'strawberry')
+      .replace(/\bbluebery\b/g, 'blueberry')
+      .replace(/\bwatermellon\b/g, 'watermelon')
+      .replace(/\bfucking\b/g, '')
+      .replace(/\bfcking\b/g, '')
+      .replace(/\bsatica\b/g, 'sativa')
+      .replace(/\bsativa\b/g, '')
+      .replace(/\bindica\b/g, '')
+      .replace(/\bhibrida\b/g, '')
+      .replace(/\bhybrid\b/g, '')
+      .replace(/\bv\s*400\s*mix\b/g, 'vmix')
+      .replace(/\bv400\s*mix\b/g, 'vmix')
+      .replace(/\bv\s*mix\b/g, 'vmix')
+      .replace(/\b(nuevo|nueva|new|stock|real|actualizado|actualizada)\b/g, ' ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  const cleanStockDisplayText = (value) => {
+    return String(value || '')
+      .replace(/\([^)]*\)\s*[a-zA-Z]*\s*$/g, '')
+      .replace(/^\s*\d+\s*\|\s*/g, '')
+      .replace(/\s*(→|->|>|-)\s*(sativa|indica|índica|hibrida|híbrida|hybrid|satica)\b.*$/i, '')
+      .replace(/[^\p{L}\p{N}\s\-\/&+]/gu, ' ')
+      .replace(/\b(nuevo|nueva|new|stock|real|actualizado|actualizada)\b/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  const getStockTokens = (value) => {
+    const stop = new Set(['de', 'del', 'the', 'and', 'con', 'por', 'para', 'x', 'by']);
+    return normalizeStockString(value)
+      .split(' ')
+      .filter(token => token.length > 1 && !stop.has(token));
+  };
+
+  const getSortedTokenKey = (value) => [...new Set(getStockTokens(value))].sort().join(' ');
+
+  const levenshteinDistance = (a, b) => {
+    const s = String(a || '');
+    const t = String(b || '');
+    if (s === t) return 0;
+    if (!s.length) return t.length;
+    if (!t.length) return s.length;
+
+    const previous = Array.from({ length: t.length + 1 }, (_, i) => i);
+    const current = Array(t.length + 1);
+
+    for (let i = 1; i <= s.length; i++) {
+      current[0] = i;
+      for (let j = 1; j <= t.length; j++) {
+        const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+        current[j] = Math.min(
+          current[j - 1] + 1,
+          previous[j] + 1,
+          previous[j - 1] + cost
+        );
+      }
+      for (let j = 0; j <= t.length; j++) previous[j] = current[j];
+    }
+
+    return previous[t.length];
+  };
+
+  const tokenSimilarity = (a, b) => {
+    const x = normalizeStockString(a);
+    const y = normalizeStockString(b);
+    if (!x || !y) return 0;
+    if (x === y) return 1;
+
+    if ((x.includes(y) || y.includes(x)) && Math.min(x.length, y.length) >= 4) {
+      return 0.92;
+    }
+
+    const maxLen = Math.max(x.length, y.length);
+    const minLen = Math.min(x.length, y.length);
+    if (maxLen <= 2) return x === y ? 1 : 0;
+
+    const distance = levenshteinDistance(x, y);
+    const rawRatio = 1 - (distance / maxLen);
+    const lengthBalance = minLen / maxLen;
+
+    return Math.max(0, rawRatio * (0.72 + lengthBalance * 0.28));
+  };
+
+  const fuzzyTokenCoverage = (tokensA, tokensB) => {
+    if (!tokensA.length || !tokensB.length) return 0;
+
+    const bestA = tokensA.map(a => Math.max(...tokensB.map(b => tokenSimilarity(a, b))));
+    const bestB = tokensB.map(b => Math.max(...tokensA.map(a => tokenSimilarity(a, b))));
+
+    const avgA = bestA.reduce((sum, val) => sum + val, 0) / bestA.length;
+    const avgB = bestB.reduce((sum, val) => sum + val, 0) / bestB.length;
+
+    return (avgA * 0.55) + (avgB * 0.45);
+  };
+
+  const similarityScore = (a, b) => {
+    const normA = normalizeStockString(a);
+    const normB = normalizeStockString(b);
+    if (!normA || !normB) return 0;
+    if (normA === normB) return 100;
+
+    const sortedA = getSortedTokenKey(a);
+    const sortedB = getSortedTokenKey(b);
+    if (sortedA && sortedA === sortedB) return 98;
+
+    const tokensA = [...new Set(getStockTokens(a))];
+    const tokensB = [...new Set(getStockTokens(b))];
+    if (!tokensA.length || !tokensB.length) return 0;
+
+    const exactIntersection = tokensA.filter(t => tokensB.includes(t)).length;
+    const exactUnion = new Set([...tokensA, ...tokensB]).size;
+    const exactJaccard = exactUnion ? exactIntersection / exactUnion : 0;
+
+    const fuzzyCoverage = fuzzyTokenCoverage(tokensA, tokensB);
+    const containsBoost = normA.includes(normB) || normB.includes(normA) ? 0.10 : 0;
+
+    const score = (exactJaccard * 0.35) + (fuzzyCoverage * 0.58) + containsBoost;
+    return Math.round(Math.min(1, score) * 100);
+  };
+
+  const scoreRealAgainstWebGroup = (real, web) => {
+    const fullScore = similarityScore(`${real.model} ${real.variant}`, `${web.product} ${web.variant}`);
+    const modelScore = similarityScore(real.model, web.product);
+    const variantScore = similarityScore(real.variant, web.variant);
+
+    // Para stock, la variante/sabor pesa más que el modelo, pero el modelo evita confundir
+    // "Miami Mint" de distintas líneas.
+    let weightedScore = Math.round((variantScore * 0.66) + (modelScore * 0.34));
+
+    // Si el sabor es casi igual y el modelo se parece razonablemente, empujamos a dudosa fuerte.
+    if (variantScore >= 88 && modelScore >= 55) weightedScore += 6;
+
+    // Si el modelo es muy fuerte pero falta una palabra secundaria en el sabor, también suma.
+    if (modelScore >= 88 && variantScore >= 72) weightedScore += 4;
+
+    return {
+      score: Math.min(100, Math.max(fullScore, weightedScore)),
+      fullScore,
+      modelScore,
+      variantScore
+    };
+  };
+
+  const parseRealStockText = (rawText) => {
+    const lines = String(rawText || '').split(/\r?\n/);
+    let currentModel = '';
+    const parsed = [];
+
+    lines.forEach((rawLine) => {
+      const originalLine = String(rawLine || '').trim();
+      if (!originalLine) return;
+
+      const line = originalLine.replace(/\s+/g, ' ').trim();
+
+      // Formato 1: "Sabor (7)" o producto único "CÁPSULAS 028 1ml (4)"
+      const qtyAtEnd = line.match(/\((\d+)\)\s*[a-zA-Z]*\s*$/);
+
+      // Formato 2: "1| Lemon Hash", "1 | Durban Poison"
+      const qtyAtStart = line.match(/^\s*(\d+)\s*\|\s*(.+)$/);
+
+      if (qtyAtStart) {
+        const quantity = parseInt(qtyAtStart[1], 10);
+        const variant = cleanStockDisplayText(qtyAtStart[2]);
+        if (!variant || !Number.isFinite(quantity)) return;
+
+        parsed.push({
+          id: `${currentModel}__${variant}__${parsed.length}`,
+          model: currentModel || 'SIN MODELO',
+          variant,
+          quantity,
+          raw: originalLine,
+          normalized: normalizeStockString(`${currentModel} ${variant}`),
+          sortedKey: getSortedTokenKey(`${currentModel} ${variant}`)
+        });
+        return;
+      }
+
+      if (qtyAtEnd) {
+        const quantity = parseInt(qtyAtEnd[1], 10);
+        const nameWithoutQty = cleanStockDisplayText(line.replace(qtyAtEnd[0], ''));
+        if (!nameWithoutQty || !Number.isFinite(quantity)) return;
+
+        const looksLikeSingleProduct =
+          !currentModel ||
+          /capsula|capsulas|cápsula|cápsulas|bateria|batería|pen|shroomz|mushroom/i.test(nameWithoutQty);
+
+        const model = looksLikeSingleProduct ? nameWithoutQty : currentModel;
+        const variant = looksLikeSingleProduct ? 'Único' : nameWithoutQty;
+
+        parsed.push({
+          id: `${model}__${variant}__${parsed.length}`,
+          model,
+          variant,
+          quantity,
+          raw: originalLine,
+          normalized: normalizeStockString(`${model} ${variant}`),
+          sortedKey: getSortedTokenKey(`${model} ${variant}`)
+        });
+        return;
+      }
+
+      // Sin cantidad: se toma como título padre/modelo.
+      const header = cleanStockDisplayText(line);
+      if (header) currentModel = header;
+    });
+
+    return parsed;
+  };
+
+  const getActiveWebStockItems = () => {
+    const items = [];
+    batches
+      .filter(batch => !batch.finalizedAt)
+      .forEach(batch => {
+        (batch.items || []).forEach(item => {
+          const currentStock = Number(item.currentStock) || 0;
+          if (currentStock <= 0) return;
+          const product = item.product || 'SIN PRODUCTO';
+          const variant = item.variant || 'Único';
+          items.push({
+            batchId: batch.id,
+            batchName: batch.name || 'Lote sin nombre',
+            itemId: item.id,
+            product,
+            variant,
+            costArs: Number(item.costArs) || 0,
+            currentStock,
+            initialStock: Number(item.initialStock) || 0,
+            normalized: normalizeStockString(`${product} ${variant}`),
+            sortedKey: getSortedTokenKey(`${product} ${variant}`)
+          });
+        });
+      });
+    return items;
+  };
+
+  const buildWebStockGroups = () => {
+    const map = new Map();
+    getActiveWebStockItems().forEach(item => {
+      const key = item.sortedKey || item.normalized;
+      if (!map.has(key)) {
+        map.set(key, {
+          key,
+          label: `${item.product} / ${item.variant}`,
+          product: item.product,
+          variant: item.variant,
+          normalized: item.normalized,
+          sortedKey: item.sortedKey,
+          totalStock: 0,
+          entries: []
+        });
+      }
+      const group = map.get(key);
+      group.totalStock += item.currentStock;
+      group.entries.push(item);
+    });
+    return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label));
+  };
+
+  const analyzeStockReconciliation = () => {
+    const realItems = parseRealStockText(stockSyncText);
+    const webGroups = buildWebStockGroups();
+
+    if (!realItems.length) {
+      showToast('Pegá un stock real con cantidades entre paréntesis. Ej: Miami Mint (2)', 'error');
+      setStockSyncAnalysis(null);
+      return;
+    }
+
+    const exact = [];
+    const probable = [];
+    const notFound = [];
+    const matchedWebKeys = new Set();
+
+    realItems.forEach(real => {
+      const candidates = webGroups
+        .map(web => {
+          const scoreData = scoreRealAgainstWebGroup(real, web);
+          const inverted = real.sortedKey && web.sortedKey && real.sortedKey === web.sortedKey && real.normalized !== web.normalized;
+          return { web, ...scoreData, inverted };
+        })
+        .filter(candidate => candidate.score >= 58)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 5);
+
+      const best = candidates[0];
+
+      if (!best) {
+        notFound.push({ real, candidates: [] });
+        return;
+      }
+
+      const row = {
+        real,
+        web: best.web,
+        candidates,
+        score: best.score,
+        inverted: best.inverted,
+        webStock: best.web.totalStock,
+        realStock: real.quantity,
+        diff: real.quantity - best.web.totalStock
+      };
+
+      if (best.score >= 94 && candidates.filter(c => c.score >= 90).length === 1) {
+        exact.push(row);
+        matchedWebKeys.add(best.web.key);
+      } else {
+        probable.push(row);
+        // Si ya aparece como dudosa, no debe aparecer también como "en sistema pero no aparece".
+        matchedWebKeys.add(best.web.key);
+      }
+    });
+
+    const extraWeb = webGroups
+      .filter(web => !matchedWebKeys.has(web.key))
+      .map(web => ({ web, webStock: web.totalStock }));
+
+    const duplicateGroups = [];
+    for (let i = 0; i < webGroups.length; i++) {
+      for (let j = i + 1; j < webGroups.length; j++) {
+        const score = similarityScore(`${webGroups[i].product} ${webGroups[i].variant}`, `${webGroups[j].product} ${webGroups[j].variant}`);
+        if (score >= 92) {
+          duplicateGroups.push({ a: webGroups[i], b: webGroups[j], score });
+        }
+      }
+    }
+
+    const toAdd = exact.filter(r => r.diff > 0);
+    const toRemove = exact.filter(r => r.diff < 0);
+    const ok = exact.filter(r => r.diff === 0);
+
+    setStockSyncAnalysis({
+      createdAt: new Date().toISOString(),
+      realItems,
+      webGroups,
+      exact,
+      probable,
+      notFound,
+      extraWeb,
+      duplicateGroups: duplicateGroups.slice(0, 30),
+      summary: {
+        parsed: realItems.length,
+        exact: exact.length,
+        probable: probable.length,
+        notFound: notFound.length,
+        extraWeb: extraWeb.length,
+        duplicates: duplicateGroups.length,
+        ok: ok.length,
+        toAdd: toAdd.length,
+        toRemove: toRemove.length
+      }
+    });
+
+    showToast(`Análisis listo: ${exact.length} coincidencias exactas, ${probable.length} dudosas, ${notFound.length} no encontradas.`, 'success');
+  };
+
+  const applyExactStockReconciliation = async () => {
+    if (!stockSyncAnalysis) return showToast('Primero analizá el stock real.', 'error');
+
+    const changes = stockSyncAnalysis.exact.filter(row => row.diff !== 0);
+    if (!changes.length) return showToast('No hay diferencias exactas para aplicar.', 'success');
+
+    if (!window.confirm(`Aplicar ${changes.length} ajustes exactos de stock? No toca coincidencias dudosas ni productos no encontrados.`)) return;
+
+    setIsApplyingStockSync(true);
+
+    try {
+      await addDoc(collection(db, 'stock_sync_logs'), {
+        createdAt: new Date().toISOString(),
+        mode: 'exact_only',
+        sourceText: stockSyncText,
+        summary: stockSyncAnalysis.summary,
+        changes: changes.map(row => ({
+          real: row.real,
+          webLabel: row.web.label,
+          webStock: row.webStock,
+          realStock: row.realStock,
+          diff: row.diff,
+          entries: row.web.entries.map(entry => ({
+            batchId: entry.batchId,
+            batchName: entry.batchName,
+            itemId: entry.itemId,
+            product: entry.product,
+            variant: entry.variant,
+            currentStock: entry.currentStock,
+            initialStock: entry.initialStock
+          }))
+        }))
+      });
+
+      const updatesByBatch = new Map();
+
+      const getBatchItemsCopy = (batchId) => {
+        if (!updatesByBatch.has(batchId)) {
+          const batch = batches.find(b => b.id === batchId);
+          updatesByBatch.set(batchId, (batch?.items || []).map(item => ({ ...item })));
+        }
+        return updatesByBatch.get(batchId);
+      };
+
+      changes.forEach(row => {
+        let diff = row.diff;
+
+        if (diff > 0) {
+          const targetEntry = row.web.entries[0];
+          const itemsCopy = getBatchItemsCopy(targetEntry.batchId);
+          const idx = itemsCopy.findIndex(item => item.id === targetEntry.itemId);
+          if (idx !== -1) {
+            itemsCopy[idx].currentStock = (Number(itemsCopy[idx].currentStock) || 0) + diff;
+            itemsCopy[idx].initialStock = (Number(itemsCopy[idx].initialStock) || 0) + diff;
+          }
+        }
+
+        if (diff < 0) {
+          let remainingToRemove = Math.abs(diff);
+          const entries = [...row.web.entries].sort((a, b) => b.currentStock - a.currentStock);
+
+          entries.forEach(entry => {
+            if (remainingToRemove <= 0) return;
+            const itemsCopy = getBatchItemsCopy(entry.batchId);
+            const idx = itemsCopy.findIndex(item => item.id === entry.itemId);
+            if (idx === -1) return;
+
+            const current = Number(itemsCopy[idx].currentStock) || 0;
+            const remove = Math.min(current, remainingToRemove);
+            itemsCopy[idx].currentStock = current - remove;
+            remainingToRemove -= remove;
+          });
+        }
+      });
+
+      for (const [batchId, items] of updatesByBatch.entries()) {
+        await updateDoc(doc(db, 'batches', batchId), { items });
+      }
+
+      showToast(`Stock ajustado: ${changes.length} cambios aplicados.`, 'success');
+      setStockSyncAnalysis(null);
+    } catch (e) {
+      showToast('Error aplicando ajustes: ' + e.message, 'error');
+    } finally {
+      setIsApplyingStockSync(false);
+    }
+  };
+
 
   const handleLogin = (e) => { 
     e.preventDefault(); 
@@ -1223,6 +2345,7 @@ export default function App() {
       { id: 'home', icon: Activity, label: 'Inicio' }, 
       { id: 'sales', icon: ShoppingCart, label: 'Ventas' }, 
       { id: 'batches', icon: FolderOpen, label: 'Lotes' }, 
+      { id: 'consignment', icon: Users, label: 'Consignación' },
       { id: 'analysis', icon: BarChart3, label: 'Análisis' }, 
       { id: 'expenses', icon: Wallet, label: 'Gastos' }
   ];
@@ -1483,7 +2606,10 @@ export default function App() {
                                         </span>
                                     ) : null}
                                 />
-                                <MetricCard color="emerald" darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(analysisData.baseStats.grossProfit)} subtitle="Ingresos - Costo Mercadería" icon={TrendingUp} trend={<span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/50 text-zinc-600 dark:bg-black/50 dark:text-zinc-400">{formatPercent(analysisData.baseStats.grossMargin)}</span>} />
+                                <MetricCard color="emerald" darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(analysisData.baseStats.grossProfit)} subtitle={globalMonth === 'all' && analysisData.baseStats.neutralProfit ? 'Incluye ganancia neutra global' : 'Ingresos - Costo Mercadería'} icon={TrendingUp} trend={<span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/50 text-zinc-600 dark:bg-black/50 dark:text-zinc-400">{formatPercent(analysisData.baseStats.grossMargin)}</span>} />
+                                {globalMonth === 'all' && analysisData.baseStats.neutralProfit !== 0 && (
+                                  <MetricCard color="indigo" darkMode={darkMode} title="Ganancia Neutra" value={formatMoney(analysisData.baseStats.neutralProfit)} subtitle="Solo histórico global" icon={Box} />
+                                )}
                                 <MetricCard color="rose" darkMode={darkMode} title="Gastos Fijos" value={formatMoney(analysisData.baseStats.totalGlobalExpenses)} subtitle="Logística y operativos" icon={Wallet} />
                                 <MetricCard 
                                     color="violet"
@@ -1637,11 +2763,18 @@ export default function App() {
                             
                             <div className="space-y-4">
                                 <Input darkMode={darkMode} label="Fecha de Operación" type="date" value={saleGeneral.saleDate} onChange={e => setSaleGeneral({...saleGeneral, saleDate: e.target.value})} />
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                                    <Select darkMode={darkMode} label="Registro" value={saleGeneral.accountingType || 'Normal'} onChange={e => setSaleGeneral({...saleGeneral, accountingType: e.target.value})} options={[{value:'Normal', label:'Venta normal'}, {value:'Neutro', label:'Neutro / Global'}]} />
                                     <Select darkMode={darkMode} label="Canal" value={saleGeneral.source} onChange={e => setSaleGeneral({...saleGeneral, source: e.target.value})} options={[{value:'Instagram', label:'Instagram'}, {value:'Whatsapp', label:'Whatsapp'}, {value:'Personal', label:'Personal'}, {value:'Web', label:'Web'}]} />
                                     <Select darkMode={darkMode} label="Tipo" value={saleGeneral.isReseller} onChange={e => setSaleGeneral({...saleGeneral, isReseller: e.target.value})} options={[{value:'No', label:'Consumidor'}, {value:'Si', label:'Revendedor'}]} />
                                     <Select darkMode={darkMode} label="Historial" value={saleGeneral.isNewClient} onChange={e => setSaleGeneral({...saleGeneral, isNewClient: e.target.value})} options={[{value:'No', label:'Frecuente'}, {value:'Si', label:'Nuevo'}]} />
                                 </div>
+
+                                {(saleGeneral.accountingType || 'Normal') === 'Neutro' && (
+                                  <div className={`p-3 rounded-xl border text-xs font-semibold ${darkMode ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-300' : 'bg-indigo-50 border-indigo-100 text-indigo-700'}`}>
+                                    Modo neutro: descuenta stock y guarda la ganancia para el histórico global, pero NO crea venta, NO aparece en días, meses, gráficos ni resumen normal.
+                                  </div>
+                                )}
                                 
                                 <hr className={`border-dashed ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`} />
 
@@ -1718,12 +2851,16 @@ export default function App() {
 
                                 <hr className={`border-dashed ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`} />
 
-                                <div className={`p-3 rounded-lg border grid grid-cols-2 gap-3 ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
-                                    <Input darkMode={darkMode} label="Costo Envío" type="number" symbol="$" value={saleGeneral.shippingCost} onChange={e => setSaleGeneral({...saleGeneral, shippingCost: e.target.value})} />
-                                    <Input darkMode={darkMode} label="Cobro Envío" type="number" symbol="$" value={saleGeneral.shippingPrice} onChange={e => setSaleGeneral({...saleGeneral, shippingPrice: e.target.value})} />
-                                </div>
+                                {(saleGeneral.accountingType || 'Normal') !== 'Neutro' && (
+                                  <div className={`p-3 rounded-lg border grid grid-cols-2 gap-3 ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+                                      <Input darkMode={darkMode} label="Costo Envío" type="number" symbol="$" value={saleGeneral.shippingCost} onChange={e => setSaleGeneral({...saleGeneral, shippingCost: e.target.value})} />
+                                      <Input darkMode={darkMode} label="Cobro Envío" type="number" symbol="$" value={saleGeneral.shippingPrice} onChange={e => setSaleGeneral({...saleGeneral, shippingPrice: e.target.value})} />
+                                  </div>
+                                )}
 
-                                <Button darkMode={darkMode} onClick={handleAddSale} className="w-full mt-4 h-12 text-base shadow-lg shadow-indigo-600/30">Procesar Venta</Button>
+                                <Button darkMode={darkMode} onClick={handleAddSale} className="w-full mt-4 h-12 text-base shadow-lg shadow-indigo-600/30">
+                                  {(saleGeneral.accountingType || 'Normal') === 'Neutro' ? 'Registrar Neutro' : 'Procesar Venta'}
+                                </Button>
                             </div>
                         </Card>
                     </div>
@@ -1733,7 +2870,12 @@ export default function App() {
                 <div className="lg:col-span-8">
                   <Card darkMode={darkMode} className="h-full flex flex-col p-0 overflow-hidden border-zinc-200 dark:border-zinc-800">
                     <div className={`p-4 border-b flex flex-col sm:flex-row justify-between gap-4 sm:items-center ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-white border-zinc-200'}`}>
-                        <h3 className="font-bold text-base flex-shrink-0">Libro de Ventas</h3>
+                        <div className="flex flex-col">
+                            <h3 className="font-bold text-base flex-shrink-0">Libro de Ventas</h3>
+                            <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                              Mostrando {Math.min(visibleGroupedSales.length, groupedSales.length)} de {groupedSales.length} ventas
+                            </span>
+                        </div>
                         <div className="flex gap-2 w-full sm:w-auto">
                             <div className="flex-1 sm:w-64">
                                 <Input 
@@ -1748,10 +2890,46 @@ export default function App() {
                         </div>
                     </div>
                     
+                    {selectedSalesSummary.salesCount > 0 && (
+                      <div className={`px-4 py-3 border-b flex flex-col xl:flex-row xl:items-center justify-between gap-3 ${darkMode ? 'bg-red-500/10 border-red-500/20' : 'bg-red-50 border-red-100'}`}>
+                        <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
+                          <span className={`px-2.5 py-1 rounded-lg ${darkMode ? 'bg-red-500/15 text-red-300' : 'bg-white text-red-700 border border-red-100'}`}>
+                            {selectedSalesSummary.salesCount} venta(s) seleccionada(s)
+                          </span>
+                          <span className={`px-2.5 py-1 rounded-lg ${darkMode ? 'bg-black/25 text-zinc-300' : 'bg-white text-zinc-700 border border-red-100'}`}>
+                            {selectedSalesSummary.productsCount} producto(s) / unidad(es)
+                          </span>
+                          <span className={`px-2.5 py-1 rounded-lg ${darkMode ? 'bg-black/25 text-zinc-300' : 'bg-white text-zinc-700 border border-red-100'}`}>
+                            {selectedSalesSummary.linesCount} línea(s)
+                          </span>
+                          <span className={`px-2.5 py-1 rounded-lg ${darkMode ? 'bg-black/25 text-zinc-300' : 'bg-white text-zinc-700 border border-red-100'}`}>
+                            Total: {formatMoney(selectedSalesSummary.revenue)}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                          <Button darkMode={darkMode} onClick={clearSelectedSales} variant="outline" className="h-9 text-xs">Limpiar</Button>
+                          <Button darkMode={darkMode} onClick={handleDeleteSelectedSales} variant="danger" className="h-9 text-xs">
+                            <Trash2 size={14}/> Borrar seleccionadas
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="overflow-x-auto flex-1 h-[700px] custom-scrollbar">
                       <table className="w-full text-left text-sm border-collapse">
                           <thead className={`sticky top-0 z-10 text-xs font-semibold ${darkMode ? 'bg-[#0f1115] text-zinc-400 border-b border-zinc-800 shadow-sm' : 'bg-zinc-50 text-zinc-500 border-b border-zinc-200 shadow-sm'}`}>
                               <tr>
+                                <th className="px-4 py-3 w-10">
+                                  <input
+                                    type="checkbox"
+                                    checked={allVisibleSalesSelected}
+                                    onChange={toggleAllVisibleSalesSelection}
+                                    disabled={groupedSales.length === 0}
+                                    title={allVisibleSalesSelected ? 'Deseleccionar ventas visibles' : 'Seleccionar ventas visibles'}
+                                    className="w-4 h-4 accent-indigo-600 cursor-pointer disabled:opacity-30"
+                                  />
+                                </th>
                                 <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors" onClick={() => toggleSort('createdAt')}>
                                   <div className="flex items-center gap-1">Registro <span className="opacity-50">{salesSort.key === 'createdAt' ? (salesSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></div>
                                 </th>
@@ -1768,9 +2946,18 @@ export default function App() {
                               </tr>
                           </thead>
                           <tbody className={`divide-y ${darkMode ? 'divide-zinc-800/80' : 'divide-zinc-100'}`}>
-                            {groupedSales.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-sm font-medium opacity-50 italic">No se encontraron ventas con esos filtros.</td></tr>}
-                            {groupedSales.map(group => (
-                                <tr key={group.ticketId} className={`transition-colors group ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-zinc-50'}`}>
+                            {groupedSales.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-sm font-medium opacity-50 italic">No se encontraron ventas con esos filtros.</td></tr>}
+                            {visibleGroupedSales.map(group => (
+                                <tr key={group.ticketId} className={`transition-colors group ${selectedSaleTickets[group.ticketId] ? (darkMode ? 'bg-indigo-500/10 hover:bg-indigo-500/15' : 'bg-indigo-50 hover:bg-indigo-100/70') : (darkMode ? 'hover:bg-[#131824]' : 'hover:bg-zinc-50')}`}>
+                                  <td className="px-4 py-3 align-top pt-4">
+                                    <input
+                                      type="checkbox"
+                                      checked={!!selectedSaleTickets[group.ticketId]}
+                                      onChange={() => toggleSaleTicketSelection(group.ticketId)}
+                                      className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                                      title="Seleccionar venta"
+                                    />
+                                  </td>
                                   <td className={`px-4 py-3 text-xs font-medium whitespace-nowrap align-top pt-4 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
                                       {safeDateStr(group.date, {month:'short', day:'numeric'})}
                                       {/* ETIQUETAS VISUALES */}
@@ -1799,6 +2986,19 @@ export default function App() {
                             ))}
                           </tbody>
                       </table>
+
+                      {hasMoreGroupedSales && (
+                        <div className={`sticky bottom-0 p-3 border-t text-center ${darkMode ? 'bg-[#0f1115]/95 border-zinc-800' : 'bg-white/95 border-zinc-200'} backdrop-blur`}>
+                          <Button
+                            darkMode={darkMode}
+                            variant="outline"
+                            onClick={() => setSalesDisplayLimit(prev => prev + 120)}
+                            className="h-9 text-xs"
+                          >
+                            Mostrar 120 ventas más ({groupedSales.length - visibleGroupedSales.length} restantes)
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   </Card>
                 </div>
@@ -1819,7 +3019,9 @@ export default function App() {
                         <Button darkMode={darkMode} onClick={handleCreateBatch} className="shrink-0"><Plus size={16}/> Crear Lote</Button>
                       </div>
                   </div>
-                  <div className={`px-5 py-3 flex justify-end bg-zinc-50 dark:bg-[#0a0c10]`}>
+                  <div className={`px-5 py-3 flex flex-wrap justify-end gap-2 bg-zinc-50 dark:bg-[#0a0c10]`}>
+                      <Button darkMode={darkMode} onClick={() => copyAllBatchesToClipboard(true)} variant="outline" className="h-9"><Copy size={14}/> Copiar activos</Button>
+                      <Button darkMode={darkMode} onClick={() => copyAllBatchesToClipboard(false)} variant="outline" className="h-9"><Copy size={14}/> Copiar todos</Button>
                       <Button darkMode={darkMode} onClick={handleExportBatches} variant="outline" className="h-9"><Download size={14}/> Bajar CSV Completo</Button>
                   </div>
                 </Card>
@@ -1865,8 +3067,17 @@ export default function App() {
                                 </div>
                             </div>
                         </div>
-                        <div className={`p-2 rounded-full transition-colors ${darkMode ? 'text-zinc-500 bg-[#0f1115]' : 'text-zinc-400 bg-zinc-100'}`}>
-                            {expandedBatchId === b.id ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+                        <div className="flex items-center gap-2">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); copyBatchToClipboard(b); }}
+                              className={`hidden sm:flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-colors ${darkMode ? 'text-zinc-300 bg-[#0f1115] hover:bg-indigo-500/10 hover:text-indigo-400' : 'text-zinc-600 bg-zinc-100 hover:bg-indigo-50 hover:text-indigo-600'}`}
+                              title="Copiar contenido del lote"
+                            >
+                              <Copy size={14}/> Copiar
+                            </button>
+                            <div className={`p-2 rounded-full transition-colors ${darkMode ? 'text-zinc-500 bg-[#0f1115]' : 'text-zinc-400 bg-zinc-100'}`}>
+                                {expandedBatchId === b.id ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+                            </div>
                         </div>
                       </div>
                       
@@ -1951,6 +3162,176 @@ export default function App() {
                 </div>
               </div>
             )}
+
+
+            {/* --- PESTAÑA AJUSTAR STOCK REAL --- */}
+            {activeTab === 'stockSync' && (
+              <div className="space-y-6 animate-in fade-in duration-300">
+                <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                  <div className={`p-5 border-b flex flex-col lg:flex-row justify-between lg:items-start gap-4 ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                    <div>
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="p-2.5 rounded-lg bg-indigo-500/10 text-indigo-500"><ArrowUpDown size={20}/></div>
+                        <h2 className="text-xl font-bold">Ajustar Stock Real</h2>
+                      </div>
+                      <p className={`text-sm max-w-3xl ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                        Pegá tu stock real tal cual lo escribís por WhatsApp. El sistema compara contra los lotes activos, detecta nombres parecidos aunque tengan letras mal escritas, productos invertidos, posibles duplicados y diferencias de cantidad.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button darkMode={darkMode} onClick={analyzeStockReconciliation} className="h-10"><Search size={16}/> Analizar</Button>
+                      <Button darkMode={darkMode} onClick={applyExactStockReconciliation} disabled={!stockSyncAnalysis || isApplyingStockSync} variant="success" className="h-10">
+                        <CheckCircle size={16}/> Aplicar exactos
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] gap-0">
+                    <div className={`p-5 border-r ${darkMode ? 'border-zinc-800 bg-[#0f1115]' : 'border-zinc-200 bg-zinc-50/60'}`}>
+                      <label className={`text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>Stock real contado</label>
+                      <textarea
+                        value={stockSyncText}
+                        onChange={e => setStockSyncText(e.target.value)}
+                        placeholder={`Ejemplo:\n\n🧊 ELFBAR ICE KING\nCherry Strazz 🍒🍓 (8)\nWatermelon Ice 🍉🧊 (6)\nMiami Mint 🌴🌿❄️ (2)\n\n🧬 IGNITE V400 MIX\nGrape Ice - Watermelon Ice (2)`}
+                        className={`mt-2 w-full min-h-[430px] rounded-xl border p-4 text-sm font-mono leading-relaxed outline-none resize-y custom-scrollbar ${darkMode ? 'bg-[#0a0c10] border-zinc-800 text-zinc-100 placeholder:text-zinc-600 focus:border-indigo-500' : 'bg-white border-zinc-300 text-zinc-900 placeholder:text-zinc-400 focus:border-indigo-500'}`}
+                      />
+                      <div className={`mt-4 p-4 rounded-xl border ${darkMode ? 'bg-[#0a0c10] border-zinc-800 text-zinc-400' : 'bg-white border-zinc-200 text-zinc-600'}`}>
+                        <p className="text-xs font-bold uppercase tracking-wider mb-2">Reglas de seguridad</p>
+                        <ul className="text-xs space-y-1.5">
+                          <li>• No borra productos.</li>
+                          <li>• No toca coincidencias dudosas: palabras parecidas como “pasion/passion” o modelos como “V400 MIX/VMIX” se muestran para revisar.</li>
+                          <li>• Si falta stock en sistema, suma unidades al lote encontrado.</li>
+                          <li>• Si sobra stock en sistema, descuenta desde los lotes con más unidades.</li>
+                          <li>• Guarda backup en <span className="font-mono">stock_sync_logs</span>.</li>
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div className="p-5 space-y-5">
+                      {!stockSyncAnalysis ? (
+                        <div className={`h-full min-h-[430px] rounded-xl border-2 border-dashed flex flex-col items-center justify-center text-center p-8 ${darkMode ? 'border-zinc-800 text-zinc-500' : 'border-zinc-300 text-zinc-400'}`}>
+                          <Package size={44} className="mb-4 opacity-50"/>
+                          <h3 className="font-bold text-lg mb-2">Pegá el stock y tocá Analizar</h3>
+                          <p className="text-sm max-w-md">Todavía no se modifica nada. Primero vas a ver qué falta, qué sobra, qué no se encontró y qué parece duplicado.</p>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <MetricCard darkMode={darkMode} color="emerald" title="Exactas" value={stockSyncAnalysis.summary.exact} subtitle={`${stockSyncAnalysis.summary.ok} OK`} icon={CheckCircle} />
+                            <MetricCard darkMode={darkMode} color="amber" title="Dudosas" value={stockSyncAnalysis.summary.probable} subtitle="Revisar manual" icon={AlertTriangle} />
+                            <MetricCard darkMode={darkMode} color="rose" title="No encontradas" value={stockSyncAnalysis.summary.notFound} subtitle="Faltan en sistema" icon={XCircle} />
+                            <MetricCard darkMode={darkMode} color="violet" title="Duplicados" value={stockSyncAnalysis.summary.duplicates} subtitle="Posibles repetidos" icon={Package} />
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <Card darkMode={darkMode} className="p-4">
+                              <p className="text-xs font-bold uppercase tracking-wider text-emerald-500 mb-1">Falta agregar en sistema</p>
+                              <p className="text-2xl font-black">{stockSyncAnalysis.summary.toAdd}</p>
+                              <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Productos donde stock real &gt; stock cargado.</p>
+                            </Card>
+                            <Card darkMode={darkMode} className="p-4">
+                              <p className="text-xs font-bold uppercase tracking-wider text-red-500 mb-1">Sobra en sistema</p>
+                              <p className="text-2xl font-black">{stockSyncAnalysis.summary.toRemove}</p>
+                              <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Productos donde stock cargado &gt; stock real.</p>
+                            </Card>
+                          </div>
+
+                          <div className="space-y-4 max-h-[720px] overflow-y-auto custom-scrollbar pr-1">
+                            <div>
+                              <h3 className="text-sm font-black uppercase tracking-wider mb-3 flex items-center gap-2 text-emerald-500"><CheckCircle size={16}/> Coincidencias exactas aplicables</h3>
+                              <div className="space-y-2">
+                                {stockSyncAnalysis.exact.length === 0 && <p className="text-sm opacity-50">No hay coincidencias exactas.</p>}
+                                {stockSyncAnalysis.exact.map((row, idx) => (
+                                  <div key={`exact-${idx}`} className={`p-4 rounded-xl border ${darkMode ? 'bg-[#0f1115] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                                    <div className="flex flex-col md:flex-row md:justify-between gap-3">
+                                      <div>
+                                        <p className="font-bold text-sm">{row.real.model} / {row.real.variant}</p>
+                                        <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Detectado como: {row.web.label} · Score {row.score}%</p>
+                                      </div>
+                                      <div className="flex items-center gap-2 text-xs font-bold">
+                                        <span className="px-2 py-1 rounded bg-zinc-100 dark:bg-zinc-800">Sistema: {row.webStock}</span>
+                                        <span className="px-2 py-1 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400">Real: {row.realStock}</span>
+                                        <span className={`px-2 py-1 rounded ${row.diff === 0 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : row.diff > 0 ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400' : 'bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400'}`}>{row.diff > 0 ? `Agregar ${row.diff}` : row.diff < 0 ? `Sacar ${Math.abs(row.diff)}` : 'OK'}</span>
+                                      </div>
+                                    </div>
+                                    <div className="mt-3 grid gap-1.5">
+                                      {row.web.entries.map(entry => (
+                                        <div key={`${entry.batchId}-${entry.itemId}`} className={`text-xs px-3 py-2 rounded-lg ${darkMode ? 'bg-[#0a0c10] text-zinc-400' : 'bg-zinc-50 text-zinc-600'}`}>
+                                          {entry.batchName}: <strong>{entry.currentStock}</strong> unidades · {entry.product} / {entry.variant}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div>
+                              <h3 className="text-sm font-black uppercase tracking-wider mb-3 flex items-center gap-2 text-amber-500"><AlertTriangle size={16}/> Coincidencias dudosas</h3>
+                              <div className="space-y-2">
+                                {stockSyncAnalysis.probable.length === 0 && <p className="text-sm opacity-50">No hay coincidencias dudosas.</p>}
+                                {stockSyncAnalysis.probable.map((row, idx) => (
+                                  <div key={`prob-${idx}`} className={`p-4 rounded-xl border ${darkMode ? 'bg-[#0f1115] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                                    <p className="font-bold text-sm">{row.real.model} / {row.real.variant} <span className="text-amber-500">({row.realStock})</span></p>
+                                    <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Mejor coincidencia: {row.web.label} · Stock sistema {row.webStock} · Score {row.score}% · Modelo {row.modelScore}% · Sabor {row.variantScore}%</p>
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      {row.candidates.map((candidate, cidx) => (
+                                        <span key={cidx} className={`text-[11px] font-semibold px-2.5 py-1 rounded-full ${darkMode ? 'bg-zinc-800 text-zinc-300' : 'bg-zinc-100 text-zinc-700'}`}>{candidate.web.label} · {candidate.score}%</span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div>
+                              <h3 className="text-sm font-black uppercase tracking-wider mb-3 flex items-center gap-2 text-red-500"><XCircle size={16}/> No encontrados en sistema</h3>
+                              <div className="space-y-2">
+                                {stockSyncAnalysis.notFound.length === 0 && <p className="text-sm opacity-50">Todos los productos reales tuvieron alguna coincidencia.</p>}
+                                {stockSyncAnalysis.notFound.map((row, idx) => (
+                                  <div key={`nf-${idx}`} className={`p-4 rounded-xl border ${darkMode ? 'bg-[#0f1115] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                                    <p className="font-bold text-sm">{row.real.model} / {row.real.variant}</p>
+                                    <p className="text-xs text-red-500 mt-1">Stock real: {row.real.quantity}. No se encontró en lotes activos.</p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div>
+                              <h3 className="text-sm font-black uppercase tracking-wider mb-3 flex items-center gap-2 text-violet-500"><AlertTriangle size={16}/> Posibles duplicados en sistema</h3>
+                              <div className="space-y-2">
+                                {stockSyncAnalysis.duplicateGroups.length === 0 && <p className="text-sm opacity-50">No detecté duplicados fuertes.</p>}
+                                {stockSyncAnalysis.duplicateGroups.map((dup, idx) => (
+                                  <div key={`dup-${idx}`} className={`p-4 rounded-xl border ${darkMode ? 'bg-[#0f1115] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                                    <p className="font-bold text-sm">Posible duplicado · Score {dup.score}%</p>
+                                    <p className={`text-xs mt-2 ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>1. {dup.a.label} · Stock {dup.a.totalStock}</p>
+                                    <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>2. {dup.b.label} · Stock {dup.b.totalStock}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div>
+                              <h3 className="text-sm font-black uppercase tracking-wider mb-3 flex items-center gap-2 text-zinc-500"><Package size={16}/> En sistema pero no aparece en stock real</h3>
+                              <div className="space-y-2">
+                                {stockSyncAnalysis.extraWeb.length === 0 && <p className="text-sm opacity-50">No sobran productos sin relación.</p>}
+                                {stockSyncAnalysis.extraWeb.slice(0, 50).map((row, idx) => (
+                                  <div key={`extra-${idx}`} className={`p-4 rounded-xl border ${darkMode ? 'bg-[#0f1115] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                                    <p className="font-bold text-sm">{row.web.label}</p>
+                                    <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Stock sistema: {row.webStock}. Revisar si corresponde llevar a 0 o si faltó escribirlo en el stock real.</p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+              </div>
+            )}
+
 
             {/* --- PESTAÑA ANÁLISIS DE LOTE --- */}
             {activeTab === 'analysis' && (
@@ -2041,6 +3422,436 @@ export default function App() {
                 )}
               </div>
             )}
+
+
+
+            {/* --- PESTAÑA CONSIGNACIÓN --- */}
+            {activeTab === 'consignment' && (
+              <div className="space-y-6 animate-in fade-in duration-300">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                  <MetricCard color="indigo" darkMode={darkMode} title="En consignación" value={consignmentStats.pending} subtitle={`${consignmentStats.activeEntries} registros activos`} icon={Package} />
+                  <MetricCard color="amber" darkMode={darkMode} title="Valor pendiente" value={formatMoney(consignmentStats.valuePending)} subtitle="Plata en la calle" icon={DollarSign} />
+                  <MetricCard color="emerald" darkMode={darkMode} title="Ya pagado" value={formatMoney(consignmentStats.valuePaid)} subtitle={`${consignmentStats.paid} unidades cobradas`} icon={CheckCircle} />
+                  <MetricCard color="violet" darkMode={darkMode} title="Ganancia cobrada" value={formatMoney(consignmentStats.profitPaid)} subtitle="Liquidaciones reales" icon={TrendingUp} />
+                </div>
+
+                <Card darkMode={darkMode} className="border-t-4 border-t-amber-500 p-5 md:p-6">
+                  <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4 mb-5">
+                    <div>
+                      <h2 className="text-xl font-bold tracking-tight mb-2 flex items-center gap-2">
+                        <Users size={20} className="text-amber-500"/> Nueva entrega a consignación
+                      </h2>
+                      <p className={`text-sm max-w-3xl ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                        Cuando entregás productos a consignación se descuentan del lote, pero no se crea venta. La venta se registra recién cuando te pagan una parte o todo.
+                      </p>
+                    </div>
+                    <div className={`rounded-xl border px-4 py-3 text-xs font-semibold ${darkMode ? 'bg-[#0a0c10] border-zinc-800 text-zinc-400' : 'bg-amber-50 border-amber-100 text-amber-700'}`}>
+                      Entrega ≠ venta. Pago parcial = venta real.
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-end">
+                    <div className="lg:col-span-3">
+                      <Input
+                        darkMode={darkMode}
+                        label="Cliente / Consignatario"
+                        placeholder="Ej: Juan, local, revendedor..."
+                        value={newConsignment.clientName}
+                        onChange={e => setNewConsignment({ ...newConsignment, clientName: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="lg:col-span-3">
+                      <Select
+                        darkMode={darkMode}
+                        label="Lote de origen"
+                        value={newConsignment.batchId}
+                        onChange={e => setNewConsignment({ ...newConsignment, batchId: e.target.value, itemId: '' })}
+                        options={[
+                          { value: '', label: '-- Elegir lote activo --' },
+                          ...batches.filter(b => !b.finalizedAt).map(b => ({ value: b.id, label: b.name || 'Sin nombre' }))
+                        ]}
+                      />
+                    </div>
+
+                    <div className="lg:col-span-4">
+                      <Select
+                        darkMode={darkMode}
+                        label="Producto"
+                        value={newConsignment.itemId}
+                        onChange={e => setNewConsignment({ ...newConsignment, itemId: e.target.value })}
+                        options={[
+                          { value: '', label: consignmentSelectedBatch ? '-- Elegir producto --' : 'Primero elegí un lote' },
+                          ...consignmentAvailableItems.map(item => ({
+                            value: item.id,
+                            label: `${item.product || 'Sin producto'} / ${item.variant || 'Único'} · stock ${item.currentStock || 0}`
+                          }))
+                        ]}
+                      />
+                    </div>
+
+                    <div className="lg:col-span-1">
+                      <Input
+                        darkMode={darkMode}
+                        label="Cant."
+                        type="number"
+                        min="1"
+                        value={newConsignment.quantity}
+                        onChange={e => setNewConsignment({ ...newConsignment, quantity: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="lg:col-span-1">
+                      <Input
+                        darkMode={darkMode}
+                        label="Precio"
+                        type="number"
+                        symbol="$"
+                        value={newConsignment.unitPrice}
+                        onChange={e => setNewConsignment({ ...newConsignment, unitPrice: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="lg:col-span-3">
+                      <Input
+                        darkMode={darkMode}
+                        label="Fecha límite opcional"
+                        type="date"
+                        value={newConsignment.dueDate}
+                        onChange={e => setNewConsignment({ ...newConsignment, dueDate: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="lg:col-span-7">
+                      <Input
+                        darkMode={darkMode}
+                        label="Nota opcional"
+                        placeholder="Ej: paga cada viernes, dejar revisar stock en 7 días..."
+                        value={newConsignment.note}
+                        onChange={e => setNewConsignment({ ...newConsignment, note: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="lg:col-span-2">
+                      <Button darkMode={darkMode} onClick={handleCreateConsignment} className="w-full h-10">
+                        <Save size={16}/> Crear entrega
+                      </Button>
+                    </div>
+                  </div>
+
+                  {consignmentSelectedItem && (
+                    <div className={`mt-5 grid grid-cols-1 md:grid-cols-4 gap-3 rounded-xl border p-4 ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Producto elegido</p>
+                        <p className="font-bold text-sm mt-1">{consignmentSelectedItem.product} / {consignmentSelectedItem.variant || 'Único'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Stock disponible</p>
+                        <p className="font-bold text-sm mt-1">{consignmentSelectedItem.currentStock || 0} unidades</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Costo unitario</p>
+                        <p className="font-bold text-sm mt-1">{formatMoney(consignmentSelectedItem.costArs || 0)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Ganancia estimada</p>
+                        <p className="font-black text-sm mt-1 text-emerald-500">
+                          {formatMoney(((parseFloat(newConsignment.unitPrice || 0) - (Number(consignmentSelectedItem.costArs) || 0)) * (parseInt(newConsignment.quantity) || 0)))}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </Card>
+
+                <div className="space-y-5">
+                  {consignmentsByClient.length === 0 && (
+                    <Card darkMode={darkMode} className="p-12 text-center">
+                      <Package size={42} className="mx-auto mb-4 opacity-40"/>
+                      <p className="text-sm font-medium opacity-60">Todavía no hay productos en consignación.</p>
+                    </Card>
+                  )}
+
+                  {consignmentsByClient.map(client => (
+                    <Card key={client.clientName} darkMode={darkMode} className="p-0 overflow-hidden">
+                      <div className={`p-4 md:p-5 border-b flex flex-col xl:flex-row xl:items-center justify-between gap-3 ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                        <div>
+                          <h3 className="font-black text-lg flex items-center gap-2"><Users size={18} className="text-amber-500"/> {client.clientName}</h3>
+                          <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                            Pendiente: {client.pending} unidades · Pagadas: {client.paid} unidades
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2 text-xs font-bold">
+                          <span className={`px-3 py-1.5 rounded-lg ${darkMode ? 'bg-amber-500/10 text-amber-300' : 'bg-amber-50 text-amber-700'}`}>Por cobrar: {formatMoney(client.valuePending)}</span>
+                          <span className={`px-3 py-1.5 rounded-lg ${darkMode ? 'bg-emerald-500/10 text-emerald-300' : 'bg-emerald-50 text-emerald-700'}`}>Cobrado: {formatMoney(client.valuePaid)}</span>
+                          <span className={`px-3 py-1.5 rounded-lg ${darkMode ? 'bg-violet-500/10 text-violet-300' : 'bg-violet-50 text-violet-700'}`}>Ganancia: {formatMoney(client.profitPaid)}</span>
+                        </div>
+                      </div>
+
+                      <div className={`divide-y ${darkMode ? 'divide-zinc-800' : 'divide-zinc-100'}`}>
+                        {client.entries.map(entry => {
+                          const pending = Number(entry.quantityPending) || 0;
+                          const paid = Number(entry.quantityPaid) || 0;
+                          const returned = Number(entry.quantityReturned) || 0;
+                          const lost = Number(entry.quantityLost) || 0;
+                          const delivered = Number(entry.quantityDelivered) || 0;
+                          const unitPrice = Number(entry.unitPrice) || 0;
+                          const unitCost = Number(entry.unitCost) || 0;
+                          const isClosed = pending <= 0;
+
+                          return (
+                            <div key={entry.id} className={`p-4 md:p-5 transition-colors ${isClosed ? 'opacity-70' : ''} ${darkMode ? 'bg-[#0f1115]' : 'bg-white'}`}>
+                              <div className="flex flex-col 2xl:flex-row 2xl:items-center justify-between gap-4">
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                                    <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider ${isClosed ? (darkMode ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-100 text-zinc-500') : (darkMode ? 'bg-amber-500/10 text-amber-300' : 'bg-amber-50 text-amber-700')}`}>
+                                      {isClosed ? 'Cerrado' : 'Activo'}
+                                    </span>
+                                    {entry.dueDate && <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Límite: {safeDateStr(entry.dueDate)}</span>}
+                                  </div>
+                                  <div className="font-bold text-sm">{entry.productName || 'Sin producto'}</div>
+                                  <div className={`text-xs mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                    {entry.variant || 'Único'} · {entry.batchName || 'Sin lote'} · Precio {formatMoney(unitPrice)} · Costo {formatMoney(unitCost)}
+                                  </div>
+                                  {entry.note && <div className={`text-xs mt-2 italic ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>“{entry.note}”</div>}
+                                </div>
+
+                                <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs min-w-[320px]">
+                                  <div className={`rounded-lg p-2 ${darkMode ? 'bg-[#0a0c10]' : 'bg-zinc-50'}`}>
+                                    <p className="opacity-50 font-bold uppercase text-[9px]">Entregado</p>
+                                    <p className="font-black">{delivered}</p>
+                                  </div>
+                                  <div className={`rounded-lg p-2 ${darkMode ? 'bg-[#0a0c10]' : 'bg-amber-50'}`}>
+                                    <p className="opacity-50 font-bold uppercase text-[9px]">Pendiente</p>
+                                    <p className="font-black text-amber-500">{pending}</p>
+                                  </div>
+                                  <div className={`rounded-lg p-2 ${darkMode ? 'bg-[#0a0c10]' : 'bg-emerald-50'}`}>
+                                    <p className="opacity-50 font-bold uppercase text-[9px]">Pagado</p>
+                                    <p className="font-black text-emerald-500">{paid}</p>
+                                  </div>
+                                  <div className={`rounded-lg p-2 ${darkMode ? 'bg-[#0a0c10]' : 'bg-blue-50'}`}>
+                                    <p className="opacity-50 font-bold uppercase text-[9px]">Devuelto</p>
+                                    <p className="font-black text-blue-500">{returned}</p>
+                                  </div>
+                                  <div className={`rounded-lg p-2 ${darkMode ? 'bg-[#0a0c10]' : 'bg-red-50'}`}>
+                                    <p className="opacity-50 font-bold uppercase text-[9px]">Perdido</p>
+                                    <p className="font-black text-red-500">{lost}</p>
+                                  </div>
+                                </div>
+
+                                <div className="flex flex-wrap gap-2 2xl:justify-end">
+                                  <Button darkMode={darkMode} disabled={pending <= 0} onClick={() => handleConsignmentPayment(entry)} variant="success" className="h-9 text-xs">
+                                    <DollarSign size={14}/> Registrar pago
+                                  </Button>
+                                  <Button darkMode={darkMode} disabled={pending <= 0} onClick={() => handleConsignmentReturn(entry)} variant="outline" className="h-9 text-xs">
+                                    <Package size={14}/> Devolver
+                                  </Button>
+                                  <Button darkMode={darkMode} disabled={pending <= 0} onClick={() => handleConsignmentLost(entry)} variant="danger" className="h-9 text-xs">
+                                    <XCircle size={14}/> Perdido
+                                  </Button>
+                                </div>
+                              </div>
+
+                              <div className={`mt-3 text-xs ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                Por cobrar: <strong>{formatMoney(pending * unitPrice)}</strong> · Ganancia estimada pendiente: <strong>{formatMoney(pending * (unitPrice - unitCost))}</strong>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            )}
+
+
+            {/* --- PESTAÑA STOCK NEUTRO --- */}
+            {activeTab === 'neutralStock' && (
+              <div className="space-y-6 animate-in fade-in duration-300">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                  <MetricCard color="indigo" darkMode={darkMode} title="Registros neutros" value={neutralStockStats.count} subtitle="No son ventas" icon={Box} />
+                  <MetricCard color="blue" darkMode={darkMode} title="Unidades neutras" value={neutralStockStats.quantity} subtitle="Stock descontado" icon={Package} />
+                  <MetricCard color="emerald" darkMode={darkMode} title="Ganancia neutral" value={formatMoney(neutralStockStats.profit)} subtitle="No entra en meses/días" icon={TrendingUp} />
+                  <MetricCard color="amber" darkMode={darkMode} title="Ingreso neutral" value={formatMoney(neutralStockStats.revenue)} subtitle="Control interno" icon={DollarSign} />
+                </div>
+
+                <Card darkMode={darkMode} className="border-t-4 border-t-indigo-500 p-5 md:p-6">
+                  <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4 mb-5">
+                    <div>
+                      <h2 className="text-xl font-bold tracking-tight mb-2 flex items-center gap-2">
+                        <Box size={20} className="text-indigo-500"/> Stock Neutro
+                      </h2>
+                      <p className={`text-sm max-w-3xl ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                        Para stock perdido, ventas viejas no registradas o ajustes que querés contar con ganancia, pero sin adjudicarlo a ningún día ni mes de ventas. Se descuenta del lote, se guarda aparte y no entra en gráficos ni promedio diario.
+                      </p>
+                    </div>
+                    <div className={`rounded-xl border px-4 py-3 text-xs font-semibold ${darkMode ? 'bg-[#0a0c10] border-zinc-800 text-zinc-400' : 'bg-indigo-50 border-indigo-100 text-indigo-700'}`}>
+                      No crea ventas. No toca historial. No aparece en análisis mensual.
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-end">
+                    <div className="lg:col-span-3">
+                      <Select
+                        darkMode={darkMode}
+                        label="Lote de origen"
+                        value={newNeutralStock.batchId}
+                        onChange={e => setNewNeutralStock({ ...newNeutralStock, batchId: e.target.value, itemId: '' })}
+                        options={[
+                          { value: '', label: '-- Elegir lote activo --' },
+                          ...batches.filter(b => !b.finalizedAt).map(b => ({ value: b.id, label: b.name || 'Sin nombre' }))
+                        ]}
+                      />
+                    </div>
+
+                    <div className="lg:col-span-4">
+                      <Select
+                        darkMode={darkMode}
+                        label="Producto"
+                        value={newNeutralStock.itemId}
+                        onChange={e => setNewNeutralStock({ ...newNeutralStock, itemId: e.target.value })}
+                        options={[
+                          { value: '', label: neutralSelectedBatch ? '-- Elegir producto --' : 'Primero elegí un lote' },
+                          ...neutralAvailableItems.map(item => ({
+                            value: item.id,
+                            label: `${item.product || 'Sin producto'} / ${item.variant || 'Único'} · stock ${item.currentStock || 0}`
+                          }))
+                        ]}
+                      />
+                    </div>
+
+                    <div className="lg:col-span-1">
+                      <Input
+                        darkMode={darkMode}
+                        label="Cant."
+                        type="number"
+                        min="1"
+                        value={newNeutralStock.quantity}
+                        onChange={e => setNewNeutralStock({ ...newNeutralStock, quantity: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="lg:col-span-2">
+                      <Input
+                        darkMode={darkMode}
+                        label="Precio vendido / estimado"
+                        type="number"
+                        symbol="$"
+                        value={newNeutralStock.unitPrice}
+                        onChange={e => setNewNeutralStock({ ...newNeutralStock, unitPrice: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="lg:col-span-2">
+                      <Select
+                        darkMode={darkMode}
+                        label="Motivo"
+                        value={newNeutralStock.reason}
+                        onChange={e => setNewNeutralStock({ ...newNeutralStock, reason: e.target.value })}
+                        options={[
+                          { value: 'Stock perdido', label: 'Stock perdido' },
+                          { value: 'Venta no registrada', label: 'Venta no registrada' },
+                          { value: 'Ajuste neutral', label: 'Ajuste neutral' },
+                          { value: 'Reposición / cambio', label: 'Reposición / cambio' },
+                          { value: 'Otro', label: 'Otro' }
+                        ]}
+                      />
+                    </div>
+
+                    <div className="lg:col-span-10">
+                      <Input
+                        darkMode={darkMode}
+                        label="Nota opcional"
+                        placeholder="Ej: diferencia de conteo, venta vieja recuperada, producto perdido, etc."
+                        value={newNeutralStock.note}
+                        onChange={e => setNewNeutralStock({ ...newNeutralStock, note: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="lg:col-span-2">
+                      <Button darkMode={darkMode} onClick={handleAddNeutralStock} className="w-full h-10">
+                        <Save size={16}/> Registrar
+                      </Button>
+                    </div>
+                  </div>
+
+                  {neutralSelectedItem && (
+                    <div className={`mt-5 grid grid-cols-1 md:grid-cols-4 gap-3 rounded-xl border p-4 ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Producto elegido</p>
+                        <p className="font-bold text-sm mt-1">{neutralSelectedItem.product} / {neutralSelectedItem.variant || 'Único'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Stock disponible</p>
+                        <p className="font-bold text-sm mt-1">{neutralSelectedItem.currentStock || 0} unidades</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Costo unitario</p>
+                        <p className="font-bold text-sm mt-1">{formatMoney(neutralSelectedItem.costArs || 0)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Ganancia estimada</p>
+                        <p className="font-black text-sm mt-1 text-emerald-500">
+                          {formatMoney(((parseFloat(newNeutralStock.unitPrice || 0) - (Number(neutralSelectedItem.costArs) || 0)) * (parseInt(newNeutralStock.quantity) || 0)))}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </Card>
+
+                <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                  <div className={`p-4 md:p-5 border-b flex flex-col md:flex-row justify-between md:items-center gap-3 ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                    <div>
+                      <h3 className="font-bold text-base tracking-tight">Registro de Stock Neutro</h3>
+                      <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Estos movimientos se guardan aparte. La fecha es solo auditoría, no contabilidad mensual.</p>
+                    </div>
+                  </div>
+
+                  <div className={`divide-y ${darkMode ? 'divide-zinc-800' : 'divide-zinc-100'}`}>
+                    {neutralStockEntries.length === 0 && (
+                      <div className="p-12 text-center text-sm font-medium opacity-50">Todavía no hay registros neutros.</div>
+                    )}
+
+                    {neutralStockEntries.map(entry => (
+                      <div key={entry.id} className={`p-4 md:p-5 transition-colors group ${darkMode ? 'hover:bg-zinc-900/50 bg-[#0f1115]' : 'hover:bg-zinc-50 bg-white'}`}>
+                        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${darkMode ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 'bg-indigo-50 text-indigo-700 border border-indigo-100'}`}>{entry.reason || 'Stock neutro'}</span>
+                              <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{safeDateStr(entry.createdAt, {month:'long', day:'numeric', hour:'2-digit', minute:'2-digit'})}</span>
+                            </div>
+                            <div className="font-bold text-sm mt-2">{entry.productName || 'Sin producto'}</div>
+                            <div className={`text-xs mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                              {entry.variant || 'Único'} · {entry.batchName || 'Sin lote'} · {entry.quantity || 0} unidad(es)
+                            </div>
+                            {entry.note && <div className={`text-xs mt-2 italic ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>“{entry.note}”</div>}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-3">
+                            <div className="text-right">
+                              <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Ingreso neutral</p>
+                              <p className="font-bold">{formatMoney(entry.totalSaleRaw || 0)}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Ganancia</p>
+                              <p className={`font-black ${(entry.grossProfitRaw || 0) >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{formatMoney(entry.grossProfitRaw || 0)}</p>
+                            </div>
+                            <button
+                              onClick={() => handleDeleteNeutralStock(entry)}
+                              className={`p-2.5 rounded-lg opacity-100 md:opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}
+                              title="Eliminar y devolver stock"
+                            >
+                              <Trash2 size={18}/>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              </div>
+            )}
+
 
             {/* --- PESTAÑA GASTOS --- */}
             {activeTab === 'expenses' && (

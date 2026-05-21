@@ -136,31 +136,52 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
 
                     const partes = linea.split("|").map(t => t.trim());
 
-                    if (partes.length >= 5 && partes[0].toUpperCase() === "VENTA") {
-                        console.log("✅ Formato VENTA detectado. Procesando...");
-                        
-                        // LÓGICA NUEVA: Identificador de vendedor mejorado
-                        let vendedor = "028 Import"; // Ahora el default es 028 Import
+                    const tipoMovimiento = String(partes[0] || "").trim().toUpperCase();
+                    const esNeutroDirecto = tipoMovimiento === "NEUTRO";
+                    const esVentaNormal = tipoMovimiento === "VENTA";
+                    const esVentaMarcadaComoNeutra = esVentaNormal && String(partes[1] || "").trim().toUpperCase() === "NEUTRO";
+                    const esMovimientoValido = esVentaNormal || esNeutroDirecto;
+
+                    if (partes.length >= 5 && esMovimientoValido) {
+                        const esMovimientoNeutro = esNeutroDirecto || esVentaMarcadaComoNeutra;
+                        console.log(`✅ Formato ${esMovimientoNeutro ? "NEUTRO" : "VENTA"} detectado. Procesando...`);
+
+                        // Formatos soportados:
+                        // VENTA|Producto|Variante|Cantidad|Precio|...
+                        // VENTA|B|Producto|Variante|Cantidad|Precio|...
+                        // NEUTRO|Producto|Variante|Cantidad|Precio|Motivo opcional|Nota opcional
+                        // NEUTRO|B|Producto|Variante|Cantidad|Precio|Motivo opcional|Nota opcional
+                        // VENTA|NEUTRO|Producto|Variante|Cantidad|Precio|Motivo opcional|Nota opcional
+                        // VENTA|NEUTRO|B|Producto|Variante|Cantidad|Precio|Motivo opcional|Nota opcional
+
+                        let vendedor = "028 Import";
+                        let baseIndex = esVentaMarcadaComoNeutra ? 2 : 1;
                         let indexOffset = 0;
 
-                        // Si la segunda palabra tiene 1 o 2 letras, es el vendedor
-                        if (partes[1] && partes[1].length <= 2) {
-                            let letra = partes[1].toUpperCase();
+                        // Si después del tipo viene una sigla corta, es vendedor.
+                        if (partes[baseIndex] && partes[baseIndex].length <= 2) {
+                            let letra = partes[baseIndex].toUpperCase();
                             if (letra === "B") {
-                                vendedor = "Buono"; // Convertimos la B en Buono
+                                vendedor = "Buono";
                             } else {
-                                vendedor = letra; // Si es otra letra, la deja
+                                vendedor = letra;
                             }
                             indexOffset = 1;
                         }
 
-                        const productoRaw = String(partes[1 + indexOffset] || "");
-                        const varianteRaw = String(partes[2 + indexOffset] || "");
-                        const cantidad = parseInt(partes[3 + indexOffset]) || 1;
-                        
+                        const productoRaw = String(partes[baseIndex + indexOffset] || "");
+                        const varianteRaw = String(partes[baseIndex + 1 + indexOffset] || "");
+                        const cantidad = parseInt(partes[baseIndex + 2 + indexOffset]) || 1;
+
                         const limpiarNum = (texto) => parseFloat(String(texto).replace(/[^0-9,-]+/g,"").replace(",", ".")) || 0;
-                        const precioUnitario = limpiarNum(partes[4 + indexOffset]);
-                        
+                        const precioUnitario = limpiarNum(partes[baseIndex + 3 + indexOffset]);
+
+                        if (!productoRaw || !varianteRaw || !cantidad) {
+                            let numFallo = numeroRemitente.startsWith("549") ? numeroRemitente.replace(/^549/, "54") : numeroRemitente;
+                            await registrarEnSheet("Intentos", [fechaHoySheet, numFallo, linea, "Formato incompleto"]);
+                            continue;
+                        }
+
                         let fechaManual = "hoy"; 
                         let costoEnvioMio = 0;
                         let precioEnvioCliente = 0;
@@ -168,11 +189,24 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                         let esNuevo = false;
                         let numerosEncontrados = 0;
 
-                        for (let i = 5 + indexOffset; i < partes.length; i++) {
+                        let motivoNeutro = "Stock perdido";
+                        let notaNeutra = "";
+
+                        for (let i = baseIndex + 4 + indexOffset; i < partes.length; i++) {
                             let dato = String(partes[i]).trim();
                             let datoUpper = dato.toUpperCase();
 
                             if (datoUpper === "") continue;
+
+                            if (esMovimientoNeutro) {
+                                // En neutro no usamos fecha ni envío: lo que viene después del precio es motivo/nota.
+                                if (motivoNeutro === "Stock perdido") {
+                                    motivoNeutro = dato;
+                                } else {
+                                    notaNeutra = notaNeutra ? `${notaNeutra} | ${dato}` : dato;
+                                }
+                                continue;
+                            }
 
                             if (dato.includes("/") || dato.includes("-")) {
                                 fechaManual = dato;
@@ -196,27 +230,35 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                             }
                         }
 
-                        console.log(`Buscando producto: ${productoRaw} | Variante: ${varianteRaw} | Cantidad: ${cantidad} | Vendedor: ${vendedor}`);
-                        
-                        const resultado = await procesarVenta(productoRaw, varianteRaw, cantidad, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor);
-                        
+                        console.log(`Buscando producto: ${productoRaw} | Variante: ${varianteRaw} | Cantidad: ${cantidad} | Vendedor: ${vendedor} | Modo: ${esMovimientoNeutro ? "NEUTRO" : "VENTA"}`);
+
+                        const resultado = esMovimientoNeutro
+                            ? await procesarStockNeutro(productoRaw, varianteRaw, cantidad, precioUnitario, motivoNeutro, notaNeutra, vendedor)
+                            : await procesarVenta(productoRaw, varianteRaw, cantidad, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor);
+
                         let numeroParaMeta = numeroRemitente;
                         if (numeroParaMeta.startsWith("549") && numeroParaMeta.length === 13) {
                             numeroParaMeta = numeroParaMeta.replace(/^549/, "54");
                         }
 
                         if (resultado && resultado.exito === false) {
-                            console.log("⚠️ Error procesando la venta. Avisando...");
+                            console.log(`⚠️ Error procesando ${esMovimientoNeutro ? "stock neutro" : "venta"}. Avisando...`);
                             await enviarMensajeWhatsApp(numeroParaMeta, resultado.error_msg);
                             await registrarEnSheet("Intentos", [fechaHoySheet, numeroRemitente, linea, resultado.error_msg]);
                         } else {
-                            console.log("✅ Venta anotada con éxito.");
-                            await registrarEnSheet("Ventas", [fechaHoySheet, numeroRemitente, productoRaw, varianteRaw, cantidad, precioUnitario, `ÉXITO (${vendedor})`]);
+                            if (esMovimientoNeutro) {
+                                console.log("✅ Stock neutro anotado con éxito.");
+                                await registrarEnSheet("Neutro", [fechaHoySheet, numeroRemitente, productoRaw, varianteRaw, cantidad, precioUnitario, motivoNeutro, `ÉXITO (${vendedor})`]);
+                            } else {
+                                console.log("✅ Venta anotada con éxito.");
+                                await registrarEnSheet("Ventas", [fechaHoySheet, numeroRemitente, productoRaw, varianteRaw, cantidad, precioUnitario, `ÉXITO (${vendedor})`]);
+                            }
                         }
+
                     } else {
-                        console.log("❌ El mensaje no cumple el formato VENTA");
+                        console.log("❌ El mensaje no cumple el formato VENTA/NEUTRO");
                         let numFallo = numeroRemitente.startsWith("549") ? numeroRemitente.replace(/^549/, "54") : numeroRemitente;
-                        await registrarEnSheet("Intentos", [fechaHoySheet, numFallo, linea, "Formato Incorrecto"]);
+                        await registrarEnSheet("Intentos", [fechaHoySheet, numFallo, linea, "Formato Incorrecto. Usá VENTA|... o NEUTRO|..."]);
                     }
                 }
             }
@@ -303,6 +345,119 @@ exports.resumenSemanal = onSchedule({
     }
     await enviarMensajeWhatsApp(numeroParaMeta, msg);
 });
+
+// ==========================================
+// FUNCIÓN PROCESAR STOCK NEUTRO
+// ==========================================
+async function procesarStockNeutro(userProducto, userVariante, cantARestar, precioUnitario, motivoNeutro, notaNeutra, vendedor) {
+    if (isNaN(cantARestar) || cantARestar <= 0) return { exito: false, error_msg: "❌ La cantidad ingresada no es válida." };
+
+    const pBuscar = normalizarParaComparar(userProducto);
+    const vBuscar = normalizarParaComparar(userVariante);
+
+    const batchesRef = db.collection("batches");
+    const snapshot = await batchesRef.orderBy("createdAt", "asc").get();
+
+    let restante = cantARestar;
+    let itemsActualizados = false;
+
+    let productoEncontrado = false;
+    let stockInsuficiente = false;
+    let stockMascercanoDisponible = 0;
+
+    let batchNameOficial = "Stock neutro por WhatsApp";
+    let batchIdOficial = null;
+    let itemIdOficial = null;
+    let nombreOficial = userProducto;
+    let varianteOficial = userVariante;
+    let costoUnitarioOficial = 0;
+
+    for (const doc of snapshot.docs) {
+        if (restante <= 0) break;
+        const batchData = doc.data();
+
+        if (batchData.finalizedAt) continue;
+
+        let items = batchData.items || [];
+        let batchModificado = false;
+
+        for (let i = 0; i < items.length; i++) {
+            if (restante <= 0) break;
+            let item = items[i];
+
+            const dbProd = normalizarParaComparar(item.product);
+            const dbVar = normalizarParaComparar(item.variant);
+
+            const productMatches = esParecido(pBuscar, dbProd);
+            const variantMatches = esParecido(vBuscar, dbVar);
+
+            if (productMatches && variantMatches) {
+                productoEncontrado = true;
+                stockMascercanoDisponible = item.currentStock;
+
+                if (item.currentStock >= restante) {
+                    let cantidadADescontar = Math.min(item.currentStock, restante);
+
+                    item.currentStock -= cantidadADescontar;
+                    restante -= cantidadADescontar;
+
+                    batchModificado = true;
+                    itemsActualizados = true;
+
+                    batchNameOficial = batchData.name || "Stock neutro por WhatsApp";
+                    batchIdOficial = doc.id;
+                    itemIdOficial = item.id;
+                    nombreOficial = item.product || userProducto;
+                    varianteOficial = item.variant || userVariante;
+                    costoUnitarioOficial = item.costArs || 0;
+                } else {
+                    stockInsuficiente = true;
+                }
+            }
+        }
+
+        if (batchModificado) await doc.ref.update({ items: items });
+    }
+
+    if (itemsActualizados) {
+        const fechaCreacionReal = new Date().toISOString();
+        const totalVentaCalculado = (precioUnitario || 0) * cantARestar;
+        const totalCostoCalculado = (costoUnitarioOficial || 0) * cantARestar;
+        const gananciaCalculada = totalVentaCalculado - totalCostoCalculado;
+
+        await db.collection("neutral_stock").add({
+            createdAt: fechaCreacionReal,
+            accountingType: "neutral",
+            reason: motivoNeutro || "Stock perdido",
+            note: notaNeutra || "",
+            batchId: batchIdOficial,
+            batchName: batchNameOficial,
+            itemId: itemIdOficial,
+            productName: nombreOficial,
+            variant: varianteOficial,
+            quantity: cantARestar,
+            unitPrice: precioUnitario || 0,
+            costArsAtEntry: costoUnitarioOficial,
+            totalSaleRaw: totalVentaCalculado,
+            totalCostRaw: totalCostoCalculado,
+            grossProfitRaw: gananciaCalculada,
+            source: "Whatsapp",
+            seller: vendedor || "028 Import"
+        });
+
+        return { exito: true };
+    } 
+    else {
+        if (!productoEncontrado) {
+            return { exito: false, error_msg: `⚠️ *Error de Inventario NEUTRO:*\nEl producto *"${userProducto}"* (Variante: ${userVariante || 'Única'}) no existe o está mal escrito.` };
+        } else if (stockInsuficiente) {
+            return { exito: false, error_msg: `🛑 *Stock Insuficiente NEUTRO:*\nIntentaste descontar ${cantARestar} unidades de *"${userProducto}"*, pero solo quedan *${stockMascercanoDisponible}* en stock.` };
+        } else {
+            return { exito: false, error_msg: `⚠️ *Error desconocido* al procesar el stock neutro.` };
+        }
+    }
+}
+
 
 // ==========================================
 // FUNCIÓN PROCESAR VENTA
