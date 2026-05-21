@@ -582,6 +582,10 @@ export default function App() {
       }, { quantity: 0, revenue: 0, cost: 0, profit: 0, count: 0 });
   }, [neutralStockEntries]);
 
+  const neutralHistoryVisible = useMemo(() => {
+      return neutralStockEntries.slice(0, 80);
+  }, [neutralStockEntries]);
+
   const consignmentSelectedBatch = useMemo(() => {
       return batches.find(b => b.id === newConsignment.batchId) || null;
   }, [batches, newConsignment.batchId]);
@@ -920,7 +924,34 @@ export default function App() {
   }, [selectedBatchStats, sales, batches, expenses]);
 
   const processedSales = useMemo(() => {
-    let result = [...sales].filter(s => s != null);
+    const neutralAsSales = neutralStockEntries.map(entry => ({
+      id: entry.id,
+      neutralDocId: entry.id,
+      collectionName: 'neutral_stock',
+      ticketId: entry.ticketId || `NEUTRO-${entry.id}`,
+      createdAt: entry.createdAt,
+      date: entry.createdAt,
+      batchId: entry.batchId,
+      batchName: entry.batchName,
+      itemId: entry.itemId,
+      productName: entry.productName,
+      variant: entry.variant,
+      quantity: Number(entry.quantity) || 0,
+      unitPrice: Number(entry.unitPrice) || 0,
+      totalSaleRaw: Number(entry.totalSaleRaw) || 0,
+      costArsAtSale: Number(entry.costArsAtEntry) || 0,
+      shippingCostArs: 0,
+      source: entry.source || 'Neutro',
+      isReseller: false,
+      isNewClient: false,
+      seller: entry.seller || '028 Import',
+      isNeutral: true,
+      accountingType: 'neutral',
+      neutralReason: entry.reason || 'Neutro',
+      neutralNote: entry.note || ''
+    }));
+
+    let result = [...sales, ...neutralAsSales].filter(s => s != null);
 
     const normalizeText = (value) => String(value ?? '')
       .toLowerCase()
@@ -948,6 +979,9 @@ export default function App() {
           s.variant,              // sabor / variante
           s.batchName,            // lote
           s.source,               // Instagram, WhatsApp, etc.
+          s.isNeutral ? 'neutro global neutral stock' : '',
+          s.neutralReason || '',
+          s.neutralNote || '',
           seller,                 // 028 Import / Buono
           resellerLabel,          // revendedor / consumidor final
           newClientLabel,         // cliente nuevo / frecuente
@@ -1015,7 +1049,7 @@ export default function App() {
     });
 
     return result;
-  }, [sales, salesSearch, salesSort]);
+  }, [sales, neutralStockEntries, salesSearch, salesSort]);
 
   const groupedSales = useMemo(() => {
     const map = {};
@@ -1032,17 +1066,26 @@ export default function App() {
           isReseller: s.isReseller, 
           isNewClient: s.isNewClient, 
           seller: normalizeSellerName(s.seller),
+          isNeutral: !!s.isNeutral || s.accountingType === 'neutral',
+          neutralReason: s.neutralReason || '',
           items: [],
           originalSales: []
         };
         result.push(map[key]); 
       }
+      if (s.isNeutral || s.accountingType === 'neutral') {
+        map[key].isNeutral = true;
+        map[key].neutralReason = s.neutralReason || map[key].neutralReason || 'Neutro';
+      }
+
       map[key].items.push({
         quantity: s.quantity,
         productName: s.productName,
         variant: s.variant,
         batchName: s.batchName,
-        unitPrice: s.unitPrice
+        unitPrice: s.unitPrice,
+        isNeutral: !!s.isNeutral || s.accountingType === 'neutral',
+        neutralReason: s.neutralReason || ''
       });
       map[key].totalSaleRaw += (s.totalSaleRaw || 0);
       map[key].totalProfit += ((s.totalSaleRaw || 0) - ((s.costArsAtSale || 0) * (s.quantity || 0)));
@@ -1490,7 +1533,7 @@ export default function App() {
   };
 
   const handleDeleteNeutralStock = async (entry) => {
-    if (!window.confirm('¿Eliminar este registro neutro y devolver el stock al lote original si existe?')) return;
+    if (!window.confirm('¿Eliminar este registro neutro y devolver el stock al lote original si existe?\n\nUsá esto para recuperar stock descontado por error.')) return;
 
     try {
       if (entry.batchId && entry.itemId) {
@@ -1762,7 +1805,7 @@ export default function App() {
     }, { salesCount: 0, linesCount: 0, productsCount: 0, revenue: 0 });
 
     if (askConfirm) {
-      const msg = `¿Borrar ${summary.salesCount} venta(s) seleccionada(s)?\n\nProductos/unidades: ${summary.productsCount}\nLíneas internas: ${summary.linesCount}\nTotal facturado: ${formatMoney(summary.revenue)}\n\nSe eliminarán del historial y se devolverá el stock a sus lotes.`;
+      const msg = `¿Borrar ${summary.salesCount} registro(s) seleccionado(s)?\n\nProductos/unidades: ${summary.productsCount}\nLíneas internas: ${summary.linesCount}\nTotal facturado: ${formatMoney(summary.revenue)}\n\nSe eliminarán del historial y se devolverá el stock a sus lotes cuando corresponda.`;
       if (!window.confirm(msg)) return;
     }
 
@@ -1774,6 +1817,8 @@ export default function App() {
         // Las ventas de consignación NO devuelven stock al lote al borrarlas,
         // porque el stock ya había salido cuando se entregó a consignación.
         if (sale.consignmentId || sale.source === 'Consignación') return;
+
+        // Las ventas neutras sí devuelven stock al borrarlas, porque se descontaron del lote.
         if (!sale.batchId || !sale.itemId) return;
         if (!stockToReturnByBatch[sale.batchId]) stockToReturnByBatch[sale.batchId] = {};
         stockToReturnByBatch[sale.batchId][sale.itemId] = (stockToReturnByBatch[sale.batchId][sale.itemId] || 0) + (Number(sale.quantity) || 0);
@@ -1793,7 +1838,11 @@ export default function App() {
       }
 
       for (const sale of salesToDelete) {
-        await deleteDoc(doc(db, 'sales', sale.id));
+        if (sale.collectionName === 'neutral_stock' || sale.isNeutral || sale.accountingType === 'neutral') {
+          await deleteDoc(doc(db, 'neutral_stock', sale.neutralDocId || sale.id));
+        } else {
+          await deleteDoc(doc(db, 'sales', sale.id));
+        }
       }
 
       setSelectedSaleTickets(prev => {
@@ -1802,7 +1851,7 @@ export default function App() {
         return next;
       });
 
-      showToast(`${summary.salesCount} venta(s) borrada(s). Se devolvieron ${summary.productsCount} producto(s) al stock.`, 'success');
+      showToast(`${summary.salesCount} registro(s) borrado(s). Se devolvieron ${summary.productsCount} producto(s) al stock.`, 'success');
     } catch (e) {
       showToast('Error al borrar ventas: ' + e.message, 'error');
     }
@@ -2873,7 +2922,7 @@ export default function App() {
                         <div className="flex flex-col">
                             <h3 className="font-bold text-base flex-shrink-0">Libro de Ventas</h3>
                             <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
-                              Mostrando {Math.min(visibleGroupedSales.length, groupedSales.length)} de {groupedSales.length} ventas
+                              Mostrando {Math.min(visibleGroupedSales.length, groupedSales.length)} de {groupedSales.length} registros
                             </span>
                         </div>
                         <div className="flex gap-2 w-full sm:w-auto">
@@ -2894,7 +2943,7 @@ export default function App() {
                       <div className={`px-4 py-3 border-b flex flex-col xl:flex-row xl:items-center justify-between gap-3 ${darkMode ? 'bg-red-500/10 border-red-500/20' : 'bg-red-50 border-red-100'}`}>
                         <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
                           <span className={`px-2.5 py-1 rounded-lg ${darkMode ? 'bg-red-500/15 text-red-300' : 'bg-white text-red-700 border border-red-100'}`}>
-                            {selectedSalesSummary.salesCount} venta(s) seleccionada(s)
+                            {selectedSalesSummary.salesCount} registro(s) seleccionado(s)
                           </span>
                           <span className={`px-2.5 py-1 rounded-lg ${darkMode ? 'bg-black/25 text-zinc-300' : 'bg-white text-zinc-700 border border-red-100'}`}>
                             {selectedSalesSummary.productsCount} producto(s) / unidad(es)
@@ -2963,6 +3012,7 @@ export default function App() {
                                       {/* ETIQUETAS VISUALES */}
                                       <div className="flex flex-col gap-1 mt-1.5 items-start">
                                           <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-zinc-800 text-zinc-300' : 'bg-zinc-200 text-zinc-700'}`}>👤 {group.seller}</span>
+                                          {group.isNeutral && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-100 text-indigo-700'}`}>Neutro</span>}
                                           {group.isNewClient && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-100 text-amber-600'}`}>Nuevo</span>}
                                           {group.isReseller && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-100 text-indigo-600'}`}>Revendedor</span>}
                                       </div>
@@ -2971,8 +3021,11 @@ export default function App() {
                                       <div className="flex flex-col gap-2 mt-1">
                                           {group.items.map((item, idx) => (
                                               <div key={idx} className="flex flex-col">
-                                                  <div className="font-semibold text-sm">{item.quantity || 0}x {item.productName || 'Sin nombre'} <span className="font-normal opacity-70 ml-1">{item.variant || ''}</span></div>
-                                                  <div className={`text-[10px] font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Lote: {item.batchName || 'S/N'}</div>
+                                                  <div className="font-semibold text-sm">
+                                                      {item.quantity || 0}x {item.productName || 'Sin nombre'} <span className="font-normal opacity-70 ml-1">{item.variant || ''}</span>
+                                                      {item.isNeutral && <span className={`ml-2 px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-50 text-indigo-700'}`}>Neutro</span>}
+                                                  </div>
+                                                  <div className={`text-[10px] font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Lote: {item.batchName || 'S/N'}{item.neutralReason ? ` · ${item.neutralReason}` : ''}</div>
                                               </div>
                                           ))}
                                       </div>
@@ -2995,12 +3048,14 @@ export default function App() {
                             onClick={() => setSalesDisplayLimit(prev => prev + 120)}
                             className="h-9 text-xs"
                           >
-                            Mostrar 120 ventas más ({groupedSales.length - visibleGroupedSales.length} restantes)
+                            Mostrar 120 registros más ({groupedSales.length - visibleGroupedSales.length} restantes)
                           </Button>
                         </div>
                       )}
                     </div>
                   </Card>
+
+
                 </div>
               </div>
             )}
