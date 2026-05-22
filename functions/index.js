@@ -165,6 +165,14 @@ const parseItemCompacto = (linea) => {
     return { variante, cantidad };
 };
 
+const errorConProducto = (item, index, errorMsg) => {
+    const producto = String(item?.producto || "Sin producto").trim();
+    const modelo = String(item?.variante || "Sin modelo").trim();
+    const linea = Number.isInteger(index) ? index + 1 : "?";
+
+    return `${errorMsg}\n\nFalló en: *${producto} / ${modelo}*\nModelo: *${modelo}*\nLínea: *${linea}*`;
+};
+
 const parseMensajeNuevo = (textoOriginal) => {
     const lineas = String(textoOriginal || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     if (!lineas.length) return null;
@@ -361,7 +369,7 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
 
                         if (resultado && resultado.exito === false) {
                             console.log(`⚠️ Error procesando ${esMovimientoNeutro ? "stock neutro" : "venta"}. Avisando...`);
-                            await enviarMensajeWhatsApp(numeroParaMeta, resultado.error_msg);
+                            await enviarMensajeWhatsApp(numeroParaMeta, `${resultado.error_msg}\n\nFalló en: *${productoRaw} / ${varianteRaw}*\nModelo: *${varianteRaw}*`);
                             await registrarEnSheet("Intentos", [fechaHoySheet, numeroRemitente, linea, resultado.error_msg]);
                         } else {
                             if (esMovimientoNeutro) {
@@ -407,28 +415,29 @@ async function procesarMensajeNuevoWhatsapp(mensaje, numeroRemitente, fechaHoySh
     if (tipo === "VENTA" || tipo === "MAYORISTA") {
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
-            if (!item.precio || item.precio <= 0) return { exito: false, error_msg: `❌ Falta precio en ${item.producto} (${item.variante}).` };
+            if (!item.precio || item.precio <= 0) return { exito: false, error_msg: errorConProducto(item, i, `❌ Falta precio en ${item.producto} (${item.variante}).`) };
             const costoEnvio = i === 0 ? limpiarNumero(general.envioCosto || 0) : 0;
             const cobroEnvio = i === 0 ? limpiarNumero(general.envioCobro || 0) : 0;
             const r = await procesarVenta(item.producto, item.variante, item.cantidad, item.precio, fecha, costoEnvio, cobroEnvio, esRevendedor, tipoCliente, vendedor, ticketIdGrupo, canal);
-            if (r && r.exito === false) return r;
+            if (r && r.exito === false) return { ...r, error_msg: errorConProducto(item, i, r.error_msg) };
             total += item.precio * item.cantidad + (i === 0 ? (cobroEnvio || 0) : 0);
             unidades += item.cantidad;
             await registrarEnSheet(tipo === "MAYORISTA" ? "Mayorista" : "Ventas", [fechaHoySheet, numeroRemitente, item.producto, item.variante, item.cantidad, item.precio, `ÉXITO (${vendedor})`, tipoCliente]);
         }
-        return { exito: true, mensaje: `✅ *${tipo === "MAYORISTA" ? "Mayorista" : "Venta"} registrada*\n\nProductos: *${items.length}*\nUnidades: *${unidades}*\nTotal aprox: *$${total}*\nCliente: *${tipoCliente}*` };
+        return { exito: true, mensaje: `✅ ${tipo === "MAYORISTA" ? "Mayorista" : "Venta"} registrada` };
     }
     if (tipo === "NEUTRO") {
         const motivo = general.motivo || general.accion || "Venta neutra";
-        for (const item of items) {
-            if (!item.precio || item.precio <= 0) return { exito: false, error_msg: `❌ Falta precio en ${item.producto} (${item.variante}).` };
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (!item.precio || item.precio <= 0) return { exito: false, error_msg: errorConProducto(item, i, `❌ Falta precio en ${item.producto} (${item.variante}).`) };
             const r = await procesarStockNeutro(item.producto, item.variante, item.cantidad, item.precio, motivo, general.nota || "", vendedor);
-            if (r && r.exito === false) return r;
+            if (r && r.exito === false) return { ...r, error_msg: errorConProducto(item, i, r.error_msg) };
             total += item.precio * item.cantidad;
             unidades += item.cantidad;
             await registrarEnSheet("Neutro", [fechaHoySheet, numeroRemitente, item.producto, item.variante, item.cantidad, item.precio, motivo, `ÉXITO (${vendedor})`]);
         }
-        return { exito: true, mensaje: `✅ *Neutro registrado*\n\nProductos: *${items.length}*\nUnidades: *${unidades}*\nTotal aprox: *$${total}*` };
+        return { exito: true, mensaje: "✅ Neutro registrado" };
     }
     if (tipo === "CONSIGNACION") {
         const cliente = String(general.cliente || "").trim();
@@ -436,44 +445,48 @@ async function procesarMensajeNuevoWhatsapp(mensaje, numeroRemitente, fechaHoySh
         const accion = normalizarParaComparar(general.accion || "entrega");
         if (["entrega", "entregar", "dejo", "dejar"].includes(accion)) {
             const consignmentTicketId = `CONS-${Date.now()}`;
-            for (const item of items) {
-                if (!item.precio || item.precio <= 0) return { exito: false, error_msg: `❌ Falta precio acordado en ${item.producto} (${item.variante}).` };
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                if (!item.precio || item.precio <= 0) return { exito: false, error_msg: errorConProducto(item, i, `❌ Falta precio acordado en ${item.producto} (${item.variante}).`) };
                 const r = await procesarConsignacionEntregaItem(cliente, item, general.fechaLimite || "", general.nota || "", consignmentTicketId, tipoCliente);
-                if (r && r.exito === false) return r;
+                if (r && r.exito === false) return { ...r, error_msg: errorConProducto(item, i, r.error_msg) };
                 unidades += item.cantidad;
                 total += item.precio * item.cantidad;
             }
             await registrarEnSheet("Consignacion", [fechaHoySheet, numeroRemitente, cliente, "entrega", items.length, unidades, total, "ÉXITO"]);
-            return { exito: true, mensaje: `✅ *Consignación entregada*\n\nCliente: *${cliente}*\nProductos: *${items.length}*\nUnidades: *${unidades}*\nValor potencial: *$${total}*\n\nNo se creó venta.` };
+            return { exito: true, mensaje: "✅ Consignación registrada" };
         }
         if (["pago", "pagar", "cobro", "cobrar", "liquidacion", "liquidar", "liquidación"].includes(accion)) {
             const ticketIdPago = `CONS-PAGO-${Date.now()}`;
-            for (const item of items) {
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
                 const r = await procesarConsignacionPagoItem(cliente, item, fecha, vendedor, ticketIdPago, tipoCliente);
-                if (r && r.exito === false) return r;
+                if (r && r.exito === false) return { ...r, error_msg: errorConProducto(item, i, r.error_msg) };
                 unidades += item.cantidad;
                 total += r.total || 0;
             }
             await registrarEnSheet("ConsignacionPagos", [fechaHoySheet, numeroRemitente, cliente, "pago", items.length, unidades, total, "ÉXITO"]);
-            return { exito: true, mensaje: `✅ *Pago de consignación registrado*\n\nCliente: *${cliente}*\nProductos: *${items.length}*\nUnidades: *${unidades}*\nTotal: *$${total}*` };
+            return { exito: true, mensaje: "✅ Pago registrado" };
         }
         if (["devolucion", "devolver", "devuelve", "devuelto", "devolución"].includes(accion)) {
-            for (const item of items) {
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
                 const r = await procesarConsignacionDevolucionItem(cliente, item, general.nota || "");
-                if (r && r.exito === false) return r;
+                if (r && r.exito === false) return { ...r, error_msg: errorConProducto(item, i, r.error_msg) };
                 unidades += item.cantidad;
             }
             await registrarEnSheet("ConsignacionDevoluciones", [fechaHoySheet, numeroRemitente, cliente, "devolucion", items.length, unidades, "ÉXITO"]);
-            return { exito: true, mensaje: `✅ *Devolución registrada*\n\nCliente: *${cliente}*\nProductos: *${items.length}*\nUnidades devueltas: *${unidades}*` };
+            return { exito: true, mensaje: "✅ Devolución registrada" };
         }
         if (["perdido", "perdida", "perder", "perdio", "perdió"].includes(accion)) {
-            for (const item of items) {
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
                 const r = await procesarConsignacionPerdidoItem(cliente, item, general.nota || "");
-                if (r && r.exito === false) return r;
+                if (r && r.exito === false) return { ...r, error_msg: errorConProducto(item, i, r.error_msg) };
                 unidades += item.cantidad;
             }
             await registrarEnSheet("ConsignacionPerdidos", [fechaHoySheet, numeroRemitente, cliente, "perdido", items.length, unidades, "ÉXITO"]);
-            return { exito: true, mensaje: `✅ *Pérdida registrada*\n\nCliente: *${cliente}*\nProductos: *${items.length}*\nUnidades: *${unidades}*` };
+            return { exito: true, mensaje: "✅ Pérdida registrada" };
         }
         return { exito: false, error_msg: `❌ Acción de consignación no reconocida: ${general.accion}. Usá entrega, pago, devolucion o perdido.` };
     }
@@ -505,7 +518,7 @@ async function descontarStockParaConsignacion(userProducto, userVariante, cantid
         }
     }
     if (!productoEncontrado) return { exito: false, error_msg: `⚠️ No encontré *${userProducto}* (${userVariante}) en stock.` };
-    return { exito: false, error_msg: `🛑 Stock insuficiente de *${userProducto}* (${userVariante}). Disponible: ${stockDisponible}.` };
+    return { exito: false, error_msg: `🛑 Stock insuficiente\nProducto: *${userProducto}*\nModelo: *${userVariante || 'Único'}*\nPediste: *${cantidad}*\nDisponible: *${stockDisponible}*` };
 }
 
 async function procesarConsignacionEntregaItem(cliente, item, fechaLimite, nota, consignmentTicketId, tipoCliente) {
@@ -797,7 +810,7 @@ async function procesarStockNeutro(userProducto, userVariante, cantARestar, prec
         if (!productoEncontrado) {
             return { exito: false, error_msg: `⚠️ *Error de Inventario NEUTRO:*\nEl producto *"${userProducto}"* (Variante: ${userVariante || 'Única'}) no existe o está mal escrito.` };
         } else if (stockInsuficiente) {
-            return { exito: false, error_msg: `🛑 *Stock Insuficiente NEUTRO:*\nIntentaste descontar ${cantARestar} unidades de *"${userProducto}"*, pero solo quedan *${stockMascercanoDisponible}* en stock.` };
+            return { exito: false, error_msg: `🛑 *Stock insuficiente NEUTRO:*\nProducto: *${userProducto}*\nModelo: *${userVariante || 'Único'}*\nPediste: *${cantARestar}*\nDisponible: *${stockMascercanoDisponible}*` };
         } else {
             return { exito: false, error_msg: `⚠️ *Error desconocido* al procesar el stock neutro.` };
         }
@@ -920,7 +933,7 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
         if (!productoEncontrado) {
             return { exito: false, error_msg: `⚠️ *Error de Inventario:*\nEl producto *"${userProducto}"* (Variante: ${userVariante || 'Única'}) no existe o está mal escrito.` };
         } else if (stockInsuficiente) {
-            return { exito: false, error_msg: `🛑 *Stock Insuficiente:*\nIntentaste vender ${cantARestar} unidades de *"${userProducto}"*, pero solo quedan *${stockMascercanoDisponible}* en stock.` };
+            return { exito: false, error_msg: `🛑 *Stock insuficiente:*\nProducto: *${userProducto}*\nModelo: *${userVariante || 'Único'}*\nPediste: *${cantARestar}*\nDisponible: *${stockMascercanoDisponible}*` };
         } else {
             return { exito: false, error_msg: `⚠️ *Error desconocido* al procesar la venta.` };
         }

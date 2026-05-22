@@ -9,7 +9,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsToolti
 import { initializeApp } from "firebase/app";
 import {
   initializeFirestore, collection, addDoc, deleteDoc, doc, updateDoc, setDoc,
-  onSnapshot, query, orderBy, where, getDocs
+  onSnapshot, query, orderBy, where, getDocs, deleteField
 } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -490,7 +490,7 @@ export default function App() {
   const [selectedSaleTickets, setSelectedSaleTickets] = useState({});
   const [salesDisplayLimit, setSalesDisplayLimit] = useState(120);
 
-  const [saleGeneral, setSaleGeneral] = useState({ saleDate: getTodayDate(), accountingType: 'Normal', shippingCost: '', shippingPrice: '', source: 'Instagram', isReseller: 'No', isNewClient: 'Frecuente' });
+  const [saleGeneral, setSaleGeneral] = useState({ saleDate: getTodayDate(), accountingType: 'Normal', shippingCost: '', shippingPrice: '', source: 'Instagram', isReseller: 'No', isNewClient: 'Frecuente', wholesaleClient: '' });
   const [saleItems, setSaleItems] = useState([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
 
   const updateSaleItem = (id, field, value) => {
@@ -898,6 +898,81 @@ export default function App() {
           .map(s => ({...s, seller: normalizeSellerName(s.seller)}))
           .sort((a,b) => new Date(b.date) - new Date(a.date));
   }, [analysisData.baseStats.filteredSales]);
+
+  const wholesaleData = useMemo(() => {
+      const wholesaleSales = sales
+        .filter(s => {
+          const isWholesale = s.operationType === 'MAYORISTA' || s.isReseller === true || s.isReseller === 'Si';
+          const isConsignmentPayment = !!s.consignmentId || s.source === 'Consignación';
+          return isWholesale && !isConsignmentPayment;
+        })
+        .map(s => ({
+          ...s,
+          clientName: String(s.clientName || s.wholesaleClient || s.resellerName || '').trim() || 'Sin cliente'
+        }));
+
+      const clientsMap = {};
+      const globalTickets = new Set();
+
+      wholesaleSales.forEach(s => {
+        const clientKey = String(s.clientName || 'Sin cliente').trim().toLowerCase() || 'sin cliente';
+        const clientLabel = String(s.clientName || 'Sin cliente').trim() || 'Sin cliente';
+        const ticketId = s.ticketId || s.id;
+        globalTickets.add(ticketId);
+
+        if (!clientsMap[clientKey]) {
+          clientsMap[clientKey] = {
+            name: clientLabel,
+            revenue: 0,
+            profit: 0,
+            units: 0,
+            lines: 0,
+            tickets: new Set(),
+            lastDate: null,
+            products: {}
+          };
+        }
+
+        const client = clientsMap[clientKey];
+        const revenue = Number(s.totalSaleRaw) || 0;
+        const quantity = Number(s.quantity) || 0;
+        const cost = Number(s.costArsAtSale) || 0;
+        const profit = revenue - (cost * quantity);
+        const productKey = `${s.productName || 'Sin producto'} / ${s.variant || 'Único'}`;
+
+        client.revenue += revenue;
+        client.profit += profit;
+        client.units += quantity;
+        client.lines += 1;
+        client.tickets.add(ticketId);
+        client.products[productKey] = (client.products[productKey] || 0) + quantity;
+
+        const saleDate = s.date || s.createdAt;
+        if (saleDate && (!client.lastDate || new Date(saleDate) > new Date(client.lastDate))) {
+          client.lastDate = saleDate;
+        }
+      });
+
+      const clients = Object.values(clientsMap).map(c => ({
+        ...c,
+        orders: c.tickets.size,
+        avgTicket: c.tickets.size ? c.revenue / c.tickets.size : 0,
+        topProducts: Object.entries(c.products)
+          .map(([name, quantity]) => ({ name, quantity }))
+          .sort((a, b) => b.quantity - a.quantity)
+          .slice(0, 4)
+      })).sort((a, b) => b.revenue - a.revenue);
+
+      return {
+        sales: wholesaleSales,
+        clients,
+        activeClients: clients.length,
+        orders: globalTickets.size,
+        totalRevenue: wholesaleSales.reduce((acc, s) => acc + (Number(s.totalSaleRaw) || 0), 0),
+        totalUnits: wholesaleSales.reduce((acc, s) => acc + (Number(s.quantity) || 0), 0),
+        totalProfit: wholesaleSales.reduce((acc, s) => acc + ((Number(s.totalSaleRaw) || 0) - ((Number(s.costArsAtSale) || 0) * (Number(s.quantity) || 0))), 0)
+      };
+  }, [sales]);
 
   const batchAnalysis = useMemo(() => {
     if (!selectedBatchStats) return null;
@@ -1546,21 +1621,29 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
   };
 
   const handleDeleteConsignmentEntry = async (entry) => {
+    const delivered = Number(entry.quantityDelivered) || 0;
     const pending = Number(entry.quantityPending) || 0;
     const paid = Number(entry.quantityPaid) || 0;
     const returned = Number(entry.quantityReturned) || 0;
     const lost = Number(entry.quantityLost) || 0;
 
+    // Al borrar el producto de consignación, se deshace la salida de stock.
+    // No se vuelven a sumar las unidades ya devueltas porque esas ya volvieron al lote antes.
+    const unitsToReturn = Math.max(0, delivered - returned);
+
     const msg = [
-      `¿Borrar este registro de consignación?`,
+      `¿Borrar este producto de consignación?`,
       ``,
       `${entry.clientName || 'Sin cliente'} · ${entry.productName || 'Sin producto'} / ${entry.variant || 'Único'}`,
+      `Entregado: ${delivered}`,
       `Pendiente: ${pending}`,
       `Pagado: ${paid}`,
       `Devuelto: ${returned}`,
       `Perdido: ${lost}`,
       ``,
-      pending > 0 ? `Se devolverán ${pending} unidad(es) pendientes al lote original.` : `No hay unidades pendientes para devolver al lote.`,
+      unitsToReturn > 0
+        ? `Se devolverán ${unitsToReturn} unidad(es) al lote original.`
+        : `No se devolverán unidades porque ya fueron devueltas antes o no hay cantidad entregada.`,
       paid > 0 ? `También se borrarán las ventas reales asociadas a este pago de consignación.` : `No hay ventas pagadas asociadas para borrar.`,
       ``,
       `Esta acción no se puede deshacer.`
@@ -1569,14 +1652,21 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     if (!window.confirm(msg)) return;
 
     try {
-      if (pending > 0 && entry.batchId && entry.itemId) {
+      let stockReturned = 0;
+
+      if (unitsToReturn > 0 && entry.batchId && entry.itemId) {
         const batch = batches.find(b => b.id === entry.batchId);
         if (batch) {
           const newItems = (batch.items || []).map(item => {
             if (item.id !== entry.itemId) return item;
-            return { ...item, currentStock: (Number(item.currentStock) || 0) + pending };
+            return { ...item, currentStock: (Number(item.currentStock) || 0) + unitsToReturn };
           });
-          await updateDoc(doc(db, 'batches', entry.batchId), { items: newItems });
+
+          const updates = { items: newItems };
+          if (batch.finalizedAt) updates.finalizedAt = deleteField();
+
+          await updateDoc(doc(db, 'batches', entry.batchId), updates);
+          stockReturned = unitsToReturn;
         }
       }
 
@@ -1587,7 +1677,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
       await deleteDoc(doc(db, 'consignments', entry.id));
 
-      showToast(`Consignación borrada. ${pending > 0 ? `${pending} unidad(es) devueltas al stock. ` : ''}${linkedSalesSnap.size ? `${linkedSalesSnap.size} venta(s) asociada(s) borrada(s).` : ''}`, 'success');
+      showToast(`Consignación borrada. ${stockReturned > 0 ? `${stockReturned} unidad(es) devueltas al stock. ` : ''}${linkedSalesSnap.size ? `${linkedSalesSnap.size} venta(s) asociada(s) borrada(s).` : ''}`, 'success');
     } catch (e) {
       showToast('Error borrando consignación: ' + e.message, 'error');
     }
@@ -1869,6 +1959,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                 source: saleGeneral.source,
                 isReseller: saleGeneral.isReseller === 'Si',
                 isNewClient: saleGeneral.isNewClient,
+                clientName: saleGeneral.isReseller === 'Si' ? String(saleGeneral.wholesaleClient || '').trim() : '',
+                operationType: saleGeneral.isReseller === 'Si' ? 'MAYORISTA' : 'VENTA',
                 seller: '028 Import' 
             };
 
@@ -1916,7 +2008,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
         showToast(isNeutralSale ? `Stock neutro registrado. Ganancia global estimada: ${formatMoney(totalCashIn)}` : `Pedido registrado. Ingreso total: ${formatMoney(totalCashIn)}`, 'success');
         
-        setSaleGeneral({ ...saleGeneral, shippingCost: '', shippingPrice: '' });
+        setSaleGeneral({ ...saleGeneral, shippingCost: '', shippingPrice: '', wholesaleClient: '' });
         setSaleItems([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
 
     } catch (e) {
@@ -2525,6 +2617,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
   const TABS = [
       { id: 'home', icon: Activity, label: 'Inicio' }, 
       { id: 'sales', icon: ShoppingCart, label: 'Ventas' }, 
+      { id: 'wholesale', icon: UserCircle, label: 'Mayorista' }, 
       { id: 'batches', icon: FolderOpen, label: 'Lotes' }, 
       { id: 'consignment', icon: Users, label: 'Consignación' },
       { id: 'analysis', icon: BarChart3, label: 'Análisis' }, 
@@ -2951,6 +3044,16 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                     <Select darkMode={darkMode} label="Cliente" value={saleGeneral.isNewClient} onChange={e => setSaleGeneral({...saleGeneral, isNewClient: e.target.value})} options={[{value:'Frecuente', label:'Frecuente'}, {value:'Nuevo - Organico', label:'Nuevo - Orgánico'}, {value:'Nuevo - Publicidad', label:'Nuevo - Publicidad'}]} />
                                 </div>
 
+                                {saleGeneral.isReseller === 'Si' && (
+                                  <Input
+                                    darkMode={darkMode}
+                                    label="Nombre del cliente mayorista"
+                                    placeholder="Ej: Juan, local, revendedor..."
+                                    value={saleGeneral.wholesaleClient || ''}
+                                    onChange={e => setSaleGeneral({...saleGeneral, wholesaleClient: e.target.value})}
+                                  />
+                                )}
+
                                 {(saleGeneral.accountingType || 'Normal') === 'Neutro' && (
                                   <div className={`p-3 rounded-xl border text-xs font-semibold ${darkMode ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-300' : 'bg-indigo-50 border-indigo-100 text-indigo-700'}`}>
                                     Modo neutro: descuenta stock y guarda la ganancia para el histórico global, pero NO crea venta, NO aparece en días, meses, gráficos ni resumen normal.
@@ -3191,6 +3294,101 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                 </div>
               </div>
             )}
+
+            {/* --- PESTAÑA MAYORISTA --- */}
+            {activeTab === 'wholesale' && (
+              <div className="space-y-6 animate-in fade-in duration-300">
+                <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+                  <div>
+                    <h2 className="text-2xl font-black tracking-tight flex items-center gap-2">
+                      <UserCircle size={24} className="text-indigo-500"/> Mayorista
+                    </h2>
+                    <p className={`text-sm mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                      Resumen de ventas a revendedores/clientes mayoristas. No incluye pagos de consignación.
+                    </p>
+                  </div>
+                  <div className={`rounded-xl border px-4 py-3 text-xs font-semibold ${darkMode ? 'bg-[#0a0c10] border-zinc-800 text-zinc-400' : 'bg-indigo-50 border-indigo-100 text-indigo-700'}`}>
+                    Para que aparezca con nombre, cargá la venta como Revendedor y completá “Cliente mayorista”.
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                  <MetricCard color="indigo" darkMode={darkMode} title="Clientes mayoristas" value={wholesaleData.activeClients} subtitle="Con compras registradas" icon={Users} />
+                  <MetricCard color="blue" darkMode={darkMode} title="Pedidos mayoristas" value={wholesaleData.orders} subtitle={`${wholesaleData.totalUnits} unidades`} icon={ShoppingCart} />
+                  <MetricCard color="emerald" darkMode={darkMode} title="Facturación mayorista" value={formatMoney(wholesaleData.totalRevenue)} subtitle="Total vendido" icon={DollarSign} />
+                  <MetricCard color="violet" darkMode={darkMode} title="Ganancia mayorista" value={formatMoney(wholesaleData.totalProfit)} subtitle="Ingresos - costo" icon={TrendingUp} />
+                </div>
+
+                {wholesaleData.clients.length === 0 ? (
+                  <Card darkMode={darkMode} className="p-12 text-center">
+                    <Users size={42} className="mx-auto mb-4 opacity-40"/>
+                    <p className="text-sm font-medium opacity-60">Todavía no hay ventas mayoristas registradas.</p>
+                    <p className={`text-xs mt-2 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Las ventas aparecen acá cuando tienen Tipo: Revendedor.</p>
+                  </Card>
+                ) : (
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+                    {wholesaleData.clients.map(client => (
+                      <Card key={client.name} darkMode={darkMode} className="p-0 overflow-hidden">
+                        <div className={`p-5 border-b flex flex-col sm:flex-row sm:items-start justify-between gap-4 ${darkMode ? 'border-zinc-800 bg-[#131824]' : 'border-zinc-200 bg-white'}`}>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-3">
+                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${darkMode ? 'bg-indigo-500/10 text-indigo-300' : 'bg-indigo-100 text-indigo-700'}`}>
+                                <UserCircle size={22}/>
+                              </div>
+                              <div>
+                                <h3 className="font-black text-lg truncate">{client.name}</h3>
+                                <p className={`text-xs font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                  Última compra: {client.lastDate ? safeDateStr(client.lastDate, {month:'short', day:'numeric', year:'numeric'}) : 'Sin fecha'}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="text-left sm:text-right">
+                            <p className="text-[10px] font-black uppercase tracking-wider opacity-50">Compró en total</p>
+                            <p className="text-xl font-black text-emerald-500">{formatMoney(client.revenue)}</p>
+                          </div>
+                        </div>
+
+                        <div className="p-5 grid grid-cols-2 md:grid-cols-4 gap-3">
+                          <div className={`rounded-xl p-3 ${darkMode ? 'bg-[#0a0c10]' : 'bg-zinc-50'}`}>
+                            <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Pedidos</p>
+                            <p className="font-black mt-1">{client.orders}</p>
+                          </div>
+                          <div className={`rounded-xl p-3 ${darkMode ? 'bg-[#0a0c10]' : 'bg-zinc-50'}`}>
+                            <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Unidades</p>
+                            <p className="font-black mt-1">{client.units}</p>
+                          </div>
+                          <div className={`rounded-xl p-3 ${darkMode ? 'bg-[#0a0c10]' : 'bg-zinc-50'}`}>
+                            <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Ganancia</p>
+                            <p className="font-black mt-1 text-emerald-500">{formatMoney(client.profit)}</p>
+                          </div>
+                          <div className={`rounded-xl p-3 ${darkMode ? 'bg-[#0a0c10]' : 'bg-zinc-50'}`}>
+                            <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Ticket prom.</p>
+                            <p className="font-black mt-1">{formatMoney(client.avgTicket)}</p>
+                          </div>
+                        </div>
+
+                        <div className={`px-5 pb-5 ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                          <p className="text-[10px] font-black uppercase tracking-wider opacity-50 mb-2">Productos que más compró</p>
+                          <div className="space-y-2">
+                            {client.topProducts.length === 0 ? (
+                              <p className="text-xs opacity-50">Sin productos para mostrar.</p>
+                            ) : client.topProducts.map(p => (
+                              <div key={p.name} className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2 text-xs font-semibold ${darkMode ? 'bg-[#0a0c10]' : 'bg-zinc-50'}`}>
+                                <span className="truncate">{p.name}</span>
+                                <span className={`shrink-0 px-2 py-0.5 rounded-lg ${darkMode ? 'bg-indigo-500/10 text-indigo-300' : 'bg-indigo-100 text-indigo-700'}`}>{p.quantity} u.</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
 
             {/* --- PESTAÑA LOTES (CON EDICIÓN DE LOTE) --- */}
             {activeTab === 'batches' && (
