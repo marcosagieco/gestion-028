@@ -488,6 +488,7 @@ export default function App() {
   const [isApplyingStockSync, setIsApplyingStockSync] = useState(false);
 
   const [salesSearch, setSalesSearch] = useState('');
+  const [consignmentSearch, setConsignmentSearch] = useState('');
   const [salesSort, setSalesSort] = useState({ key: 'createdAt', direction: 'desc' });
   const [selectedSaleTickets, setSelectedSaleTickets] = useState({});
   const [salesDisplayLimit, setSalesDisplayLimit] = useState(120);
@@ -904,14 +905,16 @@ export default function App() {
   const wholesaleData = useMemo(() => {
       const wholesaleSales = sales
         .filter(s => {
-          const isWholesale = s.operationType === 'MAYORISTA' || s.isReseller === true || s.isReseller === 'Si';
+          const clientName = String(s.clientName || s.wholesaleClient || s.resellerName || '').trim();
+          const isNewWholesale = s.operationType === 'MAYORISTA' || !!clientName;
           const isConsignmentPayment = !!s.consignmentId || s.source === 'Consignación';
-          return isWholesale && !isConsignmentPayment;
+          return isNewWholesale && !isConsignmentPayment;
         })
         .map(s => ({
           ...s,
-          clientName: String(s.clientName || s.wholesaleClient || s.resellerName || '').trim() || 'Sin cliente'
-        }));
+          clientName: String(s.clientName || s.wholesaleClient || s.resellerName || '').trim()
+        }))
+        .filter(s => !!s.clientName);
 
       const clientsMap = {};
       const globalTickets = new Set();
@@ -1715,6 +1718,91 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       showToast(`Consignación borrada. ${stockReturned > 0 ? `${stockReturned} unidad(es) devueltas al stock. ` : ''}${linkedSalesSnap.size ? `${linkedSalesSnap.size} venta(s) asociada(s) borrada(s).` : ''}`, 'success');
     } catch (e) {
       showToast('Error borrando consignación: ' + e.message, 'error');
+    }
+  };
+
+  const handleDeleteConsignmentClient = async (client) => {
+    const entries = client?.entries || [];
+    if (!entries.length) return showToast('Este cliente no tiene consignaciones para borrar.', 'error');
+
+    const totalPending = entries.reduce((sum, entry) => sum + (Number(entry.quantityPending) || 0), 0);
+    const totalDelivered = entries.reduce((sum, entry) => sum + (Number(entry.quantityDelivered) || 0), 0);
+    const totalReturned = entries.reduce((sum, entry) => sum + (Number(entry.quantityReturned) || 0), 0);
+    const unitsToReturnTotal = entries.reduce((sum, entry) => {
+      const delivered = Number(entry.quantityDelivered) || 0;
+      const returned = Number(entry.quantityReturned) || 0;
+      return sum + Math.max(0, delivered - returned);
+    }, 0);
+
+    const msg = [
+      `¿Borrar TODA la consignación de ${client.clientName || 'este cliente'}?`,
+      ``,
+      `Registros: ${entries.length}`,
+      `Entregado: ${totalDelivered}`,
+      `Pendiente: ${totalPending}`,
+      `Ya devuelto: ${totalReturned}`,
+      ``,
+      unitsToReturnTotal > 0
+        ? `Se devolverán ${unitsToReturnTotal} unidad(es) al stock.`
+        : `No hay unidades para devolver al stock.`,
+      `También se borrarán las ventas asociadas a pagos de esta consignación.`,
+      ``,
+      `Esta acción no se puede deshacer.`
+    ].join('\n');
+
+    if (!window.confirm(msg)) return;
+
+    try {
+      const stockToReturnByBatch = {};
+      const entryIds = [];
+
+      entries.forEach(entry => {
+        entryIds.push(entry.id);
+        const delivered = Number(entry.quantityDelivered) || 0;
+        const returned = Number(entry.quantityReturned) || 0;
+        const unitsToReturn = Math.max(0, delivered - returned);
+
+        if (unitsToReturn > 0 && entry.batchId && entry.itemId) {
+          if (!stockToReturnByBatch[entry.batchId]) stockToReturnByBatch[entry.batchId] = {};
+          stockToReturnByBatch[entry.batchId][entry.itemId] = (stockToReturnByBatch[entry.batchId][entry.itemId] || 0) + unitsToReturn;
+        }
+      });
+
+      let stockReturned = 0;
+
+      for (const batchId of Object.keys(stockToReturnByBatch)) {
+        const batch = batches.find(b => b.id === batchId);
+        if (!batch) continue;
+
+        const returns = stockToReturnByBatch[batchId];
+        const newItems = (batch.items || []).map(item => {
+          const qty = Number(returns[item.id]) || 0;
+          stockReturned += qty;
+          return { ...item, currentStock: (Number(item.currentStock) || 0) + qty };
+        });
+
+        const updates = { items: newItems };
+        if (batch.finalizedAt) updates.finalizedAt = deleteField();
+        await updateDoc(doc(db, 'batches', batchId), updates);
+      }
+
+      let linkedSalesDeleted = 0;
+      for (const entryId of entryIds) {
+        const linkedSalesSnap = await getDocs(query(collection(db, 'sales'), where('consignmentId', '==', entryId)));
+        linkedSalesDeleted += linkedSalesSnap.size;
+        for (const saleDoc of linkedSalesSnap.docs) {
+          await deleteDoc(doc(db, 'sales', saleDoc.id));
+        }
+      }
+
+      for (const entry of entries) {
+        await deleteDoc(doc(db, 'consignments', entry.id));
+      }
+
+      setExpandedConsignmentClient(prev => prev === client.clientName ? null : prev);
+      showToast(`Cliente borrado de consignación. ${stockReturned} unidad(es) devueltas al stock. ${linkedSalesDeleted ? `${linkedSalesDeleted} venta(s) asociada(s) borrada(s).` : ''}`, 'success');
+    } catch (e) {
+      showToast('Error borrando cliente de consignación: ' + e.message, 'error');
     }
   };
 
@@ -3910,131 +3998,148 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
             {/* --- PESTAÑA CONSIGNACIÓN --- */}
             {activeTab === 'consignment' && (
-              <div className="space-y-6 animate-in fade-in duration-300 max-w-7xl">
-                <div className="flex flex-col xl:flex-row xl:items-end justify-between gap-5">
-                  <div>
-                    <h2 className="text-2xl font-black tracking-tight flex items-center gap-2">
-                      <Users size={24} className="text-amber-500"/> Consignación
-                    </h2>
-                    <p className={`text-sm mt-1 max-w-2xl ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
-                      Controlá mercadería entregada, pagos pendientes y devoluciones sin mezclarlo con ventas normales.
-                    </p>
+              <div className="animate-in fade-in duration-300 max-w-[1540px] space-y-8">
+                <div className={`relative overflow-hidden rounded-[2rem] p-7 md:p-8 shadow-[0_28px_90px_rgba(0,0,0,0.18)] backdrop-blur-xl ring-1 ${darkMode ? 'bg-white/[0.018] ring-white/[0.06]' : 'bg-white/80 ring-zinc-200/70'}`}>
+                  <div className="absolute inset-0 pointer-events-none">
+                    <div className={`absolute -top-40 -right-28 h-80 w-80 rounded-full blur-3xl ${darkMode ? 'bg-amber-500/10' : 'bg-amber-200/50'}`}></div>
+                    <div className={`absolute -bottom-44 -left-28 h-80 w-80 rounded-full blur-3xl ${darkMode ? 'bg-indigo-500/10' : 'bg-indigo-200/40'}`}></div>
                   </div>
 
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 xl:min-w-[660px]">
-                    <MetricCard color="amber" darkMode={darkMode} title="Pendiente" value={consignmentStats.pending} subtitle="unidades afuera" icon={Package} />
-                    <MetricCard color="blue" darkMode={darkMode} title="Por cobrar" value={formatMoney(consignmentStats.valuePending)} subtitle="todavía no vendido" icon={Clock} />
-                    <MetricCard color="emerald" darkMode={darkMode} title="Cobrado" value={formatMoney(consignmentStats.valuePaid)} subtitle={`${consignmentStats.paid} unidades`} icon={CheckCircle} />
-                    <MetricCard color="violet" darkMode={darkMode} title="Ganancia" value={formatMoney(consignmentStats.profitPaid)} subtitle="pagos reales" icon={TrendingUp} />
+                  <div className="relative flex flex-col xl:flex-row xl:items-end justify-between gap-8">
+                    <div>
+                      <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] mb-4 ${darkMode ? 'bg-white/5 text-zinc-400 ring-1 ring-white/[0.06]' : 'bg-zinc-100 text-zinc-500 ring-1 ring-zinc-200'}`}>
+                        <span className="h-1.5 w-1.5 rounded-full bg-amber-400"></span>
+                        Control
+                      </div>
+                      <h2 className="text-4xl md:text-5xl font-black tracking-[-0.04em] leading-none">
+                        Consignación
+                      </h2>
+                      <p className={`text-sm md:text-base mt-4 max-w-xl leading-relaxed ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                        Stock afuera, cobros pendientes y movimientos por cliente.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 w-full xl:w-auto xl:min-w-[760px]">
+                      {[
+                        { label: 'Pendiente', value: consignmentStats.pending, sub: 'unidades', icon: Package, tone: 'text-amber-400' },
+                        { label: 'Por cobrar', value: formatMoney(consignmentStats.valuePending), sub: 'pendiente', icon: Clock, tone: 'text-blue-400' },
+                        { label: 'Cobrado', value: formatMoney(consignmentStats.valuePaid), sub: `${consignmentStats.paid} unidades`, icon: CheckCircle, tone: 'text-emerald-400' },
+                        { label: 'Ganancia', value: formatMoney(consignmentStats.profitPaid), sub: 'real', icon: TrendingUp, tone: 'text-violet-400' }
+                      ].map(metric => (
+                        <div key={metric.label} className={`rounded-[1.4rem] p-4 backdrop-blur-xl ring-1 ${darkMode ? 'bg-black/12 ring-white/[0.06]' : 'bg-white/70 ring-zinc-200 shadow-sm'}`}>
+                          <div className="flex items-center justify-between mb-3">
+                            <p className={`text-[10px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{metric.label}</p>
+                            <metric.icon size={16} className={metric.tone}/>
+                          </div>
+                          <p className="text-2xl font-black tracking-[-0.03em]">{metric.value}</p>
+                          <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{metric.sub}</p>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-                  <Card darkMode={darkMode} className="xl:col-span-8 p-0 overflow-hidden">
-                    <div className={`p-5 md:p-6 border-b ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                <div className="grid grid-cols-1 2xl:grid-cols-[460px_1fr] gap-6 items-start">
+                  <div className={`rounded-[2rem] overflow-hidden ring-1 backdrop-blur-xl shadow-[0_28px_90px_rgba(0,0,0,0.18)] ${darkMode ? 'bg-white/[0.026] ring-white/[0.06]' : 'bg-white/90 ring-zinc-200'}`}>
+                    <div className={`px-6 py-5 border-b ${darkMode ? 'border-white/[0.06]' : 'border-zinc-200'}`}>
                       <div className="flex items-center justify-between gap-4">
                         <div>
-                          <h3 className="text-xl font-black tracking-tight">Nueva entrega</h3>
-                          <p className={`text-sm mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Esto descuenta stock, pero no crea una venta hasta que te paguen.</p>
+                          <h3 className="text-2xl font-black tracking-[-0.03em]">Nueva entrega</h3>
+                          <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Cliente y productos.</p>
                         </div>
-                        <span className={`hidden md:inline-flex px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider ${darkMode ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20' : 'bg-amber-50 text-amber-700 border border-amber-100'}`}>
-                          Entrega ≠ venta
-                        </span>
+                        <button
+                          onClick={addConsignmentLine}
+                          className={`h-10 px-4 rounded-full text-xs font-black transition-all active:scale-95 ${darkMode ? 'bg-white text-black hover:bg-zinc-200' : 'bg-black text-white hover:bg-zinc-800'}`}
+                        >
+                          + Producto
+                        </button>
                       </div>
                     </div>
 
-                    <div className="p-5 md:p-6 space-y-5">
-                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-                        <div className="lg:col-span-4">
+                    <div className="p-6 space-y-5">
+                      <div className={`rounded-[1.5rem] p-4 ring-1 ${darkMode ? 'bg-black/12 ring-white/[0.06]' : 'bg-zinc-50 ring-zinc-200'}`}>
+                        <div className="space-y-3">
                           <Input
                             darkMode={darkMode}
                             label="Cliente"
-                            placeholder="Ej: Juan, local, revendedor..."
+                            placeholder="Ej: Juan"
                             value={newConsignment.clientName}
                             onChange={e => setNewConsignment({ ...newConsignment, clientName: e.target.value })}
                           />
-                        </div>
 
-                        <div className="lg:col-span-3">
-                          <Input
-                            darkMode={darkMode}
-                            label="Fecha límite"
-                            type="date"
-                            value={newConsignment.dueDate}
-                            onChange={e => setNewConsignment({ ...newConsignment, dueDate: e.target.value })}
-                          />
-                        </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <Input
+                              darkMode={darkMode}
+                              label="Fecha límite"
+                              type="date"
+                              value={newConsignment.dueDate}
+                              onChange={e => setNewConsignment({ ...newConsignment, dueDate: e.target.value })}
+                            />
 
-                        <div className="lg:col-span-5">
-                          <Input
-                            darkMode={darkMode}
-                            label="Nota"
-                            placeholder="Ej: paga cada viernes, revisar en 7 días..."
-                            value={newConsignment.note}
-                            onChange={e => setNewConsignment({ ...newConsignment, note: e.target.value })}
-                          />
+                            <Input
+                              darkMode={darkMode}
+                              label="Nota"
+                              placeholder="Opcional"
+                              value={newConsignment.note}
+                              onChange={e => setNewConsignment({ ...newConsignment, note: e.target.value })}
+                            />
+                          </div>
                         </div>
                       </div>
 
                       <div className="space-y-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="text-sm font-black">Productos entregados</p>
-                          <Button darkMode={darkMode} onClick={addConsignmentLine} variant="outline" className="h-9 text-xs">
-                            <Plus size={14}/> Agregar producto
-                          </Button>
-                        </div>
-
                         {(newConsignment.lines || []).map((line, index) => {
                           const selectedBatch = getConsignmentBatchById(line.batchId);
                           const availableItems = getConsignmentAvailableItems(line.batchId);
                           const selectedItem = getConsignmentItemById(line.batchId, line.itemId);
                           const qty = parseInt(line.quantity) || 0;
                           const unitPrice = parseFloat(line.unitPrice) || 0;
+                          const value = qty * unitPrice;
                           const estimatedProfit = ((unitPrice - (Number(selectedItem?.costArs) || 0)) * qty);
 
                           return (
-                            <div key={line.id} className={`rounded-2xl border p-4 ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
-                              <div className="flex items-center justify-between gap-3 mb-3">
+                            <div key={line.id} className={`rounded-[1.5rem] overflow-hidden ring-1 ${darkMode ? 'bg-black/12 ring-white/[0.06]' : 'bg-white ring-zinc-200 shadow-sm'}`}>
+                              <div className={`px-4 py-3 flex items-center justify-between gap-3 border-b ${darkMode ? 'border-white/[0.06] bg-white/[0.025]' : 'border-zinc-100 bg-zinc-50/80'}`}>
                                 <div className="flex items-center gap-3 min-w-0">
-                                  <span className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${darkMode ? 'bg-amber-500/10 text-amber-300' : 'bg-amber-100 text-amber-700'}`}>{index + 1}</span>
+                                  <span className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${darkMode ? 'bg-white/[0.055] text-zinc-200' : 'bg-black text-white'}`}>{index + 1}</span>
                                   <div className="min-w-0">
                                     <p className="text-sm font-black truncate">{selectedItem ? `${selectedItem.product} / ${selectedItem.variant || 'Único'}` : 'Producto sin elegir'}</p>
-                                    <p className={`text-[11px] ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{selectedItem ? `Stock disponible: ${selectedItem.currentStock || 0}` : 'Elegí lote y producto'}</p>
+                                    <p className={`text-[11px] ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                      {selectedItem ? `${qty || 0} u. · ${formatMoney(value)}` : 'Seleccioná lote y producto'}
+                                    </p>
                                   </div>
                                 </div>
 
                                 <button
                                   type="button"
                                   onClick={() => removeConsignmentLine(line.id)}
-                                  className={`p-2 rounded-lg transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}
+                                  className={`p-2 rounded-full transition-all ${darkMode ? 'text-zinc-500 hover:text-red-300 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}
                                   title="Quitar producto"
                                 >
-                                  <Trash2 size={16}/>
+                                  <Trash2 size={15}/>
                                 </button>
                               </div>
 
-                              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-end">
-                                <div className="lg:col-span-3">
+                              <div className="p-4 space-y-3">
+                                <div className="grid grid-cols-2 gap-3">
                                   <Select
                                     darkMode={darkMode}
                                     label="Lote"
                                     value={line.batchId}
                                     onChange={e => updateConsignmentLine(line.id, 'batchId', e.target.value)}
                                     options={[
-                                      { value: '', label: '-- Elegir lote activo --' },
+                                      { value: '', label: '-- Lote --' },
                                       ...batches.filter(b => !b.finalizedAt).map(b => ({ value: b.id, label: b.name || 'Sin nombre' }))
                                     ]}
                                   />
-                                </div>
 
-                                <div className="lg:col-span-5">
                                   <Select
                                     darkMode={darkMode}
-                                    label="Producto / modelo"
+                                    label="Producto"
                                     value={line.itemId}
                                     onChange={e => updateConsignmentLine(line.id, 'itemId', e.target.value)}
                                     options={[
-                                      { value: '', label: selectedBatch ? '-- Elegir producto --' : 'Primero elegí un lote' },
+                                      { value: '', label: selectedBatch ? '-- Producto --' : 'Primero lote' },
                                       ...availableItems.map(item => ({
                                         value: item.id,
                                         label: `${item.product || 'Sin producto'} / ${item.variant || 'Único'} · stock ${item.currentStock || 0}`
@@ -4043,18 +4148,16 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                   />
                                 </div>
 
-                                <div className="lg:col-span-1">
+                                <div className="grid grid-cols-2 gap-3">
                                   <Input
                                     darkMode={darkMode}
-                                    label="Cant."
+                                    label="Cantidad"
                                     type="number"
                                     min="1"
                                     value={line.quantity}
                                     onChange={e => updateConsignmentLine(line.id, 'quantity', e.target.value)}
                                   />
-                                </div>
 
-                                <div className="lg:col-span-2">
                                   <Input
                                     darkMode={darkMode}
                                     label="Precio"
@@ -4065,205 +4168,202 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                   />
                                 </div>
 
-                                <div className="lg:col-span-1">
-                                  <div className={`h-10 rounded-xl flex items-center justify-center text-xs font-black ${estimatedProfit >= 0 ? (darkMode ? 'bg-emerald-500/10 text-emerald-300' : 'bg-emerald-50 text-emerald-700') : (darkMode ? 'bg-red-500/10 text-red-300' : 'bg-red-50 text-red-700')}`}>
-                                    {formatMoney(estimatedProfit)}
+                                {selectedItem && (
+                                  <div className={`rounded-2xl px-4 py-3 flex items-center justify-between text-xs font-black ${darkMode ? 'bg-white/[0.028] text-zinc-300' : 'bg-zinc-50 text-zinc-700'}`}>
+                                    <span>Stock {selectedItem.currentStock || 0}</span>
+                                    <span className={estimatedProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatMoney(estimatedProfit)}</span>
                                   </div>
-                                </div>
+                                )}
                               </div>
                             </div>
                           );
                         })}
                       </div>
 
-                      <div className={`rounded-2xl border p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4 ${darkMode ? 'bg-[#101522] border-zinc-800' : 'bg-white border-zinc-200'}`}>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 flex-1">
+                      <div className={`rounded-[1.5rem] p-5 ring-1 ${darkMode ? 'bg-white/[0.028] ring-white/[0.06]' : 'bg-zinc-50 ring-zinc-200'}`}>
+                        <div className="grid grid-cols-4 gap-3 mb-5">
                           <div>
-                            <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Productos</p>
+                            <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Prod.</p>
                             <p className="font-black text-lg">{consignmentDraftSummary.rows}</p>
                           </div>
                           <div>
-                            <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Unidades</p>
+                            <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Unid.</p>
                             <p className="font-black text-lg">{consignmentDraftSummary.units}</p>
                           </div>
                           <div>
-                            <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Por cobrar</p>
+                            <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Cobrar</p>
                             <p className="font-black text-lg">{formatMoney(consignmentDraftSummary.value)}</p>
                           </div>
                           <div>
-                            <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Ganancia</p>
-                            <p className="font-black text-lg text-emerald-500">{formatMoney(consignmentDraftSummary.profit)}</p>
+                            <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Gan.</p>
+                            <p className="font-black text-lg text-emerald-400">{formatMoney(consignmentDraftSummary.profit)}</p>
                           </div>
                         </div>
 
-                        <Button darkMode={darkMode} onClick={handleCreateConsignment} className="h-11 lg:w-auto justify-center">
-                          <Save size={16}/> Guardar entrega
-                        </Button>
+                        <button
+                          onClick={handleCreateConsignment}
+                          className={`w-full h-12 rounded-full font-black text-sm transition-all active:scale-[0.98] ${darkMode ? 'bg-white text-black hover:bg-zinc-200' : 'bg-black text-white hover:bg-zinc-800'}`}
+                        >
+                          Guardar entrega
+                        </button>
                       </div>
-                    </div>
-                  </Card>
-
-                  <div className="xl:col-span-4 space-y-4">
-                    <Card darkMode={darkMode} className="p-5">
-                      <h3 className="font-black text-base mb-3">Cómo funciona</h3>
-                      <div className="space-y-3">
-                        {[
-                          ['Entregás producto', 'Se descuenta del stock, pero no cuenta como venta.'],
-                          ['Te pagan', 'Ahí recién se registra la venta real.'],
-                          ['Te devuelven', 'Vuelve al lote original.'],
-                          ['Se pierde', 'Sale del pendiente y no vuelve al stock.']
-                        ].map((row, idx) => (
-                          <div key={row[0]} className="flex gap-3">
-                            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${darkMode ? 'bg-amber-500/10 text-amber-300' : 'bg-amber-100 text-amber-700'}`}>{idx + 1}</div>
-                            <div>
-                              <p className="text-sm font-black">{row[0]}</p>
-                              <p className={`text-xs mt-0.5 leading-relaxed ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{row[1]}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </Card>
-
-                    <Card darkMode={darkMode} className="p-5">
-                      <h3 className="font-black text-base mb-3">Regla rápida</h3>
-                      <div className={`rounded-2xl p-4 text-sm font-semibold leading-relaxed ${darkMode ? 'bg-[#0a0c10] text-zinc-400' : 'bg-zinc-50 text-zinc-600'}`}>
-                        Entrega = stock afuera. Pago = venta real. Devolución = vuelve al stock. Perdido = pérdida.
-                      </div>
-                    </Card>
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="flex flex-col md:flex-row md:items-end justify-between gap-3">
-                    <div>
-                      <h3 className="text-xl font-black tracking-tight">Clientes con productos afuera</h3>
-                      <p className={`text-sm mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Los detalles quedan cerrados para que la pantalla no se haga infinita.</p>
                     </div>
                   </div>
 
-                  {consignmentsByClient.length === 0 && (
-                    <Card darkMode={darkMode} className="p-12 text-center">
-                      <Package size={42} className="mx-auto mb-4 opacity-40"/>
-                      <p className="text-sm font-medium opacity-60">Todavía no hay productos en consignación.</p>
-                    </Card>
-                  )}
-
-                  {consignmentsByClient.map(client => {
-                    const isOpen = expandedConsignmentClient === client.clientName;
-                    return (
-                      <Card key={client.clientName} darkMode={darkMode} className="p-0 overflow-hidden">
-                        <div className={`p-5 border-b ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-white border-zinc-200'}`}>
-                          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-                            <div className="flex items-start gap-4 min-w-0">
-                              <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${darkMode ? 'bg-amber-500/10 text-amber-300' : 'bg-amber-100 text-amber-700'}`}>
-                                <Users size={22}/>
-                              </div>
-                              <div className="min-w-0">
-                                <h3 className="font-black text-lg truncate">{client.clientName}</h3>
-                                <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
-                                  {client.entries.length} producto(s) · {client.pending} unidades pendientes · {client.paid} pagadas
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs font-bold xl:min-w-[500px]">
-                              <span className={`px-3 py-2 rounded-xl ${darkMode ? 'bg-amber-500/10 text-amber-300' : 'bg-amber-50 text-amber-700'}`}>Por cobrar: {formatMoney(client.valuePending)}</span>
-                              <span className={`px-3 py-2 rounded-xl ${darkMode ? 'bg-emerald-500/10 text-emerald-300' : 'bg-emerald-50 text-emerald-700'}`}>Cobrado: {formatMoney(client.valuePaid)}</span>
-                              <span className={`px-3 py-2 rounded-xl ${darkMode ? 'bg-violet-500/10 text-violet-300' : 'bg-violet-50 text-violet-700'}`}>Ganancia: {formatMoney(client.profitPaid)}</span>
-                            </div>
-
-                            <Button
-                              darkMode={darkMode}
-                              onClick={() => setExpandedConsignmentClient(isOpen ? null : client.clientName)}
-                              variant="outline"
-                              className="h-9 text-xs justify-center xl:w-40"
-                            >
-                              {isOpen ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
-                              {isOpen ? 'Ocultar detalle' : 'Ver detalle'}
-                            </Button>
-                          </div>
+                  <div className={`rounded-[2rem] overflow-hidden ring-1 backdrop-blur-xl shadow-[0_28px_90px_rgba(0,0,0,0.18)] ${darkMode ? 'bg-white/[0.026] ring-white/[0.06]' : 'bg-white/90 ring-zinc-200'}`}>
+                    <div className={`px-6 py-5 border-b ${darkMode ? 'border-white/[0.06]' : 'border-zinc-200'}`}>
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div>
+                          <h3 className="text-2xl font-black tracking-[-0.03em]">Clientes</h3>
+                          <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{consignmentsByClient.length} activo(s)</p>
                         </div>
 
-                        {isOpen && (
-                          <div className={`divide-y max-h-[620px] overflow-y-auto custom-scrollbar ${darkMode ? 'divide-zinc-800 bg-[#0f1115]' : 'divide-zinc-100 bg-white'}`}>
-                            {client.entries.map(entry => {
-                              const pending = Number(entry.quantityPending) || 0;
-                              const paid = Number(entry.quantityPaid) || 0;
-                              const returned = Number(entry.quantityReturned) || 0;
-                              const lost = Number(entry.quantityLost) || 0;
-                              const delivered = Number(entry.quantityDelivered) || 0;
-                              const unitPrice = Number(entry.unitPrice) || 0;
-                              const unitCost = Number(entry.unitCost) || 0;
-                              const isClosed = pending <= 0;
+                        <div className="md:w-80">
+                          <Input
+                            darkMode={darkMode}
+                            placeholder="Buscar cliente..."
+                            value={consignmentSearch}
+                            onChange={e => setConsignmentSearch(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </div>
 
-                              return (
-                                <div key={entry.id} className={`p-5 ${isClosed ? 'opacity-75' : ''}`}>
-                                  <div className="flex flex-col 2xl:flex-row 2xl:items-center justify-between gap-4">
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex flex-wrap items-center gap-2 mb-2">
-                                        <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${isClosed ? (darkMode ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-100 text-zinc-500') : (darkMode ? 'bg-amber-500/10 text-amber-300' : 'bg-amber-50 text-amber-700')}`}>
-                                          {isClosed ? 'Cerrado' : 'Pendiente'}
-                                        </span>
-                                        {entry.dueDate && <span className={`text-[11px] font-bold ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Límite: {safeDateStr(entry.dueDate)}</span>}
+                    <div className={`${darkMode ? 'bg-black/[0.045]' : 'bg-white/90'} max-h-[calc(100vh-275px)] overflow-y-auto custom-scrollbar`}>
+                      {consignmentsByClient.filter(client => String(client.clientName || '').toLowerCase().includes(consignmentSearch.toLowerCase())).length === 0 && (
+                        <div className="p-20 text-center">
+                          <Package size={42} className="mx-auto mb-4 opacity-25"/>
+                          <p className="text-sm font-bold opacity-50">No hay consignaciones cargadas.</p>
+                        </div>
+                      )}
+
+                      <div className={`divide-y ${darkMode ? 'divide-white/[0.06]' : 'divide-zinc-100'}`}>
+                        {consignmentsByClient
+                          .filter(client => String(client.clientName || '').toLowerCase().includes(consignmentSearch.toLowerCase()))
+                          .map(client => {
+                            const isOpen = expandedConsignmentClient === client.clientName;
+                            return (
+                              <div key={client.clientName}>
+                                <div
+                                  className={`p-5 cursor-pointer transition-colors ${darkMode ? 'hover:bg-white/[0.026]' : 'hover:bg-zinc-50'}`}
+                                  onClick={() => setExpandedConsignmentClient(isOpen ? null : client.clientName)}
+                                >
+                                  <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                                    <div className="flex items-center gap-4 min-w-0">
+                                      <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${darkMode ? 'bg-white/[0.035] text-zinc-300 ring-1 ring-white/[0.05]' : 'bg-zinc-50 text-zinc-700 ring-1 ring-zinc-200'}`}>
+                                        <Users size={22}/>
                                       </div>
-
-                                      <div className="font-black text-base">{entry.productName || 'Sin producto'} / {entry.variant || 'Único'}</div>
-                                      <div className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
-                                        {entry.batchName || 'Sin lote'} · Precio {formatMoney(unitPrice)} · Por cobrar {formatMoney(pending * unitPrice)}
+                                      <div className="min-w-0">
+                                        <h3 className="font-black text-xl tracking-[-0.03em] truncate">{client.clientName}</h3>
+                                        <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                          {client.entries.length} producto(s) · {client.pending} pendientes · {client.paid} pagadas
+                                        </p>
                                       </div>
                                     </div>
 
-                                    <div className="grid grid-cols-5 gap-2 text-xs min-w-[360px]">
-                                      <div className={`rounded-xl p-3 ${darkMode ? 'bg-[#0a0c10]' : 'bg-zinc-50'}`}>
-                                        <p className="opacity-50 font-bold uppercase text-[9px]">Entregó</p>
-                                        <p className="font-black">{delivered}</p>
+                                    <div className="grid grid-cols-3 gap-8 text-right xl:min-w-[430px]">
+                                      <div>
+                                        <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Debe</p>
+                                        <p className={`mt-1 text-sm font-black tracking-[-0.02em] ${darkMode ? 'text-amber-300/90' : 'text-amber-700'}`}>{formatMoney(client.valuePending)}</p>
                                       </div>
-                                      <div className={`rounded-xl p-3 ${darkMode ? 'bg-[#0a0c10]' : 'bg-amber-50'}`}>
-                                        <p className="opacity-50 font-bold uppercase text-[9px]">Debe</p>
-                                        <p className="font-black text-amber-500">{pending}</p>
+                                      <div>
+                                        <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Cobrado</p>
+                                        <p className={`mt-1 text-sm font-black tracking-[-0.02em] ${darkMode ? 'text-emerald-300/90' : 'text-emerald-700'}`}>{formatMoney(client.valuePaid)}</p>
                                       </div>
-                                      <div className={`rounded-xl p-3 ${darkMode ? 'bg-[#0a0c10]' : 'bg-emerald-50'}`}>
-                                        <p className="opacity-50 font-bold uppercase text-[9px]">Pagó</p>
-                                        <p className="font-black text-emerald-500">{paid}</p>
-                                      </div>
-                                      <div className={`rounded-xl p-3 ${darkMode ? 'bg-[#0a0c10]' : 'bg-blue-50'}`}>
-                                        <p className="opacity-50 font-bold uppercase text-[9px]">Devolvió</p>
-                                        <p className="font-black text-blue-500">{returned}</p>
-                                      </div>
-                                      <div className={`rounded-xl p-3 ${darkMode ? 'bg-[#0a0c10]' : 'bg-red-50'}`}>
-                                        <p className="opacity-50 font-bold uppercase text-[9px]">Perdió</p>
-                                        <p className="font-black text-red-500">{lost}</p>
+                                      <div>
+                                        <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Ganancia</p>
+                                        <p className={`mt-1 text-sm font-black tracking-[-0.02em] ${darkMode ? 'text-violet-300/90' : 'text-violet-700'}`}>{formatMoney(client.profitPaid)}</p>
                                       </div>
                                     </div>
 
-                                    <div className="flex flex-wrap 2xl:flex-col gap-2 2xl:w-40">
-                                      <Button darkMode={darkMode} disabled={pending <= 0} onClick={() => handleConsignmentPayment(entry)} variant="success" className="h-9 text-xs justify-center">
-                                        <DollarSign size={14}/> Me pagó
-                                      </Button>
-                                      <Button darkMode={darkMode} disabled={pending <= 0} onClick={() => handleConsignmentReturn(entry)} variant="outline" className="h-9 text-xs justify-center">
-                                        <Package size={14}/> Devolvió
-                                      </Button>
-                                      <Button darkMode={darkMode} disabled={pending <= 0} onClick={() => handleConsignmentLost(entry)} variant="danger" className="h-9 text-xs justify-center">
-                                        <XCircle size={14}/> Perdido
-                                      </Button>
-                                      <Button darkMode={darkMode} onClick={() => handleDeleteConsignmentEntry(entry)} variant="outline" className="h-9 text-xs justify-center text-red-500 border-red-500/30 hover:bg-red-500/10">
-                                        <Trash2 size={14}/> Borrar
-                                      </Button>
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); handleDeleteConsignmentClient(client); }}
+                                        className={`h-8 px-3 rounded-full text-xs font-black transition-all ${darkMode ? 'bg-white/5 text-red-300 hover:bg-red-500/15' : 'bg-white text-red-600 hover:bg-red-50 ring-1 ring-zinc-200'}`}
+                                      >
+                                        Borrar cliente
+                                      </button>
+                                      <div className={`flex items-center gap-2 text-xs font-black ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                                        {isOpen ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
+                                        {isOpen ? 'Cerrar' : 'Abrir'}
+                                      </div>
                                     </div>
-                                  </div>
-
-                                  {entry.note && <div className={`text-xs mt-3 italic ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>“{entry.note}”</div>}
-                                  <div className={`mt-3 text-xs ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
-                                    Ganancia pendiente estimada: <strong>{formatMoney(pending * (unitPrice - unitCost))}</strong>
                                   </div>
                                 </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </Card>
-                    );
-                  })}
+
+                                {isOpen && (
+                                  <div className={`${darkMode ? 'bg-black/[0.10]' : 'bg-zinc-50/70'} border-t ${darkMode ? 'border-white/[0.045]' : 'border-zinc-100'}`}>
+                                    {client.entries.map(entry => {
+                                      const pending = Number(entry.quantityPending) || 0;
+                                      const paid = Number(entry.quantityPaid) || 0;
+                                      const returned = Number(entry.quantityReturned) || 0;
+                                      const lost = Number(entry.quantityLost) || 0;
+                                      const delivered = Number(entry.quantityDelivered) || 0;
+                                      const unitPrice = Number(entry.unitPrice) || 0;
+                                      const unitCost = Number(entry.unitCost) || 0;
+                                      const isClosed = pending <= 0;
+
+                                      return (
+                                        <div key={entry.id} className={`p-5 border-b last:border-b-0 ${darkMode ? 'border-white/[0.045]' : 'border-zinc-100'} ${isClosed ? 'opacity-70' : ''}`}>
+                                          <div className="grid grid-cols-1 2xl:grid-cols-12 gap-4 items-center">
+                                            <div className="2xl:col-span-4 min-w-0">
+                                              <div className="font-black text-sm truncate">{entry.productName || 'Sin producto'} / {entry.variant || 'Único'}</div>
+                                              <div className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                                {entry.batchName || 'Sin lote'} · {formatMoney(unitPrice)}
+                                              </div>
+                                            </div>
+
+                                            <div className="2xl:col-span-4 grid grid-cols-5 gap-2 text-xs">
+                                              {[
+                                                ['Ent.', delivered, ''],
+                                                ['Debe', pending, 'text-amber-400'],
+                                                ['Pagó', paid, 'text-emerald-400'],
+                                                ['Dev.', returned, 'text-blue-400'],
+                                                ['Perd.', lost, 'text-red-400']
+                                              ].map(([label, value, color]) => (
+                                                <div key={label} className={`rounded-2xl p-2.5 ${darkMode ? 'bg-white/[0.022]' : 'bg-white/80 shadow-sm shadow-black/5'}`}>
+                                                  <p className={`font-black uppercase text-[9px] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>{label}</p>
+                                                  <p className={`font-black ${color}`}>{value}</p>
+                                                </div>
+                                              ))}
+                                            </div>
+
+                                            <div className="2xl:col-span-2 text-xs">
+                                              <p className={`font-black uppercase text-[9px] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Por cobrar</p>
+                                              <p className="font-black">{formatMoney(pending * unitPrice)}</p>
+                                              <p className={`font-black uppercase text-[9px] mt-2 ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Ganancia</p>
+                                              <p className="font-black text-emerald-400">{formatMoney(pending * (unitPrice - unitCost))}</p>
+                                            </div>
+
+                                            <div className="2xl:col-span-2 grid grid-cols-2 gap-2">
+                                              <button disabled={pending <= 0} onClick={() => handleConsignmentPayment(entry)} className={`h-8 rounded-full text-xs font-black transition-all ${pending <= 0 ? 'opacity-40 cursor-not-allowed' : ''} ${darkMode ? 'bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}>
+                                                Pago
+                                              </button>
+                                              <button disabled={pending <= 0} onClick={() => handleConsignmentReturn(entry)} className={`h-8 rounded-full text-xs font-black transition-all ${pending <= 0 ? 'opacity-40 cursor-not-allowed' : ''} ${darkMode ? 'bg-white/5 text-zinc-300 hover:bg-white/[0.055]' : 'bg-white text-zinc-700 hover:bg-zinc-100 ring-1 ring-zinc-200'}`}>
+                                                Dev.
+                                              </button>
+                                              <button disabled={pending <= 0} onClick={() => handleConsignmentLost(entry)} className={`h-8 rounded-full text-xs font-black transition-all ${pending <= 0 ? 'opacity-40 cursor-not-allowed' : ''} ${darkMode ? 'bg-red-500/15 text-red-300 hover:bg-red-500/25' : 'bg-red-50 text-red-700 hover:bg-red-100'}`}>
+                                                Perdido
+                                              </button>
+                                              <button onClick={() => handleDeleteConsignmentEntry(entry)} className={`h-8 rounded-full text-xs font-black transition-all ${darkMode ? 'bg-white/5 text-red-300 hover:bg-red-500/15' : 'bg-white text-red-600 hover:bg-red-50 ring-1 ring-zinc-200'}`}>
+                                                Borrar
+                                              </button>
+                                            </div>
+                                          </div>
+
+                                          {entry.note && <div className={`text-xs mt-3 italic ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>“{entry.note}”</div>}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
