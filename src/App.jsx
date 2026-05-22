@@ -464,14 +464,13 @@ export default function App() {
     note: ''
   });
 
+  const createConsignmentLine = () => ({ id: Date.now() + Math.random(), batchId: '', itemId: '', quantity: 1, unitPrice: '' });
+
   const [newConsignment, setNewConsignment] = useState({
     clientName: '',
-    batchId: '',
-    itemId: '',
-    quantity: 1,
-    unitPrice: '',
     dueDate: '',
-    note: ''
+    note: '',
+    lines: [createConsignmentLine()]
   });
   
   const [editingItem, setEditingItem] = useState(null);
@@ -502,6 +501,23 @@ export default function App() {
   };
   const removeSaleItem = (id) => {
     setSaleItems(prev => prev.filter(item => item.id !== id));
+  };
+
+
+  const updateConsignmentLine = (id, field, value) => {
+    setNewConsignment(prev => ({
+      ...prev,
+      lines: (prev.lines || []).map(line => line.id === id ? { ...line, [field]: value, ...(field === 'batchId' ? { itemId: '' } : {}) } : line)
+    }));
+  };
+  const addConsignmentLine = () => {
+    setNewConsignment(prev => ({ ...prev, lines: [...(prev.lines || []), createConsignmentLine()] }));
+  };
+  const removeConsignmentLine = (id) => {
+    setNewConsignment(prev => {
+      const lines = (prev.lines || []).filter(line => line.id !== id);
+      return { ...prev, lines: lines.length ? lines : [createConsignmentLine()] };
+    });
   };
 
   useEffect(() => {
@@ -608,17 +624,31 @@ export default function App() {
       return neutralStockEntries.slice(0, 80);
   }, [neutralStockEntries]);
 
-  const consignmentSelectedBatch = useMemo(() => {
-      return batches.find(b => b.id === newConsignment.batchId) || null;
-  }, [batches, newConsignment.batchId]);
+  const getConsignmentBatchById = (batchId) => {
+      return batches.find(b => b.id === batchId) || null;
+  };
 
-  const consignmentAvailableItems = useMemo(() => {
-      return (consignmentSelectedBatch?.items || []).filter(item => (Number(item.currentStock) || 0) > 0);
-  }, [consignmentSelectedBatch]);
+  const getConsignmentAvailableItems = (batchId) => {
+      return ((getConsignmentBatchById(batchId)?.items) || []).filter(item => (Number(item.currentStock) || 0) > 0);
+  };
 
-  const consignmentSelectedItem = useMemo(() => {
-      return consignmentAvailableItems.find(item => item.id === newConsignment.itemId) || null;
-  }, [consignmentAvailableItems, newConsignment.itemId]);
+  const getConsignmentItemById = (batchId, itemId) => {
+      return getConsignmentAvailableItems(batchId).find(item => item.id === itemId) || null;
+  };
+
+  const consignmentDraftSummary = useMemo(() => {
+      return (newConsignment.lines || []).reduce((acc, line) => {
+        const item = getConsignmentItemById(line.batchId, line.itemId);
+        const quantity = Number(line.quantity) || 0;
+        const unitPrice = Number(line.unitPrice) || 0;
+        const unitCost = Number(item?.costArs) || 0;
+        if (line.batchId && line.itemId && quantity > 0) acc.rows += 1;
+        acc.units += quantity;
+        acc.value += unitPrice * quantity;
+        acc.profit += (unitPrice - unitCost) * quantity;
+        return acc;
+      }, { rows: 0, units: 0, value: 0, profit: 0 });
+  }, [newConsignment, batches]);
 
   const consignmentStats = useMemo(() => {
       return consignments.reduce((acc, entry) => {
@@ -1288,66 +1318,98 @@ export default function App() {
 
   const handleCreateConsignment = async () => {
     if (!newConsignment.clientName.trim()) return showToast('Escribí el nombre del cliente/consignatario.', 'error');
-    if (!newConsignment.batchId) return showToast('Elegí el lote de origen.', 'error');
-    if (!newConsignment.itemId) return showToast('Elegí el producto.', 'error');
 
-    const batch = batches.find(b => b.id === newConsignment.batchId);
-    if (!batch) return showToast('Lote no encontrado.', 'error');
+    const validLines = (newConsignment.lines || []).filter(line => line.batchId && line.itemId && (parseInt(line.quantity) || 0) > 0);
+    if (!validLines.length) return showToast('Agregá al menos un producto a la consignación.', 'error');
 
-    const item = (batch.items || []).find(i => i.id === newConsignment.itemId);
-    if (!item) return showToast('Producto no encontrado en el lote.', 'error');
+    const batchMap = new Map();
+    const consignmentEntries = [];
 
-    const quantity = parseInt(newConsignment.quantity) || 0;
-    if (quantity <= 0) return showToast('La cantidad tiene que ser mayor a 0.', 'error');
+    for (const line of validLines) {
+      const batch = batches.find(b => b.id === line.batchId);
+      if (!batch) return showToast('Uno de los lotes seleccionados no existe.', 'error');
 
-    const currentStock = Number(item.currentStock) || 0;
-    if (quantity > currentStock) return showToast(`Stock insuficiente. Disponible: ${currentStock}.`, 'error');
+      const item = (batch.items || []).find(i => i.id === line.itemId);
+      if (!item) return showToast('Uno de los productos seleccionados no existe en su lote.', 'error');
 
-    const unitPrice = parseFloat(newConsignment.unitPrice || 0);
-    if (unitPrice <= 0 || Number.isNaN(unitPrice)) return showToast('Cargá el precio acordado por unidad.', 'error');
+      const quantity = parseInt(line.quantity) || 0;
+      if (quantity <= 0) return showToast('Todas las cantidades tienen que ser mayores a 0.', 'error');
 
-    if (!window.confirm(`Entregar ${quantity} unidad(es) a ${newConsignment.clientName}?\\n\\nEsto descuenta stock del lote, pero NO crea venta todavía.`)) return;
+      const currentStock = Number(item.currentStock) || 0;
+      if (quantity > currentStock) return showToast(`Stock insuficiente para ${item.product || 'producto'} / ${item.variant || 'Único'}. Disponible: ${currentStock}.`, 'error');
 
-    try {
-      const newItems = (batch.items || []).map(i => {
-        if (i.id !== item.id) return i;
-        return { ...i, currentStock: Math.max(0, (Number(i.currentStock) || 0) - quantity) };
-      });
+      const unitPrice = parseFloat(line.unitPrice || 0);
+      if (unitPrice <= 0 || Number.isNaN(unitPrice)) return showToast(`Cargá el precio acordado por unidad para ${item.product || 'producto'} / ${item.variant || 'Único'}.`, 'error');
 
-      await updateDoc(doc(db, 'batches', batch.id), { items: newItems });
+      if (!batchMap.has(batch.id)) {
+        batchMap.set(batch.id, { batch, items: (batch.items || []).map(i => ({ ...i })) });
+      }
 
-      await addDoc(collection(db, 'consignments'), {
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        status: 'active',
-        clientName: newConsignment.clientName.trim(),
+      const batchState = batchMap.get(batch.id);
+      const itemIndex = batchState.items.findIndex(i => i.id === item.id);
+      if (itemIndex === -1) return showToast('No pude preparar uno de los productos para descontar stock.', 'error');
+
+      const preparedItem = batchState.items[itemIndex];
+      const preparedStock = Number(preparedItem.currentStock) || 0;
+      if (quantity > preparedStock) return showToast(`Stock insuficiente en preparación para ${preparedItem.product || 'producto'} / ${preparedItem.variant || 'Único'}.`, 'error');
+      preparedItem.currentStock = Math.max(0, preparedStock - quantity);
+
+      consignmentEntries.push({
         batchId: batch.id,
         batchName: batch.name || 'Sin lote',
         itemId: item.id,
         productName: item.product || 'Sin producto',
         variant: item.variant || 'Único',
-        quantityDelivered: quantity,
-        quantityPending: quantity,
-        quantityPaid: 0,
-        quantityReturned: 0,
-        quantityLost: 0,
+        quantity,
         unitCost: Number(item.costArs) || 0,
-        unitPrice,
-        dueDate: newConsignment.dueDate || '',
-        note: String(newConsignment.note || '').trim()
+        unitPrice
       });
+    }
+
+    const totalUnits = consignmentEntries.reduce((acc, e) => acc + e.quantity, 0);
+    const totalRows = consignmentEntries.length;
+    if (!window.confirm(`Entregar ${totalUnits} unidad(es) en ${totalRows} producto(s) a ${newConsignment.clientName}?
+
+Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
+
+    try {
+      for (const [batchId, batchState] of batchMap.entries()) {
+        await updateDoc(doc(db, 'batches', batchId), { items: batchState.items });
+      }
+
+      const consignmentTicketId = `CONS-${Date.now()}`;
+      for (const entry of consignmentEntries) {
+        await addDoc(collection(db, 'consignments'), {
+          consignmentTicketId,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          status: 'active',
+          clientName: newConsignment.clientName.trim(),
+          batchId: entry.batchId,
+          batchName: entry.batchName,
+          itemId: entry.itemId,
+          productName: entry.productName,
+          variant: entry.variant,
+          quantityDelivered: entry.quantity,
+          quantityPending: entry.quantity,
+          quantityPaid: 0,
+          quantityReturned: 0,
+          quantityLost: 0,
+          unitCost: entry.unitCost,
+          unitPrice: entry.unitPrice,
+          dueDate: newConsignment.dueDate || '',
+          note: String(newConsignment.note || '').trim()
+        });
+      }
 
       setNewConsignment({
         clientName: '',
-        batchId: '',
-        itemId: '',
-        quantity: 1,
-        unitPrice: '',
         dueDate: '',
-        note: ''
+        note: '',
+        lines: [createConsignmentLine()]
       });
 
-      showToast('Entrega a consignación registrada. No se creó venta.', 'success');
+      showToast(`Entrega a consignación registrada (${totalRows} productos). No se creó venta.`, 'success');
     } catch (e) {
       showToast('Error creando consignación: ' + e.message, 'error');
     }
@@ -3527,65 +3589,14 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-end">
-                    <div className="lg:col-span-3">
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-end mb-4">
+                    <div className="lg:col-span-4">
                       <Input
                         darkMode={darkMode}
                         label="Cliente / Consignatario"
                         placeholder="Ej: Juan, local, revendedor..."
                         value={newConsignment.clientName}
                         onChange={e => setNewConsignment({ ...newConsignment, clientName: e.target.value })}
-                      />
-                    </div>
-
-                    <div className="lg:col-span-3">
-                      <Select
-                        darkMode={darkMode}
-                        label="Lote de origen"
-                        value={newConsignment.batchId}
-                        onChange={e => setNewConsignment({ ...newConsignment, batchId: e.target.value, itemId: '' })}
-                        options={[
-                          { value: '', label: '-- Elegir lote activo --' },
-                          ...batches.filter(b => !b.finalizedAt).map(b => ({ value: b.id, label: b.name || 'Sin nombre' }))
-                        ]}
-                      />
-                    </div>
-
-                    <div className="lg:col-span-4">
-                      <Select
-                        darkMode={darkMode}
-                        label="Producto"
-                        value={newConsignment.itemId}
-                        onChange={e => setNewConsignment({ ...newConsignment, itemId: e.target.value })}
-                        options={[
-                          { value: '', label: consignmentSelectedBatch ? '-- Elegir producto --' : 'Primero elegí un lote' },
-                          ...consignmentAvailableItems.map(item => ({
-                            value: item.id,
-                            label: `${item.product || 'Sin producto'} / ${item.variant || 'Único'} · stock ${item.currentStock || 0}`
-                          }))
-                        ]}
-                      />
-                    </div>
-
-                    <div className="lg:col-span-1">
-                      <Input
-                        darkMode={darkMode}
-                        label="Cant."
-                        type="number"
-                        min="1"
-                        value={newConsignment.quantity}
-                        onChange={e => setNewConsignment({ ...newConsignment, quantity: e.target.value })}
-                      />
-                    </div>
-
-                    <div className="lg:col-span-1">
-                      <Input
-                        darkMode={darkMode}
-                        label="Precio"
-                        type="number"
-                        symbol="$"
-                        value={newConsignment.unitPrice}
-                        onChange={e => setNewConsignment({ ...newConsignment, unitPrice: e.target.value })}
                       />
                     </div>
 
@@ -3599,7 +3610,7 @@ export default function App() {
                       />
                     </div>
 
-                    <div className="lg:col-span-7">
+                    <div className="lg:col-span-5">
                       <Input
                         darkMode={darkMode}
                         label="Nota opcional"
@@ -3608,36 +3619,145 @@ export default function App() {
                         onChange={e => setNewConsignment({ ...newConsignment, note: e.target.value })}
                       />
                     </div>
-
-                    <div className="lg:col-span-2">
-                      <Button darkMode={darkMode} onClick={handleCreateConsignment} className="w-full h-10">
-                        <Save size={16}/> Crear entrega
-                      </Button>
-                    </div>
                   </div>
 
-                  {consignmentSelectedItem && (
-                    <div className={`mt-5 grid grid-cols-1 md:grid-cols-4 gap-3 rounded-xl border p-4 ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+                  <div className="space-y-3">
+                    {(newConsignment.lines || []).map((line, index) => {
+                      const selectedBatch = getConsignmentBatchById(line.batchId);
+                      const availableItems = getConsignmentAvailableItems(line.batchId);
+                      const selectedItem = getConsignmentItemById(line.batchId, line.itemId);
+                      const estimatedProfit = ((parseFloat(line.unitPrice || 0) - (Number(selectedItem?.costArs) || 0)) * (parseInt(line.quantity) || 0));
+
+                      return (
+                        <div key={line.id} className={`rounded-2xl border p-4 ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+                          <div className="flex items-center justify-between gap-3 mb-3">
+                            <div className="flex items-center gap-2">
+                              <span className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-black ${darkMode ? 'bg-amber-500/10 text-amber-300' : 'bg-amber-100 text-amber-700'}`}>{index + 1}</span>
+                              <p className="text-sm font-bold">Producto a consignación</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeConsignmentLine(line.id)}
+                              className={`p-2 rounded-lg transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}
+                              title="Quitar producto"
+                            >
+                              <Trash2 size={16}/>
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-end">
+                            <div className="lg:col-span-3">
+                              <Select
+                                darkMode={darkMode}
+                                label="Lote de origen"
+                                value={line.batchId}
+                                onChange={e => updateConsignmentLine(line.id, 'batchId', e.target.value)}
+                                options={[
+                                  { value: '', label: '-- Elegir lote activo --' },
+                                  ...batches.filter(b => !b.finalizedAt).map(b => ({ value: b.id, label: b.name || 'Sin nombre' }))
+                                ]}
+                              />
+                            </div>
+
+                            <div className="lg:col-span-5">
+                              <Select
+                                darkMode={darkMode}
+                                label="Producto"
+                                value={line.itemId}
+                                onChange={e => updateConsignmentLine(line.id, 'itemId', e.target.value)}
+                                options={[
+                                  { value: '', label: selectedBatch ? '-- Elegir producto --' : 'Primero elegí un lote' },
+                                  ...availableItems.map(item => ({
+                                    value: item.id,
+                                    label: `${item.product || 'Sin producto'} / ${item.variant || 'Único'} · stock ${item.currentStock || 0}`
+                                  }))
+                                ]}
+                              />
+                            </div>
+
+                            <div className="lg:col-span-1">
+                              <Input
+                                darkMode={darkMode}
+                                label="Cant."
+                                type="number"
+                                min="1"
+                                value={line.quantity}
+                                onChange={e => updateConsignmentLine(line.id, 'quantity', e.target.value)}
+                              />
+                            </div>
+
+                            <div className="lg:col-span-2">
+                              <Input
+                                darkMode={darkMode}
+                                label="Precio"
+                                type="number"
+                                symbol="$"
+                                value={line.unitPrice}
+                                onChange={e => updateConsignmentLine(line.id, 'unitPrice', e.target.value)}
+                              />
+                            </div>
+
+                            <div className="lg:col-span-1">
+                              <Button darkMode={darkMode} onClick={addConsignmentLine} variant="outline" className="w-full h-10">
+                                <Plus size={16}/>
+                              </Button>
+                            </div>
+                          </div>
+
+                          {selectedItem && (
+                            <div className={`mt-3 grid grid-cols-1 md:grid-cols-4 gap-3 rounded-xl border p-3 ${darkMode ? 'bg-[#0f1115] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                              <div>
+                                <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Producto elegido</p>
+                                <p className="font-bold text-sm mt-1">{selectedItem.product} / {selectedItem.variant || 'Único'}</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Stock disponible</p>
+                                <p className="font-bold text-sm mt-1">{selectedItem.currentStock || 0} unidades</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Costo unitario</p>
+                                <p className="font-bold text-sm mt-1">{formatMoney(selectedItem.costArs || 0)}</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Ganancia estimada</p>
+                                <p className="font-black text-sm mt-1 text-emerald-500">{formatMoney(estimatedProfit)}</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className={`mt-5 rounded-2xl border p-4 ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       <div>
-                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Producto elegido</p>
-                        <p className="font-bold text-sm mt-1">{consignmentSelectedItem.product} / {consignmentSelectedItem.variant || 'Único'}</p>
+                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Productos cargados</p>
+                        <p className="font-black text-lg mt-1">{consignmentDraftSummary.rows}</p>
                       </div>
                       <div>
-                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Stock disponible</p>
-                        <p className="font-bold text-sm mt-1">{consignmentSelectedItem.currentStock || 0} unidades</p>
+                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Unidades</p>
+                        <p className="font-black text-lg mt-1">{consignmentDraftSummary.units}</p>
                       </div>
                       <div>
-                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Costo unitario</p>
-                        <p className="font-bold text-sm mt-1">{formatMoney(consignmentSelectedItem.costArs || 0)}</p>
+                        <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Valor potencial</p>
+                        <p className="font-black text-lg mt-1">{formatMoney(consignmentDraftSummary.value)}</p>
                       </div>
                       <div>
                         <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Ganancia estimada</p>
-                        <p className="font-black text-sm mt-1 text-emerald-500">
-                          {formatMoney(((parseFloat(newConsignment.unitPrice || 0) - (Number(consignmentSelectedItem.costArs) || 0)) * (parseInt(newConsignment.quantity) || 0)))}
-                        </p>
+                        <p className="font-black text-lg mt-1 text-emerald-500">{formatMoney(consignmentDraftSummary.profit)}</p>
                       </div>
                     </div>
-                  )}
+
+                    <div className="mt-4 flex flex-col sm:flex-row gap-3">
+                      <Button darkMode={darkMode} onClick={addConsignmentLine} variant="outline" className="sm:w-auto h-10">
+                        <Plus size={16}/> Agregar otro producto
+                      </Button>
+                      <Button darkMode={darkMode} onClick={handleCreateConsignment} className="sm:ml-auto h-10">
+                        <Save size={16}/> Crear entrega múltiple
+                      </Button>
+                    </div>
+                  </div>
                 </Card>
 
                 <div className="space-y-5">

@@ -105,6 +105,112 @@ const normalizarParaComparar = (texto) => {
         .replace(/\s+/g, " ");          
 };
 
+// ==========================================
+// PARSER NUEVO WHATSAPP (bloques humanos)
+// Mantiene intacto el formato viejo VENTA|... / NEUTRO|...
+// ==========================================
+const limpiarNumero = (texto) => {
+    return parseFloat(String(texto ?? "").replace(/[^0-9,-]+/g, "").replace(",", ".")) || 0;
+};
+
+const normalizarCampoMensaje = (key) => {
+    const k = normalizarParaComparar(key).trim();
+    const aliases = {
+        "producto": "producto", "modelo": "producto", "marca": "producto", "prod": "producto",
+        "precio": "precio", "valor": "precio", "precio unitario": "precio", "unitario": "precio",
+        "sabor": "variante", "variante": "variante", "gusto": "variante",
+        "cantidad": "cantidad", "cant": "cantidad", "unidades": "cantidad", "unidad": "cantidad",
+        "cliente": "cliente", "nombre": "cliente", "consignatario": "cliente",
+        "tipo cliente": "tipoCliente", "cliente tipo": "tipoCliente", "estado cliente": "tipoCliente", "origen cliente": "tipoCliente",
+        "canal": "canal", "origen": "canal",
+        "fecha": "fecha", "dia": "fecha",
+        "fecha limite": "fechaLimite", "limite": "fechaLimite", "vencimiento": "fechaLimite",
+        "accion": "accion", "acción": "accion", "movimiento": "accion",
+        "nota": "nota", "detalle": "nota", "obs": "nota", "observacion": "nota", "observación": "nota",
+        "motivo": "motivo", "vendedor": "vendedor"
+    };
+    return aliases[k] || k;
+};
+
+const detectarTipoMensajeNuevo = (linea) => {
+    const t = normalizarParaComparar(linea).trim();
+    if (["venta", "vender"].includes(t)) return "VENTA";
+    if (["mayorista", "mayor", "revendedor", "mayoreo"].includes(t)) return "MAYORISTA";
+    if (["neutro", "neutral", "stock neutro"].includes(t)) return "NEUTRO";
+    if (["consignacion", "consignación", "consigna", "cons"].includes(t)) return "CONSIGNACION";
+    return null;
+};
+
+const normalizarTipoCliente = (value) => {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "Frecuente";
+    const v = normalizarParaComparar(raw);
+    if (["publicidad", "publi", "ads", "ad", "anuncio", "anuncios", "pauta", "pago", "paid", "nuevo publicidad", "nuevo por publicidad"].includes(v)) return "Nuevo - Publicidad";
+    if (["organico", "orgánico", "org", "ig", "instagram", "instagram organico", "instagram orgánico", "nuevo organico", "nuevo orgánico"].includes(v)) return "Nuevo - Organico";
+    if (["si", "sí", "true", "nuevo", "yes", "1"].includes(v)) return "Nuevo - Organico";
+    return "Frecuente";
+};
+
+const parseItemCompacto = (linea) => {
+    const limpia = String(linea || "")
+        .replace(/[^\w\s|\/\-\+&.áéíóúñüÁÉÍÓÚÑÜ]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    if (!limpia) return null;
+    const match = limpia.match(/^(.+?)(?:\s*(?:\||-|x)\s*|\s+)(\d+)\s*$/i);
+    if (!match) return null;
+    const variante = String(match[1] || "").trim();
+    const cantidad = parseInt(match[2]) || 0;
+    if (!variante || cantidad <= 0) return null;
+    return { variante, cantidad };
+};
+
+const parseMensajeNuevo = (textoOriginal) => {
+    const lineas = String(textoOriginal || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (!lineas.length) return null;
+    if (lineas[0].includes("|")) return null;
+    const tipo = detectarTipoMensajeNuevo(lineas[0]);
+    if (!tipo) return null;
+    const general = {};
+    const items = [];
+    let productoBase = "";
+    let precioBase = "";
+    let itemActual = null;
+    const guardarItemActual = () => {
+        if (!itemActual) return;
+        const tieneDatos = itemActual.producto || itemActual.variante || itemActual.cantidad || itemActual.precio;
+        const esSoloBase = itemActual.producto && !itemActual.variante && !itemActual.cantidad;
+        if (tieneDatos && !esSoloBase) items.push(itemActual);
+        itemActual = null;
+    };
+    for (let i = 1; i < lineas.length; i++) {
+        const linea = lineas[i];
+        const idx = linea.indexOf(":");
+        if (idx === -1) {
+            const compacto = parseItemCompacto(linea);
+            if (compacto && productoBase) items.push({ producto: productoBase, variante: compacto.variante, cantidad: compacto.cantidad, precio: precioBase });
+            else if (linea) general.nota = general.nota ? `${general.nota} | ${linea}` : linea;
+            continue;
+        }
+        const key = normalizarCampoMensaje(linea.slice(0, idx).trim());
+        const value = linea.slice(idx + 1).trim();
+        if (key === "producto") { guardarItemActual(); productoBase = value; itemActual = { producto: value }; continue; }
+        if (key === "precio") { precioBase = value; if (!itemActual) itemActual = { producto: productoBase }; itemActual.precio = value; continue; }
+        if (["variante", "cantidad"].includes(key)) { if (!itemActual) itemActual = { producto: productoBase, precio: precioBase }; itemActual[key] = value; continue; }
+        general[key] = value;
+    }
+    guardarItemActual();
+    const parsedItems = items.map((item, index) => ({ producto: String(item.producto || "").trim(), variante: String(item.variante || "").trim(), cantidad: parseInt(item.cantidad) || 0, precio: limpiarNumero(item.precio), index: index + 1 })).filter(item => item.producto && item.variante && item.cantidad > 0);
+    return { tipo, general, items: parsedItems };
+};
+
+const numeroMeta = (numeroRemitente) => {
+    let numeroParaMeta = numeroRemitente;
+    if (numeroParaMeta.startsWith("549") && numeroParaMeta.length === 13) numeroParaMeta = numeroParaMeta.replace(/^549/, "54");
+    return numeroParaMeta;
+};
+
+
 exports.webhook = functions.https.onRequest(async (req, res) => {
     if (req.method === "GET") {
         if (req.query["hub.verify_token"] === VERIFY_TOKEN) {
@@ -128,6 +234,18 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                 } 
 
                 console.log(`📩 Mensaje recibido de ${numeroRemitente}: ${textoOriginal}`);
+
+                const mensajeNuevo = parseMensajeNuevo(textoOriginal);
+                if (mensajeNuevo) {
+                    const resultadoNuevo = await procesarMensajeNuevoWhatsapp(mensajeNuevo, numeroRemitente, fechaHoySheet, textoOriginal);
+                    if (resultadoNuevo && resultadoNuevo.exito === false) {
+                        await enviarMensajeWhatsApp(numeroMeta(numeroRemitente), resultadoNuevo.error_msg);
+                        await registrarEnSheet("Intentos", [fechaHoySheet, numeroRemitente, textoOriginal, resultadoNuevo.error_msg]);
+                    } else if (resultadoNuevo && resultadoNuevo.mensaje) {
+                        await enviarMensajeWhatsApp(numeroMeta(numeroRemitente), resultadoNuevo.mensaje);
+                    }
+                    return res.sendStatus(200);
+                }
 
                 const lineas = textoOriginal.split('\n');
 
@@ -269,6 +387,234 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
     }
 });
 
+
+
+// ==========================================
+// PROCESADOR DEL FORMATO NUEVO
+// Usa las funciones viejas cuando conviene. Solo agrega lo necesario.
+// ==========================================
+async function procesarMensajeNuevoWhatsapp(mensaje, numeroRemitente, fechaHoySheet, textoOriginal) {
+    const { tipo, general, items } = mensaje;
+    if (!items.length) return { exito: false, error_msg: "❌ No encontré productos válidos para registrar." };
+    const vendedor = general.vendedor || "028 Import";
+    const canal = general.canal || "Whatsapp";
+    const fecha = general.fecha || "hoy";
+    const tipoCliente = normalizarTipoCliente(general.tipoCliente ?? "");
+    const esRevendedor = tipo === "MAYORISTA";
+    const ticketIdGrupo = Date.now().toString();
+    let total = 0;
+    let unidades = 0;
+    if (tipo === "VENTA" || tipo === "MAYORISTA") {
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (!item.precio || item.precio <= 0) return { exito: false, error_msg: `❌ Falta precio en ${item.producto} (${item.variante}).` };
+            const costoEnvio = i === 0 ? limpiarNumero(general.envioCosto || 0) : 0;
+            const cobroEnvio = i === 0 ? limpiarNumero(general.envioCobro || 0) : 0;
+            const r = await procesarVenta(item.producto, item.variante, item.cantidad, item.precio, fecha, costoEnvio, cobroEnvio, esRevendedor, tipoCliente, vendedor, ticketIdGrupo, canal);
+            if (r && r.exito === false) return r;
+            total += item.precio * item.cantidad + (i === 0 ? (cobroEnvio || 0) : 0);
+            unidades += item.cantidad;
+            await registrarEnSheet(tipo === "MAYORISTA" ? "Mayorista" : "Ventas", [fechaHoySheet, numeroRemitente, item.producto, item.variante, item.cantidad, item.precio, `ÉXITO (${vendedor})`, tipoCliente]);
+        }
+        return { exito: true, mensaje: `✅ *${tipo === "MAYORISTA" ? "Mayorista" : "Venta"} registrada*\n\nProductos: *${items.length}*\nUnidades: *${unidades}*\nTotal aprox: *$${total}*\nCliente: *${tipoCliente}*` };
+    }
+    if (tipo === "NEUTRO") {
+        const motivo = general.motivo || general.accion || "Venta neutra";
+        for (const item of items) {
+            if (!item.precio || item.precio <= 0) return { exito: false, error_msg: `❌ Falta precio en ${item.producto} (${item.variante}).` };
+            const r = await procesarStockNeutro(item.producto, item.variante, item.cantidad, item.precio, motivo, general.nota || "", vendedor);
+            if (r && r.exito === false) return r;
+            total += item.precio * item.cantidad;
+            unidades += item.cantidad;
+            await registrarEnSheet("Neutro", [fechaHoySheet, numeroRemitente, item.producto, item.variante, item.cantidad, item.precio, motivo, `ÉXITO (${vendedor})`]);
+        }
+        return { exito: true, mensaje: `✅ *Neutro registrado*\n\nProductos: *${items.length}*\nUnidades: *${unidades}*\nTotal aprox: *$${total}*` };
+    }
+    if (tipo === "CONSIGNACION") {
+        const cliente = String(general.cliente || "").trim();
+        if (!cliente) return { exito: false, error_msg: "❌ En consignación falta el cliente. Ej: cliente: Juan" };
+        const accion = normalizarParaComparar(general.accion || "entrega");
+        if (["entrega", "entregar", "dejo", "dejar"].includes(accion)) {
+            const consignmentTicketId = `CONS-${Date.now()}`;
+            for (const item of items) {
+                if (!item.precio || item.precio <= 0) return { exito: false, error_msg: `❌ Falta precio acordado en ${item.producto} (${item.variante}).` };
+                const r = await procesarConsignacionEntregaItem(cliente, item, general.fechaLimite || "", general.nota || "", consignmentTicketId, tipoCliente);
+                if (r && r.exito === false) return r;
+                unidades += item.cantidad;
+                total += item.precio * item.cantidad;
+            }
+            await registrarEnSheet("Consignacion", [fechaHoySheet, numeroRemitente, cliente, "entrega", items.length, unidades, total, "ÉXITO"]);
+            return { exito: true, mensaje: `✅ *Consignación entregada*\n\nCliente: *${cliente}*\nProductos: *${items.length}*\nUnidades: *${unidades}*\nValor potencial: *$${total}*\n\nNo se creó venta.` };
+        }
+        if (["pago", "pagar", "cobro", "cobrar", "liquidacion", "liquidar", "liquidación"].includes(accion)) {
+            const ticketIdPago = `CONS-PAGO-${Date.now()}`;
+            for (const item of items) {
+                const r = await procesarConsignacionPagoItem(cliente, item, fecha, vendedor, ticketIdPago, tipoCliente);
+                if (r && r.exito === false) return r;
+                unidades += item.cantidad;
+                total += r.total || 0;
+            }
+            await registrarEnSheet("ConsignacionPagos", [fechaHoySheet, numeroRemitente, cliente, "pago", items.length, unidades, total, "ÉXITO"]);
+            return { exito: true, mensaje: `✅ *Pago de consignación registrado*\n\nCliente: *${cliente}*\nProductos: *${items.length}*\nUnidades: *${unidades}*\nTotal: *$${total}*` };
+        }
+        if (["devolucion", "devolver", "devuelve", "devuelto", "devolución"].includes(accion)) {
+            for (const item of items) {
+                const r = await procesarConsignacionDevolucionItem(cliente, item, general.nota || "");
+                if (r && r.exito === false) return r;
+                unidades += item.cantidad;
+            }
+            await registrarEnSheet("ConsignacionDevoluciones", [fechaHoySheet, numeroRemitente, cliente, "devolucion", items.length, unidades, "ÉXITO"]);
+            return { exito: true, mensaje: `✅ *Devolución registrada*\n\nCliente: *${cliente}*\nProductos: *${items.length}*\nUnidades devueltas: *${unidades}*` };
+        }
+        if (["perdido", "perdida", "perder", "perdio", "perdió"].includes(accion)) {
+            for (const item of items) {
+                const r = await procesarConsignacionPerdidoItem(cliente, item, general.nota || "");
+                if (r && r.exito === false) return r;
+                unidades += item.cantidad;
+            }
+            await registrarEnSheet("ConsignacionPerdidos", [fechaHoySheet, numeroRemitente, cliente, "perdido", items.length, unidades, "ÉXITO"]);
+            return { exito: true, mensaje: `✅ *Pérdida registrada*\n\nCliente: *${cliente}*\nProductos: *${items.length}*\nUnidades: *${unidades}*` };
+        }
+        return { exito: false, error_msg: `❌ Acción de consignación no reconocida: ${general.accion}. Usá entrega, pago, devolucion o perdido.` };
+    }
+    return { exito: false, error_msg: "❌ Tipo de mensaje no reconocido." };
+}
+
+async function descontarStockParaConsignacion(userProducto, userVariante, cantidad) {
+    const pBuscar = normalizarParaComparar(userProducto);
+    const vBuscar = normalizarParaComparar(userVariante);
+    const snapshot = await db.collection("batches").orderBy("createdAt", "asc").get();
+    let productoEncontrado = false;
+    let stockDisponible = 0;
+    for (const docSnap of snapshot.docs) {
+        const batchData = docSnap.data();
+        if (batchData.finalizedAt) continue;
+        const items = batchData.items || [];
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            const productMatches = esParecido(pBuscar, normalizarParaComparar(item.product));
+            const variantMatches = esParecido(vBuscar, normalizarParaComparar(item.variant));
+            if (productMatches && variantMatches) {
+                productoEncontrado = true;
+                stockDisponible = Number(item.currentStock) || 0;
+                if (stockDisponible < cantidad) continue;
+                items[i] = { ...item, currentStock: stockDisponible - cantidad };
+                await docSnap.ref.update({ items });
+                return { exito: true, batchId: docSnap.id, batchName: batchData.name || "Venta por WhatsApp", itemId: item.id, productName: item.product || userProducto, variant: item.variant || userVariante, unitCost: Number(item.costArs) || 0 };
+            }
+        }
+    }
+    if (!productoEncontrado) return { exito: false, error_msg: `⚠️ No encontré *${userProducto}* (${userVariante}) en stock.` };
+    return { exito: false, error_msg: `🛑 Stock insuficiente de *${userProducto}* (${userVariante}). Disponible: ${stockDisponible}.` };
+}
+
+async function procesarConsignacionEntregaItem(cliente, item, fechaLimite, nota, consignmentTicketId, tipoCliente) {
+    const stock = await descontarStockParaConsignacion(item.producto, item.variante, item.cantidad);
+    if (!stock.exito) return stock;
+    const now = new Date().toISOString();
+    await db.collection("consignments").add({
+        consignmentTicketId, createdAt: now, updatedAt: now, status: "active", clientName: cliente, clientType: tipoCliente || "Frecuente",
+        batchId: stock.batchId, batchName: stock.batchName, itemId: stock.itemId, productName: stock.productName, variant: stock.variant,
+        quantityDelivered: item.cantidad, quantityPending: item.cantidad, quantityPaid: 0, quantityReturned: 0, quantityLost: 0,
+        unitCost: stock.unitCost, unitPrice: item.precio, dueDate: fechaLimite || "", note: nota || ""
+    });
+    return { exito: true };
+}
+
+async function buscarConsignacionesPendientes(cliente, itemPedido) {
+    const snap = await db.collection("consignments").orderBy("createdAt", "asc").get();
+    const clienteBuscar = normalizarParaComparar(cliente);
+    const pBuscar = normalizarParaComparar(itemPedido.producto);
+    const vBuscar = normalizarParaComparar(itemPedido.variante);
+    let restante = itemPedido.cantidad;
+    let encontro = false;
+    let disponible = 0;
+    const consumos = [];
+    for (const docSnap of snap.docs) {
+        if (restante <= 0) break;
+        const entry = { id: docSnap.id, ref: docSnap.ref, ...docSnap.data() };
+        const pending = Number(entry.quantityPending) || 0;
+        if (pending <= 0) continue;
+        const matchCliente = esParecido(clienteBuscar, normalizarParaComparar(entry.clientName)) || esParecido(normalizarParaComparar(entry.clientName), clienteBuscar);
+        const matchProd = esParecido(pBuscar, normalizarParaComparar(entry.productName));
+        const matchVar = esParecido(vBuscar, normalizarParaComparar(entry.variant));
+        if (matchCliente && matchProd && matchVar) {
+            encontro = true;
+            disponible += pending;
+            const take = Math.min(pending, restante);
+            consumos.push({ entry, quantity: take });
+            restante -= take;
+        }
+    }
+    if (!encontro) return { exito: false, error_msg: `⚠️ No encontré consignación activa para *${cliente}* con *${itemPedido.producto}* (${itemPedido.variante}).` };
+    if (restante > 0) return { exito: false, error_msg: `🛑 Consignación insuficiente. Pendiente disponible: ${disponible}, pedido: ${itemPedido.cantidad}.` };
+    return { exito: true, consumos };
+}
+
+async function procesarConsignacionPagoItem(cliente, itemPedido, fechaManual, vendedor, ticketIdPago, tipoCliente) {
+    const buscado = await buscarConsignacionesPendientes(cliente, itemPedido);
+    if (!buscado.exito) return buscado;
+    let total = 0;
+    let fechaFinalVenta = new Date().toISOString();
+    if (fechaManual && String(fechaManual).trim().toLowerCase() !== "hoy") {
+        const partesF = String(fechaManual).split(/[\/\-]/);
+        if (partesF.length >= 2) {
+            const dia = parseInt(partesF[0]); const mes = parseInt(partesF[1]) - 1; const anio = partesF[2] ? parseInt(partesF[2]) : new Date().getFullYear();
+            const fechaCustom = new Date(anio, mes, dia, 12, 0, 0);
+            if (!isNaN(fechaCustom.getTime())) fechaFinalVenta = fechaCustom.toISOString();
+        }
+    }
+    for (const c of buscado.consumos) {
+        const entry = c.entry;
+        const unitPrice = itemPedido.precio && itemPedido.precio > 0 ? itemPedido.precio : (Number(entry.unitPrice) || 0);
+        const subtotal = unitPrice * c.quantity;
+        total += subtotal;
+        await db.collection("sales").add({
+            ticketId: ticketIdPago, createdAt: new Date().toISOString(), date: fechaFinalVenta,
+            batchId: entry.batchId, batchName: entry.batchName, itemId: entry.itemId, productName: entry.productName, variant: entry.variant,
+            quantity: c.quantity, unitPrice, totalSaleRaw: subtotal, costArsAtSale: Number(entry.unitCost) || 0, shippingCostArs: 0,
+            source: "Consignación", consignmentId: entry.id, consignmentClient: cliente, isReseller: true, isNewClient: tipoCliente || "Frecuente", seller: vendedor || "028 Import"
+        });
+        const pending = Math.max(0, (Number(entry.quantityPending) || 0) - c.quantity);
+        await entry.ref.update({ quantityPending: pending, quantityPaid: (Number(entry.quantityPaid) || 0) + c.quantity, status: pending <= 0 ? "closed" : "active", updatedAt: new Date().toISOString(), lastPaidAt: new Date().toISOString() });
+    }
+    return { exito: true, total };
+}
+
+async function procesarConsignacionDevolucionItem(cliente, itemPedido, nota) {
+    const buscado = await buscarConsignacionesPendientes(cliente, itemPedido);
+    if (!buscado.exito) return buscado;
+    const returnsByBatch = {};
+    for (const c of buscado.consumos) {
+        const entry = c.entry;
+        const pending = Math.max(0, (Number(entry.quantityPending) || 0) - c.quantity);
+        await entry.ref.update({ quantityPending: pending, quantityReturned: (Number(entry.quantityReturned) || 0) + c.quantity, status: pending <= 0 ? "closed" : "active", updatedAt: new Date().toISOString(), returnNote: nota || "" });
+        if (entry.batchId && entry.itemId) {
+            if (!returnsByBatch[entry.batchId]) returnsByBatch[entry.batchId] = {};
+            returnsByBatch[entry.batchId][entry.itemId] = (returnsByBatch[entry.batchId][entry.itemId] || 0) + c.quantity;
+        }
+    }
+    for (const batchId of Object.keys(returnsByBatch)) {
+        const batchDoc = await db.collection("batches").doc(batchId).get();
+        if (!batchDoc.exists) continue;
+        const batchData = batchDoc.data();
+        const returns = returnsByBatch[batchId];
+        const newItems = (batchData.items || []).map(item => ({ ...item, currentStock: (Number(item.currentStock) || 0) + (Number(returns[item.id]) || 0) }));
+        await batchDoc.ref.update({ items: newItems, finalizedAt: admin.firestore.FieldValue.delete() });
+    }
+    return { exito: true };
+}
+
+async function procesarConsignacionPerdidoItem(cliente, itemPedido, nota) {
+    const buscado = await buscarConsignacionesPendientes(cliente, itemPedido);
+    if (!buscado.exito) return buscado;
+    for (const c of buscado.consumos) {
+        const entry = c.entry;
+        const pending = Math.max(0, (Number(entry.quantityPending) || 0) - c.quantity);
+        await entry.ref.update({ quantityPending: pending, quantityLost: (Number(entry.quantityLost) || 0) + c.quantity, status: pending <= 0 ? "closed" : "active", updatedAt: new Date().toISOString(), lostNote: nota || "" });
+    }
+    return { exito: true };
+}
 
 // ==========================================
 // RESÚMENES AUTOMÁTICOS
@@ -462,7 +808,7 @@ async function procesarStockNeutro(userProducto, userVariante, cantARestar, prec
 // ==========================================
 // FUNCIÓN PROCESAR VENTA
 // ==========================================
-async function procesarVenta(userProducto, userVariante, cantARestar, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor) {
+async function procesarVenta(userProducto, userVariante, cantARestar, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor, ticketIdManual = null, source = "Whatsapp") {
     if (isNaN(cantARestar) || cantARestar <= 0) return { exito: false, error_msg: "❌ La cantidad ingresada no es válida." };
 
     const pBuscar = normalizarParaComparar(userProducto);
@@ -545,7 +891,7 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
 
     if (itemsActualizados) {
         const totalVentaCalculado = (precioUnitario * cantARestar) + precioEnvioCliente;
-        const ticketIdGenerado = Date.now().toString(); 
+        const ticketIdGenerado = ticketIdManual || Date.now().toString(); 
         const fechaCreacionReal = new Date().toISOString(); 
 
         await db.collection("sales").add({
@@ -560,7 +906,7 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
             productName: nombreOficial, 
             quantity: cantARestar,
             shippingCostArs: costoEnvioMio, 
-            source: "Whatsapp",
+            source: source || "Whatsapp",
             ticketId: ticketIdGenerado,     
             totalSaleRaw: totalVentaCalculado, 
             unitPrice: precioUnitario,
