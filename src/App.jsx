@@ -918,6 +918,7 @@ export default function App() {
         const clientKey = String(s.clientName || 'Sin cliente').trim().toLowerCase() || 'sin cliente';
         const clientLabel = String(s.clientName || 'Sin cliente').trim() || 'Sin cliente';
         const ticketId = s.ticketId || s.id;
+        const saleDate = s.date || s.createdAt;
         globalTickets.add(ticketId);
 
         if (!clientsMap[clientKey]) {
@@ -929,7 +930,8 @@ export default function App() {
             lines: 0,
             tickets: new Set(),
             lastDate: null,
-            products: {}
+            products: {},
+            orderMap: {}
           };
         }
 
@@ -947,21 +949,52 @@ export default function App() {
         client.tickets.add(ticketId);
         client.products[productKey] = (client.products[productKey] || 0) + quantity;
 
-        const saleDate = s.date || s.createdAt;
+        if (!client.orderMap[ticketId]) {
+          client.orderMap[ticketId] = {
+            ticketId,
+            date: saleDate,
+            totalSaleRaw: 0,
+            quantity: 0,
+            profit: 0,
+            originalSales: [],
+            products: {}
+          };
+        }
+
+        const order = client.orderMap[ticketId];
+        order.totalSaleRaw += revenue;
+        order.quantity += quantity;
+        order.profit += profit;
+        order.originalSales.push(s);
+        order.products[productKey] = (order.products[productKey] || 0) + quantity;
+        if (saleDate && (!order.date || new Date(saleDate) > new Date(order.date))) order.date = saleDate;
+
         if (saleDate && (!client.lastDate || new Date(saleDate) > new Date(client.lastDate))) {
           client.lastDate = saleDate;
         }
       });
 
-      const clients = Object.values(clientsMap).map(c => ({
-        ...c,
-        orders: c.tickets.size,
-        avgTicket: c.tickets.size ? c.revenue / c.tickets.size : 0,
-        topProducts: Object.entries(c.products)
-          .map(([name, quantity]) => ({ name, quantity }))
-          .sort((a, b) => b.quantity - a.quantity)
-          .slice(0, 4)
-      })).sort((a, b) => b.revenue - a.revenue);
+      const clients = Object.values(clientsMap).map(c => {
+        const orderGroups = Object.values(c.orderMap)
+          .map(order => ({
+            ...order,
+            productList: Object.entries(order.products)
+              .map(([name, quantity]) => ({ name, quantity }))
+              .sort((a, b) => b.quantity - a.quantity)
+          }))
+          .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
+        return {
+          ...c,
+          orderGroups,
+          orders: orderGroups.length,
+          avgTicket: orderGroups.length ? c.revenue / orderGroups.length : 0,
+          topProducts: Object.entries(c.products)
+            .map(([name, quantity]) => ({ name, quantity }))
+            .sort((a, b) => b.quantity - a.quantity)
+            .slice(0, 4)
+        };
+      }).sort((a, b) => b.revenue - a.revenue);
 
       return {
         sales: wholesaleSales,
@@ -2058,7 +2091,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
           currentStock: (Number(item.currentStock) || 0) + (Number(returns[item.id]) || 0)
         }));
 
-        await updateDoc(doc(db, 'batches', batchId), { items: newItems });
+        const updates = { items: newItems };
+        if (batch.finalizedAt) updates.finalizedAt = deleteField();
+        await updateDoc(doc(db, 'batches', batchId), updates);
       }
 
       for (const sale of salesToDelete) {
@@ -2087,6 +2122,16 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
   const handleDeleteSelectedSales = async () => {
     await deleteSaleGroups(selectedSaleGroups, true);
+  };
+
+  const handleDeleteWholesaleOrder = async (orderGroup) => {
+    await deleteSaleGroups([orderGroup], true);
+  };
+
+  const handleDeleteWholesaleClient = async (client) => {
+    const orders = client?.orderGroups || [];
+    if (!orders.length) return showToast('Este cliente no tiene ventas para borrar.', 'error');
+    await deleteSaleGroups(orders, true);
   };
 
   const handleAddExpense = async () => {
@@ -3344,9 +3389,14 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             </div>
                           </div>
 
-                          <div className="text-left sm:text-right">
-                            <p className="text-[10px] font-black uppercase tracking-wider opacity-50">Compró en total</p>
-                            <p className="text-xl font-black text-emerald-500">{formatMoney(client.revenue)}</p>
+                          <div className="flex flex-col items-start sm:items-end gap-3">
+                            <div className="text-left sm:text-right">
+                              <p className="text-[10px] font-black uppercase tracking-wider opacity-50">Compró en total</p>
+                              <p className="text-xl font-black text-emerald-500">{formatMoney(client.revenue)}</p>
+                            </div>
+                            <Button darkMode={darkMode} onClick={() => handleDeleteWholesaleClient(client)} variant="outline" className="h-8 text-xs text-red-500 border-red-500/30 hover:bg-red-500/10">
+                              <Trash2 size={13}/> Borrar cliente
+                            </Button>
                           </div>
                         </div>
 
@@ -3380,6 +3430,39 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 <span className={`shrink-0 px-2 py-0.5 rounded-lg ${darkMode ? 'bg-indigo-500/10 text-indigo-300' : 'bg-indigo-100 text-indigo-700'}`}>{p.quantity} u.</span>
                               </div>
                             ))}
+                          </div>
+
+                          <div className="mt-5">
+                            <p className="text-[10px] font-black uppercase tracking-wider opacity-50 mb-2">Ventas del cliente</p>
+                            <div className="space-y-2">
+                              {client.orderGroups.map(order => (
+                                <div key={order.ticketId} className={`rounded-xl border p-3 ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-white border-zinc-200'}`}>
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <p className="text-xs font-black">{safeDateStr(order.date, {month:'short', day:'numeric', year:'numeric'})}</p>
+                                      <p className={`text-[11px] mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                        {order.quantity} unidad(es) · {order.originalSales.length} línea(s) · {formatMoney(order.totalSaleRaw)}
+                                      </p>
+                                    </div>
+                                    <Button darkMode={darkMode} onClick={() => handleDeleteWholesaleOrder(order)} variant="outline" className="h-8 text-xs text-red-500 border-red-500/30 hover:bg-red-500/10 shrink-0">
+                                      <Trash2 size={13}/> Borrar venta
+                                    </Button>
+                                  </div>
+                                  <div className="mt-2 flex flex-wrap gap-1.5">
+                                    {order.productList.slice(0, 4).map(p => (
+                                      <span key={p.name} className={`px-2 py-1 rounded-lg text-[10px] font-bold ${darkMode ? 'bg-zinc-900 text-zinc-400' : 'bg-zinc-100 text-zinc-600'}`}>
+                                        {p.name} · {p.quantity}u
+                                      </span>
+                                    ))}
+                                    {order.productList.length > 4 && (
+                                      <span className={`px-2 py-1 rounded-lg text-[10px] font-bold ${darkMode ? 'bg-zinc-900 text-zinc-500' : 'bg-zinc-100 text-zinc-500'}`}>
+                                        +{order.productList.length - 4} más
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         </div>
                       </Card>
