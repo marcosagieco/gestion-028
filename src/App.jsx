@@ -79,6 +79,28 @@ const normalizeSellerName = (name) => {
   return name;
 };
 
+
+const isNewClientStatus = (value) => {
+  if (value === true) return true;
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return ['si', 'nuevo', 'nuevo - organico', 'nuevo - orgánico', 'nuevo - publicidad'].includes(normalized);
+};
+
+const getClientStatusLabel = (value) => {
+  if (value === true || String(value ?? '').trim().toLowerCase() === 'si') return 'Nuevo - Orgánico';
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'nuevo - publicidad') return 'Nuevo - Publicidad';
+  if (normalized === 'nuevo - organico' || normalized === 'nuevo - orgánico' || normalized == 'nuevo') return 'Nuevo - Orgánico';
+  return 'Frecuente';
+};
+
+const getClientSearchLabel = (value) => {
+  const label = getClientStatusLabel(value);
+  if (label === 'Nuevo - Publicidad') return 'cliente nuevo publicidad primera compra ads anuncios';
+  if (label === 'Nuevo - Orgánico') return 'cliente nuevo organico orgánico primera compra';
+  return 'cliente frecuente recurrente';
+};
+
 // --- COMPONENTES UI ---
 const Card = ({ children, className = '', darkMode }) => (
   <div className={`rounded-xl border shadow-sm transition-colors duration-200 ${
@@ -469,7 +491,7 @@ export default function App() {
   const [selectedSaleTickets, setSelectedSaleTickets] = useState({});
   const [salesDisplayLimit, setSalesDisplayLimit] = useState(120);
 
-  const [saleGeneral, setSaleGeneral] = useState({ saleDate: getTodayDate(), accountingType: 'Normal', shippingCost: '', shippingPrice: '', source: 'Instagram', isReseller: 'No', isNewClient: 'No' });
+  const [saleGeneral, setSaleGeneral] = useState({ saleDate: getTodayDate(), accountingType: 'Normal', shippingCost: '', shippingPrice: '', source: 'Instagram', isReseller: 'No', isNewClient: 'Frecuente' });
   const [saleItems, setSaleItems] = useState([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
 
   const updateSaleItem = (id, field, value) => {
@@ -842,7 +864,7 @@ export default function App() {
 
   const newClientsList = useMemo(() => {
       return analysisData.baseStats.filteredSales
-          .filter(s => s.isNewClient === true || s.isNewClient === 'Si')
+          .filter(s => isNewClientStatus(s.isNewClient))
           .map(s => ({...s, seller: normalizeSellerName(s.seller)}))
           .sort((a,b) => new Date(b.date) - new Date(a.date));
   }, [analysisData.baseStats.filteredSales]);
@@ -970,7 +992,7 @@ export default function App() {
       result = result.filter(s => {
         const seller = normalizeSellerName(s.seller);
         const resellerLabel = s.isReseller === true || s.isReseller === 'Si' ? 'revendedor si mayorista' : 'consumidor final no';
-        const newClientLabel = s.isNewClient === true || s.isNewClient === 'Si' ? 'cliente nuevo primera compra' : 'cliente frecuente recurrente';
+        const newClientLabel = getClientSearchLabel(s.isNewClient);
         const profit = (s.totalSaleRaw || 0) - ((s.costArsAtSale || 0) * (s.quantity || 0));
         const shippingProfit = (s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0));
 
@@ -1152,11 +1174,11 @@ export default function App() {
   };
   
   const handleExportSales = () => {
-      const headers = ['Fecha', 'Lote', 'Producto', 'Variante', 'Cantidad', 'Precio Unitario', 'Total Venta', 'Costo Unitario', 'Ganancia Envio', 'Origen', 'Revendedor', 'Cliente Nuevo', 'Vendedor'];
+      const headers = ['Fecha', 'Lote', 'Producto', 'Variante', 'Cantidad', 'Precio Unitario', 'Total Venta', 'Costo Unitario', 'Ganancia Envio', 'Origen', 'Revendedor', 'Cliente', 'Vendedor'];
       const rows = processedSales.map(s => [
           safeDateStr(s.date), s.batchName || '', s.productName || '', s.variant || '', 
           s.quantity || 0, s.unitPrice || 0, s.totalSaleRaw || 0, s.costArsAtSale || 0, 
-          ((s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0))), s.source || '', s.isReseller ? 'Si' : 'No', s.isNewClient ? 'Si' : 'No', normalizeSellerName(s.seller)
+          ((s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0))), s.source || '', s.isReseller ? 'Si' : 'No', getClientStatusLabel(s.isNewClient), normalizeSellerName(s.seller)
       ]);
       exportToCSV('historial_ventas.csv', [headers, ...rows]);
       showToast('Historial descargado con éxito', 'success');
@@ -1736,7 +1758,7 @@ export default function App() {
                 shippingCostArs: isFirstItem ? parseFloat(saleGeneral.shippingCost || 0) : 0,
                 source: saleGeneral.source,
                 isReseller: saleGeneral.isReseller === 'Si',
-                isNewClient: saleGeneral.isNewClient === 'Si',
+                isNewClient: saleGeneral.isNewClient,
                 seller: '028 Import' 
             };
 
@@ -2816,7 +2838,7 @@ export default function App() {
                                     <Select darkMode={darkMode} label="Registro" value={saleGeneral.accountingType || 'Normal'} onChange={e => setSaleGeneral({...saleGeneral, accountingType: e.target.value})} options={[{value:'Normal', label:'Venta normal'}, {value:'Neutro', label:'Neutro / Global'}]} />
                                     <Select darkMode={darkMode} label="Canal" value={saleGeneral.source} onChange={e => setSaleGeneral({...saleGeneral, source: e.target.value})} options={[{value:'Instagram', label:'Instagram'}, {value:'Whatsapp', label:'Whatsapp'}, {value:'Personal', label:'Personal'}, {value:'Web', label:'Web'}]} />
                                     <Select darkMode={darkMode} label="Tipo" value={saleGeneral.isReseller} onChange={e => setSaleGeneral({...saleGeneral, isReseller: e.target.value})} options={[{value:'No', label:'Consumidor'}, {value:'Si', label:'Revendedor'}]} />
-                                    <Select darkMode={darkMode} label="Historial" value={saleGeneral.isNewClient} onChange={e => setSaleGeneral({...saleGeneral, isNewClient: e.target.value})} options={[{value:'No', label:'Frecuente'}, {value:'Si', label:'Nuevo'}]} />
+                                    <Select darkMode={darkMode} label="Cliente" value={saleGeneral.isNewClient} onChange={e => setSaleGeneral({...saleGeneral, isNewClient: e.target.value})} options={[{value:'Frecuente', label:'Frecuente'}, {value:'Nuevo - Organico', label:'Nuevo - Orgánico'}, {value:'Nuevo - Publicidad', label:'Nuevo - Publicidad'}]} />
                                 </div>
 
                                 {(saleGeneral.accountingType || 'Normal') === 'Neutro' && (
@@ -3013,7 +3035,7 @@ export default function App() {
                                       <div className="flex flex-col gap-1 mt-1.5 items-start">
                                           <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-zinc-800 text-zinc-300' : 'bg-zinc-200 text-zinc-700'}`}>👤 {group.seller}</span>
                                           {group.isNeutral && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-100 text-indigo-700'}`}>Neutro</span>}
-                                          {group.isNewClient && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-100 text-amber-600'}`}>Nuevo</span>}
+                                          {isNewClientStatus(group.isNewClient) && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-100 text-amber-600'}`}>{getClientStatusLabel(group.isNewClient)}</span>}
                                           {group.isReseller && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-100 text-indigo-600'}`}>Revendedor</span>}
                                       </div>
                                   </td>
