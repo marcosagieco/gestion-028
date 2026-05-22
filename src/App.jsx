@@ -9,7 +9,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsToolti
 import { initializeApp } from "firebase/app";
 import {
   initializeFirestore, collection, addDoc, deleteDoc, doc, updateDoc, setDoc,
-  onSnapshot, query, orderBy
+  onSnapshot, query, orderBy, where, getDocs
 } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -1542,6 +1542,54 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       showToast('Producto marcado como perdido dentro de consignación.', 'success');
     } catch (e) {
       showToast('Error marcando pérdida: ' + e.message, 'error');
+    }
+  };
+
+  const handleDeleteConsignmentEntry = async (entry) => {
+    const pending = Number(entry.quantityPending) || 0;
+    const paid = Number(entry.quantityPaid) || 0;
+    const returned = Number(entry.quantityReturned) || 0;
+    const lost = Number(entry.quantityLost) || 0;
+
+    const msg = [
+      `¿Borrar este registro de consignación?`,
+      ``,
+      `${entry.clientName || 'Sin cliente'} · ${entry.productName || 'Sin producto'} / ${entry.variant || 'Único'}`,
+      `Pendiente: ${pending}`,
+      `Pagado: ${paid}`,
+      `Devuelto: ${returned}`,
+      `Perdido: ${lost}`,
+      ``,
+      pending > 0 ? `Se devolverán ${pending} unidad(es) pendientes al lote original.` : `No hay unidades pendientes para devolver al lote.`,
+      paid > 0 ? `También se borrarán las ventas reales asociadas a este pago de consignación.` : `No hay ventas pagadas asociadas para borrar.`,
+      ``,
+      `Esta acción no se puede deshacer.`
+    ].join('\n');
+
+    if (!window.confirm(msg)) return;
+
+    try {
+      if (pending > 0 && entry.batchId && entry.itemId) {
+        const batch = batches.find(b => b.id === entry.batchId);
+        if (batch) {
+          const newItems = (batch.items || []).map(item => {
+            if (item.id !== entry.itemId) return item;
+            return { ...item, currentStock: (Number(item.currentStock) || 0) + pending };
+          });
+          await updateDoc(doc(db, 'batches', entry.batchId), { items: newItems });
+        }
+      }
+
+      const linkedSalesSnap = await getDocs(query(collection(db, 'sales'), where('consignmentId', '==', entry.id)));
+      for (const saleDoc of linkedSalesSnap.docs) {
+        await deleteDoc(doc(db, 'sales', saleDoc.id));
+      }
+
+      await deleteDoc(doc(db, 'consignments', entry.id));
+
+      showToast(`Consignación borrada. ${pending > 0 ? `${pending} unidad(es) devueltas al stock. ` : ''}${linkedSalesSnap.size ? `${linkedSalesSnap.size} venta(s) asociada(s) borrada(s).` : ''}`, 'success');
+    } catch (e) {
+      showToast('Error borrando consignación: ' + e.message, 'error');
     }
   };
 
@@ -3844,6 +3892,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                   </Button>
                                   <Button darkMode={darkMode} disabled={pending <= 0} onClick={() => handleConsignmentLost(entry)} variant="danger" className="h-9 text-xs">
                                     <XCircle size={14}/> Perdido
+                                  </Button>
+                                  <Button darkMode={darkMode} onClick={() => handleDeleteConsignmentEntry(entry)} variant="outline" className="h-9 text-xs text-red-500 border-red-500/30 hover:bg-red-500/10">
+                                    <Trash2 size={14}/> Borrar
                                   </Button>
                                 </div>
                               </div>
