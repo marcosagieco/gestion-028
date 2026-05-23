@@ -660,9 +660,6 @@ export default function App() {
   const consignmentStats = useMemo(() => {
       return consignments.reduce((acc, entry) => {
         const delivered = Number(entry.quantityDelivered) || 0;
-        if (!map[client].clientPhone) map[client].clientPhone = String(entry.clientPhone || entry.phone || entry.telefono || '').trim();
-        if (!map[client].clientDni) map[client].clientDni = String(entry.clientDni || entry.dni || '').trim();
-
         const pending = Number(entry.quantityPending) || 0;
         const paid = Number(entry.quantityPaid) || 0;
         const returned = Number(entry.quantityReturned) || 0;
@@ -714,6 +711,9 @@ export default function App() {
             profitPaid: 0
           };
         }
+        if (!map[client].clientPhone) map[client].clientPhone = String(entry.clientPhone || entry.phone || entry.telefono || '').trim();
+        if (!map[client].clientDni) map[client].clientDni = String(entry.clientDni || entry.dni || '').trim();
+
         const pending = Number(entry.quantityPending) || 0;
         const paid = Number(entry.quantityPaid) || 0;
         const unitPrice = Number(entry.unitPrice) || 0;
