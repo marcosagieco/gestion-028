@@ -4131,7 +4131,10 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                   </button>
                 </div>
 
-                <div className={`${consignmentSubView === 'movimientos' ? 'grid' : 'hidden'} grid-cols-1 2xl:grid-cols-[460px_1fr] gap-6 items-start`}> 
+                <div
+                  style={{ display: consignmentSubView === 'movimientos' ? 'grid' : 'none' }}
+                  className="grid-cols-1 2xl:grid-cols-[460px_1fr] gap-6 items-start"
+                >
                   <div className={`rounded-[2rem] overflow-hidden ring-1 backdrop-blur-xl shadow-[0_28px_90px_rgba(0,0,0,0.18)] ${darkMode ? 'bg-white/[0.026] ring-white/[0.06]' : 'bg-white/90 ring-zinc-200'}`}>
                     <div className={`px-6 py-5 border-b ${darkMode ? 'border-white/[0.06]' : 'border-zinc-200'}`}>
                       <div className="flex items-center justify-between gap-4">
@@ -4480,7 +4483,10 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                     </div>
                   </div>
 
-                <div className={`${consignmentSubView === 'clientes' ? 'block' : 'hidden'} rounded-[2rem] overflow-hidden ring-1 backdrop-blur-xl shadow-[0_28px_90px_rgba(0,0,0,0.18)] ${darkMode ? 'bg-white/[0.026] ring-white/[0.06]' : 'bg-white/90 ring-zinc-200'}`}>
+                <div
+                  style={{ display: consignmentSubView === 'clientes' ? 'block' : 'none' }}
+                  className={`rounded-[2rem] overflow-hidden ring-1 backdrop-blur-xl shadow-[0_28px_90px_rgba(0,0,0,0.18)] ${darkMode ? 'bg-white/[0.026] ring-white/[0.06]' : 'bg-white/90 ring-zinc-200'}`}
+                >
                   <div className={`px-6 py-5 border-b ${darkMode ? 'border-white/[0.06]' : 'border-zinc-200'}`}>
                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                       <div>
