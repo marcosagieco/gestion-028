@@ -47,6 +47,46 @@ const safeDateTime = (dateStr) => {
   return isNaN(d.getTime()) ? 0 : d.getTime();
 };
 
+const normalizeConsignmentDateInput = (dateStr) => {
+  const raw = String(dateStr || '').trim();
+  if (!raw) return '';
+
+  const slash = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (slash) {
+    const [, d, m, y] = slash;
+    return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+
+  const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso) {
+    const [, y, m, d] = iso;
+    return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+
+  const parsed = new Date(raw);
+  if (!isNaN(parsed.getTime())) {
+    return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
+  }
+
+  return raw;
+};
+
+const formatConsignmentDueDate = (dateStr) => {
+  const normalized = normalizeConsignmentDateInput(dateStr);
+  const iso = String(normalized || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`;
+  return normalized || 'Sin fecha';
+};
+
+const formatConsignmentDueDateShort = (dateStr) => {
+  const normalized = normalizeConsignmentDateInput(dateStr);
+  const iso = String(normalized || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!iso) return normalized || 'Sin límite';
+
+  const date = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]), 12, 0, 0);
+  return date.toLocaleDateString('es-AR', { day: '2-digit', month: 'short' }).replace('.', '');
+};
+
 const exportToCSV = (filename, rows) => {
   const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.map(item => `"${String(item).replace(/"/g, '""')}"`).join(",")).join("\n");
   const encodedUri = encodeURI(csvContent);
@@ -450,6 +490,7 @@ export default function App() {
   const [expandedConsignmentClient, setExpandedConsignmentClient] = useState(null);
   const [expandedConsignmentOrder, setExpandedConsignmentOrder] = useState(null);
   const [expandedConsignmentHistoryClient, setExpandedConsignmentHistoryClient] = useState(null);
+  const [expandedConsignmentInfoClient, setExpandedConsignmentInfoClient] = useState(null);
   const [manualFinalizeDate, setManualFinalizeDate] = useState(getTodayDate());
   const [globalMonth, setGlobalMonth] = useState('30days'); 
   
@@ -494,6 +535,10 @@ export default function App() {
   const [salesSearch, setSalesSearch] = useState('');
   const [consignmentSearch, setConsignmentSearch] = useState('');
   const [consignmentSubView, setConsignmentSubView] = useState('movimientos');
+  const [editingConsignmentClientKey, setEditingConsignmentClientKey] = useState(null);
+  const [consignmentClientDraft, setConsignmentClientDraft] = useState({ clientName: '', clientPhone: '', clientDni: '', clientType: '' });
+  const [editingConsignmentEntryId, setEditingConsignmentEntryId] = useState(null);
+  const [consignmentEntryDraft, setConsignmentEntryDraft] = useState({ unitPrice: '', dueDate: '', note: '' });
   const [salesSort, setSalesSort] = useState({ key: 'createdAt', direction: 'desc' });
   const [selectedSaleTickets, setSelectedSaleTickets] = useState({});
   const [salesDisplayLimit, setSalesDisplayLimit] = useState(120);
@@ -741,6 +786,7 @@ export default function App() {
             clientName: String(entry.clientName || 'Sin cliente').trim(),
             clientPhone: String(entry.clientPhone || entry.phone || entry.telefono || '').trim(),
             clientDni: String(entry.clientDni || entry.dni || '').trim(),
+            clientType: String(entry.clientType || entry.tipoCliente || '').trim(),
             entries: [],
             delivered: 0,
             pending: 0,
@@ -762,6 +808,7 @@ export default function App() {
         if (!order.clientName || order.clientName === 'Sin cliente') order.clientName = String(entry.clientName || 'Sin cliente').trim();
         if (!order.clientPhone) order.clientPhone = String(entry.clientPhone || entry.phone || entry.telefono || '').trim();
         if (!order.clientDni) order.clientDni = String(entry.clientDni || entry.dni || '').trim();
+        if (!order.clientType) order.clientType = String(entry.clientType || entry.tipoCliente || '').trim();
         if (!order.dueDate) order.dueDate = entry.dueDate || '';
         if (!order.note) order.note = entry.note || '';
 
@@ -803,6 +850,7 @@ export default function App() {
             clientName: client,
             clientPhone: String(entry.clientPhone || entry.phone || entry.telefono || '').trim(),
             clientDni: String(entry.clientDni || entry.dni || '').trim(),
+            clientType: String(entry.clientType || entry.tipoCliente || '').trim(),
             entries: [],
             delivered: 0,
             pending: 0,
@@ -820,6 +868,7 @@ export default function App() {
 
         if (!map[client].clientPhone) map[client].clientPhone = String(entry.clientPhone || entry.phone || entry.telefono || '').trim();
         if (!map[client].clientDni) map[client].clientDni = String(entry.clientDni || entry.dni || '').trim();
+        if (!map[client].clientType) map[client].clientType = String(entry.clientType || entry.tipoCliente || '').trim();
 
         const delivered = Number(entry.quantityDelivered) || 0;
         const pending = Number(entry.quantityPending) || 0;
@@ -1634,6 +1683,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
           clientName: newConsignment.clientName.trim(),
           clientPhone: String(newConsignment.clientPhone || '').trim(),
           clientDni: String(newConsignment.clientDni || '').trim(),
+          clientType: String(newConsignment.clientType || '').trim(),
           batchId: entry.batchId,
           batchName: entry.batchName,
           itemId: entry.itemId,
@@ -1941,6 +1991,114 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       showToast(`Cliente borrado de consignación. ${stockReturned} unidad(es) devueltas al stock. ${linkedSalesDeleted ? `${linkedSalesDeleted} venta(s) asociada(s) borrada(s).` : ''}`, 'success');
     } catch (e) {
       showToast('Error borrando cliente de consignación: ' + e.message, 'error');
+    }
+  };
+
+  const handleEditConsignmentOrderDueDate = async (order) => {
+    const entries = order?.entries || [];
+    if (!entries.length) return showToast('Esta entrega no tiene registros para editar.', 'error');
+
+    const current = normalizeConsignmentDateInput(order.dueDate || '');
+    const nextRaw = window.prompt(
+      'Nueva fecha límite de pago (podés usar 2026-05-30 o 30/05/2026). Dejalo vacío para borrar la fecha:',
+      current
+    );
+
+    if (nextRaw === null) return;
+
+    const next = normalizeConsignmentDateInput(nextRaw);
+    const now = new Date().toISOString();
+
+    try {
+      for (const entry of entries) {
+        await updateDoc(doc(db, 'consignments', entry.id), {
+          dueDate: next,
+          updatedAt: now
+        });
+      }
+
+      showToast(next ? `Fecha límite actualizada a ${formatConsignmentDueDate(next)}.` : 'Fecha límite borrada.', 'success');
+    } catch (e) {
+      showToast('Error editando fecha límite: ' + e.message, 'error');
+    }
+  };
+
+  const handleEditConsignmentClientData = (client) => {
+    setExpandedConsignmentHistoryClient(null);
+    setExpandedConsignmentInfoClient(null);
+    setEditingConsignmentClientKey(client.clientName);
+    setConsignmentClientDraft({
+      clientName: client.clientName || '',
+      clientPhone: client.clientPhone || '',
+      clientDni: client.clientDni || '',
+      clientType: client.clientType || ''
+    });
+  };
+
+  const handleCancelEditConsignmentClient = () => {
+    setEditingConsignmentClientKey(null);
+    setConsignmentClientDraft({ clientName: '', clientPhone: '', clientDni: '', clientType: '' });
+  };
+
+  const handleSaveConsignmentClientData = async (client) => {
+    const entries = client?.entries || [];
+    if (!entries.length) return showToast('Este cliente no tiene registros para editar.', 'error');
+
+    const cleanName = String(consignmentClientDraft.clientName || '').trim();
+    if (!cleanName) return showToast('El nombre del cliente no puede quedar vacío.', 'error');
+
+    const now = new Date().toISOString();
+
+    try {
+      for (const entry of entries) {
+        await updateDoc(doc(db, 'consignments', entry.id), {
+          clientName: cleanName,
+          clientPhone: String(consignmentClientDraft.clientPhone || '').trim(),
+          clientDni: String(consignmentClientDraft.clientDni || '').trim(),
+          clientType: String(consignmentClientDraft.clientType || '').trim(),
+          updatedAt: now
+        });
+      }
+
+      setExpandedConsignmentHistoryClient(prev => prev === client.clientName ? cleanName : prev);
+      setExpandedConsignmentOrder(null);
+      handleCancelEditConsignmentClient();
+      showToast('Datos del cliente actualizados.', 'success');
+    } catch (e) {
+      showToast('Error editando datos del cliente: ' + e.message, 'error');
+    }
+  };
+
+  const handleEditConsignmentEntry = (entry) => {
+    setEditingConsignmentEntryId(entry.id);
+    setConsignmentEntryDraft({
+      unitPrice: String(entry.unitPrice || ''),
+      dueDate: normalizeConsignmentDateInput(entry.dueDate || ''),
+      note: entry.note || ''
+    });
+  };
+
+  const handleCancelEditConsignmentEntry = () => {
+    setEditingConsignmentEntryId(null);
+    setConsignmentEntryDraft({ unitPrice: '', dueDate: '', note: '' });
+  };
+
+  const handleSaveConsignmentEntry = async (entry) => {
+    const unitPrice = parseFloat(consignmentEntryDraft.unitPrice || 0);
+    if (unitPrice <= 0 || Number.isNaN(unitPrice)) return showToast('El precio tiene que ser mayor a 0.', 'error');
+
+    try {
+      await updateDoc(doc(db, 'consignments', entry.id), {
+        unitPrice,
+        dueDate: normalizeConsignmentDateInput(consignmentEntryDraft.dueDate || ''),
+        note: String(consignmentEntryDraft.note || '').trim(),
+        updatedAt: new Date().toISOString()
+      });
+
+      handleCancelEditConsignmentEntry();
+      showToast('Producto de consignación actualizado.', 'success');
+    } catch (e) {
+      showToast('Error editando producto: ' + e.message, 'error');
     }
   };
 
@@ -4408,7 +4566,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                       </div>
                     </div>
 
-                    <div className={`${darkMode ? 'bg-black/[0.045]' : 'bg-white/90'} max-h-[calc(100vh-275px)] overflow-y-auto custom-scrollbar`}>
+                    <div className={`${darkMode ? 'bg-black/[0.045]' : 'bg-white/90'} max-h-[calc(100vh-275px)] overflow-y-auto custom-scrollbar p-3`}>
                       {consignmentOrders.filter(order => `${order.clientName || ''} ${order.clientPhone || ''} ${order.clientDni || ''} ${order.entries.map(e => `${e.productName || ''} ${e.variant || ''} ${e.batchName || ''}`).join(' ')}`.toLowerCase().includes(consignmentSearch.toLowerCase())).length === 0 && (
                         <div className="p-20 text-center">
                           <Package size={42} className="mx-auto mb-4 opacity-25"/>
@@ -4416,7 +4574,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         </div>
                       )}
 
-                      <div className={`divide-y ${darkMode ? 'divide-white/[0.06]' : 'divide-zinc-100'}`}>
+                      <div className="space-y-3">
                         {consignmentOrders
                           .filter(order => `${order.clientName || ''} ${order.clientPhone || ''} ${order.clientDni || ''} ${order.entries.map(e => `${e.productName || ''} ${e.variant || ''} ${e.batchName || ''}`).join(' ')}`.toLowerCase().includes(consignmentSearch.toLowerCase()))
                           .map(order => {
@@ -4425,53 +4583,73 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             const orderDate = order.createdAt || order.updatedAt;
 
                             return (
-                              <div key={order.id}>
+                              <div
+                                key={order.id}
+                                className={`rounded-[1.7rem] overflow-hidden ring-1 transition-all ${darkMode ? 'bg-white/[0.024] ring-white/[0.055] hover:ring-white/[0.09]' : 'bg-white ring-zinc-200 shadow-sm shadow-black/5 hover:shadow-md'}`}
+                              >
                                 <div
                                   className={`p-5 cursor-pointer transition-colors ${darkMode ? 'hover:bg-white/[0.026]' : 'hover:bg-zinc-50'}`}
                                   onClick={() => setExpandedConsignmentOrder(isOpen ? null : order.id)}
                                 >
-                                  <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-                                    <div className="flex items-center gap-4 min-w-0">
-                                      <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${darkMode ? 'bg-white/[0.035] text-zinc-300 ring-1 ring-white/[0.05]' : 'bg-zinc-50 text-zinc-700 ring-1 ring-zinc-200'}`}>
-                                        <Package size={22}/>
-                                      </div>
-                                      <div className="min-w-0">
-                                        <h3 className="font-black text-xl tracking-[-0.03em] truncate">{order.clientName}</h3>
-                                        <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
-                                          {safeDateStr(orderDate, {day:'2-digit', month:'short', year:'numeric'})} · {totalProducts} producto(s) · {order.pending} pendientes · {order.paid} pagadas
-                                        </p>
-                                        {(order.clientPhone || order.clientDni) && (
-                                          <p className={`text-[11px] mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
-                                            {order.clientPhone ? `Tel: ${order.clientPhone}` : ''}{order.clientPhone && order.clientDni ? ' · ' : ''}{order.clientDni ? `DNI: ${order.clientDni}` : ''}
+                                  <div className="space-y-4">
+                                    <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                                      <div className="flex items-center gap-4 min-w-0">
+                                        <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${darkMode ? 'bg-white/[0.035] text-zinc-300 ring-1 ring-white/[0.05]' : 'bg-zinc-50 text-zinc-700 ring-1 ring-zinc-200'}`}>
+                                          <Package size={22}/>
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                          <h3 className="font-black text-xl tracking-[-0.03em] truncate">{order.clientName}</h3>
+                                          <p className={`text-xs mt-1 truncate ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                            {formatConsignmentDueDateShort(orderDate)} · {totalProducts} producto(s) · {order.pending} pendientes · {order.paid} pagadas
                                           </p>
-                                        )}
+                                          {(order.clientType || order.clientPhone || order.clientDni) && (
+                                            <p className={`text-[11px] mt-1 truncate ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                              {order.clientType ? `Tipo: ${order.clientType}` : ''}{order.clientType && (order.clientPhone || order.clientDni) ? ' · ' : ''}{order.clientPhone ? `Tel: ${order.clientPhone}` : ''}{(order.clientPhone && order.clientDni) ? ' · ' : ''}{order.clientDni ? `DNI: ${order.clientDni}` : ''}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      <div className="flex items-center justify-end gap-2 shrink-0">
+                                        <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); handleEditConsignmentOrderDueDate(order); }}
+                                          className={`h-8 px-3 rounded-full text-xs font-black whitespace-nowrap transition-all ${darkMode ? 'bg-white/[0.035] text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.07]' : 'bg-white text-zinc-500 hover:text-zinc-900 hover:bg-zinc-50 ring-1 ring-zinc-200'}`}
+                                        >
+                                          Editar
+                                        </button>
+                                        <div className={`flex items-center gap-1.5 text-xs font-black whitespace-nowrap ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                                          {isOpen ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
+                                          {isOpen ? 'Cerrar' : 'Abrir'}
+                                        </div>
                                       </div>
                                     </div>
 
-                                    <div className="grid grid-cols-3 gap-8 text-right xl:min-w-[430px]">
-                                      <div>
+                                    <div className={`grid grid-cols-2 md:grid-cols-4 gap-3 pt-4 border-t ${darkMode ? 'border-white/[0.045]' : 'border-zinc-100'}`}>
+                                      <div className={`rounded-2xl p-3 ${darkMode ? 'bg-white/[0.018]' : 'bg-white/70 shadow-sm shadow-black/5'}`}>
+                                        <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Vence</p>
+                                        <p className={`mt-1 text-sm font-black tracking-[-0.02em] whitespace-nowrap ${order.dueDate ? (darkMode ? 'text-zinc-200' : 'text-zinc-900') : (darkMode ? 'text-zinc-600' : 'text-zinc-400')}`}>
+                                          {order.dueDate ? formatConsignmentDueDateShort(order.dueDate) : 'Sin límite'}
+                                        </p>
+                                      </div>
+                                      <div className={`rounded-2xl p-3 ${darkMode ? 'bg-white/[0.018]' : 'bg-white/70 shadow-sm shadow-black/5'}`}>
                                         <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Debe</p>
-                                        <p className={`mt-1 text-sm font-black tracking-[-0.02em] ${darkMode ? 'text-amber-300/90' : 'text-amber-700'}`}>{formatMoney(order.valuePending)}</p>
+                                        <p className={`mt-1 text-sm font-black tracking-[-0.02em] truncate ${darkMode ? 'text-amber-300/90' : 'text-amber-700'}`}>{formatMoney(order.valuePending)}</p>
                                       </div>
-                                      <div>
+                                      <div className={`rounded-2xl p-3 ${darkMode ? 'bg-white/[0.018]' : 'bg-white/70 shadow-sm shadow-black/5'}`}>
                                         <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Cobrado</p>
-                                        <p className={`mt-1 text-sm font-black tracking-[-0.02em] ${darkMode ? 'text-emerald-300/90' : 'text-emerald-700'}`}>{formatMoney(order.valuePaid)}</p>
+                                        <p className={`mt-1 text-sm font-black tracking-[-0.02em] truncate ${darkMode ? 'text-emerald-300/90' : 'text-emerald-700'}`}>{formatMoney(order.valuePaid)}</p>
                                       </div>
-                                      <div>
+                                      <div className={`rounded-2xl p-3 ${darkMode ? 'bg-white/[0.018]' : 'bg-white/70 shadow-sm shadow-black/5'}`}>
                                         <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Ganancia</p>
-                                        <p className={`mt-1 text-sm font-black tracking-[-0.02em] ${darkMode ? 'text-violet-300/90' : 'text-violet-700'}`}>{formatMoney(order.profitPaid)}</p>
+                                        <p className={`mt-1 text-sm font-black tracking-[-0.02em] truncate ${darkMode ? 'text-violet-300/90' : 'text-violet-700'}`}>{formatMoney(order.profitPaid)}</p>
                                       </div>
-                                    </div>
-
-                                    <div className={`flex items-center gap-2 text-xs font-black ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                                      {isOpen ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
-                                      {isOpen ? 'Cerrar' : 'Abrir'}
                                     </div>
                                   </div>
                                 </div>
 
                                 {isOpen && (
-                                  <div className={`${darkMode ? 'bg-black/[0.10]' : 'bg-zinc-50/70'} border-t ${darkMode ? 'border-white/[0.045]' : 'border-zinc-100'}`}>
+                                  <div className={`${darkMode ? 'bg-black/[0.16]' : 'bg-zinc-50/80'} border-t ${darkMode ? 'border-white/[0.06]' : 'border-zinc-100'}`}>
                                     {order.entries.map(entry => {
                                       const pending = Number(entry.quantityPending) || 0;
                                       const paid = Number(entry.quantityPaid) || 0;
@@ -4554,7 +4732,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                       <div>
                         <h3 className="text-2xl font-black tracking-[-0.03em]">Clientes a Consignación</h3>
                         <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
-                          Todos los clientes anotados y su historial completo.
+                          Fichas de clientes con datos destacados e historial completo.
                         </p>
                       </div>
                       <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -4573,7 +4751,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                     </div>
                   </div>
 
-                  <div className={`${darkMode ? 'bg-black/[0.045]' : 'bg-white/90'} divide-y ${darkMode ? 'divide-white/[0.06]' : 'divide-zinc-100'}`}>
+                  <div className={`${darkMode ? 'bg-black/[0.045]' : 'bg-white/90'} p-3 space-y-3`}>
                     {consignmentClientHistory.filter(client => `${client.clientName || ''} ${client.clientPhone || ''} ${client.clientDni || ''}`.toLowerCase().includes(consignmentSearch.toLowerCase())).length === 0 && (
                       <div className="p-16 text-center">
                         <UserCircle size={42} className="mx-auto mb-4 opacity-25"/>
@@ -4584,83 +4762,181 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                     {consignmentClientHistory
                       .filter(client => `${client.clientName || ''} ${client.clientPhone || ''} ${client.clientDni || ''}`.toLowerCase().includes(consignmentSearch.toLowerCase()))
                       .map(client => {
-                        const isOpen = expandedConsignmentHistoryClient === client.clientName;
+                        const isHistoryOpen = expandedConsignmentHistoryClient === client.clientName;
+                        const isInfoOpen = expandedConsignmentInfoClient === client.clientName;
+                        const isEditingClient = editingConsignmentClientKey === client.clientName;
                         return (
-                          <div key={`history-${client.clientName}`}>
+                          <div
+                            key={`history-${client.clientName}`}
+                            className={`rounded-[1.7rem] overflow-hidden ring-1 transition-all ${darkMode ? 'bg-white/[0.024] ring-white/[0.055]' : 'bg-white ring-zinc-200 shadow-sm shadow-black/5'}`}
+                          >
                             <div className="p-5">
-                              <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-                                <div className="flex items-center gap-4 min-w-0">
-                                  <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${darkMode ? 'bg-white/[0.035] text-zinc-300 ring-1 ring-white/[0.05]' : 'bg-zinc-50 text-zinc-700 ring-1 ring-zinc-200'}`}>
-                                    <UserCircle size={22}/>
+                              {isEditingClient ? (
+                                <div className={`rounded-[1.4rem] p-4 ring-1 ${darkMode ? 'bg-white/[0.024] ring-white/[0.055]' : 'bg-zinc-50 ring-zinc-200'}`}>
+                                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                                    <Input
+                                      darkMode={darkMode}
+                                      label="Nombre"
+                                      value={consignmentClientDraft.clientName}
+                                      onChange={e => setConsignmentClientDraft({ ...consignmentClientDraft, clientName: e.target.value })}
+                                    />
+                                    <Input
+                                      darkMode={darkMode}
+                                      label="Tipo"
+                                      value={consignmentClientDraft.clientType}
+                                      onChange={e => setConsignmentClientDraft({ ...consignmentClientDraft, clientType: e.target.value })}
+                                    />
+                                    <Input
+                                      darkMode={darkMode}
+                                      label="Teléfono"
+                                      value={consignmentClientDraft.clientPhone}
+                                      onChange={e => setConsignmentClientDraft({ ...consignmentClientDraft, clientPhone: e.target.value })}
+                                    />
+                                    <Input
+                                      darkMode={darkMode}
+                                      label="DNI"
+                                      value={consignmentClientDraft.clientDni}
+                                      onChange={e => setConsignmentClientDraft({ ...consignmentClientDraft, clientDni: e.target.value })}
+                                    />
                                   </div>
-                                  <div className="min-w-0">
-                                    <h3 className="font-black text-xl tracking-[-0.03em] truncate">{client.clientName}</h3>
-                                    <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
-                                      {client.entries.length} registro(s) · {client.delivered} entregadas · {client.pending} pendientes
-                                    </p>
-                                    {(client.clientPhone || client.clientDni) && (
-                                      <p className={`text-[11px] mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
-                                        {client.clientPhone ? `Tel: ${client.clientPhone}` : ''}{client.clientPhone && client.clientDni ? ' · ' : ''}{client.clientDni ? `DNI: ${client.clientDni}` : ''}
+                                  <div className="flex justify-end gap-2 mt-4">
+                                    <button
+                                      type="button"
+                                      onClick={handleCancelEditConsignmentClient}
+                                      className={`h-9 px-4 rounded-full text-xs font-black transition-all ${darkMode ? 'bg-white/5 text-zinc-300 hover:bg-white/[0.08]' : 'bg-white text-zinc-700 hover:bg-zinc-50 ring-1 ring-zinc-200'}`}
+                                    >
+                                      Cancelar
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveConsignmentClientData(client)}
+                                      className="h-9 px-4 rounded-full text-xs font-black bg-indigo-600 text-white hover:bg-indigo-500 transition-all"
+                                    >
+                                      Guardar cambios
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                                  <div className="flex items-center gap-4 min-w-0">
+                                    <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${darkMode ? 'bg-white/[0.035] text-zinc-300 ring-1 ring-white/[0.05]' : 'bg-zinc-50 text-zinc-700 ring-1 ring-zinc-200'}`}>
+                                      <UserCircle size={22}/>
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-3 min-w-0">
+                                        <h3 className="font-black text-xl tracking-[-0.03em] truncate">{client.clientName}</h3>
+                                        <p className={`text-xs font-black whitespace-nowrap ${darkMode ? 'text-amber-300/90' : 'text-amber-700'}`}>
+                                          {formatMoney(client.valuePending)} por cobrar
+                                        </p>
+                                      </div>
+                                      <p className={`text-xs mt-1 truncate ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                        {(client.clientType || 'Sin tipo')} · {client.clientPhone ? `Tel: ${client.clientPhone}` : 'Sin teléfono'} · {client.clientDni ? `DNI ${client.clientDni}` : 'Sin DNI'}
                                       </p>
-                                    )}
+                                      <p className={`text-xs mt-1 truncate ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                        {client.pending} productos afuera · {client.delivered} prestados · último {safeDateStr(client.lastMovement, {day:'2-digit', month:'short'})}
+                                      </p>
+                                    </div>
                                   </div>
-                                </div>
 
-                                <div className="grid grid-cols-4 gap-6 text-right xl:min-w-[560px]">
-                                  <div>
-                                    <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Entregado</p>
-                                    <p className="mt-1 text-sm font-black">{formatMoney(client.valueDelivered)}</p>
-                                  </div>
-                                  <div>
-                                    <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Pendiente</p>
-                                    <p className={`mt-1 text-sm font-black ${darkMode ? 'text-amber-300/90' : 'text-amber-700'}`}>{formatMoney(client.valuePending)}</p>
-                                  </div>
-                                  <div>
-                                    <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Cobrado</p>
-                                    <p className={`mt-1 text-sm font-black ${darkMode ? 'text-emerald-300/90' : 'text-emerald-700'}`}>{formatMoney(client.valuePaid)}</p>
-                                  </div>
-                                  <div>
-                                    <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Último</p>
-                                    <p className="mt-1 text-sm font-black">{safeDateStr(client.lastMovement, {day:'2-digit', month:'short'})}</p>
+                                  <div className="flex flex-wrap xl:flex-nowrap items-center justify-end gap-2 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingConsignmentClientKey(null);
+                                        setExpandedConsignmentInfoClient(null);
+                                        setExpandedConsignmentHistoryClient(isHistoryOpen ? null : client.clientName);
+                                      }}
+                                      className={`h-9 px-4 rounded-full text-xs font-black transition-all ${isHistoryOpen ? 'bg-white text-black' : (darkMode ? 'bg-white/5 text-zinc-300 hover:bg-white/[0.08]' : 'bg-white text-zinc-700 hover:bg-zinc-50 ring-1 ring-zinc-200')}`}
+                                    >
+                                      {isHistoryOpen ? 'Ocultar historial' : 'Ver historial'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingConsignmentClientKey(null);
+                                        setExpandedConsignmentHistoryClient(null);
+                                        setExpandedConsignmentInfoClient(isInfoOpen ? null : client.clientName);
+                                      }}
+                                      className={`h-9 px-4 rounded-full text-xs font-black transition-all ${isInfoOpen ? 'bg-white text-black' : (darkMode ? 'bg-white/5 text-zinc-300 hover:bg-white/[0.08]' : 'bg-white text-zinc-700 hover:bg-zinc-50 ring-1 ring-zinc-200')}`}
+                                    >
+                                      {isInfoOpen ? 'Ocultar info' : 'Ver info'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleEditConsignmentClientData(client)}
+                                      className={`h-9 px-4 rounded-full text-xs font-black transition-all ${darkMode ? 'bg-white/5 text-zinc-300 hover:bg-white/[0.08]' : 'bg-white text-zinc-700 hover:bg-zinc-50 ring-1 ring-zinc-200'}`}
+                                    >
+                                      Editar
+                                    </button>
                                   </div>
                                 </div>
-
-                                <div className="flex flex-col sm:flex-row gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => setExpandedConsignmentHistoryClient(isOpen ? null : client.clientName)}
-                                    className={`h-9 px-4 rounded-full text-xs font-black transition-all ${darkMode ? 'bg-white/5 text-zinc-300 hover:bg-white/[0.08]' : 'bg-white text-zinc-700 hover:bg-zinc-50 ring-1 ring-zinc-200'}`}
-                                  >
-                                    {isOpen ? 'Ocultar' : 'Ver más información'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteConsignmentClient(client)}
-                                    className={`h-9 px-4 rounded-full text-xs font-black transition-all ${darkMode ? 'bg-red-500/15 text-red-300 hover:bg-red-500/25' : 'bg-red-50 text-red-700 hover:bg-red-100'}`}
-                                  >
-                                    Borrar cliente
-                                  </button>
-                                </div>
-                              </div>
+                              )}
                             </div>
 
-                            {isOpen && (
-                              <div className={`${darkMode ? 'bg-black/[0.10]' : 'bg-zinc-50/70'} border-t ${darkMode ? 'border-white/[0.045]' : 'border-zinc-100'}`}>
-                                <div className="p-5 grid grid-cols-2 md:grid-cols-5 gap-3">
-                                  {[
-                                    ['Entregadas', client.delivered, ''],
-                                    ['Pendientes', client.pending, 'text-amber-400'],
-                                    ['Pagadas', client.paid, 'text-emerald-400'],
-                                    ['Devueltas', client.returned, 'text-blue-400'],
-                                    ['Perdidas', client.lost, 'text-red-400']
-                                  ].map(([label, value, color]) => (
-                                    <div key={label} className={`rounded-2xl p-3 ${darkMode ? 'bg-white/[0.022]' : 'bg-white/80 shadow-sm shadow-black/5'}`}>
-                                      <p className={`font-black uppercase text-[9px] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>{label}</p>
-                                      <p className={`font-black text-lg ${color}`}>{value}</p>
+                            {isInfoOpen && (
+                              <div className={`${darkMode ? 'bg-black/[0.16]' : 'bg-zinc-50/80'} border-t ${darkMode ? 'border-white/[0.06]' : 'border-zinc-100'}`}>
+                                <div className="p-5 space-y-5">
+                                  <div>
+                                    <h4 className="text-sm font-black tracking-[-0.02em] mb-3">Datos del cliente</h4>
+                                    <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+                                      {[
+                                        ['Tipo', client.clientType || 'Sin tipo'],
+                                        ['Teléfono', client.clientPhone || 'Sin teléfono'],
+                                        ['DNI', client.clientDni || 'Sin DNI'],
+                                        ['Último movimiento', safeDateStr(client.lastMovement, {day:'2-digit', month:'short'})]
+                                      ].map(([label, value]) => (
+                                        <div key={label} className={`rounded-2xl p-3 ${darkMode ? 'bg-white/[0.022]' : 'bg-white/80 shadow-sm shadow-black/5'}`}>
+                                          <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>{label}</p>
+                                          <p className={`mt-1 text-sm font-black truncate ${value && !String(value).startsWith('Sin') ? (darkMode ? 'text-zinc-200' : 'text-zinc-900') : (darkMode ? 'text-zinc-600' : 'text-zinc-400')}`}>
+                                            {value}
+                                          </p>
+                                        </div>
+                                      ))}
                                     </div>
-                                  ))}
-                                </div>
+                                  </div>
 
+                                  <div>
+                                    <h4 className="text-sm font-black tracking-[-0.02em] mb-3">Resumen financiero</h4>
+                                    <div className="grid grid-cols-2 xl:grid-cols-5 gap-3">
+                                      {[
+                                        ['Prestados', client.delivered, ''],
+                                        ['Pendientes', client.pending, 'text-amber-400'],
+                                        ['Plata afuera', formatMoney(client.valuePending), 'text-amber-300'],
+                                        ['Cobrado', formatMoney(client.valuePaid), 'text-emerald-400'],
+                                        ['Ganancia real', formatMoney(client.profitPaid), 'text-violet-300']
+                                      ].map(([label, value, color]) => (
+                                        <div key={label} className={`rounded-2xl p-3 ${darkMode ? 'bg-white/[0.022]' : 'bg-white/80 shadow-sm shadow-black/5'}`}>
+                                          <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>{label}</p>
+                                          <p className={`mt-1 text-sm font-black truncate ${color}`}>{value}</p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+
+                                  <div className={`rounded-2xl p-4 ring-1 ${darkMode ? 'bg-red-500/[0.035] ring-red-500/10' : 'bg-red-50 ring-red-100'}`}>
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                      <div>
+                                        <h4 className={`text-sm font-black ${darkMode ? 'text-red-300' : 'text-red-700'}`}>Zona peligrosa</h4>
+                                        <p className={`text-xs mt-1 ${darkMode ? 'text-red-300/60' : 'text-red-700/70'}`}>Borra el cliente completo y devuelve productos pendientes al stock.</p>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteConsignmentClient(client)}
+                                        className={`h-9 px-4 rounded-full text-xs font-black transition-all ${darkMode ? 'bg-red-500/15 text-red-300 hover:bg-red-500/25' : 'bg-red-100 text-red-700 hover:bg-red-200'}`}
+                                      >
+                                        Borrar cliente
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {isHistoryOpen && (
+                              <div className={`${darkMode ? 'bg-black/[0.16]' : 'bg-zinc-50/80'} border-t ${darkMode ? 'border-white/[0.06]' : 'border-zinc-100'}`}>
+                                <div className="px-5 pt-5">
+                                  <h4 className="text-sm font-black tracking-[-0.02em] mb-3">Historial de productos</h4>
+                                </div>
                                 <div className={`px-5 pb-5 divide-y ${darkMode ? 'divide-white/[0.045]' : 'divide-zinc-100'}`}>
                                   {client.entries.map(entry => {
                                     const pending = Number(entry.quantityPending) || 0;
@@ -4678,6 +4954,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                             <p className="font-black text-sm truncate">{entry.productName || 'Sin producto'} / {entry.variant || 'Único'}</p>
                                             <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
                                               {entry.batchName || 'Sin lote'} · {safeDateStr(movementDate, {day:'2-digit', month:'short', year:'numeric'})}
+                                            </p>
+                                            <p className={`text-[11px] mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                              Vence: <span className={darkMode ? 'text-zinc-300' : 'text-zinc-700'}>{entry.dueDate ? formatConsignmentDueDateShort(entry.dueDate) : 'Sin límite'}</span>
                                             </p>
                                           </div>
 
@@ -4707,6 +4986,60 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                             </div>
                                           </div>
                                         </div>
+
+                                        {editingConsignmentEntryId === entry.id ? (
+                                          <div className={`mt-4 rounded-2xl p-4 ring-1 ${darkMode ? 'bg-white/[0.024] ring-white/[0.055]' : 'bg-white ring-zinc-200'}`}>
+                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                              <Input
+                                                darkMode={darkMode}
+                                                label="Precio acordado"
+                                                type="number"
+                                                symbol="$"
+                                                value={consignmentEntryDraft.unitPrice}
+                                                onChange={e => setConsignmentEntryDraft({ ...consignmentEntryDraft, unitPrice: e.target.value })}
+                                              />
+                                              <Input
+                                                darkMode={darkMode}
+                                                label="Fecha límite"
+                                                type="date"
+                                                value={consignmentEntryDraft.dueDate}
+                                                onChange={e => setConsignmentEntryDraft({ ...consignmentEntryDraft, dueDate: e.target.value })}
+                                              />
+                                              <Input
+                                                darkMode={darkMode}
+                                                label="Nota"
+                                                value={consignmentEntryDraft.note}
+                                                onChange={e => setConsignmentEntryDraft({ ...consignmentEntryDraft, note: e.target.value })}
+                                              />
+                                            </div>
+                                            <div className="flex justify-end gap-2 mt-4">
+                                              <button
+                                                type="button"
+                                                onClick={handleCancelEditConsignmentEntry}
+                                                className={`h-8 px-3 rounded-full text-xs font-black transition-all ${darkMode ? 'bg-white/5 text-zinc-300 hover:bg-white/[0.08]' : 'bg-white text-zinc-700 hover:bg-zinc-50 ring-1 ring-zinc-200'}`}
+                                              >
+                                                Cancelar
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={() => handleSaveConsignmentEntry(entry)}
+                                                className="h-8 px-3 rounded-full text-xs font-black bg-indigo-600 text-white hover:bg-indigo-500 transition-all"
+                                              >
+                                                Guardar producto
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <div className="mt-3 flex justify-end">
+                                            <button
+                                              type="button"
+                                              onClick={() => handleEditConsignmentEntry(entry)}
+                                              className={`h-8 px-3 rounded-full text-xs font-black transition-all ${darkMode ? 'bg-white/5 text-zinc-300 hover:bg-white/[0.08]' : 'bg-white text-zinc-700 hover:bg-zinc-50 ring-1 ring-zinc-200'}`}
+                                            >
+                                              Editar producto
+                                            </button>
+                                          </div>
+                                        )}
                                       </div>
                                     );
                                   })}
