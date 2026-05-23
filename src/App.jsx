@@ -448,6 +448,7 @@ export default function App() {
   const [expandedBatchId, setExpandedBatchId] = useState(null);
   const [expandedWholesaleClient, setExpandedWholesaleClient] = useState(null);
   const [expandedConsignmentClient, setExpandedConsignmentClient] = useState(null);
+  const [expandedConsignmentHistoryClient, setExpandedConsignmentHistoryClient] = useState(null);
   const [manualFinalizeDate, setManualFinalizeDate] = useState(getTodayDate());
   const [globalMonth, setGlobalMonth] = useState('30days'); 
   
@@ -470,6 +471,8 @@ export default function App() {
 
   const [newConsignment, setNewConsignment] = useState({
     clientName: '',
+    clientPhone: '',
+    clientDni: '',
     dueDate: '',
     note: '',
     lines: [createConsignmentLine()]
@@ -489,6 +492,7 @@ export default function App() {
 
   const [salesSearch, setSalesSearch] = useState('');
   const [consignmentSearch, setConsignmentSearch] = useState('');
+  const [consignmentSubView, setConsignmentSubView] = useState('movimientos');
   const [salesSort, setSalesSort] = useState({ key: 'createdAt', direction: 'desc' });
   const [selectedSaleTickets, setSelectedSaleTickets] = useState({});
   const [salesDisplayLimit, setSalesDisplayLimit] = useState(120);
@@ -656,6 +660,9 @@ export default function App() {
   const consignmentStats = useMemo(() => {
       return consignments.reduce((acc, entry) => {
         const delivered = Number(entry.quantityDelivered) || 0;
+        if (!map[client].clientPhone) map[client].clientPhone = String(entry.clientPhone || entry.phone || entry.telefono || '').trim();
+        if (!map[client].clientDni) map[client].clientDni = String(entry.clientDni || entry.dni || '').trim();
+
         const pending = Number(entry.quantityPending) || 0;
         const paid = Number(entry.quantityPaid) || 0;
         const returned = Number(entry.quantityReturned) || 0;
@@ -697,6 +704,8 @@ export default function App() {
         if (!map[client]) {
           map[client] = {
             clientName: client,
+            clientPhone: String(entry.clientPhone || entry.phone || entry.telefono || '').trim(),
+            clientDni: String(entry.clientDni || entry.dni || '').trim(),
             entries: [],
             pending: 0,
             paid: 0,
@@ -719,6 +728,67 @@ export default function App() {
       });
 
       return Object.values(map).sort((a, b) => (b.valuePending + b.valuePaid) - (a.valuePending + a.valuePaid));
+  }, [consignments]);
+
+  const consignmentClientHistory = useMemo(() => {
+      const map = {};
+      consignments.forEach(entry => {
+        const client = String(entry.clientName || 'Sin cliente').trim();
+        if (!map[client]) {
+          map[client] = {
+            clientName: client,
+            clientPhone: String(entry.clientPhone || entry.phone || entry.telefono || '').trim(),
+            clientDni: String(entry.clientDni || entry.dni || '').trim(),
+            entries: [],
+            delivered: 0,
+            pending: 0,
+            paid: 0,
+            returned: 0,
+            lost: 0,
+            valueDelivered: 0,
+            valuePending: 0,
+            valuePaid: 0,
+            profitPaid: 0,
+            firstMovement: null,
+            lastMovement: null
+          };
+        }
+
+        if (!map[client].clientPhone) map[client].clientPhone = String(entry.clientPhone || entry.phone || entry.telefono || '').trim();
+        if (!map[client].clientDni) map[client].clientDni = String(entry.clientDni || entry.dni || '').trim();
+
+        const delivered = Number(entry.quantityDelivered) || 0;
+        const pending = Number(entry.quantityPending) || 0;
+        const paid = Number(entry.quantityPaid) || 0;
+        const returned = Number(entry.quantityReturned) || 0;
+        const lost = Number(entry.quantityLost) || 0;
+        const unitPrice = Number(entry.unitPrice) || 0;
+        const unitCost = Number(entry.unitCost) || 0;
+        const movementDate = entry.updatedAt || entry.createdAt || entry.lastPaidAt || entry.lastReturnedAt || entry.lastLostAt || '';
+
+        map[client].entries.push(entry);
+        map[client].delivered += delivered;
+        map[client].pending += pending;
+        map[client].paid += paid;
+        map[client].returned += returned;
+        map[client].lost += lost;
+        map[client].valueDelivered += delivered * unitPrice;
+        map[client].valuePending += pending * unitPrice;
+        map[client].valuePaid += paid * unitPrice;
+        map[client].profitPaid += paid * (unitPrice - unitCost);
+
+        if (entry.createdAt && (!map[client].firstMovement || safeDateTime(entry.createdAt) < safeDateTime(map[client].firstMovement))) {
+          map[client].firstMovement = entry.createdAt;
+        }
+        if (movementDate && (!map[client].lastMovement || safeDateTime(movementDate) > safeDateTime(map[client].lastMovement))) {
+          map[client].lastMovement = movementDate;
+        }
+      });
+
+      return Object.values(map).map(client => ({
+        ...client,
+        entries: client.entries.sort((a, b) => safeDateTime(b.updatedAt || b.createdAt) - safeDateTime(a.updatedAt || a.createdAt))
+      })).sort((a, b) => safeDateTime(b.lastMovement) - safeDateTime(a.lastMovement));
   }, [consignments]);
 
   const periodOptions = useMemo(() => {
@@ -1498,6 +1568,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
           updatedAt: new Date().toISOString(),
           status: 'active',
           clientName: newConsignment.clientName.trim(),
+          clientPhone: String(newConsignment.clientPhone || '').trim(),
+          clientDni: String(newConsignment.clientDni || '').trim(),
           batchId: entry.batchId,
           batchName: entry.batchName,
           itemId: entry.itemId,
@@ -1517,6 +1589,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
       setNewConsignment({
         clientName: '',
+        clientPhone: '',
+        clientDni: '',
         dueDate: '',
         note: '',
         lines: [createConsignmentLine()]
@@ -4039,7 +4113,25 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 2xl:grid-cols-[460px_1fr] gap-6 items-start">
+                <div className={`inline-flex rounded-full p-1 ring-1 backdrop-blur-xl ${darkMode ? 'bg-white/[0.035] ring-white/[0.06]' : 'bg-white/80 ring-zinc-200 shadow-sm'}`}>
+                  <button
+                    type="button"
+                    onClick={() => setConsignmentSubView('movimientos')}
+                    className={`h-10 px-5 rounded-full text-xs font-black transition-all ${consignmentSubView === 'movimientos' ? (darkMode ? 'bg-white text-black' : 'bg-black text-white') : (darkMode ? 'text-zinc-400 hover:text-white' : 'text-zinc-500 hover:text-zinc-900')}`}
+                  >
+                    Consignación
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConsignmentSubView('clientes')}
+                    className={`h-10 px-5 rounded-full text-xs font-black transition-all ${consignmentSubView === 'clientes' ? (darkMode ? 'bg-white text-black' : 'bg-black text-white') : (darkMode ? 'text-zinc-400 hover:text-white' : 'text-zinc-500 hover:text-zinc-900')}`}
+                  >
+                    Clientes a Consignación
+                    <span className={`ml-2 px-2 py-0.5 rounded-full text-[10px] ${consignmentSubView === 'clientes' ? (darkMode ? 'bg-black/10 text-black' : 'bg-white/20 text-white') : (darkMode ? 'bg-white/[0.06] text-zinc-400' : 'bg-zinc-100 text-zinc-500')}`}>{consignmentClientHistory.length}</span>
+                  </button>
+                </div>
+
+                <div className={`${consignmentSubView === 'movimientos' ? 'grid' : 'hidden'} grid-cols-1 2xl:grid-cols-[460px_1fr] gap-6 items-start`}> 
                   <div className={`rounded-[2rem] overflow-hidden ring-1 backdrop-blur-xl shadow-[0_28px_90px_rgba(0,0,0,0.18)] ${darkMode ? 'bg-white/[0.026] ring-white/[0.06]' : 'bg-white/90 ring-zinc-200'}`}>
                     <div className={`px-6 py-5 border-b ${darkMode ? 'border-white/[0.06]' : 'border-zinc-200'}`}>
                       <div className="flex items-center justify-between gap-4">
@@ -4066,6 +4158,24 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             value={newConsignment.clientName}
                             onChange={e => setNewConsignment({ ...newConsignment, clientName: e.target.value })}
                           />
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <Input
+                              darkMode={darkMode}
+                              label="Teléfono"
+                              placeholder="+54 9..."
+                              value={newConsignment.clientPhone}
+                              onChange={e => setNewConsignment({ ...newConsignment, clientPhone: e.target.value })}
+                            />
+
+                            <Input
+                              darkMode={darkMode}
+                              label="DNI"
+                              placeholder="37375216"
+                              value={newConsignment.clientDni}
+                              onChange={e => setNewConsignment({ ...newConsignment, clientDni: e.target.value })}
+                            />
+                          </div>
 
                           <div className="grid grid-cols-2 gap-3">
                             <Input
@@ -4230,7 +4340,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                     </div>
 
                     <div className={`${darkMode ? 'bg-black/[0.045]' : 'bg-white/90'} max-h-[calc(100vh-275px)] overflow-y-auto custom-scrollbar`}>
-                      {consignmentsByClient.filter(client => String(client.clientName || '').toLowerCase().includes(consignmentSearch.toLowerCase())).length === 0 && (
+                      {consignmentsByClient.filter(client => `${client.clientName || ''} ${client.clientPhone || ''} ${client.clientDni || ''}`.toLowerCase().includes(consignmentSearch.toLowerCase())).length === 0 && (
                         <div className="p-20 text-center">
                           <Package size={42} className="mx-auto mb-4 opacity-25"/>
                           <p className="text-sm font-bold opacity-50">No hay consignaciones cargadas.</p>
@@ -4239,7 +4349,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
                       <div className={`divide-y ${darkMode ? 'divide-white/[0.06]' : 'divide-zinc-100'}`}>
                         {consignmentsByClient
-                          .filter(client => String(client.clientName || '').toLowerCase().includes(consignmentSearch.toLowerCase()))
+                          .filter(client => `${client.clientName || ''} ${client.clientPhone || ''} ${client.clientDni || ''}`.toLowerCase().includes(consignmentSearch.toLowerCase()))
                           .map(client => {
                             const isOpen = expandedConsignmentClient === client.clientName;
                             return (
@@ -4258,6 +4368,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                         <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
                                           {client.entries.length} producto(s) · {client.pending} pendientes · {client.paid} pagadas
                                         </p>
+                                        {(client.clientPhone || client.clientDni) && (
+                                          <p className={`text-[11px] mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                            {client.clientPhone ? `Tel: ${client.clientPhone}` : ''}{client.clientPhone && client.clientDni ? ' · ' : ''}{client.clientDni ? `DNI: ${client.clientDni}` : ''}
+                                          </p>
+                                        )}
                                       </div>
                                     </div>
 
@@ -4364,6 +4479,169 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                       </div>
                     </div>
                   </div>
+
+                <div className={`${consignmentSubView === 'clientes' ? 'block' : 'hidden'} rounded-[2rem] overflow-hidden ring-1 backdrop-blur-xl shadow-[0_28px_90px_rgba(0,0,0,0.18)] ${darkMode ? 'bg-white/[0.026] ring-white/[0.06]' : 'bg-white/90 ring-zinc-200'}`}>
+                  <div className={`px-6 py-5 border-b ${darkMode ? 'border-white/[0.06]' : 'border-zinc-200'}`}>
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div>
+                        <h3 className="text-2xl font-black tracking-[-0.03em]">Clientes a Consignación</h3>
+                        <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                          Todos los clientes anotados y su historial completo.
+                        </p>
+                      </div>
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                        <div className="sm:w-72">
+                          <Input
+                            darkMode={darkMode}
+                            placeholder="Buscar cliente, teléfono o DNI..."
+                            value={consignmentSearch}
+                            onChange={e => setConsignmentSearch(e.target.value)}
+                          />
+                        </div>
+                        <p className={`text-xs font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                          {consignmentClientHistory.length} cliente(s)
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className={`${darkMode ? 'bg-black/[0.045]' : 'bg-white/90'} divide-y ${darkMode ? 'divide-white/[0.06]' : 'divide-zinc-100'}`}>
+                    {consignmentClientHistory.filter(client => `${client.clientName || ''} ${client.clientPhone || ''} ${client.clientDni || ''}`.toLowerCase().includes(consignmentSearch.toLowerCase())).length === 0 && (
+                      <div className="p-16 text-center">
+                        <UserCircle size={42} className="mx-auto mb-4 opacity-25"/>
+                        <p className="text-sm font-bold opacity-50">No hay clientes para mostrar.</p>
+                      </div>
+                    )}
+
+                    {consignmentClientHistory
+                      .filter(client => `${client.clientName || ''} ${client.clientPhone || ''} ${client.clientDni || ''}`.toLowerCase().includes(consignmentSearch.toLowerCase()))
+                      .map(client => {
+                        const isOpen = expandedConsignmentHistoryClient === client.clientName;
+                        return (
+                          <div key={`history-${client.clientName}`}>
+                            <div className="p-5">
+                              <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                                <div className="flex items-center gap-4 min-w-0">
+                                  <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${darkMode ? 'bg-white/[0.035] text-zinc-300 ring-1 ring-white/[0.05]' : 'bg-zinc-50 text-zinc-700 ring-1 ring-zinc-200'}`}>
+                                    <UserCircle size={22}/>
+                                  </div>
+                                  <div className="min-w-0">
+                                    <h3 className="font-black text-xl tracking-[-0.03em] truncate">{client.clientName}</h3>
+                                    <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                      {client.entries.length} registro(s) · {client.delivered} entregadas · {client.pending} pendientes
+                                    </p>
+                                    {(client.clientPhone || client.clientDni) && (
+                                      <p className={`text-[11px] mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                        {client.clientPhone ? `Tel: ${client.clientPhone}` : ''}{client.clientPhone && client.clientDni ? ' · ' : ''}{client.clientDni ? `DNI: ${client.clientDni}` : ''}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-4 gap-6 text-right xl:min-w-[560px]">
+                                  <div>
+                                    <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Entregado</p>
+                                    <p className="mt-1 text-sm font-black">{formatMoney(client.valueDelivered)}</p>
+                                  </div>
+                                  <div>
+                                    <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Pendiente</p>
+                                    <p className={`mt-1 text-sm font-black ${darkMode ? 'text-amber-300/90' : 'text-amber-700'}`}>{formatMoney(client.valuePending)}</p>
+                                  </div>
+                                  <div>
+                                    <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Cobrado</p>
+                                    <p className={`mt-1 text-sm font-black ${darkMode ? 'text-emerald-300/90' : 'text-emerald-700'}`}>{formatMoney(client.valuePaid)}</p>
+                                  </div>
+                                  <div>
+                                    <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Último</p>
+                                    <p className="mt-1 text-sm font-black">{safeDateStr(client.lastMovement, {day:'2-digit', month:'short'})}</p>
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedConsignmentHistoryClient(isOpen ? null : client.clientName)}
+                                  className={`h-9 px-4 rounded-full text-xs font-black transition-all ${darkMode ? 'bg-white/5 text-zinc-300 hover:bg-white/[0.08]' : 'bg-white text-zinc-700 hover:bg-zinc-50 ring-1 ring-zinc-200'}`}
+                                >
+                                  {isOpen ? 'Ocultar' : 'Ver más información'}
+                                </button>
+                              </div>
+                            </div>
+
+                            {isOpen && (
+                              <div className={`${darkMode ? 'bg-black/[0.10]' : 'bg-zinc-50/70'} border-t ${darkMode ? 'border-white/[0.045]' : 'border-zinc-100'}`}>
+                                <div className="p-5 grid grid-cols-2 md:grid-cols-5 gap-3">
+                                  {[
+                                    ['Entregadas', client.delivered, ''],
+                                    ['Pendientes', client.pending, 'text-amber-400'],
+                                    ['Pagadas', client.paid, 'text-emerald-400'],
+                                    ['Devueltas', client.returned, 'text-blue-400'],
+                                    ['Perdidas', client.lost, 'text-red-400']
+                                  ].map(([label, value, color]) => (
+                                    <div key={label} className={`rounded-2xl p-3 ${darkMode ? 'bg-white/[0.022]' : 'bg-white/80 shadow-sm shadow-black/5'}`}>
+                                      <p className={`font-black uppercase text-[9px] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>{label}</p>
+                                      <p className={`font-black text-lg ${color}`}>{value}</p>
+                                    </div>
+                                  ))}
+                                </div>
+
+                                <div className={`px-5 pb-5 divide-y ${darkMode ? 'divide-white/[0.045]' : 'divide-zinc-100'}`}>
+                                  {client.entries.map(entry => {
+                                    const pending = Number(entry.quantityPending) || 0;
+                                    const paid = Number(entry.quantityPaid) || 0;
+                                    const returned = Number(entry.quantityReturned) || 0;
+                                    const lost = Number(entry.quantityLost) || 0;
+                                    const delivered = Number(entry.quantityDelivered) || 0;
+                                    const unitPrice = Number(entry.unitPrice) || 0;
+                                    const movementDate = entry.updatedAt || entry.createdAt;
+
+                                    return (
+                                      <div key={`history-row-${entry.id}`} className="py-4">
+                                        <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-center">
+                                          <div className="xl:col-span-4 min-w-0">
+                                            <p className="font-black text-sm truncate">{entry.productName || 'Sin producto'} / {entry.variant || 'Único'}</p>
+                                            <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                              {entry.batchName || 'Sin lote'} · {safeDateStr(movementDate, {day:'2-digit', month:'short', year:'numeric'})}
+                                            </p>
+                                          </div>
+
+                                          <div className="xl:col-span-5 grid grid-cols-5 gap-2 text-xs">
+                                            {[
+                                              ['Ent.', delivered, ''],
+                                              ['Debe', pending, 'text-amber-400'],
+                                              ['Pagó', paid, 'text-emerald-400'],
+                                              ['Dev.', returned, 'text-blue-400'],
+                                              ['Perd.', lost, 'text-red-400']
+                                            ].map(([label, value, color]) => (
+                                              <div key={label} className={`rounded-2xl p-2.5 ${darkMode ? 'bg-white/[0.022]' : 'bg-white/80 shadow-sm shadow-black/5'}`}>
+                                                <p className={`font-black uppercase text-[9px] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>{label}</p>
+                                                <p className={`font-black ${color}`}>{value}</p>
+                                              </div>
+                                            ))}
+                                          </div>
+
+                                          <div className="xl:col-span-3 grid grid-cols-2 gap-3 text-xs">
+                                            <div>
+                                              <p className={`font-black uppercase text-[9px] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Precio</p>
+                                              <p className="font-black">{formatMoney(unitPrice)}</p>
+                                            </div>
+                                            <div>
+                                              <p className={`font-black uppercase text-[9px] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Estado</p>
+                                              <p className={`font-black ${pending > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>{pending > 0 ? 'Abierto' : 'Cerrado'}</p>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+
                 </div>
               </div>
             )}

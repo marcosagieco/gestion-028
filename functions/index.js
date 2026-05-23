@@ -121,6 +121,8 @@ const normalizarCampoMensaje = (key) => {
         "sabor": "variante", "variante": "variante", "gusto": "variante",
         "cantidad": "cantidad", "cant": "cantidad", "unidades": "cantidad", "unidad": "cantidad",
         "cliente": "cliente", "nombre": "cliente", "consignatario": "cliente",
+        "telefono": "telefono", "teléfono": "telefono", "tel": "telefono", "celular": "telefono", "cel": "telefono", "whatsapp": "telefono", "numero": "telefono", "número": "telefono",
+        "dni": "dni", "documento": "dni", "doc": "dni", "documento nacional": "dni",
         "tipo cliente": "tipoCliente", "cliente tipo": "tipoCliente", "estado cliente": "tipoCliente", "origen cliente": "tipoCliente",
         "canal": "canal", "origen": "canal",
         "fecha": "fecha", "dia": "fecha",
@@ -409,6 +411,7 @@ async function procesarMensajeNuevoWhatsapp(mensaje, numeroRemitente, fechaHoySh
     const fecha = general.fecha || "hoy";
     const tipoCliente = normalizarTipoCliente(general.tipoCliente ?? "");
     const esRevendedor = tipo === "MAYORISTA";
+    const clienteMayorista = esRevendedor ? String(general.cliente || general.clientName || general.nombre || "").trim() : "";
     const ticketIdGrupo = Date.now().toString();
     let total = 0;
     let unidades = 0;
@@ -418,7 +421,7 @@ async function procesarMensajeNuevoWhatsapp(mensaje, numeroRemitente, fechaHoySh
             if (!item.precio || item.precio <= 0) return { exito: false, error_msg: errorConProducto(item, i, `❌ Falta precio en ${item.producto} (${item.variante}).`) };
             const costoEnvio = i === 0 ? limpiarNumero(general.envioCosto || 0) : 0;
             const cobroEnvio = i === 0 ? limpiarNumero(general.envioCobro || 0) : 0;
-            const r = await procesarVenta(item.producto, item.variante, item.cantidad, item.precio, fecha, costoEnvio, cobroEnvio, esRevendedor, tipoCliente, vendedor, ticketIdGrupo, canal);
+            const r = await procesarVenta(item.producto, item.variante, item.cantidad, item.precio, fecha, costoEnvio, cobroEnvio, esRevendedor, tipoCliente, vendedor, ticketIdGrupo, canal, clienteMayorista);
             if (r && r.exito === false) return { ...r, error_msg: errorConProducto(item, i, r.error_msg) };
             total += item.precio * item.cantidad + (i === 0 ? (cobroEnvio || 0) : 0);
             unidades += item.cantidad;
@@ -441,6 +444,8 @@ async function procesarMensajeNuevoWhatsapp(mensaje, numeroRemitente, fechaHoySh
     }
     if (tipo === "CONSIGNACION") {
         const cliente = String(general.cliente || "").trim();
+        const telefono = String(general.telefono || "").trim();
+        const dni = String(general.dni || "").trim();
         if (!cliente) return { exito: false, error_msg: "❌ En consignación falta el cliente. Ej: cliente: Juan" };
         const accion = normalizarParaComparar(general.accion || "entrega");
         if (["entrega", "entregar", "dejo", "dejar"].includes(accion)) {
@@ -448,7 +453,7 @@ async function procesarMensajeNuevoWhatsapp(mensaje, numeroRemitente, fechaHoySh
             for (let i = 0; i < items.length; i++) {
                 const item = items[i];
                 if (!item.precio || item.precio <= 0) return { exito: false, error_msg: errorConProducto(item, i, `❌ Falta precio acordado en ${item.producto} (${item.variante}).`) };
-                const r = await procesarConsignacionEntregaItem(cliente, item, general.fechaLimite || "", general.nota || "", consignmentTicketId, tipoCliente);
+                const r = await procesarConsignacionEntregaItem(cliente, item, general.fechaLimite || "", general.nota || "", consignmentTicketId, tipoCliente, telefono, dni);
                 if (r && r.exito === false) return { ...r, error_msg: errorConProducto(item, i, r.error_msg) };
                 unidades += item.cantidad;
                 total += item.precio * item.cantidad;
@@ -521,12 +526,12 @@ async function descontarStockParaConsignacion(userProducto, userVariante, cantid
     return { exito: false, error_msg: `🛑 Stock insuficiente\nProducto: *${userProducto}*\nModelo: *${userVariante || 'Único'}*\nPediste: *${cantidad}*\nDisponible: *${stockDisponible}*` };
 }
 
-async function procesarConsignacionEntregaItem(cliente, item, fechaLimite, nota, consignmentTicketId, tipoCliente) {
+async function procesarConsignacionEntregaItem(cliente, item, fechaLimite, nota, consignmentTicketId, tipoCliente, telefono = "", dni = "") {
     const stock = await descontarStockParaConsignacion(item.producto, item.variante, item.cantidad);
     if (!stock.exito) return stock;
     const now = new Date().toISOString();
     await db.collection("consignments").add({
-        consignmentTicketId, createdAt: now, updatedAt: now, status: "active", clientName: cliente, clientType: tipoCliente || "Frecuente",
+        consignmentTicketId, createdAt: now, updatedAt: now, status: "active", clientName: cliente, clientPhone: telefono || "", clientDni: dni || "", clientType: tipoCliente || "Frecuente",
         batchId: stock.batchId, batchName: stock.batchName, itemId: stock.itemId, productName: stock.productName, variant: stock.variant,
         quantityDelivered: item.cantidad, quantityPending: item.cantidad, quantityPaid: 0, quantityReturned: 0, quantityLost: 0,
         unitCost: stock.unitCost, unitPrice: item.precio, dueDate: fechaLimite || "", note: nota || ""
@@ -821,7 +826,7 @@ async function procesarStockNeutro(userProducto, userVariante, cantARestar, prec
 // ==========================================
 // FUNCIÓN PROCESAR VENTA
 // ==========================================
-async function procesarVenta(userProducto, userVariante, cantARestar, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor, ticketIdManual = null, source = "Whatsapp") {
+async function procesarVenta(userProducto, userVariante, cantARestar, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor, ticketIdManual = null, source = "Whatsapp", clienteMayorista = "") {
     if (isNaN(cantARestar) || cantARestar <= 0) return { exito: false, error_msg: "❌ La cantidad ingresada no es válida." };
 
     const pBuscar = normalizarParaComparar(userProducto);
@@ -920,6 +925,8 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
             quantity: cantARestar,
             shippingCostArs: costoEnvioMio, 
             source: source || "Whatsapp",
+            operationType: esRevendedor ? "MAYORISTA" : "VENTA",
+            clientName: esRevendedor ? (clienteMayorista || "") : "",
             ticketId: ticketIdGenerado,     
             totalSaleRaw: totalVentaCalculado, 
             unitPrice: precioUnitario,
