@@ -448,6 +448,7 @@ export default function App() {
   const [expandedBatchId, setExpandedBatchId] = useState(null);
   const [expandedWholesaleClient, setExpandedWholesaleClient] = useState(null);
   const [expandedConsignmentClient, setExpandedConsignmentClient] = useState(null);
+  const [expandedConsignmentOrder, setExpandedConsignmentOrder] = useState(null);
   const [expandedConsignmentHistoryClient, setExpandedConsignmentHistoryClient] = useState(null);
   const [manualFinalizeDate, setManualFinalizeDate] = useState(getTodayDate());
   const [globalMonth, setGlobalMonth] = useState('30days'); 
@@ -728,6 +729,69 @@ export default function App() {
       });
 
       return Object.values(map).sort((a, b) => (b.valuePending + b.valuePaid) - (a.valuePending + a.valuePaid));
+  }, [consignments]);
+
+  const consignmentOrders = useMemo(() => {
+      const map = {};
+      consignments.forEach(entry => {
+        const ticketId = String(entry.consignmentTicketId || entry.ticketId || entry.id || '').trim() || entry.id;
+        if (!map[ticketId]) {
+          map[ticketId] = {
+            id: ticketId,
+            clientName: String(entry.clientName || 'Sin cliente').trim(),
+            clientPhone: String(entry.clientPhone || entry.phone || entry.telefono || '').trim(),
+            clientDni: String(entry.clientDni || entry.dni || '').trim(),
+            entries: [],
+            delivered: 0,
+            pending: 0,
+            paid: 0,
+            returned: 0,
+            lost: 0,
+            valuePending: 0,
+            valuePaid: 0,
+            profitPaid: 0,
+            createdAt: entry.createdAt || '',
+            updatedAt: entry.updatedAt || entry.createdAt || '',
+            dueDate: entry.dueDate || '',
+            note: entry.note || ''
+          };
+        }
+
+        const order = map[ticketId];
+
+        if (!order.clientName || order.clientName === 'Sin cliente') order.clientName = String(entry.clientName || 'Sin cliente').trim();
+        if (!order.clientPhone) order.clientPhone = String(entry.clientPhone || entry.phone || entry.telefono || '').trim();
+        if (!order.clientDni) order.clientDni = String(entry.clientDni || entry.dni || '').trim();
+        if (!order.dueDate) order.dueDate = entry.dueDate || '';
+        if (!order.note) order.note = entry.note || '';
+
+        const delivered = Number(entry.quantityDelivered) || 0;
+        const pending = Number(entry.quantityPending) || 0;
+        const paid = Number(entry.quantityPaid) || 0;
+        const returned = Number(entry.quantityReturned) || 0;
+        const lost = Number(entry.quantityLost) || 0;
+        const unitPrice = Number(entry.unitPrice) || 0;
+        const unitCost = Number(entry.unitCost) || 0;
+
+        order.entries.push(entry);
+        order.delivered += delivered;
+        order.pending += pending;
+        order.paid += paid;
+        order.returned += returned;
+        order.lost += lost;
+        order.valuePending += pending * unitPrice;
+        order.valuePaid += paid * unitPrice;
+        order.profitPaid += paid * (unitPrice - unitCost);
+
+        const movementDate = entry.updatedAt || entry.createdAt || '';
+        if (movementDate && safeDateTime(movementDate) > safeDateTime(order.updatedAt)) order.updatedAt = movementDate;
+        if (entry.createdAt && (!order.createdAt || safeDateTime(entry.createdAt) < safeDateTime(order.createdAt))) order.createdAt = entry.createdAt;
+      });
+
+      return Object.values(map).map(order => ({
+        ...order,
+        entries: order.entries.sort((a, b) => safeDateTime(b.updatedAt || b.createdAt) - safeDateTime(a.updatedAt || a.createdAt))
+      })).sort((a, b) => safeDateTime(b.createdAt || b.updatedAt) - safeDateTime(a.createdAt || a.updatedAt));
   }, [consignments]);
 
   const consignmentClientHistory = useMemo(() => {
@@ -4327,14 +4391,16 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                     <div className={`px-6 py-5 border-b ${darkMode ? 'border-white/[0.06]' : 'border-zinc-200'}`}>
                       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                         <div>
-                          <h3 className="text-2xl font-black tracking-[-0.03em]">Clientes</h3>
-                          <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{consignmentsByClient.length} activo(s)</p>
+                          <h3 className="text-2xl font-black tracking-[-0.03em]">Ventas a consignación</h3>
+                          <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                            {consignmentOrders.length} registro(s). Cada entrega queda separada aunque sea el mismo cliente.
+                          </p>
                         </div>
 
                         <div className="md:w-80">
                           <Input
                             darkMode={darkMode}
-                            placeholder="Buscar cliente..."
+                            placeholder="Buscar cliente, producto, teléfono o DNI..."
                             value={consignmentSearch}
                             onChange={e => setConsignmentSearch(e.target.value)}
                           />
@@ -4343,37 +4409,40 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                     </div>
 
                     <div className={`${darkMode ? 'bg-black/[0.045]' : 'bg-white/90'} max-h-[calc(100vh-275px)] overflow-y-auto custom-scrollbar`}>
-                      {consignmentsByClient.filter(client => `${client.clientName || ''} ${client.clientPhone || ''} ${client.clientDni || ''}`.toLowerCase().includes(consignmentSearch.toLowerCase())).length === 0 && (
+                      {consignmentOrders.filter(order => `${order.clientName || ''} ${order.clientPhone || ''} ${order.clientDni || ''} ${order.entries.map(e => `${e.productName || ''} ${e.variant || ''} ${e.batchName || ''}`).join(' ')}`.toLowerCase().includes(consignmentSearch.toLowerCase())).length === 0 && (
                         <div className="p-20 text-center">
                           <Package size={42} className="mx-auto mb-4 opacity-25"/>
-                          <p className="text-sm font-bold opacity-50">No hay consignaciones cargadas.</p>
+                          <p className="text-sm font-bold opacity-50">No hay ventas a consignación cargadas.</p>
                         </div>
                       )}
 
                       <div className={`divide-y ${darkMode ? 'divide-white/[0.06]' : 'divide-zinc-100'}`}>
-                        {consignmentsByClient
-                          .filter(client => `${client.clientName || ''} ${client.clientPhone || ''} ${client.clientDni || ''}`.toLowerCase().includes(consignmentSearch.toLowerCase()))
-                          .map(client => {
-                            const isOpen = expandedConsignmentClient === client.clientName;
+                        {consignmentOrders
+                          .filter(order => `${order.clientName || ''} ${order.clientPhone || ''} ${order.clientDni || ''} ${order.entries.map(e => `${e.productName || ''} ${e.variant || ''} ${e.batchName || ''}`).join(' ')}`.toLowerCase().includes(consignmentSearch.toLowerCase()))
+                          .map(order => {
+                            const isOpen = expandedConsignmentOrder === order.id;
+                            const totalProducts = order.entries.length;
+                            const orderDate = order.createdAt || order.updatedAt;
+
                             return (
-                              <div key={client.clientName}>
+                              <div key={order.id}>
                                 <div
                                   className={`p-5 cursor-pointer transition-colors ${darkMode ? 'hover:bg-white/[0.026]' : 'hover:bg-zinc-50'}`}
-                                  onClick={() => setExpandedConsignmentClient(isOpen ? null : client.clientName)}
+                                  onClick={() => setExpandedConsignmentOrder(isOpen ? null : order.id)}
                                 >
                                   <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
                                     <div className="flex items-center gap-4 min-w-0">
                                       <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${darkMode ? 'bg-white/[0.035] text-zinc-300 ring-1 ring-white/[0.05]' : 'bg-zinc-50 text-zinc-700 ring-1 ring-zinc-200'}`}>
-                                        <Users size={22}/>
+                                        <Package size={22}/>
                                       </div>
                                       <div className="min-w-0">
-                                        <h3 className="font-black text-xl tracking-[-0.03em] truncate">{client.clientName}</h3>
+                                        <h3 className="font-black text-xl tracking-[-0.03em] truncate">{order.clientName}</h3>
                                         <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
-                                          {client.entries.length} producto(s) · {client.pending} pendientes · {client.paid} pagadas
+                                          {safeDateStr(orderDate, {day:'2-digit', month:'short', year:'numeric'})} · {totalProducts} producto(s) · {order.pending} pendientes · {order.paid} pagadas
                                         </p>
-                                        {(client.clientPhone || client.clientDni) && (
+                                        {(order.clientPhone || order.clientDni) && (
                                           <p className={`text-[11px] mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
-                                            {client.clientPhone ? `Tel: ${client.clientPhone}` : ''}{client.clientPhone && client.clientDni ? ' · ' : ''}{client.clientDni ? `DNI: ${client.clientDni}` : ''}
+                                            {order.clientPhone ? `Tel: ${order.clientPhone}` : ''}{order.clientPhone && order.clientDni ? ' · ' : ''}{order.clientDni ? `DNI: ${order.clientDni}` : ''}
                                           </p>
                                         )}
                                       </div>
@@ -4382,37 +4451,28 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                     <div className="grid grid-cols-3 gap-8 text-right xl:min-w-[430px]">
                                       <div>
                                         <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Debe</p>
-                                        <p className={`mt-1 text-sm font-black tracking-[-0.02em] ${darkMode ? 'text-amber-300/90' : 'text-amber-700'}`}>{formatMoney(client.valuePending)}</p>
+                                        <p className={`mt-1 text-sm font-black tracking-[-0.02em] ${darkMode ? 'text-amber-300/90' : 'text-amber-700'}`}>{formatMoney(order.valuePending)}</p>
                                       </div>
                                       <div>
                                         <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Cobrado</p>
-                                        <p className={`mt-1 text-sm font-black tracking-[-0.02em] ${darkMode ? 'text-emerald-300/90' : 'text-emerald-700'}`}>{formatMoney(client.valuePaid)}</p>
+                                        <p className={`mt-1 text-sm font-black tracking-[-0.02em] ${darkMode ? 'text-emerald-300/90' : 'text-emerald-700'}`}>{formatMoney(order.valuePaid)}</p>
                                       </div>
                                       <div>
                                         <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Ganancia</p>
-                                        <p className={`mt-1 text-sm font-black tracking-[-0.02em] ${darkMode ? 'text-violet-300/90' : 'text-violet-700'}`}>{formatMoney(client.profitPaid)}</p>
+                                        <p className={`mt-1 text-sm font-black tracking-[-0.02em] ${darkMode ? 'text-violet-300/90' : 'text-violet-700'}`}>{formatMoney(order.profitPaid)}</p>
                                       </div>
                                     </div>
 
-                                    <div className="flex items-center gap-2">
-                                      <button
-                                        type="button"
-                                        onClick={(e) => { e.stopPropagation(); handleDeleteConsignmentClient(client); }}
-                                        className={`h-8 px-3 rounded-full text-xs font-black transition-all ${darkMode ? 'bg-white/5 text-red-300 hover:bg-red-500/15' : 'bg-white text-red-600 hover:bg-red-50 ring-1 ring-zinc-200'}`}
-                                      >
-                                        Borrar cliente
-                                      </button>
-                                      <div className={`flex items-center gap-2 text-xs font-black ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                                        {isOpen ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
-                                        {isOpen ? 'Cerrar' : 'Abrir'}
-                                      </div>
+                                    <div className={`flex items-center gap-2 text-xs font-black ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                                      {isOpen ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
+                                      {isOpen ? 'Cerrar' : 'Abrir'}
                                     </div>
                                   </div>
                                 </div>
 
                                 {isOpen && (
                                   <div className={`${darkMode ? 'bg-black/[0.10]' : 'bg-zinc-50/70'} border-t ${darkMode ? 'border-white/[0.045]' : 'border-zinc-100'}`}>
-                                    {client.entries.map(entry => {
+                                    {order.entries.map(entry => {
                                       const pending = Number(entry.quantityPending) || 0;
                                       const paid = Number(entry.quantityPaid) || 0;
                                       const returned = Number(entry.quantityReturned) || 0;
@@ -4482,6 +4542,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                       </div>
                     </div>
                   </div>
+
+                </div>
 
                 <div
                   style={{ display: consignmentSubView === 'clientes' ? 'block' : 'none' }}
@@ -4563,13 +4625,22 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                   </div>
                                 </div>
 
-                                <button
-                                  type="button"
-                                  onClick={() => setExpandedConsignmentHistoryClient(isOpen ? null : client.clientName)}
-                                  className={`h-9 px-4 rounded-full text-xs font-black transition-all ${darkMode ? 'bg-white/5 text-zinc-300 hover:bg-white/[0.08]' : 'bg-white text-zinc-700 hover:bg-zinc-50 ring-1 ring-zinc-200'}`}
-                                >
-                                  {isOpen ? 'Ocultar' : 'Ver más información'}
-                                </button>
+                                <div className="flex flex-col sm:flex-row gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedConsignmentHistoryClient(isOpen ? null : client.clientName)}
+                                    className={`h-9 px-4 rounded-full text-xs font-black transition-all ${darkMode ? 'bg-white/5 text-zinc-300 hover:bg-white/[0.08]' : 'bg-white text-zinc-700 hover:bg-zinc-50 ring-1 ring-zinc-200'}`}
+                                  >
+                                    {isOpen ? 'Ocultar' : 'Ver más información'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteConsignmentClient(client)}
+                                    className={`h-9 px-4 rounded-full text-xs font-black transition-all ${darkMode ? 'bg-red-500/15 text-red-300 hover:bg-red-500/25' : 'bg-red-50 text-red-700 hover:bg-red-100'}`}
+                                  >
+                                    Borrar cliente
+                                  </button>
+                                </div>
                               </div>
                             </div>
 
@@ -4648,7 +4719,6 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                   </div>
                 </div>
 
-                </div>
               </div>
             )}
 
