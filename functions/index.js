@@ -1001,4 +1001,4 @@ function esParecido(usuarioTexto, bdTexto) {
         if (!encontroParecida) return false;
     }
     return true;
-} 
+}  

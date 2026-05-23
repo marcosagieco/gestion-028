@@ -4903,4 +4903,4 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       </main>
     </div>
   );
-} 
+}  
