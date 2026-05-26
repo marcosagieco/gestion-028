@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package, UserCircle,
-  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy
+  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send
 } from 'lucide-react';
 
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
@@ -455,6 +455,603 @@ const ModernDistribution = ({ data, colors, darkMode }) => {
           </div>
         );
       })}
+    </div>
+  );
+};
+
+// --- AI CHAT FLOTANTE ---
+const AIChat = ({ darkMode, db }) => {
+  const STORAGE_KEY = '028_ai_chats';
+
+  const [open, setOpen] = useState(false);
+  const [chats, setChats] = useState(() => {
+    try {
+      const s = localStorage.getItem(STORAGE_KEY);
+      const p = s ? JSON.parse(s) : null;
+      if (p && p.length > 0) return p;
+    } catch {}
+    return [{ id: Date.now(), name: 'Chat 1', messages: [], actionHistory: [] }];
+  });
+  const [activeChatId, setActiveChatId] = useState(() => {
+    try {
+      const s = localStorage.getItem(STORAGE_KEY);
+      const p = s ? JSON.parse(s) : null;
+      if (p && p.length > 0) return p[0].id;
+    } catch {}
+    return null;
+  });
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState('');
+  const messagesEndRef = useRef(null);
+  const tabsRef = useRef(null);
+  const chatsRef = useRef(chats);
+
+  useEffect(() => { chatsRef.current = chats; }, [chats]);
+
+  const activeChat = chats.find(c => c.id === activeChatId) || chats[0] || null;
+
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(chats)); } catch {}
+  }, [chats]);
+
+  useEffect(() => {
+    if (!activeChatId && chats.length > 0) setActiveChatId(chats[0].id);
+  }, [chats, activeChatId]);
+
+  useEffect(() => {
+    if (open) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [activeChat?.messages?.length, open]);
+
+  const updateChat = (id, fn) => setChats(prev => prev.map(c => c.id === id ? fn(c) : c));
+
+  const pushMsg = (chatId, msg) => updateChat(chatId, c => ({
+    ...c, messages: [...c.messages, { ...msg, _id: `${Date.now()}-${Math.random()}` }]
+  }));
+
+  const pushAction = (chatId, action) => updateChat(chatId, c => ({
+    ...c, actionHistory: [action, ...(c.actionHistory || [])].slice(0, 3)
+  }));
+
+  const createChat = () => {
+    const nc = { id: Date.now(), name: `Chat ${chats.length + 1}`, messages: [], actionHistory: [] };
+    setChats(prev => [...prev, nc]);
+    setActiveChatId(nc.id);
+  };
+
+  const deleteChat = (id) => {
+    setChats(prev => {
+      const next = prev.filter(c => c.id !== id);
+      if (next.length === 0) {
+        const fresh = { id: Date.now(), name: 'Chat 1', messages: [], actionHistory: [] };
+        setActiveChatId(fresh.id);
+        return [fresh];
+      }
+      if (activeChatId === id) setActiveChatId(next[0].id);
+      return next;
+    });
+  };
+
+  const compactChat = (chatId) => {
+    const chat = chatsRef.current.find(c => c.id === chatId);
+    if (!chat) return;
+    const count = chat.messages.length;
+    updateChat(chatId, c => ({
+      ...c,
+      messages: count > 0
+        ? [{ role: 'assistant', content: `📦 Historial compactado (${count} mensajes eliminados para ahorrar tokens).`, _id: `compact-${Date.now()}` }]
+        : []
+    }));
+  };
+
+  const TOOLS = [
+    {
+      name: 'registrar_venta',
+      description: 'Registra una venta en sales y descuenta currentStock en batches. Requiere confirmación previa del usuario.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          date: { type: 'string', description: 'YYYY-MM-DD' },
+          batchId: { type: 'string' }, batchName: { type: 'string' },
+          itemId: { type: 'string' }, productName: { type: 'string' },
+          variant: { type: 'string' }, quantity: { type: 'number' },
+          unitPrice: { type: 'number' }, source: { type: 'string' },
+          isReseller: { type: 'boolean' }, isNewClient: { type: 'string' },
+          seller: { type: 'string' }
+        },
+        required: ['date', 'batchId', 'batchName', 'itemId', 'productName', 'quantity', 'unitPrice']
+      }
+    },
+    {
+      name: 'registrar_gasto',
+      description: 'Registra un gasto en expenses. Requiere confirmación previa del usuario.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          date: { type: 'string' }, description: { type: 'string' },
+          amount: { type: 'number' }, batchId: { type: 'string' }, batchName: { type: 'string' }
+        },
+        required: ['date', 'description', 'amount']
+      }
+    },
+    {
+      name: 'consultar_stock',
+      description: 'Lee todos los batches activos con su inventario actual. No requiere confirmación.',
+      input_schema: { type: 'object', properties: {} }
+    },
+    {
+      name: 'cierre_caja',
+      description: 'Calcula ventas, costos, gastos y ganancias de un período. No requiere confirmación.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          startDate: { type: 'string', description: 'YYYY-MM-DD' },
+          endDate: { type: 'string', description: 'YYYY-MM-DD' }
+        },
+        required: ['startDate', 'endDate']
+      }
+    },
+    {
+      name: 'consignaciones_pendientes',
+      description: 'Lista consignaciones con quantityPending > 0. No requiere confirmación.',
+      input_schema: { type: 'object', properties: {} }
+    },
+    {
+      name: 'registrar_stock_neutro',
+      description: 'Registra en neutral_stock y descuenta stock en batches. Requiere confirmación previa.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          reason: { type: 'string' }, note: { type: 'string' },
+          batchId: { type: 'string' }, batchName: { type: 'string' },
+          itemId: { type: 'string' }, productName: { type: 'string' },
+          variant: { type: 'string' }, quantity: { type: 'number' },
+          unitPrice: { type: 'number' }, costArsAtEntry: { type: 'number' }
+        },
+        required: ['batchId', 'itemId', 'productName', 'quantity']
+      }
+    },
+    {
+      name: 'comparar_periodos',
+      description: 'Compara métricas de ventas y gastos entre dos rangos de fechas. No requiere confirmación.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          period1Start: { type: 'string' }, period1End: { type: 'string' },
+          period2Start: { type: 'string' }, period2End: { type: 'string' }
+        },
+        required: ['period1Start', 'period1End', 'period2Start', 'period2End']
+      }
+    },
+    {
+      name: 'deshacer_accion',
+      description: 'Deshace una acción previa usando datos guardados en memoria. actionIndex: 0=última, 1=penúltima, 2=antepenúltima. Requiere confirmación previa.',
+      input_schema: {
+        type: 'object',
+        properties: { actionIndex: { type: 'number' } },
+        required: ['actionIndex']
+      }
+    }
+  ];
+
+  const executeTool = async (toolName, toolInput, chatId) => {
+    if (toolName === 'consultar_stock') {
+      const snap = await getDocs(collection(db, 'batches'));
+      return JSON.stringify(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }
+
+    if (toolName === 'cierre_caja') {
+      const { startDate, endDate } = toolInput;
+      const [sSnap, eSnap] = await Promise.all([
+        getDocs(query(collection(db, 'sales'), where('date', '>=', startDate), where('date', '<=', endDate))),
+        getDocs(query(collection(db, 'expenses'), where('date', '>=', startDate), where('date', '<=', endDate)))
+      ]);
+      const sales = sSnap.docs.map(d => d.data());
+      const exps = eSnap.docs.map(d => d.data());
+      const totalSales = sales.reduce((a, v) => a + (v.totalSaleRaw || 0), 0);
+      const totalCost = sales.reduce((a, v) => a + (v.costArsAtSale || 0), 0);
+      const totalExpenses = exps.reduce((a, v) => a + (v.amount || 0), 0);
+      const byProduct = {};
+      sales.forEach(s => {
+        const k = `${s.productName || ''} ${s.variant || ''}`.trim();
+        byProduct[k] = byProduct[k] || { qty: 0, total: 0 };
+        byProduct[k].qty += (s.quantity || 0);
+        byProduct[k].total += (s.totalSaleRaw || 0);
+      });
+      const bySource = {};
+      sales.forEach(s => { const src = s.source || 'Desconocido'; bySource[src] = (bySource[src] || 0) + (s.totalSaleRaw || 0); });
+      return JSON.stringify({
+        period: `${startDate} → ${endDate}`,
+        salesCount: sales.length,
+        totalSales, totalCost,
+        grossProfit: totalSales - totalCost,
+        totalExpenses,
+        netProfit: totalSales - totalCost - totalExpenses,
+        topProducts: Object.entries(byProduct).sort((a, b) => b[1].qty - a[1].qty).slice(0, 5),
+        bySource,
+        expenses: exps.map(e => ({ description: e.description, amount: e.amount }))
+      });
+    }
+
+    if (toolName === 'consignaciones_pendientes') {
+      const snap = await getDocs(collection(db, 'consignments'));
+      return JSON.stringify(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(c => (c.quantityPending || 0) > 0));
+    }
+
+    if (toolName === 'registrar_venta') {
+      const { batchId, itemId, quantity } = toolInput;
+      let costArsAtSale = 0, batchDocData = null, prevStock = 0;
+      try {
+        const allBatches = await getDocs(collection(db, 'batches'));
+        const batchDoc = allBatches.docs.find(d => d.id === batchId);
+        if (batchDoc) {
+          batchDocData = batchDoc.data();
+          const item = (batchDocData.items || []).find(i => i.id === itemId);
+          if (item) { costArsAtSale = (item.costArs || 0) * quantity; prevStock = item.currentStock || 0; }
+        }
+      } catch {}
+      const totalSaleRaw = (toolInput.unitPrice || 0) * quantity;
+      const saleRef = await addDoc(collection(db, 'sales'), {
+        ...toolInput, quantity: Number(quantity), totalSaleRaw, costArsAtSale,
+        createdAt: new Date().toISOString(), ticketId: `TKT-${Date.now()}`
+      });
+      if (batchDocData) {
+        const updItems = (batchDocData.items || []).map(i =>
+          i.id === itemId ? { ...i, currentStock: Math.max(0, (i.currentStock || 0) - quantity) } : i
+        );
+        await updateDoc(doc(db, 'batches', batchId), { items: updItems });
+        pushAction(chatId, { type: 'venta', saleId: saleRef.id, batchId, itemId, quantity: Number(quantity), previousStock: prevStock });
+      }
+      return JSON.stringify({ success: true, saleId: saleRef.id, totalSaleRaw, costArsAtSale });
+    }
+
+    if (toolName === 'registrar_gasto') {
+      const expRef = await addDoc(collection(db, 'expenses'), { ...toolInput, amount: Number(toolInput.amount) });
+      pushAction(chatId, { type: 'gasto', expenseId: expRef.id, ...toolInput });
+      return JSON.stringify({ success: true, expenseId: expRef.id });
+    }
+
+    if (toolName === 'registrar_stock_neutro') {
+      const { batchId, itemId, quantity, unitPrice = 0, costArsAtEntry = 0 } = toolInput;
+      const totalSaleRaw = unitPrice * quantity, totalCostRaw = costArsAtEntry * quantity;
+      const entryRef = await addDoc(collection(db, 'neutral_stock'), {
+        ...toolInput, totalSaleRaw, totalCostRaw, grossProfitRaw: totalSaleRaw - totalCostRaw,
+        createdAt: new Date().toISOString()
+      });
+      const allBatches = await getDocs(collection(db, 'batches'));
+      const batchDoc = allBatches.docs.find(d => d.id === batchId);
+      if (batchDoc) {
+        const bData = batchDoc.data();
+        const prevStock = (bData.items || []).find(i => i.id === itemId)?.currentStock || 0;
+        const updItems = (bData.items || []).map(i =>
+          i.id === itemId ? { ...i, currentStock: Math.max(0, (i.currentStock || 0) - quantity) } : i
+        );
+        await updateDoc(doc(db, 'batches', batchId), { items: updItems });
+        pushAction(chatId, { type: 'stock_neutro', entryId: entryRef.id, batchId, itemId, quantity, prevStock });
+      }
+      return JSON.stringify({ success: true, entryId: entryRef.id });
+    }
+
+    if (toolName === 'comparar_periodos') {
+      const { period1Start, period1End, period2Start, period2End } = toolInput;
+      const fetchP = async (s, e) => {
+        const [ss, es] = await Promise.all([
+          getDocs(query(collection(db, 'sales'), where('date', '>=', s), where('date', '<=', e))),
+          getDocs(query(collection(db, 'expenses'), where('date', '>=', s), where('date', '<=', e)))
+        ]);
+        const sv = ss.docs.map(d => d.data()), ev = es.docs.map(d => d.data());
+        const ts = sv.reduce((a, v) => a + (v.totalSaleRaw || 0), 0);
+        const tc = sv.reduce((a, v) => a + (v.costArsAtSale || 0), 0);
+        const te = ev.reduce((a, v) => a + (v.amount || 0), 0);
+        return { range: `${s} → ${e}`, salesCount: sv.length, totalSales: ts, grossProfit: ts - tc, totalExpenses: te, netProfit: ts - tc - te };
+      };
+      const [p1, p2] = await Promise.all([fetchP(period1Start, period1End), fetchP(period2Start, period2End)]);
+      return JSON.stringify({ period1: p1, period2: p2 });
+    }
+
+    if (toolName === 'deshacer_accion') {
+      const { actionIndex = 0 } = toolInput;
+      const chat = chatsRef.current.find(c => c.id === chatId);
+      const action = (chat?.actionHistory || [])[actionIndex];
+      if (!action) return JSON.stringify({ success: false, error: 'No hay acción en ese índice' });
+      if (action.type === 'venta') {
+        await deleteDoc(doc(db, 'sales', action.saleId));
+        const allBatches = await getDocs(collection(db, 'batches'));
+        const batchDoc = allBatches.docs.find(d => d.id === action.batchId);
+        if (batchDoc) {
+          const updItems = (batchDoc.data().items || []).map(i =>
+            i.id === action.itemId ? { ...i, currentStock: action.previousStock } : i
+          );
+          await updateDoc(doc(db, 'batches', action.batchId), { items: updItems });
+        }
+        updateChat(chatId, c => ({ ...c, actionHistory: c.actionHistory.filter((_, i) => i !== actionIndex) }));
+        return JSON.stringify({ success: true, message: 'Venta eliminada y stock restaurado' });
+      }
+      if (action.type === 'gasto') {
+        await deleteDoc(doc(db, 'expenses', action.expenseId));
+        updateChat(chatId, c => ({ ...c, actionHistory: c.actionHistory.filter((_, i) => i !== actionIndex) }));
+        return JSON.stringify({ success: true, message: 'Gasto eliminado' });
+      }
+      if (action.type === 'stock_neutro') {
+        await deleteDoc(doc(db, 'neutral_stock', action.entryId));
+        const allBatches = await getDocs(collection(db, 'batches'));
+        const batchDoc = allBatches.docs.find(d => d.id === action.batchId);
+        if (batchDoc) {
+          const updItems = (batchDoc.data().items || []).map(i =>
+            i.id === action.itemId ? { ...i, currentStock: action.prevStock } : i
+          );
+          await updateDoc(doc(db, 'batches', action.batchId), { items: updItems });
+        }
+        updateChat(chatId, c => ({ ...c, actionHistory: c.actionHistory.filter((_, i) => i !== actionIndex) }));
+        return JSON.stringify({ success: true, message: 'Stock neutro eliminado y stock restaurado' });
+      }
+      return JSON.stringify({ success: false, error: 'Tipo de acción no soportado' });
+    }
+
+    return JSON.stringify({ error: `Herramienta desconocida: ${toolName}` });
+  };
+
+  const SYSTEM_PROMPT = `Sos el asistente de negocio de 028 Import, una tienda de importación. Tenés acceso completo a Firebase Firestore y podés consultar y modificar datos en tiempo real.
+
+COLECCIONES DE FIREBASE:
+- "sales": date, batchId, batchName, itemId, productName, variant, quantity, unitPrice, totalSaleRaw, costArsAtSale, source, isReseller, isNewClient, seller, ticketId, createdAt
+- "batches": name, createdAt, finalizedAt, items[] (cada item: id, product, variant, costArs, initialStock, currentStock)
+- "expenses": date, description, amount, batchId, batchName
+- "neutral_stock": createdAt, reason, note, batchId, batchName, itemId, productName, variant, quantity, unitPrice, costArsAtEntry, totalSaleRaw, totalCostRaw, grossProfitRaw
+- "consignments": clientName, clientPhone, clientDni, productName, variant, batchId, batchName, quantityDelivered, quantityPending, quantityPaid, quantityReturned, quantityLost, unitPrice, unitCost, dueDate, consignmentTicketId, createdAt
+
+CONFIRMACIÓN OBLIGATORIA: Antes de ejecutar cualquier herramienta que modifique datos (registrar_venta, registrar_gasto, registrar_stock_neutro, deshacer_accion), SIEMPRE mostrá primero un resumen detallado con: nombre exacto del lote, colección de Firebase que se modifica, valores exactos antes y después del cambio, y qué documentos se tocan. Luego preguntá "¿Confirmás? (sí / no)". Solo ejecutá la herramienta si el usuario responde "sí". Si responde "no", preguntá qué quiere cambiar.
+
+MODO CONSULTA vs MODO ACCIÓN: Las herramientas de consulta (consultar_stock, cierre_caja, consignaciones_pendientes, comparar_periodos) se ejecutan directo sin pedir confirmación. Solo pedí confirmación cuando vas a modificar, crear o borrar datos.
+
+HISTORIAL DE ACCIONES CON ROLLBACK: Mantenés en memoria las últimas 3 acciones ejecutadas. Si el usuario dice "deshacé lo último" o "volvé a agregar lo que borraste", primero mostrá exactamente qué vas a revertir, pedí confirmación, y ejecutalo con deshacer_accion.
+
+COMANDOS RÁPIDOS:
+- "cierre" o "cierre de hoy" → cierre_caja con la fecha de hoy
+- "cierre de semana" → últimos 7 días
+- "cierre de mes" → desde el 1ro del mes actual hasta hoy
+- "stock" → consultar_stock, mostrá ordenado por lote con unidades disponibles
+- "pendientes" → consignaciones_pendientes, agrupadas por cliente con montos
+
+RESUMEN INTELIGENTE: Al pedir "resumen de hoy/semana/mes", usá cierre_caja y mostrá: total vendido, ganancia bruta, ganancia neta, productos más vendidos, canal con más ventas, comparación con el período anterior equivalente, y una conclusión propia.
+
+INTELIGENCIA DE NEGOCIO: Cuando mostrés un cierre o comparación, analizá los datos como asesor. Identificá tendencias, qué sube o baja, qué producto o canal rinde mejor o peor. Dá una opinión concreta con recomendaciones específicas basadas en los números reales. No te limitás a mostrar datos: interpretás, opinás y sugerís acciones.
+
+Respondé siempre en español argentino, de forma clara y directa. Usá markdown para tablas y listas cuando sea útil.`;
+
+  const sendMessage = async () => {
+    if (!input.trim() || loading || !activeChat) return;
+    const chatId = activeChat.id;
+    const userText = input.trim();
+    setInput('');
+    pushMsg(chatId, { role: 'user', content: userText });
+    setLoading(true);
+    try {
+      const history = [...(activeChat.messages || []), { role: 'user', content: userText }]
+        .slice(-20)
+        .map(m => ({ role: m.role, content: m.content }));
+      let apiMsgs = history;
+      let running = true;
+      while (running) {
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true'
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 2048,
+            system: SYSTEM_PROMPT,
+            tools: TOOLS,
+            messages: apiMsgs
+          })
+        });
+        if (!res.ok) {
+          const e = await res.json().catch(() => ({}));
+          throw new Error(e?.error?.message || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        if (data.stop_reason === 'tool_use') {
+          const texts = data.content.filter(b => b.type === 'text');
+          const toolUses = data.content.filter(b => b.type === 'tool_use');
+          if (texts.length > 0) {
+            const t = texts.map(b => b.text).join('');
+            if (t.trim()) pushMsg(chatId, { role: 'assistant', content: t });
+          }
+          const toolResults = [];
+          for (const tu of toolUses) {
+            const result = await executeTool(tu.name, tu.input, chatId);
+            toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: result });
+          }
+          apiMsgs = [...apiMsgs, { role: 'assistant', content: data.content }, { role: 'user', content: toolResults }];
+        } else {
+          const t = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+          if (t.trim()) pushMsg(chatId, { role: 'assistant', content: t });
+          running = false;
+        }
+      }
+    } catch (e) {
+      pushMsg(chatId, { role: 'assistant', content: `❌ Error: ${e.message}` });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onKey = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
+
+  if (!open) return (
+    <button
+      onClick={() => setOpen(true)}
+      className="fixed bottom-20 md:bottom-6 right-4 md:right-6 z-[60] w-14 h-14 rounded-full bg-indigo-600 text-white shadow-2xl hover:bg-indigo-500 transition-all duration-200 hover:scale-110 flex items-center justify-center"
+      title="Asistente IA 028"
+    >
+      <Sparkles size={22} />
+    </button>
+  );
+
+  return (
+    <div className="fixed bottom-20 md:bottom-6 right-4 md:right-6 z-[60]" style={{ width: 400, maxWidth: 'calc(100vw - 2rem)' }}>
+      <div
+        className={`flex flex-col rounded-2xl shadow-2xl border overflow-hidden ${darkMode ? 'bg-[#0f1115] border-zinc-800 text-zinc-100' : 'bg-white border-zinc-200 text-zinc-900'}`}
+        style={{ height: 520, maxHeight: 'calc(100vh - 140px)' }}
+      >
+        {/* Header + Tabs */}
+        <div className={`flex-shrink-0 border-b ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+          <div className="flex items-center gap-1.5 px-3 pt-2">
+            <div
+              ref={tabsRef}
+              className="flex items-center gap-1 flex-1 overflow-x-auto min-w-0 pb-1"
+              style={{ scrollbarWidth: 'none' }}
+            >
+              {chats.map(chat => (
+                <div key={chat.id} className="flex items-center gap-0.5 flex-shrink-0">
+                  {editingId === chat.id ? (
+                    <input
+                      autoFocus
+                      value={editName}
+                      onChange={e => setEditName(e.target.value)}
+                      onBlur={() => { if (editName.trim()) updateChat(chat.id, c => ({ ...c, name: editName.trim() })); setEditingId(null); }}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') { if (editName.trim()) updateChat(chat.id, c => ({ ...c, name: editName.trim() })); setEditingId(null); }
+                        else if (e.key === 'Escape') setEditingId(null);
+                      }}
+                      className={`text-xs font-medium px-2 py-0.5 rounded w-24 outline-none border ${darkMode ? 'bg-zinc-800 border-indigo-500 text-zinc-100' : 'bg-white border-indigo-400 text-zinc-900'}`}
+                    />
+                  ) : (
+                    <button
+                      onClick={() => setActiveChatId(chat.id)}
+                      onDoubleClick={() => { setEditingId(chat.id); setEditName(chat.name); }}
+                      className={`text-xs font-medium px-2.5 py-0.5 rounded transition-colors whitespace-nowrap ${
+                        activeChatId === chat.id
+                          ? (darkMode ? 'bg-indigo-500/20 text-indigo-300' : 'bg-indigo-100 text-indigo-700')
+                          : (darkMode ? 'text-zinc-500 hover:text-zinc-200' : 'text-zinc-400 hover:text-zinc-700')
+                      }`}
+                    >{chat.name}</button>
+                  )}
+                  {chats.length > 1 && (
+                    <button
+                      onClick={() => deleteChat(chat.id)}
+                      className={`p-0.5 rounded transition-colors ${darkMode ? 'text-zinc-700 hover:text-red-400' : 'text-zinc-300 hover:text-red-400'}`}
+                    >
+                      <XCircle size={11} />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={createChat}
+              className={`flex-shrink-0 p-1 rounded transition-colors ${darkMode ? 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800' : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100'}`}
+              title="Nuevo chat"
+            >
+              <Plus size={14} />
+            </button>
+            <button
+              onClick={() => activeChat && compactChat(activeChat.id)}
+              className={`flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded transition-colors ${darkMode ? 'text-zinc-600 hover:text-zinc-300 hover:bg-zinc-800' : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100'}`}
+              title="Compactar historial"
+            >
+              /compact
+            </button>
+            <button
+              onClick={() => setOpen(false)}
+              className={`flex-shrink-0 p-1 rounded transition-colors ${darkMode ? 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800' : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100'}`}
+            >
+              <XCircle size={15} />
+            </button>
+          </div>
+          <div className="flex items-center gap-1.5 px-3 pb-2 pt-1">
+            <Sparkles size={12} className="text-indigo-500 flex-shrink-0" />
+            <span className={`text-[11px] font-semibold truncate ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Asistente 028 Import · claude-sonnet</span>
+          </div>
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2.5">
+          {(!activeChat?.messages || activeChat.messages.length === 0) && !loading && (
+            <div className="flex flex-col items-center justify-center h-full gap-2 opacity-40">
+              <Sparkles size={30} className="text-indigo-500" />
+              <p className={`text-xs text-center leading-relaxed ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                Preguntame sobre ventas, stock,<br />cierres o cualquier dato del negocio.
+              </p>
+            </div>
+          )}
+          {(activeChat?.messages || []).map((msg, i) => (
+            <div key={msg._id || i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[88%] text-xs leading-relaxed px-3 py-2 rounded-2xl whitespace-pre-wrap break-words ${
+                msg.role === 'user'
+                  ? 'bg-indigo-600 text-white rounded-tr-sm'
+                  : darkMode ? 'bg-zinc-800/80 text-zinc-100 rounded-tl-sm' : 'bg-zinc-100 text-zinc-800 rounded-tl-sm'
+              }`}>
+                {msg.content}
+              </div>
+            </div>
+          ))}
+          {loading && (
+            <div className="flex justify-start">
+              <div className={`px-3 py-2.5 rounded-2xl rounded-tl-sm ${darkMode ? 'bg-zinc-800/80' : 'bg-zinc-100'}`}>
+                <span className="flex gap-1 items-center">
+                  {[0, 150, 300].map(delay => (
+                    <span
+                      key={delay}
+                      className={`w-1.5 h-1.5 rounded-full animate-bounce ${darkMode ? 'bg-zinc-500' : 'bg-zinc-400'}`}
+                      style={{ animationDelay: `${delay}ms` }}
+                    />
+                  ))}
+                </span>
+              </div>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Reversible actions strip */}
+        {activeChat?.actionHistory?.length > 0 && (
+          <div
+            className={`flex-shrink-0 px-3 py-1 border-t flex items-center gap-1.5 overflow-x-auto ${darkMode ? 'border-zinc-800 bg-[#0d1018]' : 'border-zinc-100 bg-zinc-50'}`}
+            style={{ scrollbarWidth: 'none' }}
+          >
+            <span className={`text-[9px] font-bold uppercase tracking-wider flex-shrink-0 ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Reversibles:</span>
+            {activeChat.actionHistory.map((a, i) => (
+              <span
+                key={i}
+                className={`text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 font-medium ${darkMode ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-200 text-zinc-500'}`}
+              >
+                {a.type === 'venta' ? '🛒 Venta' : a.type === 'gasto' ? '💸 Gasto' : '📦 Stock neutro'}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Input */}
+        <div className={`flex-shrink-0 p-2.5 border-t ${darkMode ? 'border-zinc-800 bg-[#131824]' : 'border-zinc-200 bg-zinc-50'}`}>
+          <div className={`flex items-end gap-2 rounded-xl border px-3 py-2 transition-colors ${darkMode ? 'bg-[#0a0c10] border-zinc-800 focus-within:border-indigo-500/60' : 'bg-white border-zinc-300 focus-within:border-indigo-400'}`}>
+            <textarea
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={onKey}
+              placeholder="Escribí tu consulta... (Enter para enviar)"
+              rows={1}
+              disabled={loading}
+              className={`flex-1 text-xs bg-transparent outline-none resize-none leading-relaxed ${darkMode ? 'text-zinc-100 placeholder-zinc-700' : 'text-zinc-900 placeholder-zinc-400'}`}
+              style={{ minHeight: 20, maxHeight: 80 }}
+              onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 80) + 'px'; }}
+            />
+            <button
+              onClick={sendMessage}
+              disabled={loading || !input.trim()}
+              className="flex-shrink-0 w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors mb-0.5"
+            >
+              <Send size={13} />
+            </button>
+          </div>
+          <p className={`text-[9px] mt-1 text-center ${darkMode ? 'text-zinc-700' : 'text-zinc-400'}`}>Enter envía · Shift+Enter nueva línea</p>
+        </div>
+      </div>
     </div>
   );
 };
@@ -5310,6 +5907,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
         </div>
       </main>
+      <AIChat darkMode={darkMode} db={db} />
     </div>
   );
 }
