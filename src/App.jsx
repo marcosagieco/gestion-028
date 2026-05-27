@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package, UserCircle,
-  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send
+  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2
 } from 'lucide-react';
 
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 import { initializeApp } from "firebase/app";
 import {
@@ -470,7 +472,7 @@ const AIChat = ({ darkMode, db }) => {
       const p = s ? JSON.parse(s) : null;
       if (p && p.length > 0) return p;
     } catch {}
-    return [{ id: Date.now(), name: 'Chat 1', messages: [], actionHistory: [] }];
+    return [{ id: Date.now(), name: 'Chat 1', messages: [], actionHistory: [], context: '' }];
   });
   const [activeChatId, setActiveChatId] = useState(() => {
     try {
@@ -484,9 +486,24 @@ const AIChat = ({ darkMode, db }) => {
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState('');
+  const [panelWidth, setPanelWidth] = useState(420);
+  const [panelHeight, setPanelHeight] = useState(520);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+  const [copiedId, setCopiedId] = useState(null);
+  const [contextOpen, setContextOpen] = useState(false);
+  const [contextDraft, setContextDraft] = useState('');
+  const [selectedModel, setSelectedModel] = useState('claude-haiku-4-5-20251001');
+  const [panelPos, setPanelPos] = useState(() => {
+    try { const s = localStorage.getItem('028_ai_pos'); return s ? JSON.parse(s) : { x: null, y: null }; } catch { return { x: null, y: null }; }
+  });
+  const [isDragging, setIsDragging] = useState(false);
   const messagesEndRef = useRef(null);
   const tabsRef = useRef(null);
   const chatsRef = useRef(chats);
+  const dragRef = useRef(null);
+  const headerDragRef = useRef(null);
+  const panelRef = useRef(null);
 
   useEffect(() => { chatsRef.current = chats; }, [chats]);
 
@@ -500,14 +517,98 @@ const AIChat = ({ darkMode, db }) => {
     if (!activeChatId && chats.length > 0) setActiveChatId(chats[0].id);
   }, [chats, activeChatId]);
 
+  // Resize desde esquina superior izquierda
+  const handleResizeStart = (e) => {
+    e.preventDefault();
+    dragRef.current = { startX: e.clientX, startY: e.clientY, startW: panelWidth, startH: panelHeight };
+    const onMove = (ev) => {
+      if (!dragRef.current) return;
+      const dx = dragRef.current.startX - ev.clientX;
+      const dy = dragRef.current.startY - ev.clientY;
+      setPanelWidth(Math.min(800, Math.max(380, dragRef.current.startW + dx)));
+      setPanelHeight(Math.min(window.innerHeight * 0.9, Math.max(400, dragRef.current.startH + dy)));
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  useEffect(() => {
+    if (panelPos.x !== null) {
+      try { localStorage.setItem('028_ai_pos', JSON.stringify(panelPos)); } catch {}
+    }
+  }, [panelPos]);
+
+  const handleHeaderDragStart = (e) => {
+    if (e.target.closest('button') || e.target.closest('input')) return;
+    e.preventDefault();
+    const rect = panelRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    headerDragRef.current = { startMouseX: e.clientX, startMouseY: e.clientY, startPanelX: rect.left, startPanelY: rect.top };
+    setIsDragging(true);
+    const onMove = (ev) => {
+      if (!headerDragRef.current) return;
+      const newX = Math.max(0, Math.min(window.innerWidth - panelWidth, headerDragRef.current.startPanelX + ev.clientX - headerDragRef.current.startMouseX));
+      const newY = Math.max(0, Math.min(window.innerHeight - 80, headerDragRef.current.startPanelY + ev.clientY - headerDragRef.current.startMouseY));
+      setPanelPos({ x: newX, y: newY });
+    };
+    const onUp = () => {
+      headerDragRef.current = null;
+      setIsDragging(false);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  // Flechas de tabs
+  const checkTabsScroll = () => {
+    const el = tabsRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 2);
+    setCanScrollRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 2);
+  };
+
+  useEffect(() => {
+    const el = tabsRef.current;
+    if (!el) return;
+    el.addEventListener('scroll', checkTabsScroll);
+    checkTabsScroll();
+    const ro = new ResizeObserver(checkTabsScroll);
+    ro.observe(el);
+    return () => { el.removeEventListener('scroll', checkTabsScroll); ro.disconnect(); };
+  }, [open, chats.length]);
+
+  const scrollTabs = (delta) => {
+    tabsRef.current?.scrollBy({ left: delta, behavior: 'smooth' });
+  };
+
   useEffect(() => {
     if (open) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [activeChat?.messages?.length, open]);
 
   const updateChat = (id, fn) => setChats(prev => prev.map(c => c.id === id ? fn(c) : c));
 
+  const formatTs = (ts) => {
+    if (!ts) return '';
+    const d = new Date(ts);
+    return d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' });
+  };
+
+  const copyMsg = (text, id) => {
+    navigator.clipboard.writeText(text).catch(() => {}).then(() => {
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 1800);
+    });
+  };
+
   const pushMsg = (chatId, msg) => updateChat(chatId, c => ({
-    ...c, messages: [...c.messages, { ...msg, _id: `${Date.now()}-${Math.random()}` }]
+    ...c, messages: [...c.messages, { ...msg, _id: `${Date.now()}-${Math.random()}`, ts: Date.now() }]
   }));
 
   const pushAction = (chatId, action) => updateChat(chatId, c => ({
@@ -515,7 +616,7 @@ const AIChat = ({ darkMode, db }) => {
   }));
 
   const createChat = () => {
-    const nc = { id: Date.now(), name: `Chat ${chats.length + 1}`, messages: [], actionHistory: [] };
+    const nc = { id: Date.now(), name: `Chat ${chats.length + 1}`, messages: [], actionHistory: [], context: '' };
     setChats(prev => [...prev, nc]);
     setActiveChatId(nc.id);
   };
@@ -543,6 +644,32 @@ const AIChat = ({ darkMode, db }) => {
         ? [{ role: 'assistant', content: `📦 Historial compactado (${count} mensajes eliminados para ahorrar tokens).`, _id: `compact-${Date.now()}` }]
         : []
     }));
+  };
+
+  // Fecha y rango en zona horaria Argentina (UTC-3, sin DST)
+  const getArgDateISO = () => {
+    const now = new Date();
+    const arg = new Date(now.toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' }));
+    const y = arg.getFullYear();
+    const m = String(arg.getMonth() + 1).padStart(2, '0');
+    const d = String(arg.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+
+  const getArgDateLabel = () =>
+    new Date().toLocaleDateString('es-AR', {
+      timeZone: 'America/Argentina/Buenos_Aires',
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+    });
+
+  // Convierte YYYY-MM-DD en rango UTC para Argentina (UTC-3)
+  const argDayToUTCRange = (dateStr) => {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    // 00:00 ART = 03:00 UTC del mismo día
+    const start = new Date(Date.UTC(y, m - 1, d, 3, 0, 0, 0));
+    // 23:59:59.999 ART = 02:59:59.999 UTC del día siguiente
+    const end = new Date(Date.UTC(y, m - 1, d + 1, 2, 59, 59, 999));
+    return { start: start.toISOString(), end: end.toISOString() };
   };
 
   const TOOLS = [
@@ -632,6 +759,79 @@ const AIChat = ({ darkMode, db }) => {
         properties: { actionIndex: { type: 'number' } },
         required: ['actionIndex']
       }
+    },
+    {
+      name: 'crear_lote',
+      description: 'Crea un lote nuevo en batches. Requiere confirmación.',
+      input_schema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] }
+    },
+    {
+      name: 'agregar_producto_a_lote',
+      description: 'Busca un batch por nombre y agrega un item. Requiere confirmación.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          batchName: { type: 'string' }, product: { type: 'string' }, variant: { type: 'string' },
+          costArs: { type: 'number' }, initialStock: { type: 'number' }
+        },
+        required: ['batchName', 'product', 'initialStock']
+      }
+    },
+    {
+      name: 'editar_producto',
+      description: 'Busca batch+item por nombre/variante y actualiza los campos indicados. Requiere confirmación.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          batchName: { type: 'string' }, productName: { type: 'string' }, variant: { type: 'string' },
+          newProduct: { type: 'string' }, newVariant: { type: 'string' },
+          costArs: { type: 'number' }, initialStock: { type: 'number' }
+        },
+        required: ['batchName', 'productName']
+      }
+    },
+    {
+      name: 'eliminar_producto',
+      description: 'Elimina un item del array items de un batch. Requiere confirmación.',
+      input_schema: {
+        type: 'object',
+        properties: { batchName: { type: 'string' }, productName: { type: 'string' }, variant: { type: 'string' } },
+        required: ['batchName', 'productName']
+      }
+    },
+    {
+      name: 'renombrar_lote',
+      description: 'Actualiza name en batches y batchName en sales/expenses asociadas. Requiere confirmación.',
+      input_schema: {
+        type: 'object',
+        properties: { currentName: { type: 'string' }, newName: { type: 'string' } },
+        required: ['currentName', 'newName']
+      }
+    },
+    {
+      name: 'editar_stock_directo',
+      description: 'Suma o resta cantidad al currentStock de un producto sin registrarlo como venta. Requiere confirmación.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          batchName: { type: 'string' }, productName: { type: 'string' }, variant: { type: 'string' },
+          delta: { type: 'number', description: 'Positivo para sumar, negativo para restar' }
+        },
+        required: ['batchName', 'productName', 'delta']
+      }
+    },
+    {
+      name: 'ventas_por_vendedor',
+      description: 'Busca en sales todas las ventas donde el campo seller contenga el string dado (case insensitive). Devuelve lista completa con productName, variant, quantity, totalSaleRaw, date, seller, y totales agregados. No requiere confirmación.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          vendedor: { type: 'string', description: 'Nombre o parte del nombre del vendedor a filtrar (ej: "Buono", "B", "Lucas")' },
+          startDate: { type: 'string', description: 'Fecha inicio opcional YYYY-MM-DD' },
+          endDate: { type: 'string', description: 'Fecha fin opcional YYYY-MM-DD' }
+        },
+        required: ['vendedor']
+      }
     }
   ];
 
@@ -643,11 +843,16 @@ const AIChat = ({ darkMode, db }) => {
 
     if (toolName === 'cierre_caja') {
       const { startDate, endDate } = toolInput;
+      // Convertir fechas argentinas a rangos UTC para cubrir ISO timestamps
+      const startRange = argDayToUTCRange(startDate);
+      const endRange = argDayToUTCRange(endDate);
+      const utcStart = startRange.start;   // 03:00 UTC del día inicio (= medianoche ART)
+      const utcEnd = endRange.end;          // 02:59:59.999 UTC del día siguiente al fin (= 23:59 ART)
       const [sSnap, eSnap] = await Promise.all([
-        getDocs(query(collection(db, 'sales'), where('date', '>=', startDate), where('date', '<=', endDate))),
-        getDocs(query(collection(db, 'expenses'), where('date', '>=', startDate), where('date', '<=', endDate)))
+        getDocs(query(collection(db, 'sales'), where('date', '>=', utcStart), where('date', '<=', utcEnd))),
+        getDocs(query(collection(db, 'expenses'), where('date', '>=', utcStart), where('date', '<=', utcEnd)))
       ]);
-      const sales = sSnap.docs.map(d => d.data());
+      const sales = sSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       const exps = eSnap.docs.map(d => d.data());
       const totalSales = sales.reduce((a, v) => a + (v.totalSaleRaw || 0), 0);
       const totalCost = sales.reduce((a, v) => a + (v.costArsAtSale || 0), 0);
@@ -655,12 +860,22 @@ const AIChat = ({ darkMode, db }) => {
       const byProduct = {};
       sales.forEach(s => {
         const k = `${s.productName || ''} ${s.variant || ''}`.trim();
-        byProduct[k] = byProduct[k] || { qty: 0, total: 0 };
+        byProduct[k] = byProduct[k] || { qty: 0, total: 0, cost: 0 };
         byProduct[k].qty += (s.quantity || 0);
         byProduct[k].total += (s.totalSaleRaw || 0);
+        byProduct[k].cost += (s.costArsAtSale || 0);
       });
       const bySource = {};
       sales.forEach(s => { const src = s.source || 'Desconocido'; bySource[src] = (bySource[src] || 0) + (s.totalSaleRaw || 0); });
+      // Agrupación por vendedor (campo seller)
+      const bySeller = {};
+      sales.forEach(s => {
+        const sel = s.seller || 'Sin vendedor';
+        bySeller[sel] = bySeller[sel] || { count: 0, totalSales: 0, totalCost: 0 };
+        bySeller[sel].count += 1;
+        bySeller[sel].totalSales += (s.totalSaleRaw || 0);
+        bySeller[sel].totalCost += (s.costArsAtSale || 0);
+      });
       return JSON.stringify({
         period: `${startDate} → ${endDate}`,
         salesCount: sales.length,
@@ -668,8 +883,10 @@ const AIChat = ({ darkMode, db }) => {
         grossProfit: totalSales - totalCost,
         totalExpenses,
         netProfit: totalSales - totalCost - totalExpenses,
-        topProducts: Object.entries(byProduct).sort((a, b) => b[1].qty - a[1].qty).slice(0, 5),
+        topProducts: Object.entries(byProduct).sort((a, b) => b[1].qty - a[1].qty).slice(0, 10).map(([name, d]) => ({ name, ...d, profit: d.total - d.cost })),
         bySource,
+        bySeller,
+        salesWithSeller: sales.map(s => ({ productName: s.productName, variant: s.variant, quantity: s.quantity, totalSaleRaw: s.totalSaleRaw, date: s.date, seller: s.seller || '' })),
         expenses: exps.map(e => ({ description: e.description, amount: e.amount }))
       });
     }
@@ -735,16 +952,18 @@ const AIChat = ({ darkMode, db }) => {
 
     if (toolName === 'comparar_periodos') {
       const { period1Start, period1End, period2Start, period2End } = toolInput;
-      const fetchP = async (s, e) => {
+      const fetchP = async (startArg, endArg) => {
+        const utcS = argDayToUTCRange(startArg).start;
+        const utcE = argDayToUTCRange(endArg).end;
         const [ss, es] = await Promise.all([
-          getDocs(query(collection(db, 'sales'), where('date', '>=', s), where('date', '<=', e))),
-          getDocs(query(collection(db, 'expenses'), where('date', '>=', s), where('date', '<=', e)))
+          getDocs(query(collection(db, 'sales'), where('date', '>=', utcS), where('date', '<=', utcE))),
+          getDocs(query(collection(db, 'expenses'), where('date', '>=', utcS), where('date', '<=', utcE)))
         ]);
         const sv = ss.docs.map(d => d.data()), ev = es.docs.map(d => d.data());
         const ts = sv.reduce((a, v) => a + (v.totalSaleRaw || 0), 0);
         const tc = sv.reduce((a, v) => a + (v.costArsAtSale || 0), 0);
         const te = ev.reduce((a, v) => a + (v.amount || 0), 0);
-        return { range: `${s} → ${e}`, salesCount: sv.length, totalSales: ts, grossProfit: ts - tc, totalExpenses: te, netProfit: ts - tc - te };
+        return { range: `${startArg} → ${endArg}`, salesCount: sv.length, totalSales: ts, grossProfit: ts - tc, totalExpenses: te, netProfit: ts - tc - te };
       };
       const [p1, p2] = await Promise.all([fetchP(period1Start, period1End), fetchP(period2Start, period2End)]);
       return JSON.stringify({ period1: p1, period2: p2 });
@@ -786,54 +1005,391 @@ const AIChat = ({ darkMode, db }) => {
         updateChat(chatId, c => ({ ...c, actionHistory: c.actionHistory.filter((_, i) => i !== actionIndex) }));
         return JSON.stringify({ success: true, message: 'Stock neutro eliminado y stock restaurado' });
       }
+      if (action.type === 'crear_lote') {
+        await deleteDoc(doc(db, 'batches', action.batchId));
+        updateChat(chatId, c => ({ ...c, actionHistory: c.actionHistory.filter((_, i) => i !== actionIndex) }));
+        return JSON.stringify({ success: true, message: `Lote "${action.name}" eliminado` });
+      }
+      if (action.type === 'agregar_producto') {
+        const snap = await getDocs(collection(db, 'batches'));
+        const bd = snap.docs.find(d => d.id === action.batchId);
+        if (bd) {
+          const updItems = (bd.data().items || []).filter(i => i.id !== action.itemId);
+          await updateDoc(doc(db, 'batches', action.batchId), { items: updItems });
+        }
+        updateChat(chatId, c => ({ ...c, actionHistory: c.actionHistory.filter((_, i) => i !== actionIndex) }));
+        return JSON.stringify({ success: true, message: 'Producto eliminado del lote' });
+      }
+      if (action.type === 'editar_producto') {
+        const snap = await getDocs(collection(db, 'batches'));
+        const bd = snap.docs.find(d => d.id === action.batchId);
+        if (bd) {
+          const updItems = (bd.data().items || []).map(i => i.id === action.itemId ? action.previousItem : i);
+          await updateDoc(doc(db, 'batches', action.batchId), { items: updItems });
+        }
+        updateChat(chatId, c => ({ ...c, actionHistory: c.actionHistory.filter((_, i) => i !== actionIndex) }));
+        return JSON.stringify({ success: true, message: 'Producto restaurado al estado anterior' });
+      }
+      if (action.type === 'eliminar_producto') {
+        const snap = await getDocs(collection(db, 'batches'));
+        const bd = snap.docs.find(d => d.id === action.batchId);
+        if (bd) {
+          await updateDoc(doc(db, 'batches', action.batchId), { items: [...(bd.data().items || []), action.item] });
+        }
+        updateChat(chatId, c => ({ ...c, actionHistory: c.actionHistory.filter((_, i) => i !== actionIndex) }));
+        return JSON.stringify({ success: true, message: 'Producto restaurado al lote' });
+      }
+      if (action.type === 'renombrar_lote') {
+        await updateDoc(doc(db, 'batches', action.batchId), { name: action.previousName });
+        const [sSnap, eSnap] = await Promise.all([
+          getDocs(query(collection(db, 'sales'), where('batchId', '==', action.batchId))),
+          getDocs(query(collection(db, 'expenses'), where('batchId', '==', action.batchId)))
+        ]);
+        await Promise.all([
+          ...sSnap.docs.map(d => updateDoc(doc(db, 'sales', d.id), { batchName: action.previousName })),
+          ...eSnap.docs.map(d => updateDoc(doc(db, 'expenses', d.id), { batchName: action.previousName }))
+        ]);
+        updateChat(chatId, c => ({ ...c, actionHistory: c.actionHistory.filter((_, i) => i !== actionIndex) }));
+        return JSON.stringify({ success: true, message: `Lote renombrado de vuelta a "${action.previousName}"` });
+      }
+      if (action.type === 'editar_stock_directo') {
+        const snap = await getDocs(collection(db, 'batches'));
+        const bd = snap.docs.find(d => d.id === action.batchId);
+        if (bd) {
+          const updItems = (bd.data().items || []).map(i => i.id === action.itemId ? { ...i, currentStock: action.prevStock } : i);
+          await updateDoc(doc(db, 'batches', action.batchId), { items: updItems });
+        }
+        updateChat(chatId, c => ({ ...c, actionHistory: c.actionHistory.filter((_, i) => i !== actionIndex) }));
+        return JSON.stringify({ success: true, message: `Stock restaurado a ${action.prevStock}` });
+      }
       return JSON.stringify({ success: false, error: 'Tipo de acción no soportado' });
+    }
+
+    if (toolName === 'crear_lote') {
+      const { name } = toolInput;
+      const batchRef = await addDoc(collection(db, 'batches'), { name, createdAt: new Date().toISOString(), items: [] });
+      pushAction(chatId, { type: 'crear_lote', batchId: batchRef.id, name });
+      return JSON.stringify({ success: true, batchId: batchRef.id, name });
+    }
+
+    if (toolName === 'agregar_producto_a_lote') {
+      const { batchName, product, variant = '', costArs = 0, initialStock = 0 } = toolInput;
+      const allBatches = await getDocs(collection(db, 'batches'));
+      const allNames = allBatches.docs.map(d => d.data().name || '');
+      const batchDoc = allBatches.docs.find(d => (d.data().name || '').toLowerCase() === batchName.toLowerCase());
+      if (!batchDoc) return JSON.stringify({
+        success: false,
+        error: `Lote "${batchName}" no existe en el sistema.`,
+        instruccion: 'Usá exactamente uno de los nombres de la lista lotesDisponibles.',
+        lotesDisponibles: allNames
+      });
+      const newItem = {
+        id: `${Date.now()}-${Math.floor(Math.random() * 9999)}`,
+        product, variant,
+        costArs: Number(costArs),
+        initialStock: Number(initialStock),
+        currentStock: Number(initialStock)
+      };
+      await updateDoc(doc(db, 'batches', batchDoc.id), { items: [...(batchDoc.data().items || []), newItem] });
+      pushAction(chatId, { type: 'agregar_producto', batchId: batchDoc.id, itemId: newItem.id, batchName });
+      return JSON.stringify({ success: true, item: newItem });
+    }
+
+    if (toolName === 'editar_producto') {
+      const { batchName, productName, variant, newProduct, newVariant, costArs, initialStock } = toolInput;
+      const allBatches = await getDocs(collection(db, 'batches'));
+      const allNames = allBatches.docs.map(d => d.data().name || '');
+      const batchDoc = allBatches.docs.find(d => (d.data().name || '').toLowerCase().includes(batchName.toLowerCase()));
+      if (!batchDoc) return JSON.stringify({
+        success: false,
+        error: `Lote "${batchName}" no existe en el sistema.`,
+        instruccion: 'Usá exactamente uno de los nombres de la lista lotesDisponibles.',
+        lotesDisponibles: allNames
+      });
+      const items = batchDoc.data().items || [];
+      const idx = items.findIndex(i =>
+        (i.product || '').toLowerCase().includes(productName.toLowerCase()) &&
+        (!variant || (i.variant || '').toLowerCase().includes(variant.toLowerCase()))
+      );
+      if (idx === -1) return JSON.stringify({
+        success: false,
+        error: `Producto "${productName}" no existe en el lote "${batchDoc.data().name}".`,
+        instruccion: 'Usá exactamente uno de los nombres de la lista productosDisponibles.',
+        productosDisponibles: items.map(i => ({ product: i.product, variant: i.variant || '' }))
+      });
+      const previousItem = { ...items[idx] };
+      const updatedItem = {
+        ...items[idx],
+        ...(newProduct !== undefined && { product: newProduct }),
+        ...(newVariant !== undefined && { variant: newVariant }),
+        ...(costArs !== undefined && { costArs: Number(costArs) }),
+        ...(initialStock !== undefined && { initialStock: Number(initialStock) })
+      };
+      const updItems = items.map((it, i) => i === idx ? updatedItem : it);
+      await updateDoc(doc(db, 'batches', batchDoc.id), { items: updItems });
+      pushAction(chatId, { type: 'editar_producto', batchId: batchDoc.id, itemId: items[idx].id, previousItem });
+      return JSON.stringify({ success: true, before: previousItem, after: updatedItem });
+    }
+
+    if (toolName === 'eliminar_producto') {
+      const { batchName, productName, variant } = toolInput;
+      const allBatches = await getDocs(collection(db, 'batches'));
+      const allNames = allBatches.docs.map(d => d.data().name || '');
+      const batchDoc = allBatches.docs.find(d => (d.data().name || '').toLowerCase().includes(batchName.toLowerCase()));
+      if (!batchDoc) return JSON.stringify({
+        success: false,
+        error: `Lote "${batchName}" no existe en el sistema.`,
+        instruccion: 'Usá exactamente uno de los nombres de la lista lotesDisponibles.',
+        lotesDisponibles: allNames
+      });
+      const items = batchDoc.data().items || [];
+      const item = items.find(i =>
+        (i.product || '').toLowerCase().includes(productName.toLowerCase()) &&
+        (!variant || (i.variant || '').toLowerCase().includes(variant.toLowerCase()))
+      );
+      if (!item) return JSON.stringify({
+        success: false,
+        error: `Producto "${productName}" no existe en el lote "${batchDoc.data().name}".`,
+        instruccion: 'Usá exactamente uno de los nombres de la lista productosDisponibles.',
+        productosDisponibles: items.map(i => ({ product: i.product, variant: i.variant || '' }))
+      });
+      await updateDoc(doc(db, 'batches', batchDoc.id), { items: items.filter(i => i.id !== item.id) });
+      pushAction(chatId, { type: 'eliminar_producto', batchId: batchDoc.id, item });
+      return JSON.stringify({ success: true, removed: item });
+    }
+
+    if (toolName === 'renombrar_lote') {
+      const { currentName, newName } = toolInput;
+      const allBatches = await getDocs(collection(db, 'batches'));
+      const allNames = allBatches.docs.map(d => d.data().name || '');
+      const batchDoc = allBatches.docs.find(d => (d.data().name || '').toLowerCase() === currentName.toLowerCase());
+      if (!batchDoc) return JSON.stringify({
+        success: false,
+        error: `Lote "${currentName}" no existe en el sistema.`,
+        instruccion: 'Usá exactamente uno de los nombres de la lista lotesDisponibles.',
+        lotesDisponibles: allNames
+      });
+      await updateDoc(doc(db, 'batches', batchDoc.id), { name: newName });
+      const [sSnap, eSnap] = await Promise.all([
+        getDocs(query(collection(db, 'sales'), where('batchId', '==', batchDoc.id))),
+        getDocs(query(collection(db, 'expenses'), where('batchId', '==', batchDoc.id)))
+      ]);
+      await Promise.all([
+        ...sSnap.docs.map(d => updateDoc(doc(db, 'sales', d.id), { batchName: newName })),
+        ...eSnap.docs.map(d => updateDoc(doc(db, 'expenses', d.id), { batchName: newName }))
+      ]);
+      pushAction(chatId, { type: 'renombrar_lote', batchId: batchDoc.id, previousName: currentName, newName });
+      return JSON.stringify({ success: true, updatedSales: sSnap.size, updatedExpenses: eSnap.size });
+    }
+
+    if (toolName === 'editar_stock_directo') {
+      const { batchName, productName, variant, delta } = toolInput;
+      const allBatches = await getDocs(collection(db, 'batches'));
+      const allNames = allBatches.docs.map(d => d.data().name || '');
+      const batchDoc = allBatches.docs.find(d => (d.data().name || '').toLowerCase().includes(batchName.toLowerCase()));
+      if (!batchDoc) return JSON.stringify({
+        success: false,
+        error: `Lote "${batchName}" no existe en el sistema.`,
+        instruccion: 'Usá exactamente uno de los nombres de la lista lotesDisponibles.',
+        lotesDisponibles: allNames
+      });
+      const items = batchDoc.data().items || [];
+      const idx = items.findIndex(i =>
+        (i.product || '').toLowerCase().includes(productName.toLowerCase()) &&
+        (!variant || (i.variant || '').toLowerCase().includes(variant.toLowerCase()))
+      );
+      if (idx === -1) return JSON.stringify({
+        success: false,
+        error: `Producto "${productName}" no existe en el lote "${batchDoc.data().name}".`,
+        instruccion: 'Usá exactamente uno de los nombres de la lista productosDisponibles.',
+        productosDisponibles: items.map(i => ({ product: i.product, variant: i.variant || '' }))
+      });
+      const prevStock = items[idx].currentStock || 0;
+      const newStock = Math.max(0, prevStock + Number(delta));
+      const updItems = items.map((it, i) => i === idx ? { ...it, currentStock: newStock } : it);
+      await updateDoc(doc(db, 'batches', batchDoc.id), { items: updItems });
+      pushAction(chatId, { type: 'editar_stock_directo', batchId: batchDoc.id, itemId: items[idx].id, prevStock, newStock });
+      return JSON.stringify({ success: true, prevStock, newStock, delta: Number(delta) });
+    }
+
+    if (toolName === 'ventas_por_vendedor') {
+      const { vendedor, startDate, endDate } = toolInput;
+      const vendedorLower = (vendedor || '').toLowerCase();
+      let salesQuery = collection(db, 'sales');
+      let constraints = [];
+      if (startDate && endDate) {
+        const startRange = argDayToUTCRange(startDate);
+        const endRange = argDayToUTCRange(endDate);
+        constraints = [where('date', '>=', startRange.start), where('date', '<=', endRange.end)];
+      }
+      const snap = await getDocs(constraints.length > 0 ? query(salesQuery, ...constraints) : salesQuery);
+      const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Filtrar client-side por seller (case insensitive, coincidencia parcial)
+      const filtered = all.filter(s => (s.seller || '').toLowerCase().includes(vendedorLower));
+      const totalSales = filtered.reduce((a, v) => a + (v.totalSaleRaw || 0), 0);
+      const totalCost = filtered.reduce((a, v) => a + (v.costArsAtSale || 0), 0);
+      const byProduct = {};
+      filtered.forEach(s => {
+        const k = `${s.productName || ''} ${s.variant || ''}`.trim();
+        byProduct[k] = byProduct[k] || { qty: 0, total: 0 };
+        byProduct[k].qty += (s.quantity || 0);
+        byProduct[k].total += (s.totalSaleRaw || 0);
+      });
+      return JSON.stringify({
+        vendedor: vendedor,
+        period: startDate && endDate ? `${startDate} → ${endDate}` : 'sin filtro de fecha',
+        count: filtered.length,
+        totalSales,
+        totalCost,
+        grossProfit: totalSales - totalCost,
+        comision3pct: Math.round(totalSales * 0.03),
+        topProducts: Object.entries(byProduct).sort((a, b) => b[1].qty - a[1].qty).slice(0, 10),
+        ventas: filtered.map(s => ({
+          productName: s.productName || '',
+          variant: s.variant || '',
+          quantity: s.quantity || 0,
+          totalSaleRaw: s.totalSaleRaw || 0,
+          date: s.date || '',
+          seller: s.seller || ''
+        }))
+      });
     }
 
     return JSON.stringify({ error: `Herramienta desconocida: ${toolName}` });
   };
 
-  const SYSTEM_PROMPT = `Sos el asistente de negocio de 028 Import, una tienda de importación. Tenés acceso completo a Firebase Firestore y podés consultar y modificar datos en tiempo real.
+  const getSystemPrompt = () => {
+    const hoy = getArgDateLabel();
+    const argISO = getArgDateISO();
+    return `Sos el sistema de análisis y control completo de 028 Import. Hoy es ${hoy} (${argISO}).
 
-COLECCIONES DE FIREBASE:
-- "sales": date, batchId, batchName, itemId, productName, variant, quantity, unitPrice, totalSaleRaw, costArsAtSale, source, isReseller, isNewClient, seller, ticketId, createdAt
-- "batches": name, createdAt, finalizedAt, items[] (cada item: id, product, variant, costArs, initialStock, currentStock)
-- "expenses": date, description, amount, batchId, batchName
-- "neutral_stock": createdAt, reason, note, batchId, batchName, itemId, productName, variant, quantity, unitPrice, costArsAtEntry, totalSaleRaw, totalCostRaw, grossProfitRaw
-- "consignments": clientName, clientPhone, clientDni, productName, variant, batchId, batchName, quantityDelivered, quantityPending, quantityPaid, quantityReturned, quantityLost, unitPrice, unitCost, dueDate, consignmentTicketId, createdAt
+⚠️ REGLA ABSOLUTA — DATOS REALES SIEMPRE: NUNCA inventes datos, números, montos, cantidades, productos ni tendencias. Si necesitás información de ventas, stock, gastos, cierres, consignaciones o cualquier dato del negocio, DEBÉS ejecutar la tool correspondiente en este mismo turno antes de responder. Está estrictamente prohibido responder con números de facturación, ganancia, stock o cualquier dato del negocio sin haberlos obtenido de una tool en este turno. Si no ejecutaste una tool, no tenés datos — decilo y ejecutá la tool.
 
-CONFIRMACIÓN OBLIGATORIA: Antes de ejecutar cualquier herramienta que modifique datos (registrar_venta, registrar_gasto, registrar_stock_neutro, deshacer_accion), SIEMPRE mostrá primero un resumen detallado con: nombre exacto del lote, colección de Firebase que se modifica, valores exactos antes y después del cambio, y qué documentos se tocan. Luego preguntá "¿Confirmás? (sí / no)". Solo ejecutá la herramienta si el usuario responde "sí". Si responde "no", preguntá qué quiere cambiar.
+⚠️ REGLA ABSOLUTA — NOMBRES EXACTOS: NUNCA inventes nombres de lotes, productos o variantes. Los únicos nombres válidos son los que obtuviste de consultar_stock en esta conversación. Si vas a operar sobre un lote o producto específico y no ejecutaste consultar_stock antes, ejecutalo primero para obtener los nombres exactos. Si una tool devuelve "lotesDisponibles" o "productosDisponibles", elegí el nombre correcto de esa lista y reintentá la operación con ese nombre exacto — no inventes una alternativa.
 
-MODO CONSULTA vs MODO ACCIÓN: Las herramientas de consulta (consultar_stock, cierre_caja, consignaciones_pendientes, comparar_periodos) se ejecutan directo sin pedir confirmación. Solo pedí confirmación cuando vas a modificar, crear o borrar datos.
+COLECCIONES FIREBASE (fechas como ISO UTC):
+- sales: date(ISO), batchId, batchName, itemId, productName, variant, quantity, unitPrice, totalSaleRaw, costArsAtSale, source, isReseller, isNewClient, seller
+- batches: name, items[]{id,product,variant,costArs,initialStock,currentStock}
+- expenses: date(ISO), description, amount, batchId, batchName
+- neutral_stock: reason, note, batchId, itemId, productName, variant, quantity, unitPrice, costArsAtEntry
+- consignments: clientName, productName, variant, quantityPending, quantityPaid, unitPrice, dueDate
 
-HISTORIAL DE ACCIONES CON ROLLBACK: Mantenés en memoria las últimas 3 acciones ejecutadas. Si el usuario dice "deshacé lo último" o "volvé a agregar lo que borraste", primero mostrá exactamente qué vas a revertir, pedí confirmación, y ejecutalo con deshacer_accion.
+CONFIRMACIÓN OBLIGATORIA antes de llamar cualquier tool que escriba/borre datos: mostrá colección afectada, lote, valores antes/después, y preguntá "¿Confirmás? (sí / no)". Solo llamá la tool si el usuario responde "sí". Las tools de solo lectura (consultar_stock, cierre_caja, consignaciones_pendientes, comparar_periodos) no requieren confirmación.
 
-COMANDOS RÁPIDOS:
-- "cierre" o "cierre de hoy" → cierre_caja con la fecha de hoy
-- "cierre de semana" → últimos 7 días
-- "cierre de mes" → desde el 1ro del mes actual hasta hoy
-- "stock" → consultar_stock, mostrá ordenado por lote con unidades disponibles
-- "pendientes" → consignaciones_pendientes, agrupadas por cliente con montos
+ROLLBACK: guardás las últimas 3 acciones. Si el usuario pide deshacer, mostrá qué vas a revertir, confirmá, y usá deshacer_accion.
 
-RESUMEN INTELIGENTE: Al pedir "resumen de hoy/semana/mes", usá cierre_caja y mostrá: total vendido, ganancia bruta, ganancia neta, productos más vendidos, canal con más ventas, comparación con el período anterior equivalente, y una conclusión propia.
+COMANDOS: "cierre"→cierre hoy | "cierre semana"→últimos 7 días | "cierre mes"→mes actual | "stock"→consultar_stock | "pendientes"→consignaciones_pendientes
 
-INTELIGENCIA DE NEGOCIO: Cuando mostrés un cierre o comparación, analizá los datos como asesor. Identificá tendencias, qué sube o baja, qué producto o canal rinde mejor o peor. Dá una opinión concreta con recomendaciones específicas basadas en los números reales. No te limitás a mostrar datos: interpretás, opinás y sugerís acciones.
+FORMA DE ACTUAR: Cuando hagás cierres o resúmenes, SIEMPRE mostrar en este orden exacto:
+1. Facturación total
+2. Costos
+3. Ganancia exacta (bruta y neta)
+4. Productos vendidos (cantidad de unidades y de líneas distintas)
+5. Clientes nuevos — separando orgánicos y ads cuando estén disponibles (campo isNewClient)
+6. Ticket promedio
+7. Productos más vendidos (por volumen)
+8. Productos más rentables (por ganancia)
+9. Ventas y comisión de Lucas Buono (ver sección EMPLEADO)
+10. Resumen ejecutivo: solo los números clave, sin repetir el detalle anterior
 
-Respondé siempre en español argentino, de forma clara y directa. Usá markdown para tablas y listas cuando sea útil.`;
+PRECISIÓN: Nunca usar aproximaciones. Siempre calcular con los datos reales. Antes de mostrar resultados, revisá si hay registros duplicados o inconsistentes y avisá si detectás algo raro. Mostrá todos los números sin redondear.
 
-  const sendMessage = async () => {
-    if (!input.trim() || loading || !activeChat) return;
+ANÁLISIS: Cuando mostrés un cierre, no te limitás a los números. Analizás tendencias, comparás con el período anterior si tenés datos, detectás qué subió o bajó, qué producto o canal está rindiendo mejor, y das una conclusión con recomendaciones concretas para el negocio.
+
+DISTRIBUCIÓN: En todos los análisis, SIEMPRE separar:
+- Nicotina (mayor volumen de ventas)
+- THC / cannabis (mayor ganancia por unidad)
+Mostrar subtotales de facturación, costos y ganancia por cada categoría. Para identificar la categoría, usar el nombre del lote o producto (nicotina, vape, pod, desechable → categoría nicotina; thc, cannabis, hachís, flor → categoría THC). Si no podés determinar la categoría, agrupar como "Otros".
+
+EMPLEADO — Lucas Buono: Lucas trabaja por comisión del 3% sobre sus ventas. En el sistema sus ventas tienen el campo seller = "Buono". Cuando el usuario pida análisis de Lucas o cuando hagas un cierre completo, siempre:
+- Filtrar las ventas con seller = "Buono"
+- Mostrar su facturación total y cantidad de ventas
+- Calcular y mostrar su comisión: facturación_Buono × 0.03
+- Mostrar sus productos más vendidos
+
+MARKETING — Meta Ads vs orgánico: El negocio trabaja con una agencia de Meta Ads. Los clientes nuevos se registran en el campo isNewClient con valores como "Nuevo orgánico", "Nuevo por ads", o similares. Durante mayo 2026 se apagaron los ads para medir el volumen orgánico real. Cuando analicés clientes nuevos o marketing, siempre:
+- Separar clientes nuevos orgánicos de clientes nuevos por ads usando el campo isNewClient
+- Mostrar cantidad y facturación de cada tipo
+- Si el período incluye mayo 2026, mencionar que los ads estaban apagados y que los nuevos de ese período son 100% orgánicos
+
+LENGUAJE DE NEGOCIO: Nunca uses términos técnicos como "Firebase", "colección", "documento", "campo", "array", "batch id" ni ningún término de base de datos. Usá lenguaje de negocio: "lote" en vez de "batch/document", "venta" en vez de "sales record", "gasto" en vez de "expense", "productos" en vez de "items array". El usuario no sabe de programación.
+
+CONFIRMACIONES EXITOSAS: Cuando una acción se complete, mostrá un resumen breve en texto plano sin tablas. Ejemplo: "✅ Variante actualizada: de 'X' a 'Y' en el lote Z." Directo y claro.
+
+Usá tablas markdown para comparaciones. Respondé en español argentino.`;
+  };
+
+  // Palabras clave que indican que el usuario pide datos reales — fuerza tool_choice: 'any'
+  const DATA_KEYWORDS = [
+    'cierre', 'venta', 'vendim', 'vendiste', 'vendimos',
+    'ganam', 'ganancia', 'ganancias', 'ganamos',
+    'factura', 'facturac', 'facturamos', 'facturaste',
+    'ingreso', 'ingresos',
+    'gasto', 'gastos', 'gastam', 'gastamos',
+    'stock', 'inventario',
+    'cuánto', 'cuanto', 'cuántos', 'cuantos',
+    'pendiente', 'consignac',
+    'comparar', 'período', 'periodo', 'comparación',
+    'hoy', 'ayer', 'semana', 'este mes', 'último mes', 'ultimo mes',
+    'promedio', 'ticket promedio',
+    'reporte', 'resumen', 'análisis', 'analisis', 'informe',
+    'lucas', 'buono', 'vendedor', 'comisión', 'comision',
+    'nicotina', 'thc', 'cannabis', 'cbd',
+    'top ', 'más vendido', 'mas vendido', 'más rentable', 'mas rentable',
+    'lote', 'producto'
+  ];
+
+  const requiresToolUse = (text) => {
+    const lower = text.toLowerCase();
+    return DATA_KEYWORDS.some(kw => lower.includes(kw));
+  };
+
+  const isConfirmMsg = (content) => {
+    if (typeof content !== 'string') return false;
+    const lower = content.toLowerCase();
+    return lower.includes('¿confirmás?') || lower.includes('confirmás?') ||
+           lower.includes('¿confirmas?') || lower.includes('confirmas?');
+  };
+
+  const sendMessage = async (directText) => {
+    const userText = typeof directText === 'string' ? directText : input.trim();
+    if (!userText || loading || !activeChat) return;
+    if (typeof directText !== 'string') setInput('');
     const chatId = activeChat.id;
-    const userText = input.trim();
-    setInput('');
+    const modelUsed = selectedModel;
     pushMsg(chatId, { role: 'user', content: userText });
     setLoading(true);
     try {
-      const history = [...(activeChat.messages || []), { role: 'user', content: userText }]
-        .slice(-20)
-        .map(m => ({ role: m.role, content: m.content }));
+      const CONTEXT_WORDS = ['sí', 'si', 'no', 'confirmá', 'confirma', 'cancelá', 'cancela', ' y ', 'cuánto', 'cuanto', 'por qué', 'por que', 'ese ', 'igual'];
+      const ANALYSIS_WORDS = ['cierre', 'comparar', 'semana', 'mes', 'análisis', 'analisis'];
+      const lowerUserText = userText.toLowerCase();
+      const isAnalysis = ANALYSIS_WORDS.some(w => lowerUserText.includes(w));
+      const isShortOrContext = userText.length < 20 || CONTEXT_WORDS.some(w => lowerUserText.includes(w));
+      const historyCount = isAnalysis ? 6 : isShortOrContext ? 4 : 0;
+      const allMsgs = [...(activeChat.messages || []), { role: 'user', content: userText }];
+      const history = historyCount > 0
+        ? allMsgs.slice(-historyCount).map(m => ({ role: m.role, content: m.content }))
+        : [{ role: 'user', content: userText }];
       let apiMsgs = history;
       let running = true;
+      let isFirstCall = true;
+      let toolsCalledThisTurn = false;
+      const needsToolFirst = requiresToolUse(userText);
+
       while (running) {
+        const requestBody = {
+          model: selectedModel,
+          max_tokens: 2048,
+          system: getSystemPrompt() + (activeChat?.context?.trim() ? `\n\nCONTEXTO ADICIONAL DEL CHAT:\n${activeChat.context.trim()}` : ''),
+          tools: TOOLS,
+          messages: apiMsgs,
+        };
+        // Primera llamada con palabras clave de datos: forzar ejecución de tool
+        if (isFirstCall && needsToolFirst) {
+          requestBody.tool_choice = { type: 'any' };
+        }
+        isFirstCall = false;
+
         const res = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: {
@@ -842,13 +1398,7 @@ Respondé siempre en español argentino, de forma clara y directa. Usá markdown
             'anthropic-version': '2023-06-01',
             'anthropic-dangerous-direct-browser-access': 'true'
           },
-          body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 2048,
-            system: SYSTEM_PROMPT,
-            tools: TOOLS,
-            messages: apiMsgs
-          })
+          body: JSON.stringify(requestBody)
         });
         if (!res.ok) {
           const e = await res.json().catch(() => ({}));
@@ -856,26 +1406,41 @@ Respondé siempre en español argentino, de forma clara y directa. Usá markdown
         }
         const data = await res.json();
         if (data.stop_reason === 'tool_use') {
+          toolsCalledThisTurn = true;
           const texts = data.content.filter(b => b.type === 'text');
           const toolUses = data.content.filter(b => b.type === 'tool_use');
           if (texts.length > 0) {
             const t = texts.map(b => b.text).join('');
-            if (t.trim()) pushMsg(chatId, { role: 'assistant', content: t });
+            if (t.trim()) pushMsg(chatId, { role: 'assistant', content: t, model: modelUsed });
           }
           const toolResults = [];
           for (const tu of toolUses) {
-            const result = await executeTool(tu.name, tu.input, chatId);
+            let result;
+            try {
+              result = await executeTool(tu.name, tu.input, chatId);
+              const parsed = JSON.parse(result);
+              if (parsed?.success === false) {
+                result = JSON.stringify({ ...parsed, tool: tu.name });
+              }
+            } catch (toolErr) {
+              result = JSON.stringify({ success: false, tool: tu.name, error: toolErr.message });
+            }
             toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: result });
           }
           apiMsgs = [...apiMsgs, { role: 'assistant', content: data.content }, { role: 'user', content: toolResults }];
         } else {
           const t = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-          if (t.trim()) pushMsg(chatId, { role: 'assistant', content: t });
+          // Red de seguridad: si se esperaba tool y no se ejecutó ninguna, bloquear la respuesta
+          if (needsToolFirst && !toolsCalledThisTurn) {
+            pushMsg(chatId, { role: 'assistant', content: '⚠️ Intenté responder sin consultar los datos reales. Por favor, repetí tu pregunta para que pueda obtener los datos actualizados.', model: modelUsed });
+          } else if (t.trim()) {
+            pushMsg(chatId, { role: 'assistant', content: t, model: modelUsed });
+          }
           running = false;
         }
       }
     } catch (e) {
-      pushMsg(chatId, { role: 'assistant', content: `❌ Error: ${e.message}` });
+      pushMsg(chatId, { role: 'assistant', content: `❌ Error: ${e.message}`, model: modelUsed });
     } finally {
       setLoading(false);
     }
@@ -886,173 +1451,452 @@ Respondé siempre en español argentino, de forma clara y directa. Usá markdown
   if (!open) return (
     <button
       onClick={() => setOpen(true)}
-      className="fixed bottom-20 md:bottom-6 right-4 md:right-6 z-[60] w-14 h-14 rounded-full bg-indigo-600 text-white shadow-2xl hover:bg-indigo-500 transition-all duration-200 hover:scale-110 flex items-center justify-center"
+      className="fixed bottom-20 md:bottom-6 right-4 md:right-6 z-[60] w-14 h-14 rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-900/30 hover:bg-indigo-500 hover:shadow-indigo-900/50 hover:scale-105 flex items-center justify-center transition-all duration-200"
       title="Asistente IA 028"
     >
-      <Sparkles size={22} />
+      <Sparkles size={20} />
     </button>
   );
 
+  const mdComponents = {
+    p: ({ children }) => <p className="mb-1.5 last:mb-0">{children}</p>,
+    ul: ({ children }) => <ul className="list-disc list-inside mb-1.5 space-y-0.5 pl-1">{children}</ul>,
+    ol: ({ children }) => <ol className="list-decimal list-inside mb-1.5 space-y-0.5 pl-1">{children}</ol>,
+    li: ({ children }) => <li className="leading-snug">{children}</li>,
+    strong: ({ children }) => <strong className="font-600">{children}</strong>,
+    em: ({ children }) => <em className="italic opacity-75">{children}</em>,
+    pre: ({ children }) => (
+      <pre className={`p-3 rounded-xl my-2 text-[11px] font-mono overflow-x-auto leading-relaxed ${darkMode ? 'bg-zinc-950/70 text-zinc-300 ring-1 ring-white/[0.05]' : 'bg-zinc-100 text-zinc-700 ring-1 ring-zinc-200'}`}>
+        {children}
+      </pre>
+    ),
+    code: ({ className, children }) => {
+      const isBlock = Boolean(className);
+      return isBlock
+        ? <code className={`${className || ''} text-[11px]`}>{children}</code>
+        : <code className={`px-1.5 py-0.5 rounded-md text-[11px] font-mono ${darkMode ? 'bg-zinc-700/60 text-indigo-300' : 'bg-zinc-200 text-indigo-700'}`}>{children}</code>;
+    },
+    table: ({ children }) => (
+      <div className={`overflow-x-auto my-2.5 rounded-xl border ${darkMode ? 'border-zinc-700/50' : 'border-zinc-200'}`}>
+        <table className="text-[11px] border-collapse w-full">{children}</table>
+      </div>
+    ),
+    thead: ({ children }) => <thead className={darkMode ? 'bg-zinc-800/60' : 'bg-zinc-100'}>{children}</thead>,
+    tbody: ({ children }) => <tbody>{children}</tbody>,
+    tr: ({ children }) => (
+      <tr className={darkMode ? 'border-b border-zinc-700/40 last:border-b-0 even:bg-zinc-800/20' : 'border-b border-zinc-200 last:border-b-0 even:bg-zinc-50'}>
+        {children}
+      </tr>
+    ),
+    th: ({ children }) => (
+      <th className={`px-3 py-2 font-600 text-left text-[10px] uppercase tracking-wide whitespace-nowrap border-r last:border-r-0 ${darkMode ? 'text-zinc-300 border-zinc-700/40' : 'text-zinc-600 border-zinc-200'}`}>
+        {children}
+      </th>
+    ),
+    td: ({ children }) => (
+      <td className={`px-3 py-2 border-r last:border-r-0 ${darkMode ? 'text-zinc-300 border-zinc-700/25' : 'text-zinc-700 border-zinc-200'}`}>
+        {children}
+      </td>
+    ),
+    h1: ({ children }) => <p className="font-600 text-[14px] mb-2 mt-1">{children}</p>,
+    h2: ({ children }) => <p className="font-600 text-[13px] mb-1.5">{children}</p>,
+    h3: ({ children }) => <p className="font-600 mb-1 opacity-80">{children}</p>,
+    blockquote: ({ children }) => <blockquote className="border-l-2 border-indigo-500/35 pl-3 my-1.5 italic opacity-65">{children}</blockquote>,
+    hr: () => <hr className={`my-3 ${darkMode ? 'border-zinc-700/40' : 'border-zinc-200'}`} />,
+    a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">{children}</a>,
+  };
+
+  const actionLabel = (a) => {
+    const map = { venta: '🛒 Venta', gasto: '💸 Gasto', stock_neutro: '📦 Stock neutro', crear_lote: '📁 Lote', agregar_producto: '➕ Producto', editar_producto: '✏️ Edición', eliminar_producto: '🗑️ Eliminación', renombrar_lote: '🏷️ Renombre', editar_stock_directo: '📊 Stock' };
+    return map[a.type] || '↩ Acción';
+  };
+
   return (
-    <div className="fixed bottom-20 md:bottom-6 right-4 md:right-6 z-[60]" style={{ width: 400, maxWidth: 'calc(100vw - 2rem)' }}>
+    <>
+      {isDragging && <style>{`* { cursor: grabbing !important; user-select: none; }`}</style>}
       <div
-        className={`flex flex-col rounded-2xl shadow-2xl border overflow-hidden ${darkMode ? 'bg-[#0f1115] border-zinc-800 text-zinc-100' : 'bg-white border-zinc-200 text-zinc-900'}`}
-        style={{ height: 520, maxHeight: 'calc(100vh - 140px)' }}
+        ref={panelRef}
+        className={`fixed z-[60] ${panelPos.x === null ? 'bottom-20 md:bottom-6 right-4 md:right-6' : ''}`}
+        style={panelPos.x !== null
+          ? { left: panelPos.x, top: panelPos.y, width: panelWidth, maxWidth: 'calc(100vw - 2rem)' }
+          : { width: panelWidth, maxWidth: 'calc(100vw - 2rem)' }
+        }
       >
-        {/* Header + Tabs */}
-        <div className={`flex-shrink-0 border-b ${darkMode ? 'bg-[#131824] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
-          <div className="flex items-center gap-1.5 px-3 pt-2">
-            <div
-              ref={tabsRef}
-              className="flex items-center gap-1 flex-1 overflow-x-auto min-w-0 pb-1"
-              style={{ scrollbarWidth: 'none' }}
-            >
-              {chats.map(chat => (
-                <div key={chat.id} className="flex items-center gap-0.5 flex-shrink-0">
-                  {editingId === chat.id ? (
-                    <input
-                      autoFocus
-                      value={editName}
-                      onChange={e => setEditName(e.target.value)}
-                      onBlur={() => { if (editName.trim()) updateChat(chat.id, c => ({ ...c, name: editName.trim() })); setEditingId(null); }}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') { if (editName.trim()) updateChat(chat.id, c => ({ ...c, name: editName.trim() })); setEditingId(null); }
-                        else if (e.key === 'Escape') setEditingId(null);
-                      }}
-                      className={`text-xs font-medium px-2 py-0.5 rounded w-24 outline-none border ${darkMode ? 'bg-zinc-800 border-indigo-500 text-zinc-100' : 'bg-white border-indigo-400 text-zinc-900'}`}
-                    />
-                  ) : (
-                    <button
-                      onClick={() => setActiveChatId(chat.id)}
-                      onDoubleClick={() => { setEditingId(chat.id); setEditName(chat.name); }}
-                      className={`text-xs font-medium px-2.5 py-0.5 rounded transition-colors whitespace-nowrap ${
-                        activeChatId === chat.id
-                          ? (darkMode ? 'bg-indigo-500/20 text-indigo-300' : 'bg-indigo-100 text-indigo-700')
-                          : (darkMode ? 'text-zinc-500 hover:text-zinc-200' : 'text-zinc-400 hover:text-zinc-700')
-                      }`}
-                    >{chat.name}</button>
-                  )}
-                  {chats.length > 1 && (
-                    <button
-                      onClick={() => deleteChat(chat.id)}
-                      className={`p-0.5 rounded transition-colors ${darkMode ? 'text-zinc-700 hover:text-red-400' : 'text-zinc-300 hover:text-red-400'}`}
-                    >
-                      <XCircle size={11} />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-            <button
-              onClick={createChat}
-              className={`flex-shrink-0 p-1 rounded transition-colors ${darkMode ? 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800' : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100'}`}
-              title="Nuevo chat"
-            >
-              <Plus size={14} />
-            </button>
-            <button
-              onClick={() => activeChat && compactChat(activeChat.id)}
-              className={`flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded transition-colors ${darkMode ? 'text-zinc-600 hover:text-zinc-300 hover:bg-zinc-800' : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100'}`}
-              title="Compactar historial"
-            >
-              /compact
-            </button>
-            <button
-              onClick={() => setOpen(false)}
-              className={`flex-shrink-0 p-1 rounded transition-colors ${darkMode ? 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800' : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100'}`}
-            >
-              <XCircle size={15} />
-            </button>
-          </div>
-          <div className="flex items-center gap-1.5 px-3 pb-2 pt-1">
-            <Sparkles size={12} className="text-indigo-500 flex-shrink-0" />
-            <span className={`text-[11px] font-semibold truncate ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Asistente 028 Import · claude-sonnet</span>
-          </div>
-        </div>
+        <style>{`
+          .ai-scroll::-webkit-scrollbar { width: 3px; }
+          .ai-scroll::-webkit-scrollbar-track { background: transparent; }
+          .ai-scroll::-webkit-scrollbar-thumb { background: transparent; border-radius: 99px; transition: background 0.3s; }
+          .ai-scroll:hover::-webkit-scrollbar-thumb { background: rgba(99,102,241,0.18); }
+          .ai-scroll { overflow-x: hidden; }
+          .ai-scroll * { max-width: 100%; word-break: break-word; overflow-wrap: anywhere; }
+          .ai-tabs::-webkit-scrollbar { display: none; }
+          .ai-tab-active { position: relative; }
+          .ai-tab-active::before, .ai-tab-active::after { content: ''; position: absolute; bottom: 0; width: 8px; height: 8px; pointer-events: none; }
+          .ai-tab-active::before { left: -8px; border-bottom-right-radius: 8px; box-shadow: 4px 0 0 0 ${darkMode ? '#2a2a3a' : '#ffffff'}; }
+          .ai-tab-active::after { right: -8px; border-bottom-left-radius: 8px; box-shadow: -4px 0 0 0 ${darkMode ? '#2a2a3a' : '#ffffff'}; }
+          @keyframes ai-dot { 0%,80%,100%{opacity:.12;transform:scale(0.55)} 40%{opacity:1;transform:scale(1)} }
+          .ai-dot { animation: ai-dot 1.2s ease-in-out infinite; }
+          @keyframes ai-fadein { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+          .ai-msg { animation: ai-fadein 0.18s ease-out both; }
+        `}</style>
 
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2.5">
-          {(!activeChat?.messages || activeChat.messages.length === 0) && !loading && (
-            <div className="flex flex-col items-center justify-center h-full gap-2 opacity-40">
-              <Sparkles size={30} className="text-indigo-500" />
-              <p className={`text-xs text-center leading-relaxed ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                Preguntame sobre ventas, stock,<br />cierres o cualquier dato del negocio.
-              </p>
-            </div>
-          )}
-          {(activeChat?.messages || []).map((msg, i) => (
-            <div key={msg._id || i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[88%] text-xs leading-relaxed px-3 py-2 rounded-2xl whitespace-pre-wrap break-words ${
-                msg.role === 'user'
-                  ? 'bg-indigo-600 text-white rounded-tr-sm'
-                  : darkMode ? 'bg-zinc-800/80 text-zinc-100 rounded-tl-sm' : 'bg-zinc-100 text-zinc-800 rounded-tl-sm'
-              }`}>
-                {msg.content}
-              </div>
-            </div>
-          ))}
-          {loading && (
-            <div className="flex justify-start">
-              <div className={`px-3 py-2.5 rounded-2xl rounded-tl-sm ${darkMode ? 'bg-zinc-800/80' : 'bg-zinc-100'}`}>
-                <span className="flex gap-1 items-center">
-                  {[0, 150, 300].map(delay => (
-                    <span
-                      key={delay}
-                      className={`w-1.5 h-1.5 rounded-full animate-bounce ${darkMode ? 'bg-zinc-500' : 'bg-zinc-400'}`}
-                      style={{ animationDelay: `${delay}ms` }}
-                    />
-                  ))}
-                </span>
-              </div>
-            </div>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Reversible actions strip */}
-        {activeChat?.actionHistory?.length > 0 && (
+        <div
+          className={`flex flex-col overflow-hidden relative ${
+            darkMode
+              ? 'bg-zinc-900 ring-1 ring-white/[0.06] shadow-[0_28px_70px_-6px_rgba(0,0,0,0.8),0_0_0_1px_rgba(255,255,255,0.04)]'
+              : 'bg-white ring-1 ring-zinc-200/70 shadow-[0_28px_70px_-6px_rgba(0,0,0,0.13),0_0_0_1px_rgba(0,0,0,0.03)]'
+          }`}
+          style={{ height: panelHeight, borderRadius: 24 }}
+        >
+          {/* Handle de resize */}
           <div
-            className={`flex-shrink-0 px-3 py-1 border-t flex items-center gap-1.5 overflow-x-auto ${darkMode ? 'border-zinc-800 bg-[#0d1018]' : 'border-zinc-100 bg-zinc-50'}`}
-            style={{ scrollbarWidth: 'none' }}
+            onMouseDown={handleResizeStart}
+            className="absolute top-0 left-0 w-7 h-7 z-20 cursor-nw-resize flex items-start justify-start p-2 group"
+            title="Redimensionar"
           >
-            <span className={`text-[9px] font-bold uppercase tracking-wider flex-shrink-0 ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Reversibles:</span>
-            {activeChat.actionHistory.map((a, i) => (
-              <span
-                key={i}
-                className={`text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 font-medium ${darkMode ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-200 text-zinc-500'}`}
-              >
-                {a.type === 'venta' ? '🛒 Venta' : a.type === 'gasto' ? '💸 Gasto' : '📦 Stock neutro'}
-              </span>
-            ))}
+            <svg width="7" height="7" viewBox="0 0 7 7" className={`opacity-15 group-hover:opacity-40 transition-opacity ${darkMode ? 'fill-zinc-400' : 'fill-zinc-500'}`}>
+              <circle cx="1.5" cy="1.5" r="1.2"/><circle cx="1.5" cy="4.5" r="1.2"/><circle cx="4.5" cy="1.5" r="1.2"/>
+            </svg>
           </div>
-        )}
 
-        {/* Input */}
-        <div className={`flex-shrink-0 p-2.5 border-t ${darkMode ? 'border-zinc-800 bg-[#131824]' : 'border-zinc-200 bg-zinc-50'}`}>
-          <div className={`flex items-end gap-2 rounded-xl border px-3 py-2 transition-colors ${darkMode ? 'bg-[#0a0c10] border-zinc-800 focus-within:border-indigo-500/60' : 'bg-white border-zinc-300 focus-within:border-indigo-400'}`}>
-            <textarea
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={onKey}
-              placeholder="Escribí tu consulta... (Enter para enviar)"
-              rows={1}
-              disabled={loading}
-              className={`flex-1 text-xs bg-transparent outline-none resize-none leading-relaxed ${darkMode ? 'text-zinc-100 placeholder-zinc-700' : 'text-zinc-900 placeholder-zinc-400'}`}
-              style={{ minHeight: 20, maxHeight: 80 }}
-              onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 80) + 'px'; }}
-            />
-            <button
-              onClick={sendMessage}
-              disabled={loading || !input.trim()}
-              className="flex-shrink-0 w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors mb-0.5"
-            >
-              <Send size={13} />
-            </button>
+          {/* HEADER — draggable */}
+          <div
+            className="flex-shrink-0 select-none"
+            style={{ cursor: isDragging ? 'grabbing' : 'grab', background: darkMode ? '#0f0f17' : '#d8d8e2' }}
+            onMouseDown={handleHeaderDragStart}
+          >
+            {/* Fila 1: tabs + acciones */}
+            <div className="flex items-end gap-0 px-2 pt-2 pb-0">
+              {canScrollLeft && (
+                <button onMouseDown={e => e.stopPropagation()} onClick={() => scrollTabs(-120)} className={`flex-shrink-0 p-1 rounded mb-0.5 self-end transition-colors ${darkMode ? 'text-zinc-600 hover:text-zinc-300' : 'text-zinc-300 hover:text-zinc-600'}`}>
+                  <ChevronLeft size={11} />
+                </button>
+              )}
+              <div ref={tabsRef} className="ai-tabs flex items-end flex-1 overflow-x-auto min-w-0 pl-2 gap-1" onScroll={checkTabsScroll}>
+                {chats.map((chat) => {
+                  const isActive = activeChatId === chat.id;
+                  return (
+                    <div key={chat.id} className="relative flex-shrink-0 group/tab" style={{ zIndex: isActive ? 2 : 1 }}>
+                      {editingId === chat.id ? (
+                        <input
+                          autoFocus value={editName}
+                          onMouseDown={e => e.stopPropagation()}
+                          onChange={e => setEditName(e.target.value)}
+                          onBlur={() => { if (editName.trim()) updateChat(chat.id, c => ({ ...c, name: editName.trim() })); setEditingId(null); }}
+                          onKeyDown={e => { if (e.key === 'Enter') { if (editName.trim()) updateChat(chat.id, c => ({ ...c, name: editName.trim() })); setEditingId(null); } else if (e.key === 'Escape') setEditingId(null); }}
+                          className={`text-[11px] font-medium px-2.5 outline-none ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}
+                          style={{ borderRadius: '8px 8px 0 0', paddingTop: 6, paddingBottom: 7, width: 88,
+                            background: darkMode ? '#2a2a3a' : '#ffffff' }}
+                        />
+                      ) : (
+                        <div
+                          className={`flex items-center gap-1.5 px-2.5 transition-colors${isActive ? ' ai-tab-active' : ''} ${
+                            isActive
+                              ? (darkMode ? 'text-zinc-100' : 'text-zinc-800')
+                              : (darkMode ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-600')
+                          }`}
+                          style={{
+                            borderRadius: '8px 8px 0 0',
+                            paddingTop: 6,
+                            paddingBottom: 6,
+                            background: isActive ? (darkMode ? '#2a2a3a' : '#ffffff') : 'transparent',
+                          }}
+                        >
+                          <button
+                            onMouseDown={e => e.stopPropagation()}
+                            onClick={() => setActiveChatId(chat.id)}
+                            onDoubleClick={() => { setEditingId(chat.id); setEditName(chat.name); }}
+                            title="Doble click para renombrar"
+                            className="text-[11px] font-medium whitespace-nowrap flex items-center gap-1.5 outline-none leading-none"
+                          >
+                            {chat.name}
+                            {chat.context?.trim() && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 flex-shrink-0" />}
+                          </button>
+                          {chats.length > 1 && (
+                            <button
+                              onMouseDown={e => e.stopPropagation()}
+                              onClick={() => deleteChat(chat.id)}
+                              className={`flex-shrink-0 w-3.5 h-3.5 rounded flex items-center justify-center transition-all ${
+                                isActive
+                                  ? (darkMode ? 'text-zinc-500 hover:text-zinc-100 hover:bg-white/10' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-200/80')
+                                  : 'opacity-0 group-hover/tab:opacity-100 ' + (darkMode ? 'text-zinc-600 hover:text-red-400' : 'text-zinc-300 hover:text-red-400')
+                              }`}
+                            >
+                              <XCircle size={10} />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {canScrollRight && (
+                <button onMouseDown={e => e.stopPropagation()} onClick={() => scrollTabs(120)} className={`flex-shrink-0 p-1 rounded mb-0.5 self-end transition-colors ${darkMode ? 'text-zinc-600 hover:text-zinc-300' : 'text-zinc-300 hover:text-zinc-600'}`}>
+                  <ChevronRight size={11} />
+                </button>
+              )}
+              <div className="flex items-center gap-0.5 ml-2 mb-0.5 self-end flex-shrink-0">
+                <button onMouseDown={e => e.stopPropagation()} onClick={createChat} className={`p-1.5 rounded-lg transition-colors ${darkMode ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.05]' : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100'}`} title="Nuevo chat">
+                  <Plus size={12} />
+                </button>
+                <button onMouseDown={e => e.stopPropagation()} onClick={() => activeChat && compactChat(activeChat.id)} className={`p-1.5 rounded-lg transition-colors ${darkMode ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.05]' : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100'}`} title="Compactar historial">
+                  <Minimize2 size={12} />
+                </button>
+                <button
+                  onMouseDown={e => e.stopPropagation()}
+                  onClick={() => { setContextOpen(o => !o); setContextDraft(activeChat?.context || ''); }}
+                  title="Contexto del chat"
+                  className={`p-1.5 rounded-lg transition-colors ${
+                    activeChat?.context?.trim()
+                      ? (darkMode ? 'text-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/20' : 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100')
+                      : (darkMode ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.05]' : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100')
+                  }`}
+                >
+                  <FolderOpen size={12} />
+                </button>
+                <button onMouseDown={e => e.stopPropagation()} onClick={() => { setPanelPos({ x: null, y: null }); try { localStorage.removeItem('028_ai_pos'); } catch {} setOpen(false); }} className={`p-1.5 rounded-lg transition-colors ${darkMode ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.05]' : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100'}`}>
+                  <XCircle size={12} />
+                </button>
+              </div>
+            </div>
+
+            {/* Fila 2: modelo activo + selector */}
+            <div className="flex items-center justify-between px-3 pt-2 pb-2.5" style={{ background: darkMode ? '#2a2a3a' : '#ffffff', borderRadius: '6px 6px 0 0' }}>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <div className="w-3.5 h-3.5 rounded-full bg-gradient-to-br from-indigo-500 to-indigo-700 flex items-center justify-center flex-shrink-0">
+                  <Sparkles size={7} className="text-white" />
+                </div>
+                <span className={`text-[11px] font-semibold ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>028 Asistente</span>
+                <span className={`text-[9px] px-1.5 py-px rounded-full font-medium flex-shrink-0 ${
+                  selectedModel === 'claude-haiku-4-5-20251001'
+                    ? (darkMode ? 'bg-amber-500/10 text-amber-400/80' : 'bg-amber-50 text-amber-600')
+                    : (darkMode ? 'bg-indigo-500/10 text-indigo-400/80' : 'bg-indigo-50 text-indigo-600')
+                }`}>
+                  {selectedModel === 'claude-haiku-4-5-20251001' ? '⚡ haiku' : '🧠 sonnet'}
+                </span>
+                {activeChat?.context?.trim() && (
+                  <span className={`text-[9px] px-1.5 py-px rounded-full flex-shrink-0 ${darkMode ? 'bg-indigo-500/8 text-indigo-400/60' : 'bg-indigo-50 text-indigo-400'}`}>ctx</span>
+                )}
+              </div>
+              <div className="flex items-center gap-0.5 flex-shrink-0">
+                <button
+                  onMouseDown={e => e.stopPropagation()}
+                  onClick={() => setSelectedModel('claude-haiku-4-5-20251001')}
+                  title="Rápido y eficiente"
+                  className={`text-[9px] font-semibold px-2 py-0.5 rounded-full transition-all ${
+                    selectedModel === 'claude-haiku-4-5-20251001'
+                      ? (darkMode ? 'bg-amber-500/12 text-amber-400 ring-1 ring-amber-500/20' : 'bg-amber-50 text-amber-600 ring-1 ring-amber-200')
+                      : (darkMode ? 'text-zinc-600 hover:text-zinc-400' : 'text-zinc-400 hover:text-zinc-600')
+                  }`}
+                >⚡ Rápido</button>
+                <button
+                  onMouseDown={e => e.stopPropagation()}
+                  onClick={() => setSelectedModel('claude-sonnet-4-6')}
+                  title="Análisis profundo"
+                  className={`text-[9px] font-semibold px-2 py-0.5 rounded-full transition-all ${
+                    selectedModel === 'claude-sonnet-4-6'
+                      ? (darkMode ? 'bg-indigo-500/12 text-indigo-400 ring-1 ring-indigo-500/20' : 'bg-indigo-50 text-indigo-600 ring-1 ring-indigo-200')
+                      : (darkMode ? 'text-zinc-600 hover:text-zinc-400' : 'text-zinc-400 hover:text-zinc-600')
+                  }`}
+                >🧠 Análisis</button>
+              </div>
+            </div>
           </div>
-          <p className={`text-[9px] mt-1 text-center ${darkMode ? 'text-zinc-700' : 'text-zinc-400'}`}>Enter envía · Shift+Enter nueva línea</p>
+
+          {/* Panel de contexto */}
+          {contextOpen && activeChat ? (
+            <div className="flex-1 overflow-y-auto flex flex-col p-4 gap-3">
+              <p className={`text-[11px] leading-relaxed ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                Este texto se envía al asistente en cada mensaje. Usalo para instrucciones fijas, períodos de análisis o datos de referencia.
+              </p>
+              <textarea
+                autoFocus
+                value={contextDraft}
+                onChange={e => setContextDraft(e.target.value.slice(0, 5000))}
+                placeholder={"Ejemplo: Analizar solo ventas de mayo 2026.\nEl precio de costo del CBD es $8.500."}
+                className={`flex-1 text-[13px] rounded-2xl p-3.5 resize-none outline-none leading-relaxed border transition-all ${
+                  darkMode
+                    ? 'bg-zinc-800/50 border-zinc-700/40 text-zinc-100 placeholder-zinc-600 focus:border-indigo-500/40 focus:ring-1 focus:ring-indigo-500/10'
+                    : 'bg-zinc-50 border-zinc-200 text-zinc-900 placeholder-zinc-400 focus:border-indigo-400/50 focus:ring-1 focus:ring-indigo-300/10'
+                }`}
+              />
+              <div className="flex items-center justify-between gap-2 flex-shrink-0">
+                <span className={`text-[10px] tabular-nums ${contextDraft.length >= 4800 ? 'text-amber-400 font-semibold' : darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                  {contextDraft.length.toLocaleString('es-AR')} / 5.000
+                </span>
+                <div className="flex items-center gap-2">
+                  {contextDraft.trim() && (
+                    <button onClick={() => setContextDraft('')} className={`text-[11px] px-3 py-1.5 rounded-xl transition-colors ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-500 hover:bg-red-50'}`}>Borrar</button>
+                  )}
+                  <button
+                    onClick={() => { updateChat(activeChat.id, c => ({ ...c, context: contextDraft })); setContextOpen(false); }}
+                    className="text-[11px] font-semibold px-3.5 py-1.5 rounded-xl bg-indigo-600 text-white hover:bg-indigo-500 transition-colors"
+                  >Guardar</button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="ai-scroll flex-1 overflow-y-auto px-4 py-4 space-y-5">
+              {/* Empty state */}
+              {(!activeChat?.messages || activeChat.messages.length === 0) && !loading && (
+                <div className="flex flex-col items-center justify-center h-full gap-5 select-none px-2">
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${darkMode ? 'bg-indigo-500/8 ring-1 ring-indigo-500/12' : 'bg-indigo-50 ring-1 ring-indigo-200/60'}`}>
+                    <Sparkles size={22} className={darkMode ? 'text-indigo-400/50' : 'text-indigo-400'} />
+                  </div>
+                  <div className="text-center">
+                    <p className={`text-[13px] font-semibold mb-1 ${darkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>Asistente 028 Import</p>
+                    <p className={`text-[11px] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>¿Qué querés consultar?</p>
+                  </div>
+                  <div className="flex flex-wrap justify-center gap-1.5">
+                    {[
+                      { icon: '📊', label: 'Cierre de hoy',    msg: 'cierre' },
+                      { icon: '📦', label: 'Stock actual',      msg: 'stock' },
+                      { icon: '⏳', label: 'Consignaciones',    msg: 'pendientes' },
+                      { icon: '👤', label: 'Ventas de Lucas',   msg: 'ventas de Buono' },
+                      { icon: '📈', label: 'Comparar ayer',     msg: 'comparar con ayer' },
+                      { icon: '💰', label: 'Cierre semana',     msg: 'cierre semana' },
+                    ].map(({ icon, label, msg }) => (
+                      <button
+                        key={label}
+                        onClick={() => sendMessage(msg)}
+                        className={`text-[11px] font-medium px-3.5 py-1.5 rounded-full border transition-all active:scale-95 whitespace-nowrap flex items-center gap-1.5 ${
+                          darkMode
+                            ? 'border-zinc-700/60 text-zinc-500 hover:text-zinc-300 hover:border-zinc-600/80 hover:bg-white/[0.03]'
+                            : 'border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50'
+                        }`}
+                      >
+                        <span>{icon}</span>{label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Mensajes */}
+              {(activeChat?.messages || []).map((msg, i, arr) => {
+                const isLastMsg = i === arr.length - 1;
+                const showConfirm = msg.role === 'assistant' && isLastMsg && !loading && isConfirmMsg(msg.content);
+                return (
+                  <React.Fragment key={msg._id || i}>
+                    <div className={`ai-msg flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      {msg.role === 'user' ? (
+                        <div className="relative group max-w-[75%]">
+                          <div
+                            className="bg-indigo-600 text-white text-[13px] leading-relaxed px-4 py-2.5 break-words whitespace-pre-wrap"
+                            style={{ borderRadius: '20px 20px 6px 20px' }}
+                          >
+                            {msg.content}
+                          </div>
+                          <button
+                            onClick={() => copyMsg(msg.content, msg._id)}
+                            className={`absolute -top-1.5 -left-7 opacity-0 group-hover:opacity-100 transition-opacity w-5 h-5 rounded-lg flex items-center justify-center ${darkMode ? 'bg-zinc-800 text-zinc-500 hover:text-zinc-200' : 'bg-zinc-100 text-zinc-400 hover:text-zinc-700'}`}
+                            title="Copiar"
+                          >
+                            {copiedId === msg._id ? <CheckCircle size={10} className="text-emerald-400" /> : <Copy size={10} />}
+                          </button>
+                          <p className={`text-[10px] mt-1 text-right ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>{formatTs(msg.ts)}</p>
+                        </div>
+                      ) : (
+                        <div className="relative group flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 mb-1.5">
+                            <Sparkles size={9} className={`flex-shrink-0 ${darkMode ? 'text-indigo-500/45' : 'text-indigo-400/55'}`} />
+                            <span className={`text-[10px] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                              {(msg.model || selectedModel) === 'claude-haiku-4-5-20251001' ? 'haiku' : 'sonnet'} · {formatTs(msg.ts)}
+                            </span>
+                          </div>
+                          <div className={`text-[13px] leading-relaxed pl-3.5 border-l-2 break-words ${darkMode ? 'border-indigo-500/20 text-zinc-200' : 'border-indigo-400/25 text-zinc-800'}`}>
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{msg.content}</ReactMarkdown>
+                          </div>
+                          <button
+                            onClick={() => copyMsg(msg.content, msg._id)}
+                            className={`absolute top-0 -right-6 opacity-0 group-hover:opacity-100 transition-opacity w-5 h-5 rounded-lg flex items-center justify-center ${darkMode ? 'bg-zinc-800 text-zinc-500 hover:text-zinc-200' : 'bg-zinc-100 text-zinc-400 hover:text-zinc-700'}`}
+                            title="Copiar"
+                          >
+                            {copiedId === msg._id ? <CheckCircle size={10} className="text-emerald-400" /> : <Copy size={10} />}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    {showConfirm && (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => sendMessage('sí')}
+                          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-2xl text-[12px] font-semibold transition-all active:scale-95 ${
+                            darkMode
+                              ? 'bg-emerald-500/8 text-emerald-400 ring-1 ring-emerald-500/15 hover:bg-emerald-500/15'
+                              : 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100'
+                          }`}
+                        >
+                          <CheckCircle size={12} />Confirmar
+                        </button>
+                        <button
+                          onClick={() => sendMessage('no')}
+                          className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-2xl text-[12px] font-semibold transition-all active:scale-95 ${
+                            darkMode
+                              ? 'bg-red-500/8 text-red-400 ring-1 ring-red-500/15 hover:bg-red-500/15'
+                              : 'bg-red-50 text-red-600 ring-1 ring-red-200 hover:bg-red-100'
+                          }`}
+                        >
+                          <XCircle size={12} />Cancelar
+                        </button>
+                      </div>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+
+              {/* Typing indicator */}
+              {loading && (
+                <div className="ai-msg flex justify-start">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <Sparkles size={9} className={`flex-shrink-0 ${darkMode ? 'text-indigo-500/45' : 'text-indigo-400/55'}`} />
+                      <span className={`text-[10px] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>pensando...</span>
+                    </div>
+                    <div className={`pl-3.5 border-l-2 ${darkMode ? 'border-indigo-500/20' : 'border-indigo-400/25'}`}>
+                      <div className="flex gap-1 items-center py-0.5">
+                        {[0, 0.16, 0.32].map((d, idx) => (
+                          <span key={idx} className="ai-dot w-[5px] h-[5px] rounded-full bg-indigo-400/45" style={{ animationDelay: `${d}s` }} />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+          )}
+
+          {/* Input */}
+          <div className={`flex-shrink-0 px-3 pb-3 pt-2 ${darkMode ? 'bg-zinc-900' : 'bg-white'}`}>
+            <div className={`flex items-end gap-2 rounded-2xl px-4 py-3 ${darkMode ? 'bg-zinc-800/50' : 'bg-zinc-50'}`}>
+              <textarea
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={onKey}
+                placeholder="Preguntá algo..."
+                rows={1}
+                disabled={loading}
+                className={`flex-1 text-[13px] bg-transparent outline-none resize-none leading-relaxed ${darkMode ? 'text-zinc-100 placeholder-zinc-600' : 'text-zinc-900 placeholder-zinc-400'}`}
+                style={{ minHeight: 22, maxHeight: 100 }}
+                onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px'; }}
+              />
+              {input.trim() && (
+                <button
+                  onClick={sendMessage}
+                  disabled={loading}
+                  className="flex-shrink-0 w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center hover:bg-indigo-500 transition-colors mb-0.5 shadow-md shadow-indigo-900/20"
+                >
+                  <Send size={13} />
+                </button>
+              )}
+            </div>
+            <p className={`text-[9px] mt-1.5 text-center ${darkMode ? 'text-zinc-700' : 'text-zinc-300'}`}>Enter envía · Shift+Enter nueva línea</p>
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 };
 
