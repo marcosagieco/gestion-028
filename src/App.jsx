@@ -5460,7 +5460,18 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             </tbody>
                           </table>
                           
-                          <div className={`p-4 flex justify-end border-t ${darkMode ? 'border-zinc-800 bg-[#0a0c10]' : 'border-zinc-200 bg-zinc-100'}`}>
+                          <div className={`p-4 flex flex-wrap justify-between items-center gap-3 border-t ${darkMode ? 'border-zinc-800 bg-[#0a0c10]' : 'border-zinc-200 bg-zinc-100'}`}>
+                              {b.finalizedAt ? (
+                                <div className="flex items-center gap-3">
+                                  <span className={`text-xs font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Archivado el {safeDateStr(b.finalizedAt)}</span>
+                                  <button onClick={(e) => { e.stopPropagation(); handleUpdateBatchStatus(b.id, false); }} className={`text-sm font-semibold flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${darkMode ? 'text-indigo-400 hover:bg-indigo-500/10' : 'text-indigo-600 hover:bg-indigo-50'}`}>🔄 Reabrir Lote</button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                                  <input type="date" value={manualFinalizeDate} onChange={e => setManualFinalizeDate(e.target.value)} className={`px-3 py-1.5 text-sm border rounded-lg outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#131824] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`} />
+                                  <button onClick={() => handleUpdateBatchStatus(b.id, true)} className={`text-sm font-semibold flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${darkMode ? 'text-emerald-400 hover:bg-emerald-500/10' : 'text-emerald-700 hover:bg-emerald-50'}`}>✓ Finalizar Lote</button>
+                                </div>
+                              )}
                               <button onClick={(e) => { e.stopPropagation(); handleDeleteBatch(b.id); }} className={`text-sm font-semibold flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${darkMode ? 'text-red-500 hover:bg-red-500/10' : 'text-red-600 hover:bg-red-50'}`}><Trash2 size={16}/> Eliminar Carpeta Definitivamente</button>
                           </div>
                         </div>
