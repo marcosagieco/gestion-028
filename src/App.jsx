@@ -7230,4 +7230,4 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       <AIChat darkMode={darkMode} db={db} />
     </div>
   );
-}
+} 
