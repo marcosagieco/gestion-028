@@ -4900,9 +4900,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
         
         <header className={`md:hidden sticky top-0 z-30 flex justify-between items-center px-4 py-3 border-b backdrop-blur-xl ${darkMode ? 'bg-[#050505]/90 border-white/[0.06]' : 'bg-white/90 border-zinc-200/80'}`}>
             <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{background:'#6366f1'}}>
-                    <Package size={14} strokeWidth={2.5} className="text-white" />
-                </div>
+                <img src="https://i.ibb.co/wh6spzwM/Dise-o-sin-t-tulo-14.png" alt="028 Import" className="w-8 h-8 rounded-xl object-cover flex-shrink-0" />
                 <h1 className="font-black tracking-tight text-sm">028 IMPORT</h1>
             </div>
             <div className="flex items-center gap-2">
