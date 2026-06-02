@@ -174,17 +174,17 @@ const MetricCard = ({ title, value, subtitle, icon: Icon, trend, color = 'zinc',
   };
 
   return (
-    <div className={`flex flex-col p-4 rounded-xl border shadow-sm transition-all duration-200 group ${colorStyles[color]} ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>
-       <div className="flex items-center justify-between mb-3">
-          <span className={`text-xs font-bold uppercase tracking-wider ${darkMode ? 'opacity-60' : 'text-zinc-600'}`}>{title}</span>
-          <div className={`p-1.5 rounded-md transition-colors ${iconColors[color]}`}>
-              <Icon size={16} strokeWidth={2.5} />
+    <div className={`flex flex-col p-3 sm:p-4 rounded-xl border shadow-sm transition-all duration-200 group overflow-hidden min-w-0 ${colorStyles[color]} ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>
+       <div className="flex items-center justify-between mb-2 sm:mb-3 gap-1">
+          <span className={`text-[10px] sm:text-xs font-bold uppercase tracking-wider truncate ${darkMode ? 'opacity-60' : 'text-zinc-600'}`}>{title}</span>
+          <div className={`p-1 sm:p-1.5 rounded-md transition-colors flex-shrink-0 ${iconColors[color]}`}>
+              <Icon size={14} strokeWidth={2.5} />
           </div>
        </div>
-       <div>
-          <div className="text-2xl font-bold tracking-tight">{value}</div>
-          <div className="flex items-center justify-between mt-2 gap-2">
-             <span className={`text-xs font-medium truncate ${darkMode ? 'opacity-50' : 'text-zinc-500'}`}>{subtitle}</span>
+       <div className="min-w-0">
+          <div className="text-base sm:text-xl lg:text-2xl font-bold tracking-tight leading-tight break-all">{value}</div>
+          <div className="flex items-center justify-between mt-1.5 sm:mt-2 gap-2">
+             <span className={`text-[10px] sm:text-xs font-medium truncate ${darkMode ? 'opacity-50' : 'text-zinc-500'}`}>{subtitle}</span>
              {trend}
           </div>
        </div>
@@ -547,14 +547,14 @@ const MiniLineChart = ({ data, labels, formatter }) => {
 const PremiumMetricCard = ({ title, value, subtitle, change, sparkline, sparklineLabels, sparklineFormatter, darkMode, extra, tooltip, lineSparkline, lineSparklineLabels, lineSparklineFormatter }) => {
   const isPositive = change === null || change === undefined || change >= 0;
   return (
-    <div className={`rounded-2xl border p-4 flex flex-col transition-all duration-200 ${
+    <div className={`rounded-2xl border p-3 sm:p-4 flex flex-col transition-all duration-200 overflow-hidden min-w-0 ${
       darkMode ? 'bg-[#101010] border-white/[0.06] hover:border-white/[0.12]' : 'bg-white border-zinc-200 hover:border-zinc-300'
     }`}>
-      <div className="flex items-start justify-between gap-2 mb-3">
-        <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 leading-tight">{title}</span>
-        <div className="flex items-center gap-1.5 flex-shrink-0">
+      <div className="flex items-start justify-between gap-2 mb-2 sm:mb-3">
+        <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-zinc-500 leading-tight">{title}</span>
+        <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
           {change !== null && change !== undefined && (
-            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+            <span className={`text-[9px] sm:text-[10px] font-bold px-1 sm:px-1.5 py-0.5 rounded-full ${
               isPositive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
             }`}>
               {isPositive ? '+' : '−'}{Math.abs(change).toFixed(1)}%
@@ -570,8 +570,8 @@ const PremiumMetricCard = ({ title, value, subtitle, change, sparkline, sparklin
           )}
         </div>
       </div>
-      <div className={`text-3xl font-bold tracking-tight leading-none ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`}>{value}</div>
-      <div className="text-[11px] text-zinc-500 mt-1">{subtitle}</div>
+      <div className={`text-lg sm:text-2xl lg:text-3xl font-bold tracking-tight leading-tight break-all min-w-0 ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`}>{value}</div>
+      <div className="text-[10px] sm:text-[11px] text-zinc-500 mt-1">{subtitle}</div>
       {extra}
       {lineSparkline && <MiniLineChart data={lineSparkline} labels={lineSparklineLabels} formatter={lineSparklineFormatter} />}
       {sparkline && <div className="mt-auto pt-3"><MiniBarChart data={sparkline} labels={sparklineLabels} formatter={sparklineFormatter} /></div>}
@@ -5493,7 +5493,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 </div>
                               </div>
 
-                              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs min-w-[420px]">
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs w-full">
                                 <div className={`rounded-xl p-3 ${darkMode ? 'bg-[#0D0D0D]' : 'bg-zinc-50'}`}>
                                   <p className="text-[10px] font-bold uppercase tracking-wider opacity-50">Compró</p>
                                   <p className="font-black text-emerald-500">{formatMoney(client.revenue)}</p>
@@ -6080,13 +6080,13 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         { label: 'Cobrado', value: formatMoney(consignmentStats.valuePaid), sub: `${consignmentStats.paid} unidades`, icon: CheckCircle, tone: 'text-emerald-400' },
                         { label: 'Ganancia', value: formatMoney(consignmentStats.profitPaid), sub: 'real', icon: TrendingUp, tone: 'text-violet-400' }
                       ].map(metric => (
-                        <div key={metric.label} className={`rounded-[1.4rem] p-4 backdrop-blur-xl ring-1 ${darkMode ? 'bg-black/12 ring-white/[0.06]' : 'bg-white/70 ring-zinc-200 shadow-sm'}`}>
-                          <div className="flex items-center justify-between mb-3">
-                            <p className={`text-[10px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{metric.label}</p>
-                            <metric.icon size={16} className={metric.tone}/>
+                        <div key={metric.label} className={`rounded-[1.4rem] p-3 sm:p-4 backdrop-blur-xl ring-1 overflow-hidden min-w-0 ${darkMode ? 'bg-black/12 ring-white/[0.06]' : 'bg-white/70 ring-zinc-200 shadow-sm'}`}>
+                          <div className="flex items-center justify-between mb-2 sm:mb-3 gap-1">
+                            <p className={`text-[9px] sm:text-[10px] font-black uppercase tracking-[0.16em] truncate ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{metric.label}</p>
+                            <metric.icon size={14} className={`flex-shrink-0 ${metric.tone}`}/>
                           </div>
-                          <p className="text-2xl font-black tracking-[-0.03em]">{metric.value}</p>
-                          <p className={`text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{metric.sub}</p>
+                          <p className="text-base sm:text-xl lg:text-2xl font-black tracking-[-0.03em] break-all leading-tight">{metric.value}</p>
+                          <p className={`text-[10px] sm:text-xs mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{metric.sub}</p>
                         </div>
                       ))}
                     </div>
@@ -6274,22 +6274,22 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                       </div>
 
                       <div className={`rounded-[1.5rem] p-5 ring-1 ${darkMode ? 'bg-white/[0.028] ring-white/[0.06]' : 'bg-zinc-50 ring-zinc-200'}`}>
-                        <div className="grid grid-cols-4 gap-3 mb-5">
-                          <div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+                          <div className="min-w-0">
                             <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Prod.</p>
-                            <p className="font-black text-lg">{consignmentDraftSummary.rows}</p>
+                            <p className="font-black text-base sm:text-lg">{consignmentDraftSummary.rows}</p>
                           </div>
-                          <div>
+                          <div className="min-w-0">
                             <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Unid.</p>
-                            <p className="font-black text-lg">{consignmentDraftSummary.units}</p>
+                            <p className="font-black text-base sm:text-lg">{consignmentDraftSummary.units}</p>
                           </div>
-                          <div>
+                          <div className="min-w-0">
                             <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Cobrar</p>
-                            <p className="font-black text-lg">{formatMoney(consignmentDraftSummary.value)}</p>
+                            <p className="font-black text-sm sm:text-base lg:text-lg break-all">{formatMoney(consignmentDraftSummary.value)}</p>
                           </div>
-                          <div>
+                          <div className="min-w-0">
                             <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Gan.</p>
-                            <p className="font-black text-lg text-emerald-400">{formatMoney(consignmentDraftSummary.profit)}</p>
+                            <p className="font-black text-sm sm:text-base lg:text-lg text-emerald-400 break-all">{formatMoney(consignmentDraftSummary.profit)}</p>
                           </div>
                         </div>
 
