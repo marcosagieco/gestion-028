@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package, UserCircle,
-  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw
+  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2
 } from 'lucide-react';
 
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
@@ -326,7 +326,7 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
             const mStr = String(d.getMonth() + 1).padStart(2, '0');
             const dayStr = String(d.getDate()).padStart(2, '0');
             const key = `${yStr}-${mStr}-${dayStr}`;
-            map[key] = { key, name: `${dayStr}/${mStr}`, fullLabel: `${dayStr} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0, Ganancia: 0 };
+            map[key] = { key, name: `${dayStr}/${mStr}`, fullLabel: `${dayStr} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0 };
         }
     };
 
@@ -343,7 +343,7 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
           const m = String(d.getMonth() + 1).padStart(2, '0');
           const day = String(d.getDate()).padStart(2, '0');
           const key = `${y}-${m}-${day}`;
-          map[key] = { key, name: `${day}/${m}`, fullLabel: `${day} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0, Ganancia: 0 };
+          map[key] = { key, name: `${day}/${m}`, fullLabel: `${day} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0 };
         }
       }
     }
@@ -355,20 +355,20 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
       for (let i = 1; i <= daysInMonth; i++) {
         const dayStr = String(i).padStart(2, '0');
         const key = `${yStr}-${mStr}-${dayStr}`;
-        map[key] = { key, name: `${dayStr}/${mStr}`, fullLabel: `${i} de ${monthNames[m - 1]}`, Ingresos: 0, Unidades: 0, Ganancia: 0 };
+        map[key] = { key, name: `${dayStr}/${mStr}`, fullLabel: `${i} de ${monthNames[m - 1]}`, Ingresos: 0, Unidades: 0 };
       }
     } else {
       if (!sales || sales.length === 0) return [];
       const dates = sales.map(s => s.date ? new Date(s.date) : new Date());
       const minDate = new Date(Math.min(...dates.map(d => isNaN(d.getTime()) ? new Date().getTime() : d.getTime())));
       const maxDate = new Date(Math.max(...dates.map(d => isNaN(d.getTime()) ? new Date().getTime() : d.getTime())));
-
+      
       for (let d = new Date(minDate.getFullYear(), minDate.getMonth(), minDate.getDate()); d <= maxDate; d.setDate(d.getDate() + 1)) {
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
         const day = String(d.getDate()).padStart(2, '0');
         const key = `${y}-${m}-${day}`;
-        map[key] = { key, name: `${day}/${m}`, fullLabel: `${day} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0, Ganancia: 0 };
+        map[key] = { key, name: `${day}/${m}`, fullLabel: `${day} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0 };
       }
     }
 
@@ -380,7 +380,6 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
       if (map[key]) {
         map[key].Ingresos += s.totalSaleRaw || 0;
         map[key].Unidades += s.quantity || 0;
-        map[key].Ganancia += (s.totalSaleRaw || 0) - (s.costArsAtSale || 0);
       }
     });
 
@@ -397,9 +396,8 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
     <div className="w-full flex flex-col space-y-4">
       <div className="flex justify-end mb-1">
           <div className={`flex items-center p-1 rounded-lg border ${darkMode ? 'bg-[#0f1115] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
-              <button onClick={() => setMetric('revenue')} className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${metric === 'revenue' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Ingresos</button>
-              <button onClick={() => setMetric('quantity')} className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${metric === 'quantity' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Unidades</button>
-              <button onClick={() => setMetric('profit')} className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${metric === 'profit' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Ganancia</button>
+              <button onClick={() => setMetric('revenue')} className={`px-4 py-1 text-xs font-semibold rounded-md transition-all ${metric === 'revenue' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Ingresos</button>
+              <button onClick={() => setMetric('quantity')} className={`px-4 py-1 text-xs font-semibold rounded-md transition-all ${metric === 'quantity' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Unidades</button>
           </div>
       </div>
       
@@ -414,13 +412,13 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
             </defs>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridColor} />
             <XAxis dataKey="name" stroke={textColor} fontSize={10} tickLine={false} axisLine={false} dy={10} minTickGap={20} />
-            <YAxis
-              stroke={textColor} fontSize={10} tickLine={false} axisLine={false}
-              tickFormatter={(value) => metric !== 'quantity' ? formatCompact(value) : value}
+            <YAxis 
+              stroke={textColor} fontSize={10} tickLine={false} axisLine={false} 
+              tickFormatter={(value) => metric === 'revenue' ? formatCompact(value) : value} 
               width={45}
             />
             <RechartsTooltip content={<CustomTooltip darkMode={darkMode} />} cursor={{ stroke: textColor, strokeWidth: 1, strokeDasharray: '3 3' }} />
-            <Area type="monotone" dataKey={metric === 'revenue' ? 'Ingresos' : metric === 'quantity' ? 'Unidades' : 'Ganancia'} stroke={metric === 'profit' ? '#fcdb00' : themeColor} strokeWidth={3} fillOpacity={1} fill={`url(#colorMetric-${isCompareMode ? 'vs' : 'base'})`} activeDot={{ r: 6, strokeWidth: 0 }} />
+            <Area type="monotone" dataKey={metric === 'revenue' ? 'Ingresos' : 'Unidades'} stroke={themeColor} strokeWidth={3} fillOpacity={1} fill={`url(#colorMetric-${isCompareMode ? 'vs' : 'base'})`} activeDot={{ r: 6, strokeWidth: 0 }} />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -459,68 +457,6 @@ const ModernDistribution = ({ data, colors, darkMode }) => {
           </div>
         );
       })}
-    </div>
-  );
-};
-
-// --- SPARKLINE SVG MINI CHART ---
-const Sparkline = ({ data, color = '#fcdb00', width = 72, height = 28 }) => {
-  if (!data || data.length < 2) return null;
-  const validData = data.map(v => (isNaN(v) ? 0 : v));
-  const max = Math.max(...validData, 0.001);
-  const min = Math.min(...validData);
-  const range = max - min || 1;
-  const pts = validData.map((v, i) => {
-    const x = (i / (validData.length - 1)) * width;
-    const y = height - ((v - min) / range) * (height - 3) - 1;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
-  const firstX = pts[0].split(',')[0];
-  const lastPt = pts[pts.length - 1];
-  const [lx, ly] = lastPt.split(',');
-  const areaPath = `M${pts.join(' L')} L${lx},${height} L${firstX},${height} Z`;
-  return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="overflow-visible flex-shrink-0">
-      <defs>
-        <linearGradient id="spk-grad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.22"/>
-          <stop offset="100%" stopColor={color} stopOpacity="0"/>
-        </linearGradient>
-      </defs>
-      <path d={areaPath} fill="url(#spk-grad)"/>
-      <polyline fill="none" stroke={color} strokeWidth="1.5" points={pts.join(' ')} strokeLinecap="round" strokeLinejoin="round"/>
-      <circle cx={lx} cy={ly} r="2.5" fill={color}/>
-    </svg>
-  );
-};
-
-// --- PREMIUM METRIC CARD ---
-const PremiumMetricCard = ({ title, value, subtitle, change, sparkline, accent = '#fcdb00', darkMode, extra }) => {
-  const isPositive = change === null || change === undefined || change >= 0;
-  return (
-    <div
-      className={`rounded-2xl border p-4 flex flex-col gap-2 relative overflow-hidden transition-all duration-200 ${
-        darkMode ? 'bg-[#0f1115] border-white/[0.06] hover:border-white/[0.12]' : 'bg-white border-zinc-200 hover:border-zinc-300'
-      }`}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 leading-tight">{title}</span>
-        {change !== null && change !== undefined && (
-          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${
-            isPositive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
-          }`}>
-            {isPositive ? '+' : '−'}{Math.abs(change).toFixed(1)}%
-          </span>
-        )}
-      </div>
-      <div className="flex items-end justify-between gap-2">
-        <div className="min-w-0">
-          <div className={`text-2xl font-extrabold tracking-tight leading-none ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`}>{value}</div>
-          <div className="text-[11px] text-zinc-500 mt-1 truncate">{subtitle}</div>
-        </div>
-        {sparkline && <Sparkline data={sparkline} color={accent} />}
-      </div>
-      {extra}
     </div>
   );
 };
@@ -912,22 +848,12 @@ const AIChat = ({ darkMode, db }) => {
       const endRange = argDayToUTCRange(endDate);
       const utcStart = startRange.start;   // 03:00 UTC del día inicio (= medianoche ART)
       const utcEnd = endRange.end;          // 02:59:59.999 UTC del día siguiente al fin (= 23:59 ART)
-      const [sSnap, eSnap, bSnap] = await Promise.all([
+      const [sSnap, eSnap] = await Promise.all([
         getDocs(query(collection(db, 'sales'), where('date', '>=', utcStart), where('date', '<=', utcEnd))),
-        getDocs(query(collection(db, 'expenses'), where('date', '>=', utcStart), where('date', '<=', utcEnd))),
-        getDocs(collection(db, 'batches'))
+        getDocs(query(collection(db, 'expenses'), where('date', '>=', utcStart), where('date', '<=', utcEnd)))
       ]);
       const sales = sSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       const exps = eSnap.docs.map(d => d.data());
-      const batches = bSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const activeBatches = batches.filter(b => !b.finalizedAt);
-      const inversionTotalLotesActivos = activeBatches.reduce((sum, b) =>
-        sum + (b.items || []).reduce((s, i) => s + (i.costArs || 0) * (i.initialStock || 0), 0), 0);
-      const valorStockActual = activeBatches.reduce((sum, b) =>
-        sum + (b.items || []).reduce((s, i) => s + (i.costArs || 0) * (i.currentStock || 0), 0), 0);
-      const batchesPeriodo = batches.filter(b => b.createdAt && b.createdAt >= utcStart && b.createdAt <= utcEnd);
-      const inversionLotesPeriodo = batchesPeriodo.reduce((sum, b) =>
-        sum + (b.items || []).reduce((s, i) => s + (i.costArs || 0) * (i.initialStock || 0), 0), 0);
       const totalSales = sales.reduce((a, v) => a + (v.totalSaleRaw || 0), 0);
       const totalCost = sales.reduce((a, v) => a + (v.costArsAtSale || 0), 0);
       const totalExpenses = exps.reduce((a, v) => a + (v.amount || 0), 0);
@@ -961,18 +887,7 @@ const AIChat = ({ darkMode, db }) => {
         bySource,
         bySeller,
         salesWithSeller: sales.map(s => ({ productName: s.productName, variant: s.variant, quantity: s.quantity, totalSaleRaw: s.totalSaleRaw, date: s.date, seller: s.seller || '' })),
-        expenses: exps.map(e => ({ description: e.description, amount: e.amount })),
-        inversionTotalLotesActivos,
-        valorStockActual,
-        stockDepreciacion: inversionTotalLotesActivos - valorStockActual,
-        lotesActivosCount: activeBatches.length,
-        inversionLotesPeriodo,
-        lotesPeriodoCount: batchesPeriodo.length,
-        lotesPeriodo: batchesPeriodo.map(b => ({
-          name: b.name,
-          createdAt: b.createdAt,
-          inversionInicial: (b.items || []).reduce((s, i) => s + (i.costArs || 0) * (i.initialStock || 0), 0)
-        }))
+        expenses: exps.map(e => ({ description: e.description, amount: e.amount }))
       });
     }
 
@@ -2048,7 +1963,6 @@ export default function App() {
   
   const [editingItem, setEditingItem] = useState(null);
   const [editingBatchId, setEditingBatchId] = useState(null);
-  const [restoringItem, setRestoringItem] = useState(null);
   const [editingBatchName, setEditingBatchName] = useState('');
 
   const [selectedBatchStats, setSelectedBatchStats] = useState(null);
@@ -2611,33 +2525,6 @@ export default function App() {
           .map(s => ({...s, seller: normalizeSellerName(s.seller)}))
           .sort((a,b) => new Date(b.date) - new Date(a.date));
   }, [analysisData.baseStats.filteredSales]);
-
-  const sparklineData7d = useMemo(() => {
-    const today = new Date();
-    const days = Array.from({length: 7}, (_, i) => {
-      const d = new Date(today);
-      d.setDate(d.getDate() - (6 - i));
-      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    });
-    const rev = new Array(7).fill(0);
-    const units = new Array(7).fill(0);
-    const profit = new Array(7).fill(0);
-    const clients = new Array(7).fill(0);
-    sales.forEach(s => {
-      if (!s.date) return;
-      const d = new Date(s.date);
-      if (isNaN(d.getTime())) return;
-      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-      const idx = days.indexOf(key);
-      if (idx >= 0) {
-        rev[idx] += s.totalSaleRaw || 0;
-        units[idx] += s.quantity || 0;
-        profit[idx] += (s.totalSaleRaw || 0) - (s.costArsAtSale || 0);
-        if (isNewClientStatus(s.isNewClient)) clients[idx] += 1;
-      }
-    });
-    return { revenue: rev, units, profit, clients };
-  }, [sales]);
 
   const wholesaleData = useMemo(() => {
       const wholesaleSales = sales
@@ -3817,19 +3704,6 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     try { await updateDoc(doc(db, 'batches', batchId), { items: updatedItems }); showToast("Producto eliminado", 'success'); } catch (e) { showToast("Error al borrar: " + e.message, 'error'); }
   };
 
-  const handleConfirmRestore = async (batchId) => {
-    if (!restoringItem) return;
-    const batch = batches.find(b => b.id === batchId);
-    if (!batch) return;
-    const amount = parseInt(restoringItem.amount);
-    if (isNaN(amount) || amount < 1) return showToast("Ingresá una cantidad válida", 'error');
-    const item = batch.items.find(i => i.id === restoringItem.id);
-    if (!item) return;
-    const newStock = (item.currentStock || 0) + amount;
-    const updatedItems = batch.items.map(i => i.id === restoringItem.id ? { ...i, currentStock: newStock } : i);
-    try { await updateDoc(doc(db, 'batches', batchId), { items: updatedItems }); showToast(`+${amount} unidades restauradas`, 'success'); setRestoringItem(null); } catch (e) { showToast("Error: " + e.message, 'error'); }
-  };
-
   const handleSaveEditItem = async (batchId) => {
     if (!editingItem) return;
     const batch = batches.find(b => b.id === batchId);
@@ -4722,41 +4596,47 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
             {/* --- PESTAÑA INICIO --- */}
             {activeTab === 'home' && (
-                <div className="space-y-5 animate-in fade-in duration-300">
-                    {/* PERIOD SELECTOR */}
-                    <div className={`p-4 rounded-2xl border flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 ${darkMode ? 'bg-[#0f1115] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
+                <div className="space-y-6 animate-in fade-in duration-300">
+                    <div className={`p-4 rounded-xl border flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 ${darkMode ? 'bg-[#131824] border-zinc-800/80' : 'bg-white border-zinc-200'}`}>
                         <div className="flex items-center gap-3 flex-shrink-0">
-                            <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{background:'rgba(252,219,0,0.12)'}}>
-                                <Calendar size={15} style={{color:'#fcdb00'}}/>
-                            </div>
+                            <div className="p-2.5 rounded-lg bg-indigo-500/10 text-indigo-500"><Calendar size={20}/></div>
                             <div>
-                                <h3 className={`font-bold text-sm ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Período de Análisis</h3>
-                                <p className="text-[11px] text-zinc-500">Seleccioná el rango a evaluar</p>
+                                <h3 className="font-bold text-sm">Periodo de Análisis</h3>
+                                <p className={`text-xs ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Selecciona el rango de tiempo a evaluar</p>
                             </div>
                         </div>
-                        <div className="w-full lg:w-auto flex flex-col md:flex-row gap-3 lg:items-center">
+                        <div className="w-full lg:w-auto flex flex-col md:flex-row gap-4 lg:items-center">
                             <div className="w-full md:w-64 flex-shrink-0">
-                                <Select darkMode={darkMode} value={globalMonth} onChange={e => setGlobalMonth(e.target.value)} options={periodOptions}/>
+                                <Select 
+                                    darkMode={darkMode}
+                                    value={globalMonth} 
+                                    onChange={e => setGlobalMonth(e.target.value)}
+                                    options={periodOptions}
+                                />
                             </div>
+                            
+                            {/* RANGO SIMPLE */}
                             {globalMonth === 'custom' && (
                                 <div className="flex items-center gap-2 animate-in slide-in-from-right-2 w-full md:w-auto">
                                     <Input darkMode={darkMode} type="date" value={customDateRange.start} onChange={e => setCustomDateRange({...customDateRange, start: e.target.value})} />
-                                    <span className="text-zinc-500 font-bold">—</span>
+                                    <span className={`font-bold ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>-</span>
                                     <Input darkMode={darkMode} type="date" value={customDateRange.end} onChange={e => setCustomDateRange({...customDateRange, end: e.target.value})} />
                                 </div>
                             )}
+
+                            {/* MODO COMPARACIÓN (Vs) */}
                             {globalMonth === 'compare' && (
                                 <div className="flex flex-col gap-2 animate-in slide-in-from-right-2 w-full md:w-auto">
                                     <div className="flex items-center gap-2">
-                                        <span className="text-[10px] font-bold uppercase w-10 text-zinc-500">Base</span>
+                                        <span className={`text-[10px] font-bold uppercase w-10 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Base</span>
                                         <Input darkMode={darkMode} type="date" value={customDateRange.start} onChange={e => setCustomDateRange({...customDateRange, start: e.target.value})} />
-                                        <span className="text-zinc-500 font-bold">—</span>
+                                        <span className={`font-bold ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>-</span>
                                         <Input darkMode={darkMode} type="date" value={customDateRange.end} onChange={e => setCustomDateRange({...customDateRange, end: e.target.value})} />
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <span className="text-[10px] font-bold uppercase w-10 text-rose-400">Vs</span>
+                                        <span className={`text-[10px] font-bold uppercase w-10 ${darkMode ? 'text-rose-400' : 'text-rose-600'}`}>Vs</span>
                                         <Input darkMode={darkMode} type="date" value={compareDateRange.start} onChange={e => setCompareDateRange({...compareDateRange, start: e.target.value})} />
-                                        <span className="text-zinc-500 font-bold">—</span>
+                                        <span className={`font-bold ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>-</span>
                                         <Input darkMode={darkMode} type="date" value={compareDateRange.end} onChange={e => setCompareDateRange({...compareDateRange, end: e.target.value})} />
                                     </div>
                                 </div>
@@ -4764,231 +4644,254 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         </div>
                     </div>
 
-                    {/* COMPARE / NORMAL */}
+                    {/* VISTA DIVIDIDA (MANO A MANO) */}
                     {globalMonth === 'compare' ? (
                         <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-                            {/* COLUMNA BASE */}
-                            <div className="space-y-5 border-b xl:border-b-0 xl:border-r border-zinc-800/60 pb-8 xl:pb-0 xl:pr-8">
-                                <h3 className="text-base font-black flex items-center gap-2" style={{color:'#fcdb00'}}>
-                                    <Calendar size={16}/> Período Base
+                            
+                            {/* COLUMNA 1: PERIODO BASE */}
+                            <div className="space-y-6 border-b xl:border-b-0 xl:border-r border-zinc-200 dark:border-zinc-800 pb-8 xl:pb-0 xl:pr-8">
+                                <h3 className="text-xl font-black text-indigo-500 flex items-center gap-2">
+                                    <Calendar size={20}/> Periodo Base
                                 </h3>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <PremiumMetricCard darkMode={darkMode} title="Ingresos" value={formatCompact(analysisData.baseStats.totalRevenue)} subtitle={formatMoney(analysisData.baseStats.totalRevenue)} change={null} />
-                                    <PremiumMetricCard darkMode={darkMode} title="Ganancia Bruta" value={formatCompact(analysisData.baseStats.grossProfit)} subtitle={`${formatPercent(analysisData.baseStats.grossMargin)} margen`} change={null} />
-                                    <PremiumMetricCard darkMode={darkMode} title="Gastos" value={formatCompact(analysisData.baseStats.totalGlobalExpenses)} subtitle="Fijos y logística" change={null} />
-                                    <PremiumMetricCard darkMode={darkMode} title="Beneficio Neto" value={formatCompact(analysisData.baseStats.netProfit)} subtitle={`${formatPercent(analysisData.baseStats.netMargin)} neto`} change={null} />
+                                
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <MetricCard color="blue" darkMode={darkMode} title="Ingresos" value={formatMoney(analysisData.baseStats.totalRevenue)} subtitle="Bruto facturado" icon={DollarSign} />
+                                    <MetricCard color="emerald" darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(analysisData.baseStats.grossProfit)} subtitle="Ingresos - Costo" icon={TrendingUp} trend={<span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/50 text-zinc-600 dark:bg-black/50 dark:text-zinc-400">{formatPercent(analysisData.baseStats.grossMargin)}</span>} />
+                                    <MetricCard color="rose" darkMode={darkMode} title="Gastos Fijos" value={formatMoney(analysisData.baseStats.totalGlobalExpenses)} subtitle="Logística" icon={Wallet} />
+                                    <MetricCard color="violet" darkMode={darkMode} title="Beneficio Neto" value={formatMoney(analysisData.baseStats.netProfit)} subtitle="Capital libre" icon={Award} trend={<span className={`text-[10px] font-bold px-2 py-0.5 rounded-md bg-white/50 text-violet-700 dark:bg-black/50 dark:text-violet-400`}>{formatPercent(analysisData.baseStats.netMargin)}</span>} />
+                                    <MetricCard color="amber" darkMode={darkMode} title="Inversión" value={formatMoney(analysisData.baseStats.totalInvestment)} subtitle="Capital apostado" icon={Box} />
+                                    <MetricCard color="indigo" darkMode={darkMode} title="Valor Inventario" value={formatMoney(analysisData.baseStats.currentStockValue)} subtitle="Activo retenido" icon={Package} />
+                                    <MetricCard color="emerald" darkMode={darkMode} title="Flujo Efectivo" value={formatMoney(analysisData.baseStats.cashBalance)} subtitle="Caja real" icon={Activity} />
+                                    <MetricCard color="amber" darkMode={darkMode} title="Promedio Ventas" value={analysisData.baseStats.dailyAvgItems.toFixed(1)} subtitle="Unidades por día" icon={Flame} />
                                 </div>
-                                <div className={`rounded-2xl border p-4 ${darkMode ? 'bg-[#0f1115] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
-                                    <div className="flex items-center gap-2 mb-3">
-                                        <TrendingUp size={13} className="text-zinc-500"/>
-                                        <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Ingresos (Base)</span>
+
+                                <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                                    <div className={`p-4 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                        <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><TrendingUp size={16}/></div>
+                                        <h3 className="font-bold tracking-tight text-sm">Ingresos (Base)</h3>
                                     </div>
-                                    <SalesAreaChart sales={analysisData.baseStats.filteredSales} mode="custom" customRange={customDateRange} darkMode={darkMode} isCompareMode={false} />
+                                    <div className="p-4">
+                                        <SalesAreaChart sales={analysisData.baseStats.filteredSales} mode="custom" customRange={customDateRange} darkMode={darkMode} isCompareMode={false} />
+                                    </div>
+                                </Card>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                                        <div className={`p-4 border-b flex items-center gap-2 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                            <div className="bg-indigo-500/10 text-indigo-500 p-1.5 rounded-md"><Users size={14}/></div>
+                                            <h3 className="font-bold tracking-tight text-xs">Canales (Base)</h3>
+                                        </div>
+                                        <ModernDistribution data={analysisData.baseStats.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} />
+                                    </Card>
+                                    <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                                        <div className={`p-4 border-b flex items-center gap-2 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                            <div className="bg-indigo-500/10 text-indigo-500 p-1.5 rounded-md"><BarChart3 size={14}/></div>
+                                            <h3 className="font-bold tracking-tight text-xs">B2B/B2C (Base)</h3>
+                                        </div>
+                                        <ModernDistribution data={analysisData.baseStats.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} />
+                                    </Card>
                                 </div>
                             </div>
-                            {/* COLUMNA VS */}
-                            <div className="space-y-5">
-                                <h3 className="text-base font-black text-rose-500 flex items-center gap-2">
-                                    <ArrowUpDown size={16}/> Período a Comparar
+
+                            {/* COLUMNA 2: PERIODO A COMPARAR (VS) */}
+                            <div className="space-y-6">
+                                <h3 className="text-xl font-black text-rose-500 flex items-center gap-2">
+                                    <ArrowUpDown size={20}/> Periodo a Comparar (Vs)
                                 </h3>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <PremiumMetricCard darkMode={darkMode} title="Ingresos" value={formatCompact(analysisData.compareStats?.totalRevenue || 0)} subtitle={formatMoney(analysisData.compareStats?.totalRevenue || 0)} change={analysisData.baseStats.totalRevenue > 0 ? ((analysisData.compareStats?.totalRevenue||0) - analysisData.baseStats.totalRevenue) / Math.abs(analysisData.baseStats.totalRevenue) * 100 : null} />
-                                    <PremiumMetricCard darkMode={darkMode} title="Ganancia Bruta" value={formatCompact(analysisData.compareStats?.grossProfit || 0)} subtitle={`${formatPercent(analysisData.compareStats?.grossMargin || 0)} margen`} change={analysisData.baseStats.grossProfit !== 0 ? ((analysisData.compareStats?.grossProfit||0) - analysisData.baseStats.grossProfit) / Math.abs(analysisData.baseStats.grossProfit) * 100 : null} />
-                                    <PremiumMetricCard darkMode={darkMode} title="Gastos" value={formatCompact(analysisData.compareStats?.totalGlobalExpenses || 0)} subtitle="Fijos y logística" change={null} />
-                                    <PremiumMetricCard darkMode={darkMode} title="Beneficio Neto" value={formatCompact(analysisData.compareStats?.netProfit || 0)} subtitle={`${formatPercent(analysisData.compareStats?.netMargin || 0)} neto`} change={analysisData.baseStats.netProfit !== 0 ? ((analysisData.compareStats?.netProfit||0) - analysisData.baseStats.netProfit) / Math.abs(analysisData.baseStats.netProfit) * 100 : null} />
+                                
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <MetricCard color="blue" darkMode={darkMode} title="Ingresos" value={formatMoney(analysisData.compareStats.totalRevenue)} subtitle="Bruto facturado" icon={DollarSign} />
+                                    <MetricCard color="emerald" darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(analysisData.compareStats.grossProfit)} subtitle="Ingresos - Costo" icon={TrendingUp} trend={<span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/50 text-zinc-600 dark:bg-black/50 dark:text-zinc-400">{formatPercent(analysisData.compareStats.grossMargin)}</span>} />
+                                    <MetricCard color="rose" darkMode={darkMode} title="Gastos Fijos" value={formatMoney(analysisData.compareStats.totalGlobalExpenses)} subtitle="Logística" icon={Wallet} />
+                                    <MetricCard color="violet" darkMode={darkMode} title="Beneficio Neto" value={formatMoney(analysisData.compareStats.netProfit)} subtitle="Capital libre" icon={Award} trend={<span className={`text-[10px] font-bold px-2 py-0.5 rounded-md bg-white/50 text-violet-700 dark:bg-black/50 dark:text-violet-400`}>{formatPercent(analysisData.compareStats.netMargin)}</span>} />
+                                    <MetricCard color="amber" darkMode={darkMode} title="Inversión" value={formatMoney(analysisData.compareStats.totalInvestment)} subtitle="Capital apostado" icon={Box} />
+                                    <MetricCard color="indigo" darkMode={darkMode} title="Valor Inventario" value={formatMoney(analysisData.compareStats.currentStockValue)} subtitle="Activo retenido" icon={Package} />
+                                    <MetricCard color="emerald" darkMode={darkMode} title="Flujo Efectivo" value={formatMoney(analysisData.compareStats.cashBalance)} subtitle="Caja real" icon={Activity} />
+                                    <MetricCard color="amber" darkMode={darkMode} title="Promedio Ventas" value={analysisData.compareStats.dailyAvgItems.toFixed(1)} subtitle="Unidades por día" icon={Flame} />
                                 </div>
-                                <div className={`rounded-2xl border p-4 ${darkMode ? 'bg-[#0f1115] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
-                                    <div className="flex items-center gap-2 mb-3">
-                                        <TrendingUp size={13} className="text-rose-500"/>
-                                        <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Ingresos (Vs)</span>
+
+                                <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                                    <div className={`p-4 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                        <div className="bg-rose-500/10 text-rose-500 p-2 rounded-lg"><TrendingUp size={16}/></div>
+                                        <h3 className="font-bold tracking-tight text-sm">Ingresos (Vs)</h3>
                                     </div>
-                                    <SalesAreaChart sales={analysisData.compareStats?.filteredSales || []} mode="custom" customRange={compareDateRange} darkMode={darkMode} isCompareMode={true} />
+                                    <div className="p-4">
+                                        <SalesAreaChart sales={analysisData.compareStats.filteredSales} mode="custom" customRange={compareDateRange} darkMode={darkMode} isCompareMode={true} />
+                                    </div>
+                                </Card>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                                        <div className={`p-4 border-b flex items-center gap-2 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                            <div className="bg-rose-500/10 text-rose-500 p-1.5 rounded-md"><Users size={14}/></div>
+                                            <h3 className="font-bold tracking-tight text-xs">Canales (Vs)</h3>
+                                        </div>
+                                        <ModernDistribution data={analysisData.compareStats.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} />
+                                    </Card>
+                                    <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                                        <div className={`p-4 border-b flex items-center gap-2 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                            <div className="bg-rose-500/10 text-rose-500 p-1.5 rounded-md"><BarChart3 size={14}/></div>
+                                            <h3 className="font-bold tracking-tight text-xs">B2B/B2C (Vs)</h3>
+                                        </div>
+                                        <ModernDistribution data={analysisData.compareStats.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} />
+                                    </Card>
                                 </div>
                             </div>
+
                         </div>
                     ) : (
-                        /* VISTA NORMAL */
+                        /* VISTA NORMAL (UN SOLO PERIODO) */
                         <>
-                            {/* 6 METRIC CARDS */}
-                            {(() => {
-                                const prev = analysisData.prevBaseStats;
-                                const cur = analysisData.baseStats;
-                                const pct = (c, p) => (p && p !== 0) ? ((c - p) / Math.abs(p)) * 100 : null;
-                                const newClientsOrganic = newClientsList.filter(s => s.isNewClient === 'Nuevo - Organico' || s.isNewClient === true).length;
-                                const newClientsAds = newClientsList.filter(s => s.isNewClient === 'Nuevo - Publicidad').length;
-                                const avgTicket = cur.salesCount > 0 ? cur.totalRevenue / cur.salesCount : 0;
-                                const prevAvgTicket = prev && prev.salesCount > 0 ? prev.totalRevenue / prev.salesCount : null;
-                                return (
-                                    <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
-                                        <PremiumMetricCard darkMode={darkMode} title="Facturación" value={formatCompact(cur.totalRevenue)} subtitle={formatMoney(cur.totalRevenue)} change={pct(cur.totalRevenue, prev?.totalRevenue)} sparkline={sparklineData7d.revenue} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Ganancia Neta" value={formatCompact(cur.netProfit)} subtitle={`${formatPercent(cur.netMargin)} neto`} change={pct(cur.netProfit, prev?.netProfit)} sparkline={sparklineData7d.profit} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Productos Vendidos" value={cur.itemsSold} subtitle={`${cur.salesCount} pedidos`} change={pct(cur.itemsSold, prev?.itemsSold)} sparkline={sparklineData7d.units} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Clientes Nuevos" value={newClientsList.length} subtitle={`${newClientsOrganic} org · ${newClientsAds} ads`} change={null} sparkline={sparklineData7d.clients}
-                                            extra={newClientsList.length > 0 && (
-                                                <div className="flex gap-1 mt-1">
-                                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">{newClientsOrganic} orgánico</span>
-                                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/10 text-blue-400">{newClientsAds} ads</span>
-                                                </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                                <MetricCard 
+                                    color="blue"
+                                    darkMode={darkMode} title={`Ingresos ${globalMonth === 'all' ? 'Totales' : ''}`} value={formatMoney(analysisData.baseStats.totalRevenue)} subtitle="Bruto facturado" icon={DollarSign}
+                                    trend={analysisData.prevBaseStats && analysisData.prevBaseStats.totalRevenue > 0 ? (
+                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${analysisData.baseStats.totalRevenue >= analysisData.prevBaseStats.totalRevenue ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 text-red-600 dark:text-red-400'}`}>
+                                            {analysisData.baseStats.totalRevenue >= analysisData.prevBaseStats.totalRevenue ? '↑' : '↓'} {Math.abs(((analysisData.baseStats.totalRevenue - analysisData.prevBaseStats.totalRevenue)/analysisData.prevBaseStats.totalRevenue)*100).toFixed(0)}%
+                                        </span>
+                                    ) : null}
+                                />
+                                <MetricCard color="emerald" darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(analysisData.baseStats.grossProfit)} subtitle={globalMonth === 'all' && analysisData.baseStats.neutralProfit ? 'Incluye ganancia neutra global' : 'Ingresos - Costo Mercadería'} icon={TrendingUp} trend={<span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/50 text-zinc-600 dark:bg-black/50 dark:text-zinc-400">{formatPercent(analysisData.baseStats.grossMargin)}</span>} />
+                                {globalMonth === 'all' && analysisData.baseStats.neutralProfit !== 0 && (
+                                  <MetricCard color="indigo" darkMode={darkMode} title="Ganancia Neutra" value={formatMoney(analysisData.baseStats.neutralProfit)} subtitle="Solo histórico global" icon={Box} />
+                                )}
+                                <MetricCard color="rose" darkMode={darkMode} title="Gastos Fijos" value={formatMoney(analysisData.baseStats.totalGlobalExpenses)} subtitle="Logística y operativos" icon={Wallet} />
+                                <MetricCard 
+                                    color="violet"
+                                    darkMode={darkMode} title="Beneficio Neto" value={formatMoney(analysisData.baseStats.netProfit)} subtitle="Capital libre" icon={Award}
+                                    trend={
+                                        <div className="flex gap-1 items-center">
+                                            {analysisData.prevBaseStats && analysisData.prevBaseStats.netProfit > 0 && (
+                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${analysisData.baseStats.netProfit >= analysisData.prevBaseStats.netProfit ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 text-red-600 dark:text-red-400'}`}>
+                                                    {analysisData.baseStats.netProfit >= analysisData.prevBaseStats.netProfit ? '↑' : '↓'} {Math.abs(((analysisData.baseStats.netProfit - analysisData.prevBaseStats.netProfit)/analysisData.prevBaseStats.netProfit)*100).toFixed(0)}%
+                                                </span>
                                             )}
-                                        />
-                                        <PremiumMetricCard darkMode={darkMode} title="Ticket Promedio" value={formatCompact(avgTicket)} subtitle="por pedido" change={pct(avgTicket, prevAvgTicket)} sparkline={null} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Inversión Activa" value={formatCompact(cur.currentStockValue)} subtitle={formatMoney(cur.currentStockValue)} change={null} sparkline={null} />
-                                    </div>
-                                );
-                            })()}
-
-                            {/* MAIN CHART */}
-                            <div className={`rounded-2xl border p-5 ${darkMode ? 'bg-[#0f1115] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
-                                <div className="flex items-center justify-between mb-4">
-                                    <div>
-                                        <h3 className={`text-sm font-bold ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Evolución del Período</h3>
-                                        <p className="text-[11px] text-zinc-500 mt-0.5">Ingresos · Unidades · Ganancia</p>
-                                    </div>
-                                </div>
-                                <SalesAreaChart sales={analysisData.baseStats.filteredSales} mode={globalMonth === 'custom' ? 'custom' : globalMonth} customRange={customDateRange} darkMode={darkMode} />
+                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md bg-white/50 text-violet-700 dark:bg-black/50 dark:text-violet-400`}>{formatPercent(analysisData.baseStats.netMargin)}</span>
+                                        </div>
+                                    }
+                                />
+                                <MetricCard color="amber" darkMode={darkMode} title="Inversión" value={formatMoney(analysisData.baseStats.totalInvestment)} subtitle="Capital apostado" icon={Box} />
+                                <MetricCard color="indigo" darkMode={darkMode} title="Valor Inventario" value={formatMoney(analysisData.baseStats.currentStockValue)} subtitle="Activo retenido actual" icon={Package} />
+                                <MetricCard color="emerald" darkMode={darkMode} title="Flujo Efectivo" value={formatMoney(analysisData.baseStats.cashBalance)} subtitle="Diferencia real en caja" icon={Activity} />
+                                <MetricCard 
+                                    color="amber"
+                                    darkMode={darkMode} title="Promedio Ventas" value={analysisData.baseStats.dailyAvgItems.toFixed(1)} subtitle="Unidades por día activo" icon={Flame}
+                                    trend={analysisData.baseStats.currentStreak > 0 ? <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-white/50 text-orange-600 dark:bg-black/50 dark:text-orange-400 flex items-center gap-1"><Flame size={12}/> {analysisData.baseStats.currentStreak} días</span> : null}
+                                />
                             </div>
 
-                            {/* TOP PRODUCTOS + ACTIVIDAD RECIENTE */}
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                                {/* TOP PRODUCTOS */}
-                                <div className={`rounded-2xl border p-5 ${darkMode ? 'bg-[#0f1115] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
-                                    <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-5">Top Productos</h3>
-                                    <div className="space-y-4">
-                                        {(() => {
-                                            const map = {};
-                                            analysisData.baseStats.filteredSales.forEach(s => {
-                                                const k = `${s.productName || ''} ${s.variant || ''}`.trim();
-                                                if (!k) return;
-                                                map[k] = map[k] || { qty: 0, rev: 0 };
-                                                map[k].qty += s.quantity || 0;
-                                                map[k].rev += s.totalSaleRaw || 0;
-                                            });
-                                            const sorted = Object.entries(map).sort((a,b) => b[1].qty - a[1].qty).slice(0, 6);
-                                            if (sorted.length === 0) return <div className="text-sm text-zinc-500 text-center py-8 opacity-50">Sin ventas en este período</div>;
-                                            const maxQty = sorted[0][1].qty || 1;
-                                            return sorted.map(([name, data], i) => (
-                                                <div key={name} className="flex flex-col gap-1.5">
-                                                    <div className="flex items-center justify-between gap-2">
-                                                        <div className="flex items-center gap-2 min-w-0">
-                                                            <span className="text-[10px] font-black w-4 text-right text-zinc-600">{i+1}</span>
-                                                            <span className={`text-xs font-semibold truncate ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{name}</span>
-                                                        </div>
-                                                        <div className="flex items-center gap-2 flex-shrink-0">
-                                                            <span className="text-[11px] font-bold text-zinc-500">{data.qty} uds</span>
-                                                            <span className={`text-[10px] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>{formatCompact(data.rev)}</span>
-                                                        </div>
-                                                    </div>
-                                                    <div className={`h-1.5 w-full rounded-full overflow-hidden ${darkMode ? 'bg-zinc-800' : 'bg-zinc-100'}`}>
-                                                        <div className="h-full rounded-full transition-all duration-700" style={{width:`${(data.qty/maxQty)*100}%`, background:'#fcdb00'}}/>
-                                                    </div>
-                                                </div>
-                                            ));
-                                        })()}
-                                    </div>
+                            <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                                <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                    <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><TrendingUp size={18}/></div>
+                                    <h3 className="font-bold tracking-tight text-sm">Evolución de Ingresos</h3>
                                 </div>
+                                <div className="p-5">
+                                    <SalesAreaChart sales={analysisData.baseStats.filteredSales} mode={globalMonth === 'custom' ? 'custom' : globalMonth} customRange={customDateRange} darkMode={darkMode} />
+                                </div>
+                            </Card>
 
-                                {/* ACTIVIDAD RECIENTE */}
-                                <div className={`rounded-2xl border p-5 ${darkMode ? 'bg-[#0f1115] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
-                                    <div className="flex items-center justify-between mb-5">
-                                        <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Actividad Reciente</h3>
-                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${darkMode ? 'bg-zinc-800 text-zinc-500' : 'bg-zinc-100 text-zinc-500'}`}>
-                                            últimas ventas
-                                        </span>
-                                    </div>
-                                    <div className="space-y-2">
-                                        {[...analysisData.baseStats.filteredSales]
-                                            .sort((a,b) => new Date(b.date) - new Date(a.date))
-                                            .slice(0, 5)
-                                            .map((s, i) => (
-                                                <div key={s.id || i} className={`flex items-center justify-between p-3 rounded-xl border transition-colors ${darkMode ? 'bg-zinc-900/40 border-zinc-800 hover:border-zinc-700' : 'bg-zinc-50 border-zinc-200 hover:border-zinc-300'}`}>
-                                                    <div className="flex items-center gap-3 min-w-0">
-                                                        <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0" style={{background:'rgba(252,219,0,0.1)'}}>
-                                                            <ShoppingCart size={13} style={{color:'#fcdb00'}}/>
-                                                        </div>
-                                                        <div className="min-w-0">
-                                                            <div className={`text-xs font-semibold truncate ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>
-                                                                {s.productName || 'Producto'}{s.variant ? ` · ${s.variant}` : ''}
-                                                            </div>
-                                                            <div className="text-[10px] text-zinc-500">
-                                                                {safeDateStr(s.date, {day:'numeric', month:'short'})} · {normalizeSellerName(s.seller)} · ×{s.quantity}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                    <div className={`text-xs font-black flex-shrink-0 ml-2 ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{formatCompact(s.totalSaleRaw)}</div>
-                                                </div>
-                                            ))
-                                        }
-                                        {analysisData.baseStats.filteredSales.length === 0 && (
-                                            <div className="text-sm text-zinc-500 text-center py-8 opacity-50">Sin ventas en este período</div>
-                                        )}
-                                    </div>
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                                <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                    <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><Users size={18}/></div>
+                                    <h3 className="font-bold tracking-tight text-sm">Tráfico por Canales</h3>
                                 </div>
+                                <ModernDistribution data={analysisData.baseStats.pieSourceData} colors={['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b']} darkMode={darkMode} />
+                                </Card>
+
+                                <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                                <div className={`p-5 border-b flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                    <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><BarChart3 size={18}/></div>
+                                    <h3 className="font-bold tracking-tight text-sm">Clientes</h3>
+                                </div>
+                                <ModernDistribution data={analysisData.baseStats.pieTypeData} colors={['#10b981', '#6366f1']} darkMode={darkMode} />
+                                </Card>
                             </div>
                         </>
                     )}
 
-                    {/* EQUIPO + NUEVOS CLIENTES */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                        {/* EQUIPO */}
-                        <div className={`rounded-2xl border p-5 ${darkMode ? 'bg-[#0f1115] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
-                            <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-4">Rendimiento del Equipo</h3>
-                            <div className="space-y-2">
-                                {teamStats.map((member, i) => (
-                                    <div key={member.name} className={`flex items-center gap-3 p-3 rounded-xl border ${darkMode ? 'bg-zinc-900/40 border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
-                                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-[11px] font-black flex-shrink-0 ${i !== 0 ? (darkMode ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-200 text-zinc-600') : ''}`} style={i === 0 ? {background:'#fcdb00', color:'#0B0F19'} : {}}>
-                                            {i + 1}
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <div className={`text-sm font-bold truncate ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{member.name}</div>
-                                            <div className="text-[10px] text-zinc-500">{member.count} pedidos · {member.items} un.</div>
-                                        </div>
-                                        <div className={`text-sm font-black flex-shrink-0 ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{formatCompact(member.revenue)}</div>
-                                    </div>
-                                ))}
-                                {teamStats.length === 0 && <div className="text-sm text-zinc-500 text-center py-6 opacity-50">Sin datos de vendedores</div>}
-                            </div>
-                        </div>
-
-                        {/* NUEVOS CLIENTES */}
-                        <div className={`rounded-2xl border p-5 flex flex-col ${darkMode ? 'bg-[#0f1115] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
-                            <div className="flex items-center justify-between mb-4">
-                                <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Nuevos Clientes</h3>
-                                <div className="flex items-center gap-1.5">
-                                    {(() => {
-                                        const org = newClientsList.filter(s => s.isNewClient === 'Nuevo - Organico' || s.isNewClient === true).length;
-                                        const ads = newClientsList.filter(s => s.isNewClient === 'Nuevo - Publicidad').length;
-                                        return (<>
-                                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">{org} orgánico</span>
-                                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/10 text-blue-400">{ads} ads</span>
-                                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${darkMode ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-100 text-zinc-500'}`}>{newClientsList.length} total</span>
-                                        </>);
-                                    })()}
+                    {/* NUEVO: SECCIÓN DE RENDIMIENTO DE EQUIPO Y CLIENTES NUEVOS */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8 pt-8 border-t border-zinc-200 dark:border-zinc-800">
+                        
+                        {/* TARJETA RENDIMIENTO DE EQUIPO */}
+                        <Card darkMode={darkMode} className="p-5 flex flex-col h-full">
+                            <div className={`border-b pb-4 mb-4 flex items-center gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                <div className="bg-indigo-500/10 text-indigo-500 p-2 rounded-lg"><UserCircle size={18}/></div>
+                                <div>
+                                    <h3 className="font-bold tracking-tight text-sm">Rendimiento del Equipo</h3>
+                                    <p className={`text-xs ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Comparativa de ventas en el periodo actual</p>
                                 </div>
                             </div>
-                            <div className="max-h-[260px] overflow-y-auto custom-scrollbar space-y-2 pr-1 flex-1">
-                                {newClientsList.length === 0 ? (
-                                    <div className="flex flex-col items-center justify-center py-8 opacity-50">
-                                        <Star size={28} className="mb-2 text-zinc-500"/>
-                                        <span className="text-sm text-zinc-500">Sin clientes nuevos en este período</span>
-                                    </div>
-                                ) : newClientsList.map((nc, i) => (
-                                    <div key={nc.id || i} className={`flex items-center justify-between p-3 rounded-xl border ${darkMode ? 'bg-zinc-900/40 border-zinc-800 hover:border-zinc-700' : 'bg-zinc-50 border-zinc-200'}`}>
-                                        <div className="flex items-center gap-3 min-w-0">
-                                            <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-black flex-shrink-0 ${nc.isNewClient === 'Nuevo - Publicidad' ? 'bg-blue-500/10 text-blue-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
-                                                {nc.isNewClient === 'Nuevo - Publicidad' ? 'AD' : 'OR'}
-                                            </div>
-                                            <div className="min-w-0">
-                                                <div className={`text-xs font-semibold truncate ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>
-                                                    {nc.productName}{nc.variant && <span className="font-normal opacity-60"> {nc.variant}</span>}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 flex-1">
+                                {teamStats.map((member, index) => (
+                                    <div key={member.name} className={`p-4 rounded-xl border flex flex-col justify-between ${darkMode ? 'bg-[#0a0c10] border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+                                        <div>
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="flex items-center gap-2">
+                                                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${index === 0 ? 'bg-amber-100 text-amber-600' : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400'}`}>
+                                                        {index + 1}
+                                                    </div>
+                                                    <span className="font-bold text-sm">{member.name}</span>
                                                 </div>
-                                                <div className="text-[10px] text-zinc-500">{safeDateStr(nc.date, {day:'numeric', month:'short'})} · {nc.seller || '028 Import'}</div>
                                             </div>
+                                            <div className="text-2xl font-black mb-1">{formatMoney(member.revenue)}</div>
+                                            <div className={`text-xs font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Facturado</div>
                                         </div>
-                                        <div className="text-xs font-black text-emerald-400 flex-shrink-0 ml-2">{formatCompact(nc.totalSaleRaw)}</div>
+                                        <div className="mt-4 flex items-center gap-2">
+                                            <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-100 text-indigo-600'}`}>{member.count} pedidos</span>
+                                            <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${darkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-100 text-emerald-600'}`}>{member.items} un.</span>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
-                        </div>
+                        </Card>
+
+                        {/* TARJETA CLIENTES NUEVOS */}
+                        <Card darkMode={darkMode} className="p-5 flex flex-col h-full">
+                            <div className={`border-b pb-4 mb-4 flex items-center justify-between gap-3 ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
+                                <div className="flex items-center gap-3">
+                                    <div className="bg-emerald-500/10 text-emerald-500 p-2 rounded-lg"><Star size={18}/></div>
+                                    <div>
+                                        <h3 className="font-bold tracking-tight text-sm">Nuevos Clientes Captados</h3>
+                                        <p className={`text-xs ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Historial de primeras compras</p>
+                                    </div>
+                                </div>
+                                <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${darkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-600'}`}>
+                                    {newClientsList.length} total
+                                </span>
+                            </div>
+                            
+                            <div className="max-h-[300px] overflow-y-auto custom-scrollbar flex-1 pr-2">
+                                {newClientsList.length === 0 ? (
+                                    <div className="flex flex-col items-center justify-center h-full opacity-50 py-8">
+                                        <Star size={32} className="mb-2" />
+                                        <span className="text-sm font-medium">No hay clientes nuevos registrados en este periodo.</span>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {newClientsList.map(nc => (
+                                            <div key={nc.id} className={`p-4 rounded-xl border flex justify-between items-center transition-colors ${darkMode ? 'bg-[#0a0c10] border-zinc-800 hover:border-zinc-700' : 'bg-zinc-50 border-zinc-200 hover:border-zinc-300'}`}>
+                                                <div className="flex items-center gap-4">
+                                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm ${darkMode ? 'bg-zinc-800 text-zinc-300' : 'bg-white border text-zinc-600 shadow-sm'}`}>
+                                                        {nc.seller ? nc.seller.charAt(0) : '0'}
+                                                    </div>
+                                                    <div>
+                                                        <div className="font-bold text-sm mb-0.5">{nc.productName} <span className="font-normal opacity-70">({nc.variant})</span></div>
+                                                        <div className={`text-[11px] font-medium flex items-center gap-2 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                                            <span>{safeDateStr(nc.date, {day:'numeric', month:'short'})}</span>
+                                                            <span>•</span>
+                                                            <span>Por: {nc.seller || '028 Import'}</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="font-black text-emerald-500">{formatMoney(nc.totalSaleRaw)}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </Card>
                     </div>
 
                 </div>
@@ -5508,38 +5411,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                               {(b.items || []).length === 0 && <tr><td colSpan="4" className="p-8 text-center text-sm font-medium opacity-50 italic">La carpeta está vacía.</td></tr>}
                               {(b.items || []).map((item, idx) => {
                                 const isEditing = editingItem?.id === item.id;
-                                const isRestoring = restoringItem?.id === item.id;
                                 return (
                                 <tr key={item.id} className={`transition-colors group/item ${darkMode ? 'hover:bg-[#131824]' : 'hover:bg-white'}`}>
-                                  {isRestoring ? (
-                                      <>
-                                          <td className="px-5 py-3">
-                                              <div className="font-semibold text-sm">{item.product || 'Sin nombre'}</div>
-                                              <div className={`text-xs font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{item.variant || ''}</div>
-                                          </td>
-                                          <td className="px-5 py-3 font-mono font-medium text-sm text-zinc-500">{formatMoney(item.costArs)}</td>
-                                          <td className="px-5 py-3">
-                                              <div className="flex items-center gap-2">
-                                                  <input
-                                                      autoFocus
-                                                      type="number" min="1"
-                                                      placeholder="Cant."
-                                                      className={`w-20 p-1.5 text-sm border rounded outline-none focus:border-amber-500 ${darkMode ? 'bg-[#0a0c10] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`}
-                                                      value={restoringItem.amount}
-                                                      onChange={e => setRestoringItem({ ...restoringItem, amount: e.target.value })}
-                                                      onKeyDown={e => { if (e.key === 'Enter') handleConfirmRestore(b.id); if (e.key === 'Escape') setRestoringItem(null); }}
-                                                  />
-                                                  <span className={`text-xs ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>actual: {item.currentStock || 0}</span>
-                                              </div>
-                                          </td>
-                                          <td className="px-5 py-3 text-right">
-                                              <div className="flex justify-end gap-1">
-                                                  <button onClick={() => handleConfirmRestore(b.id)} className={`p-2 rounded-lg ${darkMode ? 'text-amber-400 hover:bg-amber-500/10' : 'text-amber-600 hover:bg-amber-50'}`} title="Confirmar restauración"><Save size={16} /></button>
-                                                  <button onClick={() => setRestoringItem(null)} className={`p-2 rounded-lg ${darkMode ? 'text-zinc-500 hover:bg-zinc-800' : 'text-zinc-400 hover:bg-zinc-100'}`} title="Cancelar"><XCircle size={16} /></button>
-                                              </div>
-                                          </td>
-                                      </>
-                                  ) : isEditing ? (
+                                  {isEditing ? (
                                       <>
                                           <td className="px-5 py-3">
                                               <input className={`w-full p-1.5 mb-1 text-sm border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0a0c10] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`} value={editingItem.product} onChange={e => setEditingItem({...editingItem, product: e.target.value})} placeholder="Producto"/>
@@ -5575,7 +5449,6 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                           </td>
                                           <td className="px-5 py-3 text-right">
                                               <div className="flex justify-end gap-1 opacity-0 group-hover/item:opacity-100 transition-all">
-                                                  <button onClick={() => setRestoringItem({ ...item, amount: '' })} className={`p-2 rounded-lg ${darkMode ? 'text-amber-400 hover:bg-amber-500/10' : 'text-amber-600 hover:bg-amber-50'}`} title="Restaurar unidades"><RotateCcw size={16} /></button>
                                                   <button onClick={() => setEditingItem(item)} className={`p-2 rounded-lg ${darkMode ? 'text-indigo-400 hover:bg-indigo-500/10' : 'text-indigo-600 hover:bg-indigo-50'}`} title="Editar Producto"><Settings size={16} /></button>
                                                   <button onClick={() => handleDeleteItemFromBatch(b.id, item.id)} className={`p-2 rounded-lg ${darkMode ? 'text-red-400 hover:bg-red-500/10' : 'text-red-600 hover:bg-red-50'}`} title="Eliminar Producto"><Trash2 size={16} /></button>
                                               </div>
@@ -5587,18 +5460,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             </tbody>
                           </table>
                           
-                          <div className={`p-4 flex flex-wrap justify-between items-center gap-3 border-t ${darkMode ? 'border-zinc-800 bg-[#0a0c10]' : 'border-zinc-200 bg-zinc-100'}`}>
-                              {b.finalizedAt ? (
-                                <div className="flex items-center gap-3">
-                                  <span className={`text-xs font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Archivado el {safeDateStr(b.finalizedAt)}</span>
-                                  <button onClick={(e) => { e.stopPropagation(); handleUpdateBatchStatus(b.id, false); }} className={`text-sm font-semibold flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${darkMode ? 'text-indigo-400 hover:bg-indigo-500/10' : 'text-indigo-600 hover:bg-indigo-50'}`}>🔄 Reabrir Lote</button>
-                                </div>
-                              ) : (
-                                <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-                                  <input type="date" value={manualFinalizeDate} onChange={e => setManualFinalizeDate(e.target.value)} className={`px-3 py-1.5 text-sm border rounded-lg outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#131824] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`} />
-                                  <button onClick={() => handleUpdateBatchStatus(b.id, true)} className={`text-sm font-semibold flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${darkMode ? 'text-emerald-400 hover:bg-emerald-500/10' : 'text-emerald-700 hover:bg-emerald-50'}`}>✓ Finalizar Lote</button>
-                                </div>
-                              )}
+                          <div className={`p-4 flex justify-end border-t ${darkMode ? 'border-zinc-800 bg-[#0a0c10]' : 'border-zinc-200 bg-zinc-100'}`}>
                               <button onClick={(e) => { e.stopPropagation(); handleDeleteBatch(b.id); }} className={`text-sm font-semibold flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${darkMode ? 'text-red-500 hover:bg-red-500/10' : 'text-red-600 hover:bg-red-50'}`}><Trash2 size={16}/> Eliminar Carpeta Definitivamente</button>
                           </div>
                         </div>
