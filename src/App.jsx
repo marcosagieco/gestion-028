@@ -182,7 +182,7 @@ const MetricCard = ({ title, value, subtitle, icon: Icon, trend, color = 'zinc',
           </div>
        </div>
        <div className="min-w-0">
-          <div className="text-base sm:text-xl lg:text-2xl font-bold tracking-tight leading-tight break-all">{value}</div>
+          <div className="text-sm sm:text-lg lg:text-xl font-bold tracking-tighter leading-tight break-all">{value}</div>
           <div className="flex items-center justify-between mt-1.5 sm:mt-2 gap-2">
              <span className={`text-[10px] sm:text-xs font-medium truncate ${darkMode ? 'opacity-50' : 'text-zinc-500'}`}>{subtitle}</span>
              {trend}
@@ -546,8 +546,24 @@ const MiniLineChart = ({ data, labels, formatter }) => {
 // --- PREMIUM METRIC CARD ---
 const PremiumMetricCard = ({ title, value, subtitle, change, sparkline, sparklineLabels, sparklineFormatter, darkMode, extra, tooltip, lineSparkline, lineSparklineLabels, lineSparklineFormatter }) => {
   const isPositive = change === null || change === undefined || change >= 0;
+  const [tipOpen, setTipOpen] = useState(false);
+  const tipRef = useRef(null);
+
+  useEffect(() => {
+    if (!tipOpen) return;
+    const close = (e) => {
+      if (tipRef.current && !tipRef.current.contains(e.target)) setTipOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('touchstart', close);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('touchstart', close);
+    };
+  }, [tipOpen]);
+
   return (
-    <div className={`rounded-2xl border p-3 sm:p-4 flex flex-col transition-all duration-200 overflow-hidden min-w-0 ${
+    <div className={`rounded-2xl border p-3 sm:p-4 flex flex-col transition-all duration-200 min-w-0 ${
       darkMode ? 'bg-[#101010] border-white/[0.06] hover:border-white/[0.12]' : 'bg-white border-zinc-200 hover:border-zinc-300'
     }`}>
       <div className="flex items-start justify-between gap-2 mb-2 sm:mb-3">
@@ -561,16 +577,28 @@ const PremiumMetricCard = ({ title, value, subtitle, change, sparkline, sparklin
             </span>
           )}
           {tooltip && (
-            <div className="relative group/tt">
-              <span className="w-4 h-4 rounded-full border border-zinc-500/40 text-zinc-500 text-[9px] font-bold flex items-center justify-center cursor-help select-none hover:border-zinc-400 hover:text-zinc-400 transition-colors">?</span>
-              <div className="absolute z-50 right-0 top-5 w-56 bg-zinc-900 border border-zinc-700 text-zinc-200 text-[11px] leading-snug rounded-xl px-3 py-2.5 shadow-xl opacity-0 group-hover/tt:opacity-100 pointer-events-none transition-opacity duration-150 whitespace-normal">
+            <div className="relative group/tt" ref={tipRef}>
+              <span
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (window.matchMedia('(hover: none)').matches) setTipOpen(o => !o);
+                }}
+                className={`w-5 h-5 rounded-full border text-[9px] font-bold flex items-center justify-center cursor-pointer select-none transition-colors ${
+                  tipOpen
+                    ? 'border-indigo-400 text-indigo-400 bg-indigo-500/10'
+                    : 'border-zinc-500/40 text-zinc-500 hover:border-zinc-400 hover:text-zinc-400'
+                }`}
+              >?</span>
+              <div className={`absolute z-[100] right-0 top-6 w-64 max-w-[calc(100vw-2rem)] bg-zinc-900 border border-zinc-700 text-zinc-200 text-[11px] leading-snug rounded-xl px-3 py-2.5 shadow-xl transition-opacity duration-150 whitespace-normal ${
+                tipOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none group-hover/tt:opacity-100'
+              }`}>
                 {tooltip}
               </div>
             </div>
           )}
         </div>
       </div>
-      <div className={`text-lg sm:text-2xl lg:text-3xl font-bold tracking-tight leading-tight break-all min-w-0 ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`}>{value}</div>
+      <div className={`text-sm sm:text-xl lg:text-2xl font-bold tracking-tighter leading-tight break-all min-w-0 ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`}>{value}</div>
       <div className="text-[10px] sm:text-[11px] text-zinc-500 mt-1">{subtitle}</div>
       {extra}
       {lineSparkline && <MiniLineChart data={lineSparkline} labels={lineSparklineLabels} formatter={lineSparklineFormatter} />}
@@ -2086,7 +2114,7 @@ export default function App() {
   const [compareDateRange, setCompareDateRange] = useState({ start: getPreviousDayStr(getTodayDate()), end: getPreviousDayStr(getTodayDate()) });
 
   const [newBatchName, setNewBatchName] = useState('');
-  const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '' });
+  const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '', repeatCount: '1' });
   const [newExpense, setNewExpense] = useState({ description: '', amount: '', batchId: '', date: getTodayDate() });
   const [newNeutralStock, setNewNeutralStock] = useState({
     batchId: '',
@@ -2573,7 +2601,18 @@ export default function App() {
           const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
           const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
-          let daysActive = isAll ? 1 : Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24)));
+          let daysActive;
+          if (isAll) {
+              const saleDates = fSales.map(s => new Date(s.date)).filter(d => !isNaN(d.getTime()));
+              if (saleDates.length > 0) {
+                  const firstSale = new Date(Math.min(...saleDates));
+                  daysActive = Math.max(1, Math.ceil((new Date() - firstSale) / (1000 * 60 * 60 * 24)));
+              } else {
+                  daysActive = 1;
+              }
+          } else {
+              daysActive = Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24)));
+          }
           const dailyAvgItems = daysActive > 0 ? itemsSold / daysActive : 0;
 
           const pieSourceData = Object.entries(sourceCounts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
@@ -2652,7 +2691,7 @@ export default function App() {
            prevBaseStats = calculateForRange(pStart, pEnd, false);
       }
 
-      return { baseStats, compareStats, prevBaseStats };
+      return { baseStats, compareStats, prevBaseStats, rangeStart: bStart, rangeEnd: bEnd };
   }, [sales, batches, expenses, neutralStockEntries, globalMonth, customDateRange, compareDateRange]);
 
   const teamStats = useMemo(() => {
@@ -3988,14 +4027,20 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     if (!newItem.product || !newItem.costArs || !newItem.initialStock) return showToast("Faltan datos esenciales", 'error');
     const batch = batches.find(b => b.id === batchId);
     if (!batch) return;
-    const newItemData = {
-      id: Date.now() + Math.random().toString(36).substr(2, 9),
+    const count = Math.max(1, Math.min(parseInt(newItem.repeatCount) || 1, 500));
+    const now = Date.now();
+    const newItems = Array.from({ length: count }, (_, i) => ({
+      id: now + i + '-' + Math.random().toString(36).substr(2, 9),
       product: newItem.product, variant: newItem.variant || 'Único',
       costArs: parseFloat(newItem.costArs) || 0,
       initialStock: parseInt(newItem.initialStock) || 0,
       currentStock: parseInt(newItem.initialStock) || 0,
-    };
-    try { await updateDoc(doc(db, 'batches', batchId), { items: [...(batch.items || []), newItemData] }); setNewItem({ product: '', variant: '', costArs: '', initialStock: '' }); showToast("Producto agregado", 'success'); } catch (e) { showToast("Error: " + e.message, 'error'); }
+    }));
+    try {
+      await updateDoc(doc(db, 'batches', batchId), { items: [...(batch.items || []), ...newItems] });
+      setNewItem({ product: '', variant: '', costArs: '', initialStock: '', repeatCount: '1' });
+      showToast(count > 1 ? `${count} entradas agregadas` : 'Producto agregado', 'success');
+    } catch (e) { showToast("Error: " + e.message, 'error'); }
   };
 
   const handleDeleteItemFromBatch = async (batchId, itemId) => {
@@ -5023,12 +5068,23 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 const fMoney = v => formatMoney(v);
                                 const fUds = v => `${v} uds`;
                                 const fClientes = v => `${v} cliente${v !== 1 ? 's' : ''}`;
+                                const homeAdSpend = metaDailyData.length > 0 ? metaDailyData.reduce((sum, day) => {
+                                    if (!day.date_start) return sum;
+                                    const [y, m, d] = day.date_start.split('-').map(Number);
+                                    const dayDate = new Date(y, m - 1, d, 12, 0, 0);
+                                    return dayDate >= analysisData.rangeStart && dayDate <= analysisData.rangeEnd
+                                        ? sum + parseFloat(day.spend || 0)
+                                        : sum;
+                                }, 0) : 0;
+                                const totalExpWithAds = cur.totalGlobalExpenses + homeAdSpend;
+                                const netProfitWithAds = cur.netProfit - homeAdSpend;
+                                const netMarginWithAds = cur.totalRevenue > 0 ? (netProfitWithAds / cur.totalRevenue) * 100 : 0;
                                 return (
                                     <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
                                         <PremiumMetricCard darkMode={darkMode} title="Facturación" value={formatMoney(cur.totalRevenue)} subtitle="Bruto facturado" change={pct(cur.totalRevenue, prev?.totalRevenue)} sparkline={sparklineData7d.revenue} sparklineLabels={L} sparklineFormatter={fMoney} />
                                         <PremiumMetricCard darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(cur.grossProfit)} subtitle={`${formatPercent(cur.grossMargin)} margen`} change={pct(cur.grossProfit, prev?.grossProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Ganancia Neta" value={formatMoney(cur.netProfit)} subtitle={`${formatPercent(cur.netMargin)} neto`} change={pct(cur.netProfit, prev?.netProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Gastos Fijos" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Logística y operativos" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} />
+                                        <PremiumMetricCard darkMode={darkMode} title="Ganancia Neta" value={formatMoney(netProfitWithAds)} subtitle={`${formatPercent(netMarginWithAds)} neto${homeAdSpend > 0 ? ' · incl. ads' : ''}`} change={pct(cur.netProfit, prev?.netProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Ganancia neta descontando el gasto en Meta Ads del período (${formatMoney(homeAdSpend)}). Gastos fijos: ${formatMoney(cur.totalGlobalExpenses)}.` : undefined} />
+                                        <PremiumMetricCard darkMode={darkMode} title="Gastos Totales" value={formatMoney(totalExpWithAds)} subtitle={homeAdSpend > 0 ? `incl. ${formatMoney(homeAdSpend)} en ads` : 'Logística y operativos'} change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Gastos fijos (${formatMoney(cur.totalGlobalExpenses)}) + Meta Ads del período (${formatMoney(homeAdSpend)}).` : undefined} />
                                         <PremiumMetricCard darkMode={darkMode} title="Inversión" value={formatMoney(cur.totalInvestment)} subtitle="Capital apostado" change={null} sparkline={sparklineData7d.investment} sparklineLabels={L} sparklineFormatter={fMoney} />
                                         <PremiumMetricCard darkMode={darkMode} title="Inversión Activa" value={formatMoney(cur.currentStockValue)} subtitle="Stock a costo actual" change={null} sparkline={null} />
                                         <PremiumMetricCard darkMode={darkMode} title="Productos Vendidos" value={cur.itemsSold} subtitle={`${cur.salesCount} pedidos`} change={pct(cur.itemsSold, prev?.itemsSold)} sparkline={sparklineData7d.units} sparklineLabels={L} sparklineFormatter={fUds} />
@@ -5669,11 +5725,24 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                           <div className={`p-5 m-5 rounded-xl border border-dashed ${darkMode ? 'border-zinc-700 bg-[#181818]' : 'border-zinc-300 bg-white'}`}>
                             <h4 className={`text-xs font-bold uppercase tracking-wider mb-4 flex items-center gap-2 ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`}><Plus size={14}/> Agregar Mercadería</h4>
                             <div className="grid grid-cols-2 md:grid-cols-12 gap-3 items-end">
-                              <div className="col-span-2 md:col-span-4"><Input darkMode={darkMode} list="products-list" label="Producto" placeholder="Ej: iPhone 15" value={newItem.product} onChange={e => setNewItem({...newItem, product: e.target.value})} /></div>
-                              <div className="col-span-2 md:col-span-3"><Input darkMode={darkMode} list="variants-list" label="Variante" placeholder="Ej: 128GB Black" value={newItem.variant} onChange={e => setNewItem({...newItem, variant: e.target.value})} /></div>
+                              <div className="col-span-2 md:col-span-3"><Input darkMode={darkMode} list="products-list" label="Producto" placeholder="Ej: Cherry Fuse" value={newItem.product} onChange={e => setNewItem({...newItem, product: e.target.value})} /></div>
+                              <div className="col-span-2 md:col-span-3"><Input darkMode={darkMode} list="variants-list" label="Variante" placeholder="Ej: Blanco" value={newItem.variant} onChange={e => setNewItem({...newItem, variant: e.target.value})} /></div>
                               <div className="col-span-1 md:col-span-2"><Input darkMode={darkMode} label="Costo ($)" type="number" value={newItem.costArs} onChange={e => setNewItem({...newItem, costArs: e.target.value})} /></div>
                               <div className="col-span-1 md:col-span-1"><Input darkMode={darkMode} label="Cant." type="number" value={newItem.initialStock} onChange={e => setNewItem({...newItem, initialStock: e.target.value})} /></div>
-                              <div className="col-span-2 md:col-span-2"><Button darkMode={darkMode} onClick={() => handleAddItemToBatch(b.id)} className="w-full">Añadir</Button></div>
+                              <div className="col-span-1 md:col-span-1">
+                                <Input
+                                  darkMode={darkMode}
+                                  label="Veces"
+                                  type="number"
+                                  value={newItem.repeatCount}
+                                  onChange={e => setNewItem({...newItem, repeatCount: e.target.value})}
+                                />
+                              </div>
+                              <div className="col-span-2 md:col-span-2">
+                                <Button darkMode={darkMode} onClick={() => handleAddItemToBatch(b.id)} className="w-full">
+                                  {parseInt(newItem.repeatCount) > 1 ? `Añadir ×${parseInt(newItem.repeatCount)}` : 'Añadir'}
+                                </Button>
+                              </div>
                             </div>
                           </div>
 
