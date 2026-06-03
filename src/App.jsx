@@ -2107,6 +2107,7 @@ export default function App() {
   const [metaDailyData, setMetaDailyData] = useState([]);
   const [metaLoading, setMetaLoading] = useState(false);
   const [metaError, setMetaError] = useState(null);
+  const [homeMetaDailyData, setHomeMetaDailyData] = useState([]);
   const [metaPeriod, setMetaPeriod] = useState('last_30d');
   const [metaCustomRange, setMetaCustomRange] = useState({ start: '2026-05-30', end: getTodayDate() });
 
@@ -2866,6 +2867,25 @@ export default function App() {
     if (activeTab === 'metaads') fetchMetaInsights();
     // eslint-disable-next-line
   }, [activeTab, metaPeriod]);
+
+  // Carga silenciosa de datos diarios de Meta Ads para correlación con Inicio
+  useEffect(() => {
+    const fetchHomeMetaDaily = async () => {
+      const token = import.meta.env.VITE_META_ACCESS_TOKEN;
+      const accountId = import.meta.env.VITE_META_AD_ACCOUNT_ID;
+      if (!token || !accountId) return;
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const base = `https://graph.facebook.com/v19.0/${accountId}/insights`;
+        const res = await fetch(
+          `${base}?fields=spend&time_increment=1&time_range={"since":"2026-05-30","until":"${today}"}&access_token=${token}`
+        );
+        const json = await res.json();
+        if (!json.error && Array.isArray(json.data)) setHomeMetaDailyData(json.data);
+      } catch {}
+    };
+    fetchHomeMetaDaily();
+  }, []);
 
   const wholesaleData = useMemo(() => {
       const wholesaleSales = sales
@@ -5068,14 +5088,14 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 const fMoney = v => formatMoney(v);
                                 const fUds = v => `${v} uds`;
                                 const fClientes = v => `${v} cliente${v !== 1 ? 's' : ''}`;
-                                const homeAdSpend = metaDailyData.length > 0 ? metaDailyData.reduce((sum, day) => {
+                                const homeAdSpend = homeMetaDailyData.reduce((sum, day) => {
                                     if (!day.date_start) return sum;
                                     const [y, m, d] = day.date_start.split('-').map(Number);
                                     const dayDate = new Date(y, m - 1, d, 12, 0, 0);
                                     return dayDate >= analysisData.rangeStart && dayDate <= analysisData.rangeEnd
                                         ? sum + parseFloat(day.spend || 0)
                                         : sum;
-                                }, 0) : 0;
+                                }, 0);
                                 const totalExpWithAds = cur.totalGlobalExpenses + homeAdSpend;
                                 const netProfitWithAds = cur.netProfit - homeAdSpend;
                                 const netMarginWithAds = cur.totalRevenue > 0 ? (netProfitWithAds / cur.totalRevenue) * 100 : 0;
