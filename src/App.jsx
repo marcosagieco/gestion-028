@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package, UserCircle,
-  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw, Target, RefreshCw
+  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw, Target, RefreshCw, Receipt
 } from 'lucide-react';
 
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { Link } from 'react-router-dom';
 
 import { initializeApp } from "firebase/app";
 import {
@@ -133,6 +134,7 @@ const getClientStatusLabel = (value) => {
   const normalized = String(value ?? '').trim().toLowerCase();
   if (normalized === 'nuevo - publicidad') return 'Nuevo - Publicidad';
   if (normalized === 'nuevo - organico' || normalized === 'nuevo - orgánico' || normalized == 'nuevo') return 'Nuevo - Orgánico';
+  if (normalized === 'revendedor') return 'Revendedor';
   return 'Frecuente';
 };
 
@@ -140,6 +142,7 @@ const getClientSearchLabel = (value) => {
   const label = getClientStatusLabel(value);
   if (label === 'Nuevo - Publicidad') return 'cliente nuevo publicidad primera compra ads anuncios';
   if (label === 'Nuevo - Orgánico') return 'cliente nuevo organico orgánico primera compra';
+  if (label === 'Revendedor') return 'cliente revendedor distribuidor mayorista reventa';
   return 'cliente frecuente recurrente';
 };
 
@@ -2744,6 +2747,7 @@ export default function App() {
     const clients = new Array(7).fill(0);
     const organicClients = new Array(7).fill(0);
     const adsClients = new Array(7).fill(0);
+    const resellerClients = new Array(7).fill(0);
     const exps = new Array(7).fill(0);
     const txCount = new Array(7).fill(0);
     const invest = new Array(7).fill(0);
@@ -2761,6 +2765,7 @@ export default function App() {
         if (isNewClientStatus(s.isNewClient)) clients[idx] += 1;
         if (s.isNewClient === 'Nuevo - Organico' || s.isNewClient === true) organicClients[idx] += 1;
         if (s.isNewClient === 'Nuevo - Publicidad') adsClients[idx] += 1;
+        if (s.isNewClient === 'Revendedor') resellerClients[idx] += 1;
       }
     });
     expenses.forEach(e => {
@@ -2780,7 +2785,7 @@ export default function App() {
       if (idx >= 0) invest[idx] += (b.items || []).reduce((s, i) => s + (i.costArs||0)*(i.initialStock||0), 0);
     });
     const avgTicket = rev.map((r, i) => txCount[i] > 0 ? r / txCount[i] : 0);
-    return { revenue: rev, units, profit, clients, organicClients, adsClients, expenses: exps, avgTicket, investment: invest, labels };
+    return { revenue: rev, units, profit, clients, organicClients, adsClients, resellerClients, expenses: exps, avgTicket, investment: invest, labels };
   }, [sales, expenses, batches]);
 
   const metaFirebaseStats = useMemo(() => {
@@ -4919,6 +4924,16 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                 {activeTab === tab.id && <div className="ml-auto w-1 h-4 rounded-full" style={{background:'#6366f1'}}/>}
             </button>
             ))}
+            <div className={`my-2 border-t ${darkMode ? 'border-white/[0.04]' : 'border-zinc-100'}`} />
+            <Link
+                to="/facturas"
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl font-medium text-sm transition-all duration-150 ${
+                    darkMode ? 'text-zinc-500 hover:bg-white/[0.03] hover:text-zinc-300' : 'text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800'
+                }`}
+            >
+                <Receipt size={16} strokeWidth={2} />
+                <span>Facturas</span>
+            </Link>
         </div>
 
         <div className={`p-4 border-t space-y-2 ${darkMode ? 'border-white/[0.06]' : 'border-zinc-100'}`}>
@@ -5082,6 +5097,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 const pct = (c, p) => (p && p !== 0) ? ((c - p) / Math.abs(p)) * 100 : null;
                                 const newClientsOrganic = newClientsList.filter(s => s.isNewClient === 'Nuevo - Organico' || s.isNewClient === true).length;
                                 const newClientsAds = newClientsList.filter(s => s.isNewClient === 'Nuevo - Publicidad').length;
+                                const revendedoresList = analysisData.baseStats.filteredSales.filter(s => s.isNewClient === 'Revendedor');
+                                const revendedoresCount = revendedoresList.length;
+                                const revendedoresRevenue = revendedoresList.reduce((a, s) => a + (s.totalSaleRaw || 0), 0);
                                 const avgTicket = cur.salesCount > 0 ? cur.totalRevenue / cur.salesCount : 0;
                                 const prevAvgTicket = prev && prev.salesCount > 0 ? prev.totalRevenue / prev.salesCount : null;
                                 const L = sparklineData7d.labels;
@@ -5112,6 +5130,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                         <PremiumMetricCard darkMode={darkMode} title="Clientes Nuevos" value={newClientsList.length} subtitle="Total del período" change={null} sparkline={sparklineData7d.clients} sparklineLabels={L} sparklineFormatter={fClientes} />
                                         <PremiumMetricCard darkMode={darkMode} title="Clientes Orgánicos" value={newClientsOrganic} subtitle="Sin inversión en ads" change={null} sparkline={sparklineData7d.organicClients} sparklineLabels={L} sparklineFormatter={fClientes} />
                                         <PremiumMetricCard darkMode={darkMode} title="Clientes por Ads" value={newClientsAds} subtitle="Captados por publicidad" change={null} sparkline={sparklineData7d.adsClients} sparklineLabels={L} sparklineFormatter={fClientes} />
+                                        <PremiumMetricCard darkMode={darkMode} title="Ventas Revendedor" value={revendedoresCount} subtitle={revendedoresCount > 0 ? formatMoney(revendedoresRevenue) : 'Sin ventas'} change={null} sparkline={sparklineData7d.resellerClients} sparklineLabels={L} sparklineFormatter={fClientes} />
                                         <PremiumMetricCard darkMode={darkMode} title="Promedio de Ventas" value={cur.dailyAvgItems.toFixed(1)} subtitle="uds por día" change={pct(cur.dailyAvgItems, prev?.dailyAvgItems)} sparkline={sparklineData7d.units} sparklineLabels={L} sparklineFormatter={fUds}
                                             extra={cur.currentStreak > 0 && (
                                                 <div className="flex items-center gap-1.5 mt-1.5">
@@ -5192,15 +5211,19 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             {(() => {
                                 const org = newClientsList.filter(s => s.isNewClient === 'Nuevo - Organico' || s.isNewClient === true).length;
                                 const ads = newClientsList.filter(s => s.isNewClient === 'Nuevo - Publicidad').length;
+                                const allClientsForFilter = [...newClientsList, ...revendedoresList];
                                 const filtered = newClientsFilter === 'organic'
                                     ? newClientsList.filter(s => s.isNewClient === 'Nuevo - Organico' || s.isNewClient === true)
                                     : newClientsFilter === 'ads'
                                     ? newClientsList.filter(s => s.isNewClient === 'Nuevo - Publicidad')
-                                    : newClientsList;
+                                    : newClientsFilter === 'reseller'
+                                    ? revendedoresList
+                                    : allClientsForFilter;
                                 const tabs = [
-                                    { key: 'all',     label: `Todos · ${newClientsList.length}` },
-                                    { key: 'organic', label: `Orgánico · ${org}` },
-                                    { key: 'ads',     label: `Ads · ${ads}` },
+                                    { key: 'all',      label: `Todos · ${allClientsForFilter.length}` },
+                                    { key: 'organic',  label: `Orgánico · ${org}` },
+                                    { key: 'ads',      label: `Ads · ${ads}` },
+                                    { key: 'reseller', label: `Revendedor · ${revendedoresCount}` },
                                 ];
                                 return (<>
                                     <div className="flex items-center justify-between mb-3">
@@ -5225,8 +5248,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                         ) : filtered.map((nc, i) => (
                                             <div key={nc.id || i} className={`flex items-center justify-between p-3 rounded-xl border ${darkMode ? 'bg-zinc-900/40 border-[#1F1F1F] hover:border-zinc-700' : 'bg-zinc-50 border-zinc-200'}`}>
                                                 <div className="flex items-center gap-3 min-w-0">
-                                                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-black flex-shrink-0 ${nc.isNewClient === 'Nuevo - Publicidad' ? 'bg-blue-500/10 text-blue-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
-                                                        {nc.isNewClient === 'Nuevo - Publicidad' ? 'AD' : 'OR'}
+                                                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-black flex-shrink-0 ${
+                                                        nc.isNewClient === 'Nuevo - Publicidad' ? 'bg-blue-500/10 text-blue-400'
+                                                        : nc.isNewClient === 'Revendedor' ? 'bg-violet-500/10 text-violet-400'
+                                                        : 'bg-emerald-500/10 text-emerald-400'}`}>
+                                                        {nc.isNewClient === 'Nuevo - Publicidad' ? 'AD' : nc.isNewClient === 'Revendedor' ? 'RE' : 'OR'}
                                                     </div>
                                                     <div className="min-w-0">
                                                         <div className={`text-xs font-semibold truncate ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>
@@ -5263,7 +5289,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                     <Select darkMode={darkMode} label="Registro" value={saleGeneral.accountingType || 'Normal'} onChange={e => setSaleGeneral({...saleGeneral, accountingType: e.target.value})} options={[{value:'Normal', label:'Venta normal'}, {value:'Neutro', label:'Neutro / Global'}]} />
                                     <Select darkMode={darkMode} label="Canal" value={saleGeneral.source} onChange={e => setSaleGeneral({...saleGeneral, source: e.target.value})} options={[{value:'Instagram', label:'Instagram'}, {value:'Whatsapp', label:'Whatsapp'}, {value:'Personal', label:'Personal'}, {value:'Web', label:'Web'}]} />
                                     <Select darkMode={darkMode} label="Tipo" value={saleGeneral.isReseller} onChange={e => setSaleGeneral({...saleGeneral, isReseller: e.target.value})} options={[{value:'No', label:'Consumidor'}, {value:'Si', label:'Revendedor'}]} />
-                                    <Select darkMode={darkMode} label="Cliente" value={saleGeneral.isNewClient} onChange={e => setSaleGeneral({...saleGeneral, isNewClient: e.target.value})} options={[{value:'Frecuente', label:'Frecuente'}, {value:'Nuevo - Organico', label:'Nuevo - Orgánico'}, {value:'Nuevo - Publicidad', label:'Nuevo - Publicidad'}]} />
+                                    <Select darkMode={darkMode} label="Cliente" value={saleGeneral.isNewClient} onChange={e => setSaleGeneral({...saleGeneral, isNewClient: e.target.value})} options={[{value:'Frecuente', label:'Frecuente'}, {value:'Nuevo - Organico', label:'Nuevo - Orgánico'}, {value:'Nuevo - Publicidad', label:'Nuevo - Publicidad'}, {value:'Revendedor', label:'Revendedor'}]} />
                                 </div>
 
                                 {saleGeneral.isReseller === 'Si' && (
@@ -5470,7 +5496,13 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                       <div className="flex flex-col gap-1 mt-1.5 items-start">
                                           <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-zinc-800 text-zinc-300' : 'bg-zinc-200 text-zinc-700'}`}>👤 {group.seller}</span>
                                           {group.isNeutral && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-100 text-indigo-700'}`}>Neutro</span>}
-                                          {isNewClientStatus(group.isNewClient) && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-100 text-amber-600'}`}>{getClientStatusLabel(group.isNewClient)}</span>}
+                                          {(isNewClientStatus(group.isNewClient) || group.isNewClient === 'Revendedor') && (
+                                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
+                                              group.isNewClient === 'Revendedor'
+                                                ? (darkMode ? 'bg-violet-500/10 text-violet-400' : 'bg-violet-100 text-violet-700')
+                                                : (darkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-100 text-amber-600')
+                                            }`}>{getClientStatusLabel(group.isNewClient)}</span>
+                                          )}
                                           {group.isReseller && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-100 text-indigo-600'}`}>Revendedor</span>}
                                       </div>
                                   </td>

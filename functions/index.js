@@ -6,6 +6,78 @@ admin.initializeApp();
 
 const db = admin.firestore();
 
+const { emitirFacturaC } = require('./facturacion');
+const { generarFacturaPDFBuffer } = require('./generar-factura-pdf');
+const crypto = require('crypto');
+
+const STORAGE_BUCKET = 'gestion-028.firebasestorage.app';
+
+// ─── Subir PDF a Storage con token permanente (no expira) ────────────────────
+async function subirPDFStorage(pdfBuffer, filePath) {
+    const bucket = admin.storage().bucket(STORAGE_BUCKET);
+    const file   = bucket.file(filePath);
+    const token  = crypto.randomUUID();
+    await file.save(pdfBuffer, {
+        contentType: 'application/pdf',
+        metadata: { firebaseStorageDownloadTokens: token },
+    });
+    const encoded = encodeURIComponent(filePath);
+    return `https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o/${encoded}?alt=media&token=${token}`;
+}
+
+// ─── Generar PDF + subir + guardar en colección facturas ─────────────────────
+async function guardarFacturaConPDF({ ventaId, ptoVta, numero, fecha, fechaDisplay,
+    cae, vencimientoCAE, vencCAEDisp, monto }) {
+
+    const qrPayload = {
+        ver: 1, fecha, cuit: 20484597953,
+        ptoVta, tipoCmp: 11, nroCmp: numero, importe: monto,
+        moneda: 'PES', ctz: 1, tipoDocRec: 99, nroDocRec: 0,
+        tipoCodAut: 'E', codAut: parseInt(cae),
+    };
+    const qrUrl = 'https://www.afip.gob.ar/fe/qr/?p=' +
+        Buffer.from(JSON.stringify(qrPayload)).toString('base64');
+
+    const pdfBuffer = await generarFacturaPDFBuffer({
+        ptoVta, numero, fecha, fechaDisplay,
+        cae, vencCAEDisp,
+        receptorNombre:  'Consumidor Final',
+        tipoDoc:         99,
+        nroDoc:          0,
+        condIVAReceptor: 'Consumidor Final',
+        items: [{ descripcion: 'Venta al contado', cantidad: 1, precioUnit: monto, subtotal: monto }],
+        total: monto,
+    });
+
+    const [yy, mm]  = fecha.split('-');
+    const pvStr     = String(ptoVta).padStart(5, '0');
+    const nroStr    = String(numero).padStart(8, '0');
+    const filePath  = `facturas/${yy}/${mm}/factura-c-${pvStr}-${nroStr}.pdf`;
+    const pdfUrl    = await subirPDFStorage(pdfBuffer, filePath);
+
+    const comprobanteFormateado = `${pvStr}-${nroStr}`;
+    await db.collection('facturas').doc(cae).set({
+        ventaId,
+        fechaEmision:         fecha,
+        tipoComprobante:      'Factura C',
+        cbteTipo:             11,
+        puntoVenta:           ptoVta,
+        nroComprobante:       numero,
+        comprobanteFormateado,
+        importeTotal:         monto,
+        cae,
+        vencimientoCAE,
+        receptorNombre:       'Consumidor Final',
+        docTipo:              99,
+        docNro:               0,
+        qrUrl,
+        pdfUrl,
+        estado:               'emitida',
+        createdAt:            new Date().toISOString(),
+    });
+    console.log(`✓ Factura guardada en Firestore: facturas/${cae}`);
+}
+
 const VERIFY_TOKEN = "028_Import_Master_2026";
 
 // 👇 TUS DATOS REALES DE META 👇
@@ -150,6 +222,7 @@ const normalizarTipoCliente = (value) => {
     if (["publicidad", "publi", "ads", "ad", "anuncio", "anuncios", "pauta", "pago", "paid", "nuevo publicidad", "nuevo por publicidad"].includes(v)) return "Nuevo - Publicidad";
     if (["organico", "orgánico", "org", "ig", "instagram", "instagram organico", "instagram orgánico", "nuevo organico", "nuevo orgánico"].includes(v)) return "Nuevo - Organico";
     if (["si", "sí", "true", "nuevo", "yes", "1"].includes(v)) return "Nuevo - Organico";
+    if (["revendedor", "revend", "rev", "distribuidor", "mayoreo", "reventa"].includes(v)) return "Revendedor";
     return "Frecuente";
 };
 
@@ -221,6 +294,76 @@ const numeroMeta = (numeroRemitente) => {
 };
 
 
+// ─── Migración única de factura ya emitida ────────────────────────────────────
+// Llamar UNA SOLA VEZ: POST /migrarFacturaExistente
+// Luego de ejecutado, este endpoint puede quedar (es idempotente y seguro).
+exports.migrarFacturaExistente = functions.https.onRequest(async (req, res) => {
+    if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
+
+    const CAE = '86228193709416';
+    const existing = await db.collection('facturas').doc(CAE).get();
+    if (existing.exists) {
+        return res.status(200).json({ ok: false, message: 'Ya migrado. El documento existe en Firestore.' });
+    }
+
+    try {
+        const FECHA  = '2026-06-03';
+        const [yy, mm, dd] = FECHA.split('-');
+        const pdfBuffer = await generarFacturaPDFBuffer({
+            ptoVta:          1,
+            numero:          2,
+            fecha:           FECHA,
+            fechaDisplay:    `${dd}/${mm}/${yy}`,
+            cae:             CAE,
+            vencCAEDisp:     '13/06/2026',
+            receptorNombre:  'Consumidor Final',
+            tipoDoc:         99,
+            nroDoc:          0,
+            condIVAReceptor: 'Consumidor Final',
+            items: [{ descripcion: 'Venta al contado', cantidad: 1, precioUnit: 26000, subtotal: 26000 }],
+            total: 26000,
+        });
+
+        const filePath = `facturas/2026/06/factura-c-00001-00000002.pdf`;
+        const pdfUrl   = await subirPDFStorage(pdfBuffer, filePath);
+
+        const qrPayload = {
+            ver: 1, fecha: FECHA, cuit: 20484597953,
+            ptoVta: 1, tipoCmp: 11, nroCmp: 2, importe: 26000,
+            moneda: 'PES', ctz: 1, tipoDocRec: 99, nroDocRec: 0,
+            tipoCodAut: 'E', codAut: parseInt(CAE),
+        };
+        const qrUrl = 'https://www.afip.gob.ar/fe/qr/?p=' +
+            Buffer.from(JSON.stringify(qrPayload)).toString('base64');
+
+        await db.collection('facturas').doc(CAE).set({
+            ventaId:              '',
+            fechaEmision:         FECHA,
+            tipoComprobante:      'Factura C',
+            cbteTipo:             11,
+            puntoVenta:           1,
+            nroComprobante:       2,
+            comprobanteFormateado: '00001-00000002',
+            importeTotal:         26000,
+            cae:                  CAE,
+            vencimientoCAE:       '2026-06-13',
+            receptorNombre:       'Consumidor Final',
+            docTipo:              99,
+            docNro:               0,
+            qrUrl,
+            pdfUrl,
+            estado:               'emitida',
+            createdAt:            new Date().toISOString(),
+        });
+
+        console.log('✓ Migración completada: facturas/' + CAE);
+        return res.status(200).json({ ok: true, message: 'Migración completada.', pdfUrl });
+    } catch (e) {
+        console.error('❌ Error en migración:', e.message);
+        return res.status(500).json({ ok: false, error: e.message });
+    }
+});
+
 exports.webhook = functions.https.onRequest(async (req, res) => {
     if (req.method === "GET") {
         if (req.query["hub.verify_token"] === VERIFY_TOKEN) {
@@ -244,6 +387,16 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                 } 
 
                 console.log(`📩 Mensaje recibido de ${numeroRemitente}: ${textoOriginal}`);
+
+                // ── Factura pendiente ──────────────────────────────────────
+                const pendingSnap = await db.collection('pending_invoice').doc(numeroRemitente).get();
+                if (pendingSnap.exists) {
+                    const { texto, solo } = await resolverPendingFactura(pendingSnap, textoOriginal);
+                    if (texto) await enviarMensajeWhatsApp(numeroMeta(numeroRemitente), texto);
+                    if (solo) return res.sendStatus(200);
+                    // solo=false → respuesta no reconocida o expirada → procesar como mensaje nuevo
+                }
+                // ──────────────────────────────────────────────────────────
 
                 const mensajeNuevo = parseMensajeNuevo(textoOriginal);
                 if (mensajeNuevo) {
@@ -380,6 +533,11 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                             } else {
                                 console.log("✅ Venta anotada con éxito.");
                                 await registrarEnSheet("Ventas", [fechaHoySheet, numeroRemitente, productoRaw, varianteRaw, cantidad, precioUnitario, `ÉXITO (${vendedor})`]);
+                                if (resultado.saleId) {
+                                    const monto = resultado.totalSaleRaw || 0;
+                                    await guardarPendingFactura(numeroRemitente, [resultado.saleId], monto);
+                                    await enviarMensajeWhatsApp(numeroParaMeta, `✅ Venta registrada.\n\n🧾 ¿Emito Factura C por $${monto.toLocaleString('es-AR')} a Consumidor Final?\nRespondé *sí* o *no*.`);
+                                }
                             }
                         }
 
@@ -400,6 +558,118 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
 
 
 // ==========================================
+// FACTURACIÓN ELECTRÓNICA — ESTADO PENDIENTE
+// ==========================================
+
+async function guardarPendingFactura(numeroRemitente, saleIds, monto) {
+    await db.collection('pending_invoice').doc(numeroRemitente).set({
+        saleIds,
+        monto,
+        createdAt: new Date().toISOString(),
+    });
+}
+
+async function resolverPendingFactura(pendingSnap, textoRespuesta) {
+    const { saleIds, monto, createdAt } = pendingSnap.data();
+
+    // Expiración: si tiene más de 1 hora, auto-skip sin molestar
+    const edadMs = Date.now() - new Date(createdAt).getTime();
+    if (edadMs > 60 * 60 * 1000) {
+        await pendingSnap.ref.delete();
+        for (const id of saleIds) {
+            await db.collection('sales').doc(id).update({ invoiceStatus: 'sin_factura' }).catch(() => {});
+        }
+        return { texto: null, solo: false }; // expired → procesar como mensaje nuevo
+    }
+
+    const t = normalizarParaComparar(textoRespuesta).trim();
+    const afirmativos = ['si', 'sí', 'dale', 'ok', 'yes', 'claro', 'bueno', 'va', 'emiti', 'emitila'];
+    const negativos   = ['no', 'nop', 'nel', 'para nada', 'no gracias'];
+    const esAf  = afirmativos.some(p => t === p || t.startsWith(p + ' '));
+    const esNeg = negativos.some(p => t === p || t.startsWith(p + ' '));
+
+    // Respuesta no reconocida → auto-skip y procesar el mensaje como nuevo comando
+    if (!esAf && !esNeg) {
+        await pendingSnap.ref.delete();
+        for (const id of saleIds) {
+            await db.collection('sales').doc(id).update({ invoiceStatus: 'sin_factura' }).catch(() => {});
+        }
+        return { texto: null, solo: false };
+    }
+
+    await pendingSnap.ref.delete();
+
+    if (esNeg) {
+        for (const id of saleIds) {
+            await db.collection('sales').doc(id).update({ invoiceStatus: 'sin_factura' }).catch(() => {});
+        }
+        return { texto: '✅ Venta registrada sin factura.', solo: true };
+    }
+
+    // Afirmativo → verificar anti-duplicado ANTES de llamar a ARCA
+    for (const id of saleIds) {
+        const snap = await db.collection('sales').doc(id).get();
+        if (!snap.exists) continue;
+        const d = snap.data();
+        if (d.invoiceStatus === 'emitida' || d.invoiceCAE || d.invoiceNumber || d.facturaId) {
+            return {
+                texto: `⚠️ La factura ya fue emitida (CAE: ${d.invoiceCAE || d.facturaId}, Nro: ${d.invoiceNumber}).`,
+                solo: true,
+            };
+        }
+    }
+
+    try {
+        const resultado = await emitirFacturaC(monto);
+        const hoy             = new Date().toISOString().slice(0, 10);
+        const [yy, mm, dd]    = hoy.split('-');
+        const fechaDisplay    = `${dd}/${mm}/${yy}`;
+        const ptoVta          = 1;
+        const vencParts       = (resultado.vencimientoCAE || '').split('-');
+        const vencCAEDisp     = vencParts.length === 3
+            ? `${vencParts[2]}/${vencParts[1]}/${vencParts[0]}` : '';
+
+        // Actualizar sales primero: protección anti-duplicado activada
+        for (const id of saleIds) {
+            await db.collection('sales').doc(id).update({
+                invoiceStatus:  'emitida',
+                invoiceCAE:     resultado.CAE,
+                invoiceNumber:  resultado.nroComprobante,
+                invoiceDate:    hoy,
+                facturaId:      resultado.CAE,
+            });
+        }
+
+        // PDF + Storage + Firestore facturas (no bloquea la respuesta WhatsApp)
+        guardarFacturaConPDF({
+            ventaId:       saleIds[0] || '',
+            ptoVta,
+            numero:        resultado.nroComprobante,
+            fecha:         hoy,
+            fechaDisplay,
+            cae:           resultado.CAE,
+            vencimientoCAE: resultado.vencimientoCAE,
+            vencCAEDisp,
+            monto,
+        }).catch(e => console.error('❌ Error guardando PDF/factura (CAE ya emitido):', e.message));
+
+        return {
+            texto: `🧾 *Factura C emitida*\n• Nro: ${resultado.nroComprobante}\n• CAE: ${resultado.CAE}\n• Vence: ${resultado.vencimientoCAE}`,
+            solo: true,
+        };
+    } catch (e) {
+        console.error('❌ Error ARCA al emitir factura:', e.message);
+        for (const id of saleIds) {
+            await db.collection('sales').doc(id).update({ invoiceStatus: 'pendiente' }).catch(() => {});
+        }
+        return {
+            texto: '⚠️ ARCA no respondió. La factura quedó como *pendiente* y se reintentará.',
+            solo: true,
+        };
+    }
+}
+
+// ==========================================
 // PROCESADOR DEL FORMATO NUEVO
 // Usa las funciones viejas cuando conviene. Solo agrega lo necesario.
 // ==========================================
@@ -416,6 +686,7 @@ async function procesarMensajeNuevoWhatsapp(mensaje, numeroRemitente, fechaHoySh
     let total = 0;
     let unidades = 0;
     if (tipo === "VENTA" || tipo === "MAYORISTA") {
+        const saleIds = [];
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
             if (!item.precio || item.precio <= 0) return { exito: false, error_msg: errorConProducto(item, i, `❌ Falta precio en ${item.producto} (${item.variante}).`) };
@@ -423,9 +694,15 @@ async function procesarMensajeNuevoWhatsapp(mensaje, numeroRemitente, fechaHoySh
             const cobroEnvio = i === 0 ? limpiarNumero(general.envioCobro || 0) : 0;
             const r = await procesarVenta(item.producto, item.variante, item.cantidad, item.precio, fecha, costoEnvio, cobroEnvio, esRevendedor, tipoCliente, vendedor, ticketIdGrupo, canal, clienteMayorista);
             if (r && r.exito === false) return { ...r, error_msg: errorConProducto(item, i, r.error_msg) };
+            if (r.saleId) saleIds.push(r.saleId);
             total += item.precio * item.cantidad + (i === 0 ? (cobroEnvio || 0) : 0);
             unidades += item.cantidad;
             await registrarEnSheet(tipo === "MAYORISTA" ? "Mayorista" : "Ventas", [fechaHoySheet, numeroRemitente, item.producto, item.variante, item.cantidad, item.precio, `ÉXITO (${vendedor})`, tipoCliente]);
+        }
+        if (saleIds.length > 0) {
+            await guardarPendingFactura(numeroRemitente, saleIds, total);
+            const montoFmt = total.toLocaleString('es-AR');
+            return { exito: true, mensaje: `✅ Venta registrada.\n\n🧾 ¿Emito Factura C por $${montoFmt} a Consumidor Final?\nRespondé *sí* o *no*.` };
         }
         return { exito: true, mensaje: `✅ ${tipo === "MAYORISTA" ? "Mayorista" : "Venta"} registrada` };
     }
@@ -912,29 +1189,29 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
         const ticketIdGenerado = ticketIdManual || Date.now().toString(); 
         const fechaCreacionReal = new Date().toISOString(); 
 
-        await db.collection("sales").add({
-            batchId: batchIdOficial, 
+        const saleRef = await db.collection("sales").add({
+            batchId: batchIdOficial,
             batchName: batchNameOficial,
-            costArsAtSale: costoUnitarioOficial, 
-            createdAt: fechaCreacionReal,   
+            costArsAtSale: costoUnitarioOficial,
+            createdAt: fechaCreacionReal,
             date: fechaFinalVenta,
             isReseller: esRevendedor,
-            isNewClient: esNuevo,       
-            itemId: itemIdOficial,   
-            productName: nombreOficial, 
+            isNewClient: esNuevo,
+            itemId: itemIdOficial,
+            productName: nombreOficial,
             quantity: cantARestar,
-            shippingCostArs: costoEnvioMio, 
+            shippingCostArs: costoEnvioMio,
             source: source || "Whatsapp",
             operationType: esRevendedor ? "MAYORISTA" : "VENTA",
             clientName: esRevendedor ? (clienteMayorista || "") : "",
-            ticketId: ticketIdGenerado,     
-            totalSaleRaw: totalVentaCalculado, 
+            ticketId: ticketIdGenerado,
+            totalSaleRaw: totalVentaCalculado,
             unitPrice: precioUnitario,
             variant: varianteOficial,
-            seller: vendedor // 👈 Guarda correctamente "028 Import" o "Buono"
+            seller: vendedor
         });
 
-        return { exito: true };
+        return { exito: true, saleId: saleRef.id, totalSaleRaw: totalVentaCalculado };
     } 
     else {
         if (!productoEncontrado) {

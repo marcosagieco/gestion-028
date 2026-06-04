@@ -1,2 +1,6 @@
 node_modules/
 *.local
+clave_privada.key
+solicitud.csr
+certificado.crt
+.env
