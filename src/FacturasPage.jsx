@@ -30,22 +30,11 @@ const fmtDate = s => {
   return `${d}/${m}/${y}`;
 };
 
-async function descargarPDF(url, nombre) {
-  try {
-    const res  = await fetch(url);
-    const blob = await res.blob();
-    const obj  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = obj;
-    a.download = nombre;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(obj);
-  } catch {
-    window.open(url, '_blank');
-  }
-}
+// Ver PDF: abrir en nueva pestaña (inline)
+// Descargar PDF: misma URL con &dl=1 → Content-Disposition: attachment
+const dlUrl = pdfUrl => pdfUrl
+  ? (pdfUrl.includes('?') ? pdfUrl + '&dl=1' : pdfUrl + '?dl=1')
+  : null;
 
 export default function FacturasPage() {
   const [dm, setDm]               = useState(() => localStorage.getItem('028_dark_mode') === 'true');
@@ -264,20 +253,19 @@ export default function FacturasPage() {
                           {f.pdfUrl ? (
                             <>
                               <a href={f.pdfUrl} target="_blank" rel="noopener noreferrer"
-                                title="Ver PDF en nueva pestaña"
+                                title="Ver PDF"
                                 className={`p-1.5 rounded-lg transition-colors
                                   ${dm ? 'text-zinc-500 hover:text-indigo-400 hover:bg-indigo-500/10'
                                        : 'text-zinc-400 hover:text-indigo-600 hover:bg-indigo-50'}`}>
                                 <ExternalLink size={14} />
                               </a>
-                              <button
-                                onClick={() => descargarPDF(f.pdfUrl, `factura-c-${f.comprobanteFormateado}.pdf`)}
+                              <a href={dlUrl(f.pdfUrl)} target="_blank" rel="noopener noreferrer"
                                 title="Descargar PDF"
                                 className={`p-1.5 rounded-lg transition-colors
                                   ${dm ? 'text-zinc-500 hover:text-emerald-400 hover:bg-emerald-500/10'
                                        : 'text-zinc-400 hover:text-emerald-600 hover:bg-emerald-50'}`}>
                                 <Download size={14} />
-                              </button>
+                              </a>
                             </>
                           ) : (
                             <span className={`text-[10px] ${dm ? 'text-zinc-700' : 'text-zinc-300'}`}>

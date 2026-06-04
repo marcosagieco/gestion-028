@@ -10,19 +10,14 @@ const { emitirFacturaC } = require('./facturacion');
 const { generarFacturaPDFBuffer } = require('./generar-factura-pdf');
 const crypto = require('crypto');
 
-const STORAGE_BUCKET = 'gestion-028.firebasestorage.app';
+const STORAGE_BUCKET  = 'gestion-028.firebasestorage.app';
+const SERVE_PDF_BASE  = 'https://us-central1-gestion-028.cloudfunctions.net/servePdf';
 
-// ─── Subir PDF a Storage con token permanente (no expira) ────────────────────
+// ─── Subir PDF a Storage (solo guarda; la URL se sirve vía servePdf) ──────────
 async function subirPDFStorage(pdfBuffer, filePath) {
     const bucket = admin.storage().bucket(STORAGE_BUCKET);
     const file   = bucket.file(filePath);
-    const token  = crypto.randomUUID();
-    await file.save(pdfBuffer, {
-        contentType: 'application/pdf',
-        metadata: { firebaseStorageDownloadTokens: token },
-    });
-    const encoded = encodeURIComponent(filePath);
-    return `https://firebasestorage.googleapis.com/v0/b/${STORAGE_BUCKET}/o/${encoded}?alt=media&token=${token}`;
+    await file.save(pdfBuffer, { contentType: 'application/pdf' });
 }
 
 // ─── Generar PDF + subir + guardar en colección facturas ─────────────────────
@@ -53,7 +48,10 @@ async function guardarFacturaConPDF({ ventaId, ptoVta, numero, fecha, fechaDispl
     const pvStr     = String(ptoVta).padStart(5, '0');
     const nroStr    = String(numero).padStart(8, '0');
     const filePath  = `facturas/${yy}/${mm}/factura-c-${pvStr}-${nroStr}.pdf`;
-    const pdfUrl    = await subirPDFStorage(pdfBuffer, filePath);
+    await subirPDFStorage(pdfBuffer, filePath);
+
+    // URL permanente: servida por Cloud Function, nunca expira
+    const pdfUrl = `${SERVE_PDF_BASE}?cae=${cae}`;
 
     const comprobanteFormateado = `${pvStr}-${nroStr}`;
     await db.collection('facturas').doc(cae).set({
@@ -325,7 +323,8 @@ exports.migrarFacturaExistente = functions.https.onRequest(async (req, res) => {
         });
 
         const filePath = `facturas/2026/06/factura-c-00001-00000002.pdf`;
-        const pdfUrl   = await subirPDFStorage(pdfBuffer, filePath);
+        await subirPDFStorage(pdfBuffer, filePath);
+        const pdfUrl = `${SERVE_PDF_BASE}?cae=${CAE}`;
 
         const qrPayload = {
             ver: 1, fecha: FECHA, cuit: 20484597953,
@@ -362,6 +361,54 @@ exports.migrarFacturaExistente = functions.https.onRequest(async (req, res) => {
         console.error('❌ Error en migración:', e.message);
         return res.status(500).json({ ok: false, error: e.message });
     }
+});
+
+// ─── Servir PDF desde Storage con headers correctos ──────────────────────────
+exports.servePdf = functions.https.onRequest(async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    if (req.method === 'OPTIONS') return res.status(204).send('');
+
+    const { cae, dl } = req.query;
+    if (!cae) return res.status(400).send('Missing cae');
+
+    const snap = await db.collection('facturas').doc(cae).get();
+    if (!snap.exists) return res.status(404).send('Factura no encontrada');
+
+    const { puntoVenta, nroComprobante, fechaEmision } = snap.data();
+    const pvStr  = String(puntoVenta).padStart(5, '0');
+    const nroStr = String(nroComprobante).padStart(8, '0');
+    const [yy, mm] = (fechaEmision || '').split('-');
+    const filePath = `facturas/${yy}/${mm}/factura-c-${pvStr}-${nroStr}.pdf`;
+
+    const bucket = admin.storage().bucket(STORAGE_BUCKET);
+    const file   = bucket.file(filePath);
+    const [exists] = await file.exists();
+    if (!exists) return res.status(404).send('Archivo PDF no encontrado en Storage');
+
+    const filename = `factura-c-${pvStr}-${nroStr}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition',
+        dl === '1'
+            ? `attachment; filename="${filename}"`
+            : `inline; filename="${filename}"`
+    );
+    file.createReadStream()
+        .on('error', err => { console.error('stream error:', err); res.status(500).end(); })
+        .pipe(res);
+});
+
+// ─── Parchar pdfUrl de docs existentes al formato servePdf ───────────────────
+// Llamar UNA SOLA VEZ después de deployar: POST /patchPdfUrls
+exports.patchPdfUrls = functions.https.onRequest(async (req, res) => {
+    if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
+    const snap  = await db.collection('facturas').get();
+    const batch = db.batch();
+    snap.docs.forEach(d => {
+        batch.update(d.ref, { pdfUrl: `${SERVE_PDF_BASE}?cae=${d.id}` });
+    });
+    await batch.commit();
+    return res.status(200).json({ ok: true, updated: snap.size });
 });
 
 exports.webhook = functions.https.onRequest(async (req, res) => {
