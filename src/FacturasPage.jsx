@@ -14,12 +14,14 @@ const firebaseConfig = {
 };
 
 const fbApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
+// Usar getFirestore si ya fue inicializado por App.jsx (chunk separado vía lazy)
 let db;
 try {
   db = initializeFirestore(fbApp, { experimentalForceLongPolling: true });
 } catch {
   db = getFirestore(fbApp);
 }
+if (!db) db = getFirestore(fbApp);
 
 const formatMoney = n =>
   new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n || 0);
