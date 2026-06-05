@@ -386,20 +386,25 @@ export default function FacturasPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className={`text-[11px] font-bold uppercase tracking-wide ${tHead}`}>
-                    <th className="pl-4 pr-2 py-3 text-center w-8">
-                      <input
-                        type="checkbox"
-                        checked={filtered.length > 0 && filtered.every(f => selected.has(f.id))}
-                        ref={el => { if (el) el.indeterminate = selected.size > 0 && !filtered.every(f => selected.has(f.id)); }}
-                        onChange={() => {
-                          if (filtered.every(f => selected.has(f.id))) {
-                            setSelected(new Set());
-                          } else {
-                            setSelected(new Set(filtered.map(f => f.id)));
-                          }
-                        }}
-                        className="cursor-pointer accent-indigo-500"
-                      />
+                    <th className="pl-4 pr-3 py-3 text-center w-10">
+                      {(() => {
+                        const allSel = filtered.length > 0 && filtered.every(f => selected.has(f.id));
+                        const someSel = selected.size > 0 && !allSel;
+                        return (
+                          <button
+                            onClick={() => allSel ? setSelected(new Set()) : setSelected(new Set(filtered.map(f => f.id)))}
+                            title={allSel ? 'Deseleccionar todas' : 'Seleccionar todas'}
+                            className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all mx-auto
+                              ${allSel
+                                ? 'bg-indigo-500 border-indigo-500'
+                                : someSel
+                                ? 'bg-indigo-500/40 border-indigo-400'
+                                : (dm ? 'border-zinc-600 hover:border-indigo-400 bg-transparent' : 'border-zinc-300 hover:border-indigo-400 bg-transparent')}`}>
+                            {allSel && <svg viewBox="0 0 10 8" className="w-2.5 h-2.5 fill-none stroke-white stroke-2"><polyline points="1,4 4,7 9,1"/></svg>}
+                            {someSel && <div className="w-2 h-0.5 bg-white rounded" />}
+                          </button>
+                        );
+                      })()}
                     </th>
                     <th className="px-4 py-3 text-left whitespace-nowrap">Fecha</th>
                     <th className="px-4 py-3 text-left">Receptor</th>
@@ -417,17 +422,23 @@ export default function FacturasPage() {
                       className={`border-t transition-colors ${tRow} ${selected.has(f.id) ? (dm ? 'bg-indigo-500/[0.07]' : 'bg-indigo-50/60') : ''}`}>
 
                       {/* Checkbox */}
-                      <td className="pl-4 pr-2 py-3 text-center">
-                        <input
-                          type="checkbox"
-                          checked={selected.has(f.id)}
-                          onChange={() => setSelected(prev => {
+                      <td className="pl-4 pr-3 py-3 text-center">
+                        <button
+                          onClick={() => setSelected(prev => {
                             const next = new Set(prev);
                             next.has(f.id) ? next.delete(f.id) : next.add(f.id);
                             return next;
                           })}
-                          className="cursor-pointer accent-indigo-500"
-                        />
+                          className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all mx-auto
+                            ${selected.has(f.id)
+                              ? 'bg-indigo-500 border-indigo-500'
+                              : (dm ? 'border-zinc-600 hover:border-indigo-400 bg-transparent' : 'border-zinc-300 hover:border-indigo-400 bg-transparent')}`}>
+                          {selected.has(f.id) && (
+                            <svg viewBox="0 0 10 8" className="w-2.5 h-2.5 fill-none stroke-white stroke-2">
+                              <polyline points="1,4 4,7 9,1"/>
+                            </svg>
+                          )}
+                        </button>
                       </td>
 
                       {/* Fecha */}
