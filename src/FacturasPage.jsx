@@ -191,14 +191,15 @@ export default function FacturasPage() {
   useEffect(() => { localStorage.setItem('028_dark_mode', dm); }, [dm]);
   useEffect(() => { setSelected(new Set()); }, [search, fechaDesde, fechaHasta]);
 
+  // Arrancar el listener siempre, independiente del auth.
+  // Así los datos están listos en cuanto el usuario ingresa la contraseña.
   useEffect(() => {
-    if (!auth) return;
     const q = query(collection(db, 'facturas'), orderBy('fechaEmision', 'desc'));
     return onSnapshot(q,
       snap  => { setFacturas(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); },
       err   => { console.error('facturas:', err); setLoading(false); }
     );
-  }, [auth]);
+  }, []);
 
   if (!auth) return <LoginFacturas dm={dm} onAuth={() => setAuth(true)} />;
 
