@@ -2106,6 +2106,7 @@ export default function App() {
   const [manualFinalizeDate, setManualFinalizeDate] = useState(getTodayDate());
   const [globalMonth, setGlobalMonth] = useState('30days');
   const [newClientsFilter, setNewClientsFilter] = useState('all');
+  const [chartMedioPago, setChartMedioPago] = useState('all');
   const [metaData, setMetaData] = useState(null);
   const [metaDailyData, setMetaDailyData] = useState([]);
   const [metaLoading, setMetaLoading] = useState(false);
@@ -5100,6 +5101,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 const revendedoresList = analysisData.baseStats.filteredSales.filter(s => s.isNewClient === 'Revendedor');
                                 const revendedoresCount = revendedoresList.length;
                                 const revendedoresRevenue = revendedoresList.reduce((a, s) => a + (s.totalSaleRaw || 0), 0);
+                                const byMP = mp => analysisData.baseStats.filteredSales.filter(s => s.medioPago === mp).reduce((a, s) => a + (s.totalSaleRaw || 0), 0);
+                                const ingAlias1 = byMP('alias1');
+                                const ingAlias2 = byMP('alias2');
+                                const ingAlias3 = byMP('alias3');
+                                const ingEfectivo = byMP('efectivo');
                                 const avgTicket = cur.salesCount > 0 ? cur.totalRevenue / cur.salesCount : 0;
                                 const prevAvgTicket = prev && prev.salesCount > 0 ? prev.totalRevenue / prev.salesCount : null;
                                 const L = sparklineData7d.labels;
@@ -5131,6 +5137,10 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                         <PremiumMetricCard darkMode={darkMode} title="Clientes Orgánicos" value={newClientsOrganic} subtitle="Sin inversión en ads" change={null} sparkline={sparklineData7d.organicClients} sparklineLabels={L} sparklineFormatter={fClientes} />
                                         <PremiumMetricCard darkMode={darkMode} title="Clientes por Ads" value={newClientsAds} subtitle="Captados por publicidad" change={null} sparkline={sparklineData7d.adsClients} sparklineLabels={L} sparklineFormatter={fClientes} />
                                         <PremiumMetricCard darkMode={darkMode} title="Ventas Revendedor" value={revendedoresCount} subtitle={revendedoresCount > 0 ? formatMoney(revendedoresRevenue) : 'Sin ventas'} change={null} sparkline={sparklineData7d.resellerClients} sparklineLabels={L} sparklineFormatter={fClientes} />
+                                        <PremiumMetricCard darkMode={darkMode} title="Alias 1" value={formatMoney(ingAlias1)} subtitle="Ingresos" change={null} sparkline={null} color="blue" />
+                                        <PremiumMetricCard darkMode={darkMode} title="Alias 2" value={formatMoney(ingAlias2)} subtitle="Ingresos" change={null} sparkline={null} color="violet" />
+                                        <PremiumMetricCard darkMode={darkMode} title="Alias 3" value={formatMoney(ingAlias3)} subtitle="Ingresos" change={null} sparkline={null} color="amber" />
+                                        <PremiumMetricCard darkMode={darkMode} title="Efectivo" value={formatMoney(ingEfectivo)} subtitle="Ingresos" change={null} sparkline={null} color="emerald" />
                                         <PremiumMetricCard darkMode={darkMode} title="Promedio de Ventas" value={cur.dailyAvgItems.toFixed(1)} subtitle="uds por día" change={pct(cur.dailyAvgItems, prev?.dailyAvgItems)} sparkline={sparklineData7d.units} sparklineLabels={L} sparklineFormatter={fUds}
                                             extra={cur.currentStreak > 0 && (
                                                 <div className="flex items-center gap-1.5 mt-1.5">
@@ -5147,13 +5157,36 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
                             {/* MAIN CHART */}
                             <div className={`rounded-2xl border p-5 ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
-                                <div className="flex items-center justify-between mb-4">
+                                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                                     <div>
                                         <h3 className={`text-sm font-bold ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Evolución del Período</h3>
                                         <p className="text-[11px] text-zinc-500 mt-0.5">Ingresos · Unidades · Ganancia</p>
                                     </div>
+                                    <div className={`flex items-center gap-1 p-1 rounded-xl ${darkMode ? 'bg-zinc-900/60' : 'bg-zinc-100'}`}>
+                                        {[
+                                            { key: 'all',      label: 'Todos' },
+                                            { key: 'alias1',   label: 'Alias 1' },
+                                            { key: 'alias2',   label: 'Alias 2' },
+                                            { key: 'alias3',   label: 'Alias 3' },
+                                            { key: 'efectivo', label: 'Efectivo' },
+                                        ].map(({ key, label }) => (
+                                            <button key={key} onClick={() => setChartMedioPago(key)}
+                                                className={`px-2.5 py-1 text-[10px] font-bold rounded-lg transition-all duration-150 ${
+                                                    chartMedioPago === key
+                                                        ? (darkMode ? 'bg-zinc-700 text-zinc-100 shadow-sm' : 'bg-white text-zinc-900 shadow-sm')
+                                                        : 'text-zinc-500 hover:text-zinc-400'
+                                                }`}>{label}</button>
+                                        ))}
+                                    </div>
                                 </div>
-                                <SalesAreaChart sales={analysisData.baseStats.filteredSales} mode={globalMonth === 'custom' ? 'custom' : globalMonth} customRange={customDateRange} darkMode={darkMode} />
+                                <SalesAreaChart
+                                    sales={chartMedioPago === 'all'
+                                        ? analysisData.baseStats.filteredSales
+                                        : analysisData.baseStats.filteredSales.filter(s => s.medioPago === chartMedioPago)}
+                                    mode={globalMonth === 'custom' ? 'custom' : globalMonth}
+                                    customRange={customDateRange}
+                                    darkMode={darkMode}
+                                />
                             </div>
 
                         </>

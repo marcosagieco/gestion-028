@@ -199,9 +199,24 @@ const normalizarCampoMensaje = (key) => {
         "fecha limite": "fechaLimite", "limite": "fechaLimite", "vencimiento": "fechaLimite",
         "accion": "accion", "acción": "accion", "movimiento": "accion",
         "nota": "nota", "detalle": "nota", "obs": "nota", "observacion": "nota", "observación": "nota",
-        "motivo": "motivo", "vendedor": "vendedor"
+        "motivo": "motivo", "vendedor": "vendedor",
+        "pago": "medioPago", "medio pago": "medioPago", "medio de pago": "medioPago",
+        "metodo pago": "medioPago", "metodo de pago": "medioPago", "forma pago": "medioPago",
+        "envio": "envioCobro", "envío": "envioCobro",
+        "costo envio": "envioCobro", "costo de envio": "envioCobro", "costo envío": "envioCobro",
+        "cobro envio": "envioCobro", "cobro de envio": "envioCobro",
+        "envio cliente": "envioCobro", "shipping": "envioCobro"
     };
     return aliases[k] || k;
+};
+
+const normalizarMedioPago = (v) => {
+    const n = normalizarParaComparar(String(v || ''));
+    if (['alias1', 'a1', 'alias 1', '1'].includes(n)) return 'alias1';
+    if (['alias2', 'a2', 'alias 2', '2'].includes(n)) return 'alias2';
+    if (['alias3', 'a3', 'alias 3', '3'].includes(n)) return 'alias3';
+    if (['efe', 'efectivo', 'cash', 'efectico'].includes(n)) return 'efectivo';
+    return n || null;
 };
 
 const detectarTipoMensajeNuevo = (linea) => {
@@ -632,11 +647,12 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                             continue;
                         }
 
-                        let fechaManual = "hoy"; 
+                        let fechaManual = "hoy";
                         let costoEnvioMio = 0;
                         let precioEnvioCliente = 0;
                         let esRevendedor = false;
                         let esNuevo = false;
+                        let medioPagoViejo = null;
                         let numerosEncontrados = 0;
 
                         let motivoNeutro = "Stock perdido";
@@ -666,7 +682,19 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                             } 
                             else if (datoUpper === "NUEVO") {
                                 esNuevo = true;
-                            } 
+                            }
+                            else if (["ALIAS1","A1"].includes(datoUpper)) {
+                                medioPagoViejo = 'alias1';
+                            }
+                            else if (["ALIAS2","A2"].includes(datoUpper)) {
+                                medioPagoViejo = 'alias2';
+                            }
+                            else if (["ALIAS3","A3"].includes(datoUpper)) {
+                                medioPagoViejo = 'alias3';
+                            }
+                            else if (["EFE","EFECTIVO","CASH"].includes(datoUpper)) {
+                                medioPagoViejo = 'efectivo';
+                            }
                             else if (/[0-9]/.test(dato)) {
                                 let posibleNum = limpiarNum(dato);
                                 if (!isNaN(posibleNum)) {
@@ -684,7 +712,7 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
 
                         const resultado = esMovimientoNeutro
                             ? await procesarStockNeutro(productoRaw, varianteRaw, cantidad, precioUnitario, motivoNeutro, notaNeutra, vendedor)
-                            : await procesarVenta(productoRaw, varianteRaw, cantidad, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor);
+                            : await procesarVenta(productoRaw, varianteRaw, cantidad, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor, null, "Whatsapp", "", medioPagoViejo);
 
                         let numeroParaMeta = numeroRemitente;
                         if (numeroParaMeta.startsWith("549") && numeroParaMeta.length === 13) {
@@ -703,9 +731,13 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                                 console.log("✅ Venta anotada con éxito.");
                                 await registrarEnSheet("Ventas", [fechaHoySheet, numeroRemitente, productoRaw, varianteRaw, cantidad, precioUnitario, `ÉXITO (${vendedor})`]);
                                 if (resultado.saleId) {
-                                    const monto = resultado.totalSaleRaw || 0;
-                                    await guardarPendingFactura(numeroRemitente, [resultado.saleId], monto);
-                                    await enviarMensajeWhatsApp(numeroParaMeta, `✅ Venta registrada.\n\n🧾 ¿Emito Factura C por $${monto.toLocaleString('es-AR')} a Consumidor Final?\nRespondé *sí* o *no*.`);
+                                    const monto = (resultado.totalSaleRaw || 0) + (resultado.clientShippingCharge || 0);
+                                    if (resultado.medioPago === 'alias1') {
+                                        await guardarPendingFactura(numeroRemitente, [resultado.saleId], monto);
+                                        await enviarMensajeWhatsApp(numeroParaMeta, `✅ Venta registrada.\n\n🧾 ¿Emito Factura C por $${monto.toLocaleString('es-AR')} a Consumidor Final?\nRespondé *sí* o *no*.`);
+                                    } else {
+                                        await enviarMensajeWhatsApp(numeroParaMeta, `✅ Venta registrada.`);
+                                    }
                                 }
                             }
                         }
@@ -855,20 +887,21 @@ async function procesarMensajeNuevoWhatsapp(mensaje, numeroRemitente, fechaHoySh
     let total = 0;
     let unidades = 0;
     if (tipo === "VENTA" || tipo === "MAYORISTA") {
+        const medioPago = normalizarMedioPago(general.medioPago);
         const saleIds = [];
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
             if (!item.precio || item.precio <= 0) return { exito: false, error_msg: errorConProducto(item, i, `❌ Falta precio en ${item.producto} (${item.variante}).`) };
             const costoEnvio = i === 0 ? limpiarNumero(general.envioCosto || 0) : 0;
             const cobroEnvio = i === 0 ? limpiarNumero(general.envioCobro || 0) : 0;
-            const r = await procesarVenta(item.producto, item.variante, item.cantidad, item.precio, fecha, costoEnvio, cobroEnvio, esRevendedor, tipoCliente, vendedor, ticketIdGrupo, canal, clienteMayorista);
+            const r = await procesarVenta(item.producto, item.variante, item.cantidad, item.precio, fecha, costoEnvio, cobroEnvio, esRevendedor, tipoCliente, vendedor, ticketIdGrupo, canal, clienteMayorista, medioPago);
             if (r && r.exito === false) return { ...r, error_msg: errorConProducto(item, i, r.error_msg) };
             if (r.saleId) saleIds.push(r.saleId);
             total += item.precio * item.cantidad + (i === 0 ? (cobroEnvio || 0) : 0);
             unidades += item.cantidad;
             await registrarEnSheet(tipo === "MAYORISTA" ? "Mayorista" : "Ventas", [fechaHoySheet, numeroRemitente, item.producto, item.variante, item.cantidad, item.precio, `ÉXITO (${vendedor})`, tipoCliente]);
         }
-        if (saleIds.length > 0) {
+        if (saleIds.length > 0 && medioPago === 'alias1') {
             await guardarPendingFactura(numeroRemitente, saleIds, total);
             const montoFmt = total.toLocaleString('es-AR');
             return { exito: true, mensaje: `✅ Venta registrada.\n\n🧾 ¿Emito Factura C por $${montoFmt} a Consumidor Final?\nRespondé *sí* o *no*.` };
@@ -1272,7 +1305,7 @@ async function procesarStockNeutro(userProducto, userVariante, cantARestar, prec
 // ==========================================
 // FUNCIÓN PROCESAR VENTA
 // ==========================================
-async function procesarVenta(userProducto, userVariante, cantARestar, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor, ticketIdManual = null, source = "Whatsapp", clienteMayorista = "") {
+async function procesarVenta(userProducto, userVariante, cantARestar, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor, ticketIdManual = null, source = "Whatsapp", clienteMayorista = "", medioPago = null) {
     if (isNaN(cantARestar) || cantARestar <= 0) return { exito: false, error_msg: "❌ La cantidad ingresada no es válida." };
 
     const pBuscar = normalizarParaComparar(userProducto);
@@ -1354,7 +1387,8 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
     }
 
     if (itemsActualizados) {
-        const totalVentaCalculado = (precioUnitario * cantARestar) + precioEnvioCliente;
+        // totalSaleRaw = solo producto (el envío no es ganancia del emisor)
+        const totalVentaCalculado = precioUnitario * cantARestar;
         const ticketIdGenerado = ticketIdManual || Date.now().toString(); 
         const fechaCreacionReal = new Date().toISOString(); 
 
@@ -1370,6 +1404,8 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
             productName: nombreOficial,
             quantity: cantARestar,
             shippingCostArs: costoEnvioMio,
+            clientShippingCharge: precioEnvioCliente,
+            medioPago: medioPago || null,
             source: source || "Whatsapp",
             operationType: esRevendedor ? "MAYORISTA" : "VENTA",
             clientName: esRevendedor ? (clienteMayorista || "") : "",
@@ -1380,7 +1416,7 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
             seller: vendedor
         });
 
-        return { exito: true, saleId: saleRef.id, totalSaleRaw: totalVentaCalculado };
+        return { exito: true, saleId: saleRef.id, totalSaleRaw: totalVentaCalculado, clientShippingCharge: precioEnvioCliente, medioPago: medioPago || null };
     } 
     else {
         if (!productoEncontrado) {
