@@ -2,8 +2,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { initializeFirestore, getFirestore, collection, query, orderBy, onSnapshot } from 'firebase/firestore';
-import { ArrowLeft, Download, Search, ExternalLink, Receipt, Moon, Sun, FileSpreadsheet } from 'lucide-react';
+import { ArrowLeft, Download, Search, ExternalLink, Receipt, Moon, Sun, FileSpreadsheet, Package } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import JSZip from 'jszip';
 
 const firebaseConfig = {
   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
@@ -71,6 +72,35 @@ function exportarExcel(facturas) {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Facturas');
   XLSX.writeFile(wb, `facturas-028-${hoy}.xlsx`);
+}
+
+async function descargarZIP(facturas, setZipLoading) {
+  setZipLoading(true);
+  try {
+    const zip  = new JSZip();
+    const hoy  = new Date().toISOString().slice(0, 10);
+    await Promise.all(facturas.map(async f => {
+      if (!f.pdfUrl) return;
+      try {
+        const res  = await fetch(f.pdfUrl);
+        if (!res.ok) return;
+        const blob = await res.blob();
+        const name = `factura-c-${f.comprobanteFormateado || f.cae}.pdf`;
+        zip.file(name, blob);
+      } catch { /* skip si falla un PDF individual */ }
+    }));
+    const content = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(content);
+    const a   = document.createElement('a');
+    a.href     = url;
+    a.download = `facturas-028-seleccionadas-${hoy}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } finally {
+    setZipLoading(false);
+  }
 }
 
 const FACTURAS_KEY = '028_facturas_auth';
@@ -155,8 +185,11 @@ export default function FacturasPage() {
   const [search, setSearch]       = useState('');
   const [fechaDesde, setFechaDesde] = useState('');
   const [fechaHasta, setFechaHasta] = useState('');
+  const [selected, setSelected]   = useState(new Set());
+  const [zipLoading, setZipLoading] = useState(false);
 
   useEffect(() => { localStorage.setItem('028_dark_mode', dm); }, [dm]);
+  useEffect(() => { setSelected(new Set()); }, [search, fechaDesde, fechaHasta]);
 
   useEffect(() => {
     if (!auth) return;
@@ -222,7 +255,7 @@ export default function FacturasPage() {
             {filtered.length > 0 && (
               <button
                 onClick={() => exportarExcel(filtered)}
-                title="Exportar a Excel"
+                title="Exportar todas las visibles a Excel"
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors
                   ${dm ? 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
                        : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}>
@@ -295,6 +328,43 @@ export default function FacturasPage() {
           </div>
         </div>
 
+        {/* ── Barra de acciones de selección ── */}
+        {selected.size > 0 && (() => {
+          const selFacturas = filtered.filter(f => selected.has(f.id));
+          return (
+            <div className={`rounded-xl border px-4 py-3 flex flex-wrap items-center gap-3
+              ${dm ? 'bg-indigo-500/10 border-indigo-500/30' : 'bg-indigo-50 border-indigo-200'}`}>
+              <span className={`text-xs font-bold ${dm ? 'text-indigo-300' : 'text-indigo-700'}`}>
+                {selected.size} {selected.size === 1 ? 'seleccionada' : 'seleccionadas'}
+              </span>
+              <button
+                onClick={() => exportarExcel(selFacturas)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors
+                  ${dm ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'
+                       : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'}`}>
+                <FileSpreadsheet size={13} />
+                Exportar Excel
+              </button>
+              <button
+                disabled={zipLoading}
+                onClick={() => descargarZIP(selFacturas, setZipLoading)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed
+                  ${dm ? 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30'
+                       : 'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}>
+                {zipLoading
+                  ? <><div className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" /> Generando ZIP…</>
+                  : <><Package size={13} /> Descargar ZIP</>}
+              </button>
+              <button
+                onClick={() => setSelected(new Set())}
+                className={`ml-auto text-xs transition-colors
+                  ${dm ? 'text-zinc-600 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-600'}`}>
+                Limpiar selección
+              </button>
+            </div>
+          );
+        })()}
+
         {/* ── Tabla ── */}
         <div className={`rounded-xl border overflow-hidden ${card}`}>
           {loading ? (
@@ -316,6 +386,21 @@ export default function FacturasPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className={`text-[11px] font-bold uppercase tracking-wide ${tHead}`}>
+                    <th className="pl-4 pr-2 py-3 text-center w-8">
+                      <input
+                        type="checkbox"
+                        checked={filtered.length > 0 && filtered.every(f => selected.has(f.id))}
+                        ref={el => { if (el) el.indeterminate = selected.size > 0 && !filtered.every(f => selected.has(f.id)); }}
+                        onChange={() => {
+                          if (filtered.every(f => selected.has(f.id))) {
+                            setSelected(new Set());
+                          } else {
+                            setSelected(new Set(filtered.map(f => f.id)));
+                          }
+                        }}
+                        className="cursor-pointer accent-indigo-500"
+                      />
+                    </th>
                     <th className="px-4 py-3 text-left whitespace-nowrap">Fecha</th>
                     <th className="px-4 py-3 text-left">Receptor</th>
                     <th className="px-4 py-3 text-left whitespace-nowrap">Tipo</th>
@@ -328,7 +413,22 @@ export default function FacturasPage() {
                 </thead>
                 <tbody>
                   {filtered.map(f => (
-                    <tr key={f.id} className={`border-t transition-colors ${tRow}`}>
+                    <tr key={f.id}
+                      className={`border-t transition-colors ${tRow} ${selected.has(f.id) ? (dm ? 'bg-indigo-500/[0.07]' : 'bg-indigo-50/60') : ''}`}>
+
+                      {/* Checkbox */}
+                      <td className="pl-4 pr-2 py-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(f.id)}
+                          onChange={() => setSelected(prev => {
+                            const next = new Set(prev);
+                            next.has(f.id) ? next.delete(f.id) : next.add(f.id);
+                            return next;
+                          })}
+                          className="cursor-pointer accent-indigo-500"
+                        />
+                      </td>
 
                       {/* Fecha */}
                       <td className="px-4 py-3 whitespace-nowrap">
