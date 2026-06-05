@@ -292,6 +292,128 @@ const numeroMeta = (numeroRemitente) => {
 };
 
 
+// ─── Migrar TODAS las facturas emitidas → genera PDF + Firestore facturas ─────
+// Idempotente: saltea las que ya existen en la colección facturas.
+// POST /migrarTodasLasFacturas
+exports.migrarTodasLasFacturas = functions.https.onRequest(async (req, res) => {
+    if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
+
+    // Leer todas las ventas con factura emitida
+    const salesSnap = await db.collection('sales')
+        .where('invoiceStatus', '==', 'emitida').get();
+
+    if (salesSnap.empty) {
+        return res.status(200).json({ ok: true, message: 'No hay ventas con factura emitida.' });
+    }
+
+    // Agrupar por CAE (puede haber múltiples sales por factura)
+    const byCae = {};
+    salesSnap.docs.forEach(doc => {
+        const d = doc.data();
+        if (!d.invoiceCAE) return;
+        const cae = String(d.invoiceCAE);
+        if (!byCae[cae]) {
+            byCae[cae] = {
+                cae,
+                nroComprobante: d.invoiceNumber,
+                fecha:          d.invoiceDate,   // YYYY-MM-DD
+                monto:          0,
+                ventaId:        doc.id,
+            };
+        }
+        byCae[cae].monto += Number(d.totalSaleRaw) || 0;
+    });
+
+    const results = [];
+
+    for (const [cae, data] of Object.entries(byCae)) {
+        // Idempotencia: saltar si ya existe
+        const existing = await db.collection('facturas').doc(cae).get();
+        if (existing.exists) {
+            results.push({ cae, nroComprobante: data.nroComprobante, status: 'ya_existe' });
+            continue;
+        }
+
+        try {
+            const fecha   = data.fecha;          // YYYY-MM-DD
+            const [yy, mm, dd] = fecha.split('-');
+            const fechaDisplay = `${dd}/${mm}/${yy}`;
+
+            // ARCA da exactamente 10 días de vigencia al CAE
+            const vencDate = new Date(`${fecha}T12:00:00`);
+            vencDate.setDate(vencDate.getDate() + 10);
+            const vencimientoCAE = vencDate.toISOString().slice(0, 10);
+            const vd = vencimientoCAE.split('-');
+            const vencCAEDisp = `${vd[2]}/${vd[1]}/${vd[0]}`;
+
+            const ptoVta = 1;
+            const monto  = data.monto;
+            const numero = data.nroComprobante;
+
+            const pdfBuffer = await generarFacturaPDFBuffer({
+                ptoVta, numero, fecha, fechaDisplay,
+                cae, vencCAEDisp,
+                receptorNombre:  'Consumidor Final',
+                tipoDoc:         99,
+                nroDoc:          0,
+                condIVAReceptor: 'Consumidor Final',
+                items: [{ descripcion: 'Venta al contado', cantidad: 1, precioUnit: monto, subtotal: monto }],
+                total: monto,
+            });
+
+            const pvStr    = String(ptoVta).padStart(5, '0');
+            const nroStr   = String(numero).padStart(8, '0');
+            const filePath = `facturas/${yy}/${mm}/factura-c-${pvStr}-${nroStr}.pdf`;
+            await subirPDFStorage(pdfBuffer, filePath);
+            const pdfUrl = `${SERVE_PDF_BASE}?cae=${cae}`;
+
+            const qrPayload = {
+                ver: 1, fecha, cuit: 20484597953,
+                ptoVta, tipoCmp: 11, nroCmp: numero, importe: monto,
+                moneda: 'PES', ctz: 1, tipoDocRec: 99, nroDocRec: 0,
+                tipoCodAut: 'E', codAut: parseInt(cae),
+            };
+            const qrUrl = 'https://www.afip.gob.ar/fe/qr/?p=' +
+                Buffer.from(JSON.stringify(qrPayload)).toString('base64');
+
+            const comprobanteFormateado = `${pvStr}-${nroStr}`;
+
+            await db.collection('facturas').doc(cae).set({
+                ventaId:              data.ventaId,
+                fechaEmision:         fecha,
+                tipoComprobante:      'Factura C',
+                cbteTipo:             11,
+                puntoVenta:           ptoVta,
+                nroComprobante:       numero,
+                comprobanteFormateado,
+                importeTotal:         monto,
+                cae,
+                vencimientoCAE,
+                receptorNombre:       'Consumidor Final',
+                docTipo:              99,
+                docNro:               0,
+                qrUrl,
+                pdfUrl,
+                estado:               'emitida',
+                createdAt:            new Date().toISOString(),
+            });
+
+            console.log(`✓ Migrada: facturas/${cae} (Nro ${comprobanteFormateado})`);
+            results.push({ cae, nroComprobante: comprobanteFormateado, monto, status: 'migrada' });
+
+        } catch (e) {
+            console.error(`❌ Error migrando CAE ${cae}:`, e.message);
+            results.push({ cae, status: 'error', error: e.message });
+        }
+    }
+
+    const migradas  = results.filter(r => r.status === 'migrada').length;
+    const yaExisten = results.filter(r => r.status === 'ya_existe').length;
+    const errores   = results.filter(r => r.status === 'error').length;
+
+    return res.status(200).json({ ok: true, migradas, yaExisten, errores, results });
+});
+
 // ─── Migración única de factura ya emitida ────────────────────────────────────
 // Llamar UNA SOLA VEZ: POST /migrarFacturaExistente
 // Luego de ejecutado, este endpoint puede quedar (es idempotente y seguro).

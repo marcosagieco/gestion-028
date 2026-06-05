@@ -38,8 +38,83 @@ const dlUrl = pdfUrl => pdfUrl
   ? (pdfUrl.includes('?') ? pdfUrl + '&dl=1' : pdfUrl + '?dl=1')
   : null;
 
+const FACTURAS_KEY = '028_facturas_auth';
+const FACTURAS_PWD = 'seguridad0288';
+
+function LoginFacturas({ dm, onAuth }) {
+  const [pwd, setPwd]   = useState('');
+  const [err, setErr]   = useState(false);
+  const [show, setShow] = useState(false);
+
+  const submit = e => {
+    e.preventDefault();
+    if (pwd === FACTURAS_PWD) {
+      localStorage.setItem(FACTURAS_KEY, 'true');
+      onAuth();
+    } else {
+      setErr(true);
+      setPwd('');
+    }
+  };
+
+  return (
+    <div className={`min-h-screen flex items-center justify-center px-4 ${dm ? 'bg-[#050505]' : 'bg-slate-50'}`}
+      style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <div className={`w-full max-w-sm rounded-2xl border p-8 shadow-xl
+        ${dm ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
+
+        <div className="flex items-center gap-3 mb-7">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: '#6366f1' }}>
+            <Receipt size={17} className="text-white" />
+          </div>
+          <div>
+            <p className={`text-xs font-bold uppercase tracking-widest ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>028 Import</p>
+            <h1 className={`text-sm font-black leading-tight ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>Portal de Facturas</h1>
+          </div>
+        </div>
+
+        <form onSubmit={submit} className="space-y-4">
+          <div>
+            <label className={`block text-xs font-semibold mb-1.5 ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>
+              Contraseña
+            </label>
+            <div className="relative">
+              <input
+                type={show ? 'text' : 'password'}
+                value={pwd}
+                onChange={e => { setPwd(e.target.value); setErr(false); }}
+                placeholder="••••••••••••"
+                autoFocus
+                className={`w-full px-3 py-2.5 pr-10 text-sm rounded-xl border outline-none transition-all
+                  focus:ring-2 focus:ring-indigo-500/30
+                  ${err ? 'border-red-500/60 bg-red-500/5' : dm
+                    ? 'bg-[#1a1a1a] border-white/[0.08] text-zinc-100 placeholder-zinc-600'
+                    : 'bg-white border-zinc-200 text-zinc-900 placeholder-zinc-400'}`}
+              />
+              <button type="button" onClick={() => setShow(v => !v)}
+                className={`absolute right-3 top-1/2 -translate-y-1/2 text-xs
+                  ${dm ? 'text-zinc-600 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-600'}`}>
+                {show ? 'ocultar' : 'ver'}
+              </button>
+            </div>
+            {err && <p className="text-xs text-red-400 mt-1.5 font-medium">Contraseña incorrecta</p>}
+          </div>
+
+          <button type="submit"
+            className="w-full py-2.5 rounded-xl text-sm font-bold text-white transition-all
+              hover:opacity-90 active:scale-[0.98]"
+            style={{ background: '#6366f1' }}>
+            Ingresar
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function FacturasPage() {
   const [dm, setDm]               = useState(() => localStorage.getItem('028_dark_mode') === 'true');
+  const [auth, setAuth]           = useState(() => localStorage.getItem(FACTURAS_KEY) === 'true');
   const [facturas, setFacturas]   = useState([]);
   const [loading, setLoading]     = useState(true);
   const [search, setSearch]       = useState('');
@@ -49,12 +124,15 @@ export default function FacturasPage() {
   useEffect(() => { localStorage.setItem('028_dark_mode', dm); }, [dm]);
 
   useEffect(() => {
+    if (!auth) return;
     const q = query(collection(db, 'facturas'), orderBy('fechaEmision', 'desc'));
     return onSnapshot(q,
       snap  => { setFacturas(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); },
       err   => { console.error('facturas:', err); setLoading(false); }
     );
-  }, []);
+  }, [auth]);
+
+  if (!auth) return <LoginFacturas dm={dm} onAuth={() => setAuth(true)} />;
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -111,6 +189,14 @@ export default function FacturasPage() {
                 ${dm ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.06]'
                      : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}>
               {dm ? <Sun size={14} /> : <Moon size={14} />}
+            </button>
+            <button
+              onClick={() => { localStorage.removeItem(FACTURAS_KEY); setAuth(false); }}
+              title="Cerrar sesión"
+              className={`p-1.5 rounded-lg text-xs transition-colors
+                ${dm ? 'text-zinc-600 hover:text-red-400 hover:bg-red-500/10'
+                     : 'text-zinc-400 hover:text-red-500 hover:bg-red-50'}`}>
+              Salir
             </button>
           </div>
         </div>
