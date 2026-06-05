@@ -5209,6 +5209,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         {/* NUEVOS CLIENTES */}
                         <div className={`rounded-2xl border p-5 flex flex-col ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
                             {(() => {
+                                const revendedoresList = analysisData.baseStats.filteredSales.filter(s => s.isNewClient === 'Revendedor');
+                                const revendedoresCount = revendedoresList.length;
                                 const org = newClientsList.filter(s => s.isNewClient === 'Nuevo - Organico' || s.isNewClient === true).length;
                                 const ads = newClientsList.filter(s => s.isNewClient === 'Nuevo - Publicidad').length;
                                 const allClientsForFilter = [...newClientsList, ...revendedoresList];
