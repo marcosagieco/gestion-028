@@ -433,6 +433,10 @@ exports.migrarTodasLasFacturas = functions.https.onRequest(async (req, res) => {
 // Llamar UNA SOLA VEZ: POST /migrarFacturaExistente
 // Luego de ejecutado, este endpoint puede quedar (es idempotente y seguro).
 exports.migrarFacturaExistente = functions.https.onRequest(async (req, res) => {
+    const secret = req.query.secret || req.headers['x-admin-secret'];
+    if (!process.env.ADMIN_SECRET || secret !== process.env.ADMIN_SECRET) {
+        return res.status(403).send('Forbidden');
+    }
     if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
 
     const CAE = '86228193709416';
@@ -538,6 +542,10 @@ exports.servePdf = functions.https.onRequest(async (req, res) => {
 // ─── Parchar pdfUrl de docs existentes al formato servePdf ───────────────────
 // Llamar UNA SOLA VEZ después de deployar: POST /patchPdfUrls
 exports.patchPdfUrls = functions.https.onRequest(async (req, res) => {
+    const secret = req.query.secret || req.headers['x-admin-secret'];
+    if (!process.env.ADMIN_SECRET || secret !== process.env.ADMIN_SECRET) {
+        return res.status(403).send('Forbidden');
+    }
     if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
     const snap  = await db.collection('facturas').get();
     const batch = db.batch();

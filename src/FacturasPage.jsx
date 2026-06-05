@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { initializeFirestore, getFirestore, collection, query, orderBy, onSnapshot } from 'firebase/firestore';
-import { ArrowLeft, Download, Search, ExternalLink, Receipt, Moon, Sun } from 'lucide-react';
+import { ArrowLeft, Download, Search, ExternalLink, Receipt, Moon, Sun, FileSpreadsheet } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 const firebaseConfig = {
   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
@@ -37,6 +38,40 @@ const fmtDate = s => {
 const dlUrl = pdfUrl => pdfUrl
   ? (pdfUrl.includes('?') ? pdfUrl + '&dl=1' : pdfUrl + '?dl=1')
   : null;
+
+function exportarExcel(facturas) {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const rows = facturas.map(f => ({
+    'Fecha emisión':        f.fechaEmision   ? fmtDate(f.fechaEmision)   : '—',
+    'Receptor / Cliente':   f.receptorNombre ?? '—',
+    'Tipo comprobante':     f.tipoComprobante ?? '—',
+    'Punto de venta':       f.puntoVenta != null ? String(f.puntoVenta).padStart(5, '0') : '—',
+    'Número comprobante':   f.nroComprobante != null ? String(f.nroComprobante).padStart(8, '0') : '—',
+    'Comprobante completo': f.comprobanteFormateado ?? '—',
+    'Importe total':        f.importeTotal ?? 0,
+    'CAE':                  f.cae ?? '—',
+    'Vencimiento CAE':      f.vencimientoCAE ? fmtDate(f.vencimientoCAE) : '—',
+    'Estado':               f.estado ?? '—',
+    'Documento receptor':   f.docNro != null ? String(f.docNro) : '—',
+    'Código ARCA receptor': f.docTipo != null ? `${f.docTipo} / ${f.docNro ?? 0}` : '—',
+    'Link PDF':             f.pdfUrl ?? '—',
+    'Link QR':              f.qrUrl  ?? '—',
+  }));
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+
+  // Ancho de columnas
+  ws['!cols'] = [
+    { wch: 14 }, { wch: 22 }, { wch: 16 }, { wch: 14 },
+    { wch: 18 }, { wch: 20 }, { wch: 14 }, { wch: 20 },
+    { wch: 16 }, { wch: 10 }, { wch: 20 }, { wch: 22 },
+    { wch: 50 }, { wch: 80 },
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Facturas');
+  XLSX.writeFile(wb, `facturas-028-${hoy}.xlsx`);
+}
 
 const FACTURAS_KEY = '028_facturas_auth';
 const FACTURAS_PWD = 'seguridad0288';
@@ -184,6 +219,18 @@ export default function FacturasPage() {
               ${dm ? 'bg-white/[0.06] text-zinc-400' : 'bg-zinc-100 text-zinc-500'}`}>
               {filtered.length} {filtered.length === 1 ? 'factura' : 'facturas'}
             </span>
+            {filtered.length > 0 && (
+              <button
+                onClick={() => exportarExcel(filtered)}
+                title="Exportar a Excel"
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors
+                  ${dm ? 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
+                       : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}>
+                <FileSpreadsheet size={13} />
+                Excel
+              </button>
+            )}
+
             <button onClick={() => setDm(v => !v)}
               className={`p-1.5 rounded-lg transition-colors
                 ${dm ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.06]'
