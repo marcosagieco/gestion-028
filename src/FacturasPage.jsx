@@ -115,7 +115,7 @@ function LoginFacturas({ dm, onAuth }) {
     e.preventDefault();
     if (pwd === FACTURAS_PWD) {
       localStorage.setItem(FACTURAS_KEY, 'true');
-      onAuth();
+      window.location.reload();
     } else {
       setErr(true);
       setPwd('');
