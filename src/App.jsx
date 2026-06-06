@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package, UserCircle,
-  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw, Target, RefreshCw, Receipt
+  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw, Target, RefreshCw, Receipt, Minus
 } from 'lucide-react';
 
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
@@ -2144,6 +2144,7 @@ export default function App() {
   const [editingItem, setEditingItem] = useState(null);
   const [editingBatchId, setEditingBatchId] = useState(null);
   const [restoringItem, setRestoringItem] = useState(null);
+  const [subtractingItem, setSubtractingItem] = useState(null);
   const [editingBatchName, setEditingBatchName] = useState('');
 
   const [selectedBatchStats, setSelectedBatchStats] = useState(null);
@@ -4090,6 +4091,19 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     try { await updateDoc(doc(db, 'batches', batchId), { items: updatedItems }); showToast(`+${amount} unidades restauradas`, 'success'); setRestoringItem(null); } catch (e) { showToast("Error: " + e.message, 'error'); }
   };
 
+  const handleConfirmSubtract = async (batchId) => {
+    if (!subtractingItem) return;
+    const batch = batches.find(b => b.id === batchId);
+    if (!batch) return;
+    const amount = parseInt(subtractingItem.amount);
+    if (isNaN(amount) || amount < 1) return showToast("Ingresá una cantidad válida", 'error');
+    const item = batch.items.find(i => i.id === subtractingItem.id);
+    if (!item) return;
+    const newStock = Math.max(0, (item.currentStock || 0) - amount);
+    const updatedItems = batch.items.map(i => i.id === subtractingItem.id ? { ...i, currentStock: newStock } : i);
+    try { await updateDoc(doc(db, 'batches', batchId), { items: updatedItems }); showToast(`-${amount} unidades restadas`, 'success'); setSubtractingItem(null); } catch (e) { showToast("Error: " + e.message, 'error'); }
+  };
+
   const handleSaveEditItem = async (batchId) => {
     if (!editingItem) return;
     const batch = batches.find(b => b.id === batchId);
@@ -5842,9 +5856,38 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                               {(b.items || []).map((item, idx) => {
                                 const isEditing = editingItem?.id === item.id;
                                 const isRestoring = restoringItem?.id === item.id;
+                                const isSubtracting = subtractingItem?.id === item.id;
                                 return (
                                 <tr key={item.id} className={`transition-colors group/item ${darkMode ? 'hover:bg-[#181818]' : 'hover:bg-white'}`}>
-                                  {isRestoring ? (
+                                  {isSubtracting ? (
+                                      <>
+                                          <td className="px-5 py-3">
+                                              <div className="font-semibold text-sm">{item.product || 'Sin nombre'}</div>
+                                              <div className={`text-xs font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{item.variant || ''}</div>
+                                          </td>
+                                          <td className="px-5 py-3 font-mono font-medium text-sm text-zinc-500">{formatMoney(item.costArs)}</td>
+                                          <td className="px-5 py-3">
+                                              <div className="flex items-center gap-2">
+                                                  <input
+                                                      autoFocus
+                                                      type="number" min="1" max={item.currentStock || 0}
+                                                      placeholder="Cant."
+                                                      className={`w-20 p-1.5 text-sm border rounded outline-none focus:border-rose-500 ${darkMode ? 'bg-[#0D0D0D] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`}
+                                                      value={subtractingItem.amount}
+                                                      onChange={e => setSubtractingItem({ ...subtractingItem, amount: e.target.value })}
+                                                      onKeyDown={e => { if (e.key === 'Enter') handleConfirmSubtract(b.id); if (e.key === 'Escape') setSubtractingItem(null); }}
+                                                  />
+                                                  <span className={`text-xs ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>actual: {item.currentStock || 0}</span>
+                                              </div>
+                                          </td>
+                                          <td className="px-5 py-3 text-right">
+                                              <div className="flex justify-end gap-1">
+                                                  <button onClick={() => handleConfirmSubtract(b.id)} className={`p-2 rounded-lg ${darkMode ? 'text-rose-400 hover:bg-rose-500/10' : 'text-rose-600 hover:bg-rose-50'}`} title="Confirmar resta"><Save size={16} /></button>
+                                                  <button onClick={() => setSubtractingItem(null)} className={`p-2 rounded-lg ${darkMode ? 'text-zinc-500 hover:bg-zinc-800' : 'text-zinc-400 hover:bg-zinc-100'}`} title="Cancelar"><XCircle size={16} /></button>
+                                              </div>
+                                          </td>
+                                      </>
+                                  ) : isRestoring ? (
                                       <>
                                           <td className="px-5 py-3">
                                               <div className="font-semibold text-sm">{item.product || 'Sin nombre'}</div>
@@ -5909,6 +5952,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                           <td className="px-5 py-3 text-right">
                                               <div className="flex justify-end gap-1 opacity-0 group-hover/item:opacity-100 transition-all">
                                                   <button onClick={() => setRestoringItem({ ...item, amount: '' })} className={`p-2 rounded-lg ${darkMode ? 'text-amber-400 hover:bg-amber-500/10' : 'text-amber-600 hover:bg-amber-50'}`} title="Restaurar unidades"><RotateCcw size={16} /></button>
+                                                  <button onClick={() => setSubtractingItem({ ...item, amount: '' })} className={`p-2 rounded-lg ${darkMode ? 'text-rose-400 hover:bg-rose-500/10' : 'text-rose-600 hover:bg-rose-50'}`} title="Restar unidades"><Minus size={16} /></button>
                                                   <button onClick={() => setEditingItem(item)} className={`p-2 rounded-lg ${darkMode ? 'text-indigo-400 hover:bg-indigo-500/10' : 'text-indigo-600 hover:bg-indigo-50'}`} title="Editar Producto"><Settings size={16} /></button>
                                                   <button onClick={() => handleDeleteItemFromBatch(b.id, item.id)} className={`p-2 rounded-lg ${darkMode ? 'text-red-400 hover:bg-red-500/10' : 'text-red-600 hover:bg-red-50'}`} title="Eliminar Producto"><Trash2 size={16} /></button>
                                               </div>
