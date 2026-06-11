@@ -816,6 +816,7 @@ async function resolverPendingFactura(pendingSnap, textoRespuesta) {
     }
 
     // Afirmativo → verificar anti-duplicado ANTES de llamar a ARCA
+    let fechaVenta = null;
     for (const id of saleIds) {
         const snap = await db.collection('sales').doc(id).get();
         if (!snap.exists) continue;
@@ -826,11 +827,14 @@ async function resolverPendingFactura(pendingSnap, textoRespuesta) {
                 solo: true,
             };
         }
+        if (!fechaVenta && d.date) {
+            fechaVenta = d.date.slice(0, 10); // YYYY-MM-DD de la fecha real de la venta
+        }
     }
 
     try {
-        const resultado = await emitirFacturaC(monto);
-        const hoy             = new Date().toISOString().slice(0, 10);
+        const resultado = await emitirFacturaC(monto, fechaVenta);
+        const hoy             = fechaVenta || new Date().toISOString().slice(0, 10);
         const [yy, mm, dd]    = hoy.split('-');
         const fechaDisplay    = `${dd}/${mm}/${yy}`;
         const ptoVta          = 1;
