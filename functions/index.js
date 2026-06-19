@@ -631,14 +631,17 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                         let baseIndex = esVentaMarcadaComoNeutra ? 2 : 1;
                         let indexOffset = 0;
 
-                        // Si después del tipo viene una sigla corta, es vendedor.
-                        if (partes[baseIndex] && partes[baseIndex].length <= 2) {
-                            let letra = partes[baseIndex].toUpperCase();
-                            if (letra === "B") {
-                                vendedor = "Buono";
-                            } else {
-                                vendedor = letra;
-                            }
+                        // Si después del tipo viene una sigla o nombre de vendedor, lo detecta.
+                        const _detectarVendedor = (v) => {
+                            const u = (v || "").toUpperCase().trim();
+                            if (u === "B" || u === "BUONO") return "Buono";
+                            if (u === "D" || u === "DELFINA") return "Delfina";
+                            if (u.length <= 2) return u; // otras siglas
+                            return null;
+                        };
+                        const _vend = _detectarVendedor(partes[baseIndex]);
+                        if (_vend !== null) {
+                            vendedor = _vend;
                             indexOffset = 1;
                         }
 
@@ -816,7 +819,6 @@ async function resolverPendingFactura(pendingSnap, textoRespuesta) {
     }
 
     // Afirmativo → verificar anti-duplicado ANTES de llamar a ARCA
-    let fechaVenta = null;
     for (const id of saleIds) {
         const snap = await db.collection('sales').doc(id).get();
         if (!snap.exists) continue;
@@ -827,14 +829,11 @@ async function resolverPendingFactura(pendingSnap, textoRespuesta) {
                 solo: true,
             };
         }
-        if (!fechaVenta && d.date) {
-            fechaVenta = d.date.slice(0, 10); // YYYY-MM-DD de la fecha real de la venta
-        }
     }
 
     try {
-        const resultado = await emitirFacturaC(monto, fechaVenta);
-        const hoy             = fechaVenta || new Date().toISOString().slice(0, 10);
+        const resultado = await emitirFacturaC(monto);
+        const hoy             = new Date().toISOString().slice(0, 10);
         const [yy, mm, dd]    = hoy.split('-');
         const fechaDisplay    = `${dd}/${mm}/${yy}`;
         const ptoVta          = 1;
@@ -1153,6 +1152,7 @@ exports.resumenDiario = onSchedule({
             // Lógica para que en el WhatsApp no te ponga [028 Import] a cada rato, pero sí ponga [Buono]
             let nomVend = v.seller || "028 Import";
             if (nomVend.toUpperCase() === "B") nomVend = "Buono"; // Por si quedó alguno viejo
+            if (nomVend.toUpperCase() === "D") nomVend = "Delfina"; // Por si quedó alguno viejo
             const etiquetaVendedor = (nomVend !== "028 Import" && nomVend.toLowerCase() !== "marcos") ? `[${nomVend}] ` : "";
             
             resumenText += `• ${etiquetaVendedor}${v.quantity}x ${v.productName} (${v.variant}) - $${v.totalSaleRaw}\n`;

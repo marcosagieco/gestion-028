@@ -273,7 +273,7 @@ async function solicitarCAE(token, sign, datos) {
  * @param {number} monto  Importe total en pesos
  * @returns {{ CAE: string, vencimientoCAE: string, nroComprobante: number }}
  */
-async function emitirFacturaC(monto, fechaVenta = null) {
+async function emitirFacturaC(monto) {
     const { cert, key } = leerCredenciales();
 
     // 1. Autenticación WSAA
@@ -283,14 +283,9 @@ async function emitirFacturaC(monto, fechaVenta = null) {
     const ultimo         = await getUltimoComprobante(ta.token, ta.sign, PTO_VTA, 11);
     const nroComprobante = ultimo + 1;
 
-    // 3. Fecha de emisión YYYYMMDD (usa la fecha de la venta si fue registrada con otra fecha)
-    let fecha;
-    if (fechaVenta) {
-        fecha = fechaVenta.replace(/-/g, '');
-    } else {
-        const hoy = new Date();
-        fecha = `${hoy.getFullYear()}${String(hoy.getMonth() + 1).padStart(2, '0')}${String(hoy.getDate()).padStart(2, '0')}`;
-    }
+    // 3. Fecha de emisión YYYYMMDD
+    const hoy   = new Date();
+    const fecha = `${hoy.getFullYear()}${String(hoy.getMonth() + 1).padStart(2, '0')}${String(hoy.getDate()).padStart(2, '0')}`;
 
     // 4. Solicitar CAE
     const { cae, vencimientoCAE } = await solicitarCAE(ta.token, ta.sign, {
