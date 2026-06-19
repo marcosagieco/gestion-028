@@ -119,6 +119,7 @@ const normalizeSellerName = (name) => {
   const lower = name.toLowerCase().trim();
   if (lower === "marcos" || lower === "028import" || lower === "028 import") return "028 Import";
   if (lower === "b" || lower === "buono") return "Buono";
+  if (lower === "d" || lower === "delfina") return "Delfina";
   return name;
 };
 
