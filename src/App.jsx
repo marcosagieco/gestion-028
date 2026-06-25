@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package, UserCircle,
-  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw, Target, RefreshCw, Receipt, Minus
+  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw, Target, RefreshCw, Receipt, Minus, ArrowDownLeft, ArrowUpRight, Landmark
 } from 'lucide-react';
 
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
@@ -1478,6 +1478,12 @@ EMPLEADO — Lucas Buono: Lucas trabaja por comisión del 3% sobre sus ventas. E
 - Calcular y mostrar su comisión: facturación_Buono × 0.03
 - Mostrar sus productos más vendidos
 
+EMPLEADO — Delfina: Delfina trabaja por comisión del 4% sobre sus ventas. En el sistema sus ventas tienen el campo seller = "Delfina". Cuando el usuario pida análisis de Delfina o cuando hagas un cierre completo, siempre:
+- Filtrar las ventas con seller = "Delfina"
+- Mostrar su facturación total y cantidad de ventas
+- Calcular y mostrar su comisión: facturación_Delfina × 0.04
+- Mostrar sus productos más vendidos
+
 MARKETING — Meta Ads vs orgánico: El negocio trabaja con una agencia de Meta Ads. Los clientes nuevos se registran en el campo isNewClient con valores como "Nuevo orgánico", "Nuevo por ads", o similares. Durante mayo 2026 se apagaron los ads para medir el volumen orgánico real. Cuando analicés clientes nuevos o marketing, siempre:
 - Separar clientes nuevos orgánicos de clientes nuevos por ads usando el campo isNewClient
 - Mostrar cantidad y facturación de cada tipo
@@ -2112,6 +2118,8 @@ export default function App() {
   const [metaDailyData, setMetaDailyData] = useState([]);
   const [metaLoading, setMetaLoading] = useState(false);
   const [metaError, setMetaError] = useState(null);
+  const [metaCampaigns, setMetaCampaigns] = useState([]);
+  const [metaCampaignsLoading, setMetaCampaignsLoading] = useState(false);
   const [homeMetaDailyData, setHomeMetaDailyData] = useState([]);
   const [metaPeriod, setMetaPeriod] = useState('last_30d');
   const [metaCustomRange, setMetaCustomRange] = useState({ start: '2026-05-30', end: getTodayDate() });
@@ -2122,6 +2130,11 @@ export default function App() {
   const [newBatchName, setNewBatchName] = useState('');
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '', repeatCount: '1' });
   const [newExpense, setNewExpense] = useState({ description: '', amount: '', batchId: '', date: getTodayDate() });
+  const [cashFlow, setCashFlow] = useState([]);
+  const [newCashMovement, setNewCashMovement] = useState({ type: 'ingreso', date: getTodayDate(), description: '', amount: '' });
+  const [expensesSubTab, setExpensesSubTab] = useState('gastos');
+  const [showBuonoCommission, setShowBuonoCommission] = useState(false);
+  const [showBuono, setShowBuono] = useState(false);
   const [newNeutralStock, setNewNeutralStock] = useState({
     batchId: '',
     itemId: '',
@@ -2219,6 +2232,10 @@ export default function App() {
             setIsOffline(false);
         }, (error) => setIsOffline(true));
 
+        const unsubCash = onSnapshot(query(collection(db, 'cashFlow'), orderBy('date', 'desc')), (snap) => {
+            setCashFlow(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        }, () => {});
+
         const unsubNeutralStock = onSnapshot(query(collection(db, 'neutral_stock'), orderBy('createdAt', 'desc')), (snap) => {
             setNeutralStockEntries(snap.docs.map(d => ({ id: d.id, ...d.data() })));
             setIsOffline(false);
@@ -2241,7 +2258,7 @@ export default function App() {
         }, (error) => console.error("Error settings:", error));
         
         setLoading(false);
-        return () => { unsubBatches(); unsubSales(); unsubExp(); unsubNeutralStock(); unsubConsignments(); unsubSettings(); };
+        return () => { unsubBatches(); unsubSales(); unsubExp(); unsubCash(); unsubNeutralStock(); unsubConsignments(); unsubSettings(); };
     } catch (e) {
         setIsOffline(true);
         setLoading(false);
@@ -2722,7 +2739,7 @@ export default function App() {
           items:       d.items,
           avgTicket:   d.count > 0 ? d.revenue / d.count : 0,
           share:       totalRevenue > 0 ? (d.revenue / totalRevenue) * 100 : 0,
-          commission:  name === 'Buono' ? d.revenue * 0.03 : null,
+          commission:  name === 'Buono' ? d.revenue * 0.03 : name === 'Delfina' ? d.revenue * 0.04 : null,
       })).sort((a, b) => b.revenue - a.revenue);
   }, [analysisData.baseStats.filteredSales]);
 
@@ -2825,16 +2842,18 @@ export default function App() {
     const adsByDate = {};
     fs.forEach(s => {
       const d = s.date?.slice(0, 10); if (!d) return;
-      if (!adsByDate[d]) adsByDate[d] = { revenue: 0, cost: 0 };
+      if (!adsByDate[d]) adsByDate[d] = { revenue: 0, cost: 0, count: 0 };
       adsByDate[d].revenue += s.totalSaleRaw || 0;
       adsByDate[d].cost    += s.costArsAtSale || 0;
+      adsByDate[d].count   += 1;
     });
     const allByDate = {};
     sales.filter(s => s.date && inR(s.date)).forEach(s => {
       const d = s.date?.slice(0, 10); if (!d) return;
       allByDate[d] = (allByDate[d] || 0) + (s.totalSaleRaw || 0);
     });
-    return { revenue, netProfit: revenue - cost, grossProfit: revenue - cost, totalExp, salesCount: fs.length, totalAllRevenue, adsByDate, allByDate };
+    const uniqueClients = new Set(fs.map(s => String(s.clientName || '').trim().toLowerCase()).filter(Boolean));
+    return { revenue, netProfit: revenue - cost, grossProfit: revenue - cost, totalExp, salesCount: fs.length, uniqueClientsCount: uniqueClients.size, totalAllRevenue, adsByDate, allByDate };
   }, [sales, expenses, metaPeriod, metaCustomRange]);
 
   const fetchMetaInsights = async () => {
@@ -2867,6 +2886,37 @@ export default function App() {
       if (sJson.error) throw new Error(sJson.error.message);
       setMetaData(sJson.data?.[0] || null);
       setMetaDailyData(dJson.data || []);
+
+      // Campañas activas + sus insights
+      setMetaCampaignsLoading(true);
+      try {
+        const campsRes = await fetch(
+          `https://graph.facebook.com/v19.0/${accountId}/campaigns?fields=name,status,objective,daily_budget&limit=50&access_token=${token}`
+        );
+        const campsJson = await campsRes.json();
+        const activeCampaigns = (!campsJson.error && campsJson.data)
+          ? campsJson.data.filter(c => c.status === 'ACTIVE')
+          : [];
+        if (activeCampaigns.length > 0) {
+          const insRes = await fetch(
+            `https://graph.facebook.com/v19.0/${accountId}/insights?fields=campaign_id,spend,ctr,cpm,impressions,clicks,actions,purchase_roas&level=campaign&${params}`
+          );
+          const insJson = await insRes.json();
+          const insightsByC = {};
+          if (!insJson.error) {
+            (insJson.data || []).forEach(d => { insightsByC[d.campaign_id] = d; });
+          }
+          setMetaCampaigns(
+            activeCampaigns
+              .map(c => ({ ...c, insights: insightsByC[c.id] || null }))
+              .sort((a, b) => parseFloat(b.insights?.spend || 0) - parseFloat(a.insights?.spend || 0))
+          );
+        } else {
+          setMetaCampaigns([]);
+        }
+      } catch { setMetaCampaigns([]); }
+      finally { setMetaCampaignsLoading(false); }
+
     } catch (e) { setMetaError(e.message); }
     finally { setMetaLoading(false); }
   };
@@ -4386,6 +4436,24 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       showToast('Gasto eliminado', 'success');
   };
 
+  const handleAddCashMovement = async () => {
+    if (!newCashMovement.description.trim() || !newCashMovement.amount || !newCashMovement.date) return showToast('Completá todos los campos', 'error');
+    const [y, m, d] = newCashMovement.date.split('-');
+    await addDoc(collection(db, 'cashFlow'), {
+      type: newCashMovement.type,
+      date: new Date(Number(y), Number(m) - 1, Number(d), 12, 0, 0).toISOString(),
+      description: newCashMovement.description.trim(),
+      amount: parseFloat(newCashMovement.amount),
+    });
+    setNewCashMovement(prev => ({ ...prev, description: '', amount: '' }));
+    showToast(`${newCashMovement.type === 'ingreso' ? 'Ingreso' : 'Retiro'} registrado`, 'success');
+  };
+
+  const handleDeleteCashMovement = async (id) => {
+    await deleteDoc(doc(db, 'cashFlow', id));
+    showToast('Movimiento eliminado', 'success');
+  };
+
 
   // --- CONCILIADOR DE STOCK REAL ---
   const normalizeStockString = (value) => {
@@ -5144,6 +5212,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                         <PremiumMetricCard darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(cur.grossProfit)} subtitle={`${formatPercent(cur.grossMargin)} margen`} change={pct(cur.grossProfit, prev?.grossProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} />
                                         <PremiumMetricCard darkMode={darkMode} title="Ganancia Neta" value={formatMoney(netProfitWithAds)} subtitle={`${formatPercent(netMarginWithAds)} neto${homeAdSpend > 0 ? ' · incl. ads' : ''}`} change={pct(cur.netProfit, prev?.netProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Ganancia neta descontando el gasto en Meta Ads del período (${formatMoney(homeAdSpend)}). Gastos fijos: ${formatMoney(cur.totalGlobalExpenses)}.` : undefined} />
                                         <PremiumMetricCard darkMode={darkMode} title="Gastos Totales" value={formatMoney(totalExpWithAds)} subtitle={homeAdSpend > 0 ? `incl. ${formatMoney(homeAdSpend)} en ads` : 'Logística y operativos'} change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Gastos fijos (${formatMoney(cur.totalGlobalExpenses)}) + Meta Ads del período (${formatMoney(homeAdSpend)}).` : undefined} />
+                                        <PremiumMetricCard darkMode={darkMode} title="Gastos Empresa" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Gastos anotados" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gastos operativos, logística y fijos registrados en el sistema para el período" />
+                                        <PremiumMetricCard darkMode={darkMode} title="Gasto Meta Ads" value={homeAdSpend > 0 ? formatMoney(homeAdSpend) : '—'} subtitle="Inversión publicitaria" change={null} sparkline={null} tooltip="Gasto total en publicidad de Meta Ads durante el período seleccionado" />
                                         <PremiumMetricCard darkMode={darkMode} title="Inversión" value={formatMoney(cur.totalInvestment)} subtitle="Capital apostado" change={null} sparkline={sparklineData7d.investment} sparklineLabels={L} sparklineFormatter={fMoney} />
                                         <PremiumMetricCard darkMode={darkMode} title="Inversión Activa" value={formatMoney(cur.currentStockValue)} subtitle="Stock a costo actual" change={null} sparkline={null} />
                                         <PremiumMetricCard darkMode={darkMode} title="Productos Vendidos" value={cur.itemsSold} subtitle={`${cur.salesCount} pedidos`} change={pct(cur.itemsSold, prev?.itemsSold)} sparkline={sparklineData7d.units} sparklineLabels={L} sparklineFormatter={fUds} />
@@ -5211,9 +5281,15 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                         {/* EQUIPO */}
                         <div className={`rounded-2xl border p-5 ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
-                            <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-4">Rendimiento del Equipo</h3>
+                            <div className="flex items-center justify-between mb-4">
+                                <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Rendimiento del Equipo</h3>
+                                <button onClick={() => setShowBuono(v => !v)}
+                                    className={`text-[10px] font-semibold px-2 py-1 rounded-lg transition-all ${darkMode ? 'text-zinc-500 hover:text-zinc-300 bg-white/[0.04]' : 'text-zinc-400 hover:text-zinc-600 bg-zinc-100'}`}>
+                                    {showBuono ? 'Ocultar Buono' : 'Ver Buono'}
+                                </button>
+                            </div>
                             <div className="space-y-3">
-                                {teamStats.map((member, i) => (
+                                {teamStats.filter(m => m.name !== 'Buono' || showBuono).map((member, i) => (
                                     <div key={member.name} className={`rounded-xl border p-4 ${darkMode ? 'bg-zinc-900/40 border-[#1F1F1F]' : 'bg-zinc-50 border-zinc-200'}`}>
                                         {/* Cabecera */}
                                         <div className="flex items-center gap-2 mb-3">
@@ -5243,8 +5319,20 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                             </div>
                                             {member.commission !== null && (
                                                 <div className="col-span-2">
-                                                    <div className="text-[9px] uppercase tracking-widest text-zinc-500 mb-0.5">Comisión (3%)</div>
-                                                    <div className="text-sm font-bold leading-none text-amber-400">{formatMoney(member.commission)}</div>
+                                                    <div className="text-[9px] uppercase tracking-widest text-zinc-500 mb-0.5">Comisión ({member.name === 'Delfina' ? '4' : '3'}%)</div>
+                                                    {member.name === 'Buono' ? (
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="text-sm font-bold leading-none text-amber-400">
+                                                                {showBuonoCommission ? formatMoney(member.commission) : '••••••'}
+                                                            </div>
+                                                            <button onClick={() => setShowBuonoCommission(v => !v)}
+                                                                className={`text-[10px] px-1.5 py-0.5 rounded font-semibold transition-all ${darkMode ? 'text-zinc-500 hover:text-zinc-300 bg-white/[0.05]' : 'text-zinc-400 hover:text-zinc-600 bg-zinc-100'}`}>
+                                                                {showBuonoCommission ? 'ocultar' : 'ver'}
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="text-sm font-bold leading-none text-amber-400">{formatMoney(member.commission)}</div>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>
@@ -7205,63 +7293,172 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
             {/* --- PESTAÑA GASTOS --- */}
             {activeTab === 'expenses' && (
                 <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in duration-300">
-                <Card darkMode={darkMode} className="border-t-4 border-t-rose-500 p-5 md:p-6">
-                    <h2 className="text-xl font-bold tracking-tight mb-5 flex items-center gap-2"><Wallet size={20} className="text-rose-500"/> Declarar Egreso</h2>
-                    <div className="flex flex-col gap-4">
-                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
-                            <div className="sm:col-span-3"><Input darkMode={darkMode} type="date" label="Fecha" value={newExpense.date} onChange={e => setNewExpense({...newExpense, date: e.target.value})} /></div>
-                            <div className="sm:col-span-6"><Input darkMode={darkMode} label="Descripción del Gasto" placeholder="Ej: Publicidad Ads, Envío Extra..." value={newExpense.description} onChange={e => setNewExpense({...newExpense, description: e.target.value})} /></div>
-                            <div className="sm:col-span-3"><Input darkMode={darkMode} label="Importe" type="number" symbol="$" value={newExpense.amount} onChange={e => setNewExpense({...newExpense, amount: e.target.value})} /></div>
-                        </div>
-                        <div className="flex flex-col sm:flex-row gap-4 items-end">
-                              <div className="flex-1 w-full">
-                                 <Select 
-                                    darkMode={darkMode} 
-                                    label="Asignación Contable (Opcional)"
-                                    value={newExpense.batchId} 
-                                    onChange={e => setNewExpense({...newExpense, batchId: e.target.value})}
-                                    options={[
-                                        { value: '', label: '-- Gasto General del Negocio --' },
-                                        ...batches.map(b => ({ value: b.id, label: b.name || 'Sin nombre' }))
-                                    ]}
-                                 />
-                              </div>
-                              <Button darkMode={darkMode} onClick={handleAddExpense} variant="danger" className="w-full sm:w-48">Registrar Salida</Button>
-                        </div>
-                    </div>
-                </Card>
 
-                <Card darkMode={darkMode} className="p-0 overflow-hidden border-zinc-200 dark:border-[#1F1F1F]">
-                    <div className={`p-4 md:p-5 border-b ${darkMode ? 'bg-[#181818] border-[#1F1F1F]' : 'bg-white border-zinc-200'}`}>
-                        <h3 className="font-bold text-base tracking-tight">Registro de Egresos</h3>
-                    </div>
-                    <div className={`divide-y ${darkMode ? 'divide-zinc-800' : 'divide-zinc-100'}`}>
-                        {expenses.length === 0 && <div className="p-12 text-center text-sm font-medium opacity-50">No hay movimientos de salida registrados.</div>}
-                        {expenses.map(e => (
-                        <div key={e.id} className={`flex justify-between items-center p-4 md:p-5 transition-colors group ${darkMode ? 'hover:bg-zinc-900/50 bg-[#101010]' : 'hover:bg-zinc-50 bg-white'}`}>
-                            <div className="flex items-center gap-4">
-                                <div className={`p-2.5 rounded-lg ${darkMode ? 'bg-red-500/10 text-red-500' : 'bg-red-50 text-red-600'}`}><Wallet size={20}/></div>
-                                <div>
-                                    <div className="font-semibold text-sm">{e.description || 'Sin descripción'}</div>
+                {/* Sub-tabs */}
+                <div className={`flex gap-1 p-1 rounded-2xl ${darkMode ? 'bg-zinc-900/60' : 'bg-zinc-100'}`}>
+                  {[
+                    { id: 'gastos',      label: 'Gastos',      icon: Wallet },
+                    { id: 'movimientos', label: 'Movimientos', icon: Landmark },
+                  ].map(({ id, label, icon: Icon }) => (
+                    <button key={id} onClick={() => setExpensesSubTab(id)}
+                      className={`flex items-center gap-2 flex-1 justify-center px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${
+                        expensesSubTab === id
+                          ? (darkMode ? 'bg-zinc-700 text-zinc-100 shadow-sm' : 'bg-white text-zinc-900 shadow-sm')
+                          : 'text-zinc-500 hover:text-zinc-400'
+                      }`}>
+                      <Icon size={15}/>{label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Pestaña Movimientos */}
+                {expensesSubTab === 'movimientos' && (() => {
+                  const totalIngresos = cashFlow.filter(m => m.type === 'ingreso').reduce((s, m) => s + (m.amount || 0), 0);
+                  const totalRetiros  = cashFlow.filter(m => m.type === 'retiro').reduce((s, m) => s + (m.amount || 0), 0);
+                  const saldo         = totalIngresos - totalRetiros;
+                  const movimientos   = [...cashFlow].sort((a, b) => new Date(b.date) - new Date(a.date));
+                  return (
+                    <>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        {[
+                          { label: 'Saldo Actual',   value: saldo,         icon: Landmark,     positive: saldo >= 0 },
+                          { label: 'Total Ingresos', value: totalIngresos, icon: ArrowDownLeft, positive: true },
+                          { label: 'Total Retiros',  value: totalRetiros,  icon: ArrowUpRight,  positive: false },
+                        ].map(({ label, value, icon: Icon, positive }) => (
+                          <div key={label} className={`rounded-2xl border p-4 ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}
+                            style={darkMode ? {background:'linear-gradient(145deg,#101010,#181818)'} : {}}>
+                            <div className="flex items-center gap-2 mb-3">
+                              <div className={`p-1.5 rounded-lg ${positive ? 'bg-emerald-500/10' : 'bg-amber-500/10'}`}>
+                                <Icon size={14} className={positive ? 'text-emerald-400' : 'text-amber-400'}/>
+                              </div>
+                              <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">{label}</span>
+                            </div>
+                            <div className={`text-lg font-black tracking-tight ${positive ? 'text-emerald-400' : 'text-amber-400'}`}>
+                              {value < 0 ? '-' : ''}{formatMoney(Math.abs(value))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <Card darkMode={darkMode} className="p-5 md:p-6">
+                        <h2 className="text-xl font-bold tracking-tight mb-5 flex items-center gap-2">
+                          <Landmark size={20} className="text-indigo-400"/> Registrar Movimiento
+                        </h2>
+                        <div className="flex gap-2 mb-5">
+                          {[
+                            { type: 'ingreso', label: 'Ingreso', icon: ArrowDownLeft, active: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
+                            { type: 'retiro',  label: 'Retiro',  icon: ArrowUpRight,  active: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
+                          ].map(({ type, label, icon: Icon, active }) => (
+                            <button key={type} onClick={() => setNewCashMovement(p => ({ ...p, type }))}
+                              className={`flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-bold transition-all ${newCashMovement.type === type ? active : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
+                              <Icon size={15}/>{label}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 mb-4">
+                          <div className="sm:col-span-3"><Input darkMode={darkMode} type="date" label="Fecha" value={newCashMovement.date} onChange={e => setNewCashMovement(p => ({ ...p, date: e.target.value }))} /></div>
+                          <div className="sm:col-span-6"><Input darkMode={darkMode} label="Descripción" placeholder={newCashMovement.type === 'ingreso' ? 'Ej: Transferencia cliente, Venta efectivo...' : 'Ej: Retiro personal, Pago proveedor...'} value={newCashMovement.description} onChange={e => setNewCashMovement(p => ({ ...p, description: e.target.value }))} /></div>
+                          <div className="sm:col-span-3"><Input darkMode={darkMode} label="Importe" type="number" symbol="$" value={newCashMovement.amount} onChange={e => setNewCashMovement(p => ({ ...p, amount: e.target.value }))} /></div>
+                        </div>
+                        <div className="flex justify-end">
+                          <Button darkMode={darkMode} onClick={handleAddCashMovement}
+                            variant={newCashMovement.type === 'ingreso' ? 'primary' : 'danger'}
+                            className="w-full sm:w-56">
+                            {newCashMovement.type === 'ingreso' ? <ArrowDownLeft size={15}/> : <ArrowUpRight size={15}/>}
+                            Registrar {newCashMovement.type === 'ingreso' ? 'Ingreso' : 'Retiro'}
+                          </Button>
+                        </div>
+                      </Card>
+
+                      <Card darkMode={darkMode} className="p-0 overflow-hidden">
+                        <div className={`p-4 md:p-5 border-b ${darkMode ? 'bg-[#181818] border-[#1F1F1F]' : 'bg-white border-zinc-200'}`}>
+                          <h3 className="font-bold text-base tracking-tight">Movimientos de Caja</h3>
+                        </div>
+                        <div className={`divide-y ${darkMode ? 'divide-zinc-800' : 'divide-zinc-100'}`}>
+                          {movimientos.length === 0 && <div className="p-12 text-center text-sm font-medium opacity-50">No hay movimientos registrados.</div>}
+                          {movimientos.map(m => {
+                            const isIngreso = m.type === 'ingreso';
+                            return (
+                              <div key={m.id} className={`flex justify-between items-center p-4 md:p-5 transition-colors group ${darkMode ? 'hover:bg-zinc-900/50 bg-[#101010]' : 'hover:bg-zinc-50 bg-white'}`}>
+                                <div className="flex items-center gap-4">
+                                  <div className={`p-2.5 rounded-lg ${isIngreso ? (darkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-600') : (darkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-50 text-amber-600')}`}>
+                                    {isIngreso ? <ArrowDownLeft size={20}/> : <ArrowUpRight size={20}/>}
+                                  </div>
+                                  <div>
+                                    <div className="font-semibold text-sm">{m.description || 'Sin descripción'}</div>
                                     <div className="flex items-center gap-2 mt-1">
-                                        <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{safeDateStr(e.date, {month:'long', day:'numeric'})}</span>
-                                        {e.batchName && (
-                                            <>
-                                                <span className="text-zinc-300 dark:text-zinc-700">•</span>
-                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-zinc-700 text-zinc-400' : 'border-zinc-200 text-zinc-500'}`}>{e.batchName}</span>
-                                            </>
-                                        )}
+                                      <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{safeDateStr(m.date, {month:'long', day:'numeric'})}</span>
+                                      <span className="text-zinc-300 dark:text-zinc-700">•</span>
+                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${isIngreso ? (darkMode ? 'border-emerald-500/30 text-emerald-400' : 'border-emerald-200 text-emerald-600') : (darkMode ? 'border-amber-500/30 text-amber-400' : 'border-amber-200 text-amber-600')}`}>
+                                        {isIngreso ? 'Ingreso' : 'Retiro'}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-6">
+                                  <span className={`font-bold tracking-tight text-lg ${isIngreso ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                    {isIngreso ? '+' : '-'}{formatMoney(m.amount)}
+                                  </span>
+                                  <button onClick={() => handleDeleteCashMovement(m.id)} className={`p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}><Trash2 size={18}/></button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </Card>
+                    </>
+                  );
+                })()}
+
+                {/* Pestaña Gastos */}
+                {expensesSubTab === 'gastos' && (
+                  <>
+                    <Card darkMode={darkMode} className="border-t-4 border-t-rose-500 p-5 md:p-6">
+                        <h2 className="text-xl font-bold tracking-tight mb-5 flex items-center gap-2"><Wallet size={20} className="text-rose-500"/> Declarar Egreso</h2>
+                        <div className="flex flex-col gap-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
+                                <div className="sm:col-span-3"><Input darkMode={darkMode} type="date" label="Fecha" value={newExpense.date} onChange={e => setNewExpense({...newExpense, date: e.target.value})} /></div>
+                                <div className="sm:col-span-6"><Input darkMode={darkMode} label="Descripción del Gasto" placeholder="Ej: Publicidad Ads, Envío Extra..." value={newExpense.description} onChange={e => setNewExpense({...newExpense, description: e.target.value})} /></div>
+                                <div className="sm:col-span-3"><Input darkMode={darkMode} label="Importe" type="number" symbol="$" value={newExpense.amount} onChange={e => setNewExpense({...newExpense, amount: e.target.value})} /></div>
+                            </div>
+                            <div className="flex flex-col sm:flex-row gap-4 items-end">
+                                <div className="flex-1 w-full">
+                                    <Select darkMode={darkMode} label="Asignación Contable (Opcional)" value={newExpense.batchId} onChange={e => setNewExpense({...newExpense, batchId: e.target.value})}
+                                        options={[{ value: '', label: '-- Gasto General del Negocio --' }, ...batches.map(b => ({ value: b.id, label: b.name || 'Sin nombre' }))]} />
+                                </div>
+                                <Button darkMode={darkMode} onClick={handleAddExpense} variant="danger" className="w-full sm:w-48">Registrar Salida</Button>
+                            </div>
+                        </div>
+                    </Card>
+                    <Card darkMode={darkMode} className="p-0 overflow-hidden border-zinc-200 dark:border-[#1F1F1F]">
+                        <div className={`p-4 md:p-5 border-b ${darkMode ? 'bg-[#181818] border-[#1F1F1F]' : 'bg-white border-zinc-200'}`}>
+                            <h3 className="font-bold text-base tracking-tight">Registro de Egresos</h3>
+                        </div>
+                        <div className={`divide-y ${darkMode ? 'divide-zinc-800' : 'divide-zinc-100'}`}>
+                            {expenses.length === 0 && <div className="p-12 text-center text-sm font-medium opacity-50">No hay movimientos de salida registrados.</div>}
+                            {expenses.map(e => (
+                            <div key={e.id} className={`flex justify-between items-center p-4 md:p-5 transition-colors group ${darkMode ? 'hover:bg-zinc-900/50 bg-[#101010]' : 'hover:bg-zinc-50 bg-white'}`}>
+                                <div className="flex items-center gap-4">
+                                    <div className={`p-2.5 rounded-lg ${darkMode ? 'bg-red-500/10 text-red-500' : 'bg-red-50 text-red-600'}`}><Wallet size={20}/></div>
+                                    <div>
+                                        <div className="font-semibold text-sm">{e.description || 'Sin descripción'}</div>
+                                        <div className="flex items-center gap-2 mt-1">
+                                            <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{safeDateStr(e.date, {month:'long', day:'numeric'})}</span>
+                                            {e.batchName && (<><span className="text-zinc-300 dark:text-zinc-700">•</span><span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-zinc-700 text-zinc-400' : 'border-zinc-200 text-zinc-500'}`}>{e.batchName}</span></>)}
+                                        </div>
                                     </div>
                                 </div>
+                                <div className="flex items-center gap-6">
+                                    <span className="font-bold tracking-tight text-red-500 text-lg">-{formatMoney(e.amount)}</span>
+                                    <button onClick={() => handleDeleteExpense(e.id)} className={`p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}><Trash2 size={18}/></button>
+                                </div>
                             </div>
-                            <div className="flex items-center gap-6">
-                                <span className="font-bold tracking-tight text-red-500 text-lg">-{formatMoney(e.amount)}</span> 
-                                <button onClick={()=>handleDeleteExpense(e.id)} className={`p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}><Trash2 size={18}/></button>
-                            </div>
+                            ))}
                         </div>
-                        ))}
-                    </div>
-                </Card>
+                    </Card>
+                  </>
+                )}
+
                 </div>
             )}
 
@@ -7356,7 +7553,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                   const purchases  = parseInt(
                     metaData.actions?.find(a => ['purchase','offsite_conversion.fb_pixel_purchase','omni_purchase'].includes(a.action_type))?.value || 0
                   );
-                  const { revenue, netProfit, grossProfit, totalAllRevenue, adsByDate, allByDate } = metaFirebaseStats;
+                  const { revenue, netProfit, grossProfit, totalAllRevenue, adsByDate, allByDate, salesCount } = metaFirebaseStats;
                   const roas = adSpend > 0 ? revenue / adSpend : 0;
                   const roasProfit = adSpend > 0 ? grossProfit / adSpend : 0;
                   const mer  = adSpend > 0 ? totalAllRevenue / adSpend : 0;
@@ -7376,7 +7573,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                   const dailyRoas     = metaDailyData.map((d, i) => { const sp = dailySpend[i]; const r = adsByDate[d.date_start]?.revenue || 0; return sp > 0 ? r / sp : 0; });
                   const dailyRoasP    = metaDailyData.map((d, i) => { const sp = dailySpend[i]; const e = adsByDate[d.date_start]; const gp = e ? e.revenue - e.cost : 0; return sp > 0 ? gp / sp : 0; });
                   const dailyMer      = metaDailyData.map((d, i) => { const sp = dailySpend[i]; const r = allByDate[d.date_start] || 0; return sp > 0 ? r / sp : 0; });
-                  const dailyCpa      = metaDailyData.map((d, i) => { const p = dailyPurchases[i]; return p > 0 ? dailySpend[i] / p : 0; });
+                  const dailyCpa         = metaDailyData.map((d, i) => { const p = dailyPurchases[i]; return p > 0 ? dailySpend[i] / p : 0; });
+                  const dailySalesCount  = metaDailyData.map(d => adsByDate[d.date_start]?.count || 0);
+                  const dailyTicketAvg   = metaDailyData.map(d => { const e = adsByDate[d.date_start]; return e && e.count > 0 ? e.revenue / e.count : 0; });
 
                   const fARS = v => formatMoney(v);
 
@@ -7393,6 +7592,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         <PremiumMetricCard darkMode={darkMode} title="CPM" value={fARS(cpm)} subtitle={null} sparkline={null} lineSparkline={dailyCpm.length >= 2 ? dailyCpm : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Cuánto pagás para que 1000 personas vean tu anuncio. Mientras más bajo, más barato es llegar a la gente" />
                         <PremiumMetricCard darkMode={darkMode} title="Alcance" value={reach.toLocaleString('es-AR')} subtitle={`${impressions.toLocaleString('es-AR')} impr.`} sparkline={null} lineSparkline={dailyReach.length >= 2 ? dailyReach : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => v.toLocaleString('es-AR')} tooltip="Cantidad de personas distintas que vieron tu anuncio al menos una vez" />
                         <PremiumMetricCard darkMode={darkMode} title="Frecuencia" value={frequency.toFixed(2)} subtitle={`${reach.toLocaleString('es-AR')} personas`} sparkline={null} lineSparkline={dailyFrequency.length >= 2 ? dailyFrequency : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => v.toFixed(2)} tooltip="Cuántas veces en promedio vio tu anuncio cada persona. Entre 1.5 y 3 es ideal, más de 3 puede cansar a la audiencia" />
+                        <PremiumMetricCard darkMode={darkMode} title="Ventas por Ads" value={salesCount} subtitle="pedidos atribuidos a publicidad" sparkline={null} lineSparkline={dailySalesCount.length >= 2 ? dailySalesCount : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v} pedido${v !== 1 ? 's' : ''}`} tooltip="Total de ventas registradas como provenientes de publicidad en el período seleccionado" />
+                        <PremiumMetricCard darkMode={darkMode} title="Ticket Promedio Ads" value={salesCount > 0 ? fARS(revenue / salesCount) : '—'} subtitle="por pedido de publicidad" sparkline={null} lineSparkline={dailyTicketAvg.length >= 2 ? dailyTicketAvg : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Valor promedio de cada venta atribuida a ads. Cuanto más alto, más eficiente es la inversión publicitaria" />
                       </div>
 
                       {/* Rentabilidad real */}
@@ -7417,6 +7618,68 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                           </div>
                         </div>
                       </div>
+                      {/* Campañas activas */}
+                      {metaCampaignsLoading && (
+                        <div className={`rounded-2xl border p-5 ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}
+                          style={darkMode ? {background:'linear-gradient(145deg,#101010,#181818)', boxShadow:'0 4px 24px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04)'} : {}}>
+                          <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-zinc-500 mb-4">Campañas Activas</div>
+                          <div className="space-y-2">
+                            {[0,1,2].map(i => (
+                              <div key={i} className={`h-10 rounded-lg animate-pulse ${darkMode ? 'bg-white/[0.04]' : 'bg-zinc-100'}`}/>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {!metaCampaignsLoading && metaCampaigns.length > 0 && (
+                        <div className={`rounded-2xl border p-5 ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}
+                          style={darkMode ? {background:'linear-gradient(145deg,#101010,#181818)', boxShadow:'0 4px 24px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04)'} : {}}>
+                          <div className="flex items-center justify-between mb-5">
+                            <h3 className="text-[9px] font-bold uppercase tracking-[0.14em] text-zinc-500">Campañas Activas</h3>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${darkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-600'}`}>
+                              {metaCampaigns.length} activa{metaCampaigns.length !== 1 ? 's' : ''}
+                            </span>
+                          </div>
+                          <div className="overflow-x-auto -mx-1">
+                            <table className="w-full min-w-[520px]">
+                              <thead>
+                                <tr className={`text-[9px] font-bold uppercase tracking-widest ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                                  <th className="text-left pb-3 pr-4 pl-1">Campaña</th>
+                                  <th className="text-right pb-3 px-3">Gasto</th>
+                                  <th className="text-right pb-3 px-3">ROAS</th>
+                                  <th className="text-right pb-3 px-3">CTR</th>
+                                  <th className="text-right pb-3 px-3">CPA</th>
+                                  <th className="text-right pb-3 pl-3 pr-1">Conv.</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {metaCampaigns.map(c => {
+                                  const ins = c.insights;
+                                  const spend = parseFloat(ins?.spend || 0);
+                                  const ctr = parseFloat(ins?.ctr || 0);
+                                  const purchases = parseInt(ins?.actions?.find(a => ['purchase','offsite_conversion.fb_pixel_purchase','omni_purchase'].includes(a.action_type))?.value || 0);
+                                  const cpa = purchases > 0 ? spend / purchases : 0;
+                                  const roasRaw = ins?.purchase_roas?.find?.(r => ['omni_purchase','offsite_conversion.fb_pixel_purchase','purchase'].includes(r.action_type))?.value ?? ins?.purchase_roas?.[0]?.value ?? null;
+                                  return (
+                                    <tr key={c.id} className={`border-t text-xs ${darkMode ? 'border-white/[0.05]' : 'border-zinc-100'}`}>
+                                      <td className="py-3 pr-4 pl-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-emerald-400"/>
+                                          <span className={`font-medium truncate max-w-[200px] ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`} title={c.name}>{c.name}</span>
+                                        </div>
+                                      </td>
+                                      <td className={`py-3 px-3 text-right font-semibold tabular-nums ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{fARS(spend)}</td>
+                                      <td className={`py-3 px-3 text-right tabular-nums ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{roasRaw ? `${parseFloat(roasRaw).toFixed(2)}×` : '—'}</td>
+                                      <td className={`py-3 px-3 text-right tabular-nums ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{ctr.toFixed(2)}%</td>
+                                      <td className={`py-3 px-3 text-right tabular-nums ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{cpa > 0 ? fARS(cpa) : '—'}</td>
+                                      <td className={`py-3 pl-3 pr-1 text-right font-medium tabular-nums ${darkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>{purchases || '—'}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
                     </>
                   );
                 })()}
