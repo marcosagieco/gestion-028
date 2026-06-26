@@ -124,6 +124,23 @@ const normalizeSellerName = (name) => {
 };
 
 
+const PRODUCT_GROUPS = [
+  { name: 'Elfbar Ice',      keywords: ['elfbar'] },
+  { name: 'Blow Real Honey', keywords: ['blow'] },
+  { name: 'Sumo',            keywords: ['sumo'] },
+  { name: 'Phenom',          keywords: ['phenom'] },
+  { name: 'Strike',          keywords: ['strike'] },
+  { name: 'Dozo',            keywords: ['dozo'] },
+  { name: 'Ignite V400',     keywords: ['ignite v4', 'v400'] },
+];
+
+const normalizeProductName = (name) => {
+  if (!name) return null;
+  const lower = name.toLowerCase().trim();
+  const group = PRODUCT_GROUPS.find(g => g.keywords.some(kw => lower.includes(kw)));
+  return group ? group.name : name.trim();
+};
+
 const isNewClientStatus = (value) => {
   if (value === true) return true;
   const normalized = String(value ?? '').trim().toLowerCase();
@@ -2135,6 +2152,7 @@ export default function App() {
   const [expensesSubTab, setExpensesSubTab] = useState('gastos');
   const [showBuonoCommission, setShowBuonoCommission] = useState(false);
   const [showBuono, setShowBuono] = useState(false);
+  const [showAllTopProducts, setShowAllTopProducts] = useState(false);
   const [newNeutralStock, setNewNeutralStock] = useState({
     batchId: '',
     itemId: '',
@@ -2748,6 +2766,18 @@ export default function App() {
           .filter(s => isNewClientStatus(s.isNewClient))
           .map(s => ({...s, seller: normalizeSellerName(s.seller)}))
           .sort((a,b) => new Date(b.date) - new Date(a.date));
+  }, [analysisData.baseStats.filteredSales]);
+
+  const topProducts = useMemo(() => {
+    const map = {};
+    analysisData.baseStats.filteredSales.forEach(s => {
+      const name = normalizeProductName(s.productName);
+      if (!name) return;
+      if (!map[name]) map[name] = { name, units: 0, revenue: 0 };
+      map[name].units   += s.quantity || 0;
+      map[name].revenue += s.totalSaleRaw || 0;
+    });
+    return Object.values(map).sort((a, b) => b.units - a.units);
   }, [analysisData.baseStats.filteredSales]);
 
   const sparklineData7d = useMemo(() => {
@@ -5407,6 +5437,50 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             })()}
                         </div>
                     </div>
+
+                    {/* TOP PRODUCTOS */}
+                    {topProducts.length > 0 && (
+                        <div className={`rounded-2xl border p-5 ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
+                            <div className="flex items-center justify-between mb-4">
+                                <div>
+                                    <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Productos más vendidos</h3>
+                                    <p className="text-[10px] text-zinc-600 mt-0.5">por unidades · período seleccionado</p>
+                                </div>
+                                {topProducts.length > 5 && (
+                                    <button onClick={() => setShowAllTopProducts(v => !v)}
+                                        className={`text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-all ${darkMode ? 'text-zinc-400 hover:text-zinc-200 bg-white/[0.04]' : 'text-zinc-500 hover:text-zinc-700 bg-zinc-100'}`}>
+                                        {showAllTopProducts ? 'Ver menos' : `Ver más (${topProducts.length - 5} más)`}
+                                    </button>
+                                )}
+                            </div>
+                            <div className="space-y-2">
+                                {(showAllTopProducts ? topProducts : topProducts.slice(0, 5)).map((p, i) => {
+                                    const maxUnits = topProducts[0].units;
+                                    const pct = maxUnits > 0 ? (p.units / maxUnits) * 100 : 0;
+                                    return (
+                                        <div key={p.name} className="flex items-center gap-3">
+                                            <div className={`w-5 text-[10px] font-black text-right shrink-0 ${i === 0 ? 'text-indigo-400' : darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                                                {i + 1}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center justify-between mb-1">
+                                                    <span className={`text-xs font-semibold truncate ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{p.name}</span>
+                                                    <div className="flex items-center gap-3 shrink-0 ml-2">
+                                                        <span className={`text-[10px] font-bold ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{p.units} uds</span>
+                                                        <span className={`text-[10px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{formatMoney(p.revenue)}</span>
+                                                    </div>
+                                                </div>
+                                                <div className={`h-1 rounded-full overflow-hidden ${darkMode ? 'bg-white/[0.06]' : 'bg-zinc-100'}`}>
+                                                    <div className="h-full rounded-full transition-all duration-500"
+                                                        style={{ width: `${pct}%`, background: i === 0 ? '#6366f1' : darkMode ? 'rgba(255,255,255,0.15)' : '#d4d4d8' }}/>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
 
                 </div>
             )}
