@@ -852,7 +852,9 @@ const AIChat = ({ darkMode, db }) => {
           variant: { type: 'string' }, quantity: { type: 'number' },
           unitPrice: { type: 'number' }, source: { type: 'string' },
           isReseller: { type: 'boolean' }, isNewClient: { type: 'string' },
-          seller: { type: 'string' }
+          seller: { type: 'string' },
+          shippingPrice: { type: 'number', description: 'Total de envío cobrado al cliente (lo que pagó el cliente por el envío).' },
+          shippingCost: { type: 'number', description: 'Costo real del envío (lo que le costó al negocio mandar el pedido).' }
         },
         required: ['date', 'batchId', 'batchName', 'itemId', 'productName', 'quantity', 'unitPrice']
       }
@@ -1097,8 +1099,12 @@ const AIChat = ({ darkMode, db }) => {
         }
       } catch {}
       const totalSaleRaw = (toolInput.unitPrice || 0) * quantity;
+      const shippingPrice = Number(toolInput.shippingPrice || 0);
+      const shippingCost  = Number(toolInput.shippingCost  || 0);
+      const shippingProfit = shippingPrice - shippingCost;
       const saleRef = await addDoc(collection(db, 'sales'), {
         ...toolInput, quantity: Number(quantity), totalSaleRaw, costArsAtSale,
+        shippingPrice, shippingCost, shippingProfit,
         createdAt: new Date().toISOString(), ticketId: `TKT-${Date.now()}`
       });
       if (batchDocData) {
@@ -1108,7 +1114,7 @@ const AIChat = ({ darkMode, db }) => {
         await updateDoc(doc(db, 'batches', batchId), { items: updItems });
         pushAction(chatId, { type: 'venta', saleId: saleRef.id, batchId, itemId, quantity: Number(quantity), previousStock: prevStock });
       }
-      return JSON.stringify({ success: true, saleId: saleRef.id, totalSaleRaw, costArsAtSale });
+      return JSON.stringify({ success: true, saleId: saleRef.id, totalSaleRaw, costArsAtSale, shippingPrice, shippingCost, shippingProfit });
     }
 
     if (toolName === 'registrar_gasto') {
@@ -1456,7 +1462,7 @@ const AIChat = ({ darkMode, db }) => {
 ⚠️ REGLA ABSOLUTA — NOMBRES EXACTOS: NUNCA inventes nombres de lotes, productos o variantes. Los únicos nombres válidos son los que obtuviste de consultar_stock en esta conversación. Si vas a operar sobre un lote o producto específico y no ejecutaste consultar_stock antes, ejecutalo primero para obtener los nombres exactos. Si una tool devuelve "lotesDisponibles" o "productosDisponibles", elegí el nombre correcto de esa lista y reintentá la operación con ese nombre exacto — no inventes una alternativa.
 
 COLECCIONES FIREBASE (fechas como ISO UTC):
-- sales: date(ISO), batchId, batchName, itemId, productName, variant, quantity, unitPrice, totalSaleRaw, costArsAtSale, source, isReseller, isNewClient, seller
+- sales: date(ISO), batchId, batchName, itemId, productName, variant, quantity, unitPrice, totalSaleRaw, costArsAtSale, source, isReseller, isNewClient, seller, shippingPrice(total cobrado al cliente por envío), shippingCost(lo que costó el envío al negocio), shippingProfit(ganancia del envío = shippingPrice - shippingCost)
 - batches: name, items[]{id,product,variant,costArs,initialStock,currentStock}
 - expenses: date(ISO), description, amount, batchId, batchName
 - neutral_stock: reason, note, batchId, itemId, productName, variant, quantity, unitPrice, costArsAtEntry
@@ -1507,6 +1513,8 @@ MARKETING — Meta Ads vs orgánico: El negocio trabaja con una agencia de Meta 
 - Si el período incluye mayo 2026, mencionar que los ads estaban apagados y que los nuevos de ese período son 100% orgánicos
 
 LENGUAJE DE NEGOCIO: Nunca uses términos técnicos como "Firebase", "colección", "documento", "campo", "array", "batch id" ni ningún término de base de datos. Usá lenguaje de negocio: "lote" en vez de "batch/document", "venta" en vez de "sales record", "gasto" en vez de "expense", "productos" en vez de "items array". El usuario no sabe de programación.
+
+ENVÍOS: Cuando el usuario mencione envío al registrar una venta, usá dos campos separados: shippingPrice = total que le cobró al cliente por el envío, shippingCost = lo que le costó el envío al negocio. El sistema calcula automáticamente shippingProfit = shippingPrice - shippingCost. Si el usuario solo menciona un valor de envío sin aclarar si es costo o cobro, preguntale cuál es cuál antes de registrar. En cierres y resúmenes, cuando haya ventas con envío, mostrá: cobro envío total, costo envío total, y ganancia de envíos.
 
 CONFIRMACIONES EXITOSAS: Cuando una acción se complete, mostrá un resumen breve en texto plano sin tablas. Ejemplo: "✅ Variante actualizada: de 'X' a 'Y' en el lote Z." Directo y claro.
 
@@ -2217,8 +2225,9 @@ export default function App() {
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '', repeatCount: '1' });
   const [newExpense, setNewExpense] = useState({ description: '', amount: '', batchId: '', date: getTodayDate() });
   const [cashFlow, setCashFlow] = useState([]);
-  const [newCashMovement, setNewCashMovement] = useState({ type: 'ingreso', date: getTodayDate(), description: '', amount: '' });
+  const [newCashMovement, setNewCashMovement] = useState({ type: 'ingreso', account: 'LEMON', date: getTodayDate(), description: '', amount: '' });
   const [expensesSubTab, setExpensesSubTab] = useState('gastos');
+  const [cashFlowFilter, setCashFlowFilter] = useState('TODAS');
   const [showBuonoCommission, setShowBuonoCommission] = useState(false);
   const [showBuono, setShowBuono] = useState(false);
   const [showAllTopProducts, setShowAllTopProducts] = useState(false);
@@ -4540,6 +4549,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     const [y, m, d] = newCashMovement.date.split('-');
     await addDoc(collection(db, 'cashFlow'), {
       type: newCashMovement.type,
+      account: newCashMovement.account || 'LEMON',
       date: new Date(Number(y), Number(m) - 1, Number(d), 12, 0, 0).toISOString(),
       description: newCashMovement.description.trim(),
       amount: parseFloat(newCashMovement.amount),
@@ -7462,31 +7472,46 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                   const movimientos   = [...cashFlow].sort((a, b) => new Date(b.date) - new Date(a.date));
                   return (
                     <>
+                      {/* Saldos por cuenta */}
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        {[
-                          { label: 'Saldo Actual',   value: saldo,         icon: Landmark,     positive: saldo >= 0 },
-                          { label: 'Total Ingresos', value: totalIngresos, icon: ArrowDownLeft, positive: true },
-                          { label: 'Total Retiros',  value: totalRetiros,  icon: ArrowUpRight,  positive: false },
-                        ].map(({ label, value, icon: Icon, positive }) => (
-                          <div key={label} className={`rounded-2xl border p-4 ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}
-                            style={darkMode ? {background:'linear-gradient(145deg,#101010,#181818)'} : {}}>
-                            <div className="flex items-center gap-2 mb-3">
-                              <div className={`p-1.5 rounded-lg ${positive ? 'bg-emerald-500/10' : 'bg-amber-500/10'}`}>
-                                <Icon size={14} className={positive ? 'text-emerald-400' : 'text-amber-400'}/>
+                        {['LEMON', 'ASTROPAY', 'GALICIA'].map(acc => {
+                          const accIngresos = cashFlow.filter(m => m.account === acc && m.type === 'ingreso').reduce((s, m) => s + (m.amount || 0), 0);
+                          const accRetiros  = cashFlow.filter(m => m.account === acc && m.type === 'retiro').reduce((s, m) => s + (m.amount || 0), 0);
+                          const accSaldo    = accIngresos - accRetiros;
+                          return (
+                            <div key={acc} className={`rounded-2xl border p-4 ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}
+                              style={darkMode ? {background:'linear-gradient(145deg,#101010,#181818)'} : {}}>
+                              <div className="flex items-center gap-2 mb-3">
+                                <div className={`p-1.5 rounded-lg ${accSaldo >= 0 ? 'bg-emerald-500/10' : 'bg-rose-500/10'}`}>
+                                  <Landmark size={14} className={accSaldo >= 0 ? 'text-emerald-400' : 'text-rose-400'}/>
+                                </div>
+                                <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">{acc}</span>
                               </div>
-                              <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">{label}</span>
+                              <div className={`text-lg font-black tracking-tight ${accSaldo >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                {accSaldo < 0 ? '-' : ''}{formatMoney(Math.abs(accSaldo))}
+                              </div>
+                              <div className={`text-[10px] mt-1 ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                                +{formatMoney(accIngresos)} / -{formatMoney(accRetiros)}
+                              </div>
                             </div>
-                            <div className={`text-lg font-black tracking-tight ${positive ? 'text-emerald-400' : 'text-amber-400'}`}>
-                              {value < 0 ? '-' : ''}{formatMoney(Math.abs(value))}
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
 
                       <Card darkMode={darkMode} className="p-5 md:p-6">
                         <h2 className="text-xl font-bold tracking-tight mb-5 flex items-center gap-2">
                           <Landmark size={20} className="text-indigo-400"/> Registrar Movimiento
                         </h2>
+                        {/* Selector de cuenta */}
+                        <div className="flex gap-2 mb-3">
+                          {['LEMON', 'ASTROPAY', 'GALICIA'].map(acc => (
+                            <button key={acc} onClick={() => setNewCashMovement(p => ({ ...p, account: acc }))}
+                              className={`px-4 py-2 rounded-xl border text-sm font-bold transition-all ${newCashMovement.account === acc ? (darkMode ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40' : 'bg-indigo-50 text-indigo-700 border-indigo-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
+                              {acc}
+                            </button>
+                          ))}
+                        </div>
+                        {/* Selector ingreso / retiro */}
                         <div className="flex gap-2 mb-5">
                           {[
                             { type: 'ingreso', label: 'Ingreso', icon: ArrowDownLeft, active: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
@@ -7514,12 +7539,20 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                       </Card>
 
                       <Card darkMode={darkMode} className="p-0 overflow-hidden">
-                        <div className={`p-4 md:p-5 border-b ${darkMode ? 'bg-[#181818] border-[#1F1F1F]' : 'bg-white border-zinc-200'}`}>
+                        <div className={`p-4 md:p-5 border-b flex flex-wrap items-center justify-between gap-3 ${darkMode ? 'bg-[#181818] border-[#1F1F1F]' : 'bg-white border-zinc-200'}`}>
                           <h3 className="font-bold text-base tracking-tight">Movimientos de Caja</h3>
+                          <div className="flex gap-1.5 flex-wrap">
+                            {['TODAS', 'LEMON', 'ASTROPAY', 'GALICIA'].map(f => (
+                              <button key={f} onClick={() => setCashFlowFilter(f)}
+                                className={`px-3 py-1 rounded-lg text-[11px] font-bold border transition-all ${cashFlowFilter === f ? (darkMode ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40' : 'bg-indigo-50 text-indigo-700 border-indigo-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-600'}`}>
+                                {f}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                         <div className={`divide-y ${darkMode ? 'divide-zinc-800' : 'divide-zinc-100'}`}>
-                          {movimientos.length === 0 && <div className="p-12 text-center text-sm font-medium opacity-50">No hay movimientos registrados.</div>}
-                          {movimientos.map(m => {
+                          {movimientos.filter(m => cashFlowFilter === 'TODAS' || m.account === cashFlowFilter).length === 0 && <div className="p-12 text-center text-sm font-medium opacity-50">No hay movimientos registrados.</div>}
+                          {movimientos.filter(m => cashFlowFilter === 'TODAS' || m.account === cashFlowFilter).map(m => {
                             const isIngreso = m.type === 'ingreso';
                             return (
                               <div key={m.id} className={`flex justify-between items-center p-4 md:p-5 transition-colors group ${darkMode ? 'hover:bg-zinc-900/50 bg-[#101010]' : 'hover:bg-zinc-50 bg-white'}`}>
@@ -7535,6 +7568,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${isIngreso ? (darkMode ? 'border-emerald-500/30 text-emerald-400' : 'border-emerald-200 text-emerald-600') : (darkMode ? 'border-amber-500/30 text-amber-400' : 'border-amber-200 text-amber-600')}`}>
                                         {isIngreso ? 'Ingreso' : 'Retiro'}
                                       </span>
+                                      {m.account && (
+                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
+                                          {m.account}
+                                        </span>
+                                      )}
                                     </div>
                                   </div>
                                 </div>

@@ -202,10 +202,11 @@ const normalizarCampoMensaje = (key) => {
         "motivo": "motivo", "vendedor": "vendedor",
         "pago": "medioPago", "medio pago": "medioPago", "medio de pago": "medioPago",
         "metodo pago": "medioPago", "metodo de pago": "medioPago", "forma pago": "medioPago",
-        "envio": "envioCobro", "envío": "envioCobro",
-        "costo envio": "envioCobro", "costo de envio": "envioCobro", "costo envío": "envioCobro",
-        "cobro envio": "envioCobro", "cobro de envio": "envioCobro",
-        "envio cliente": "envioCobro", "shipping": "envioCobro"
+        "envio": "envioCobro", "envío": "envioCobro", "envio total": "envioCobro", "total envio": "envioCobro",
+        "cobro envio": "envioCobro", "cobro de envio": "envioCobro", "cobro envío": "envioCobro",
+        "envio cliente": "envioCobro", "shipping": "envioCobro",
+        "costo envio": "envioCosto", "costo de envio": "envioCosto", "costo envío": "envioCosto",
+        "mi costo envio": "envioCosto", "costo ship": "envioCosto"
     };
     return aliases[k] || k;
 };
