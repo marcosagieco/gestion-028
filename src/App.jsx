@@ -1608,18 +1608,87 @@ Usá tablas markdown para comparaciones. Respondé en español argentino.`;
             if (t.trim()) pushMsg(chatId, { role: 'assistant', content: t, model: modelUsed });
           }
           const toolResults = [];
+
+          // Pre-validación atómica: si hay múltiples registrar_venta en el mismo mensaje,
+          // verificar TODOS antes de ejecutar cualquiera. Si uno es inválido, fallan todos.
+          const ventaTools = toolUses.filter(tu => tu.name === 'registrar_venta');
+          const ventaBlockedIds = new Set();
+          if (ventaTools.length > 1) {
+            try {
+              const allBatchesSnap = await getDocs(collection(db, 'batches'));
+              const batchMap = Object.fromEntries(allBatchesSnap.docs.map(d => [d.id, d.data()]));
+              let anyInvalid = false;
+              for (const tu of ventaTools) {
+                const { batchId, itemId } = tu.input;
+                const bData = batchMap[batchId];
+                if (!bData || !(bData.items || []).find(i => i.id === itemId)) {
+                  anyInvalid = true;
+                  break;
+                }
+              }
+              if (anyInvalid) ventaTools.forEach(tu => ventaBlockedIds.add(tu.id));
+            } catch {
+              ventaTools.forEach(tu => ventaBlockedIds.add(tu.id));
+            }
+          }
+
+          // Seguimiento de ventas ejecutadas para rollback si una falla durante ejecución
+          const executedVentas = [];
+          let ventaExecutionFailed = false;
+
           for (const tu of toolUses) {
             let result;
-            try {
-              result = await executeTool(tu.name, tu.input, chatId);
-              const parsed = JSON.parse(result);
-              if (parsed?.success === false) {
-                result = JSON.stringify({ ...parsed, tool: tu.name });
+            if (ventaBlockedIds.has(tu.id)) {
+              result = JSON.stringify({ success: false, tool: tu.name, error: 'Validación fallida: uno o más productos no fueron encontrados. Ningún producto del mensaje fue registrado.' });
+            } else {
+              try {
+                result = await executeTool(tu.name, tu.input, chatId);
+                const parsed = JSON.parse(result);
+                if (parsed?.success === false) {
+                  result = JSON.stringify({ ...parsed, tool: tu.name });
+                  if (tu.name === 'registrar_venta') ventaExecutionFailed = true;
+                } else if (tu.name === 'registrar_venta' && parsed?.saleId) {
+                  executedVentas.push({ saleId: parsed.saleId, batchId: tu.input.batchId, itemId: tu.input.itemId, quantity: Number(tu.input.quantity) });
+                }
+              } catch (toolErr) {
+                result = JSON.stringify({ success: false, tool: tu.name, error: toolErr.message });
+                if (tu.name === 'registrar_venta') ventaExecutionFailed = true;
               }
-            } catch (toolErr) {
-              result = JSON.stringify({ success: false, tool: tu.name, error: toolErr.message });
             }
             toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: result });
+          }
+
+          // Rollback: si alguna venta falló durante ejecución, revertir las que ya se guardaron
+          if (ventaExecutionFailed && executedVentas.length > 0) {
+            for (const { saleId, batchId, itemId, quantity } of executedVentas) {
+              try {
+                await deleteDoc(doc(db, 'sales', saleId));
+                const bSnap = await getDocs(collection(db, 'batches'));
+                const bDoc = bSnap.docs.find(d => d.id === batchId);
+                if (bDoc) {
+                  const restoredItems = (bDoc.data().items || []).map(i =>
+                    i.id === itemId ? { ...i, currentStock: (i.currentStock || 0) + quantity } : i
+                  );
+                  await updateDoc(doc(db, 'batches', batchId), { items: restoredItems });
+                }
+              } catch {}
+            }
+            const rolledBackIds = new Set(executedVentas.map(v => v.saleId));
+            updateChat(chatId, c => ({
+              ...c,
+              actionHistory: (c.actionHistory || []).filter(a => !(a.type === 'venta' && rolledBackIds.has(a.saleId)))
+            }));
+            for (const tr of toolResults) {
+              const tu = toolUses.find(t => t.id === tr.tool_use_id);
+              if (tu?.name === 'registrar_venta') {
+                try {
+                  const parsed = JSON.parse(tr.content);
+                  if (parsed?.success === true) {
+                    tr.content = JSON.stringify({ success: false, tool: tu.name, error: 'Operación revertida: otro producto del mensaje tuvo un error. Ningún producto fue registrado.' });
+                  }
+                } catch {}
+              }
+            }
           }
           apiMsgs = [...apiMsgs, { role: 'assistant', content: data.content }, { role: 'user', content: toolResults }];
         } else {
