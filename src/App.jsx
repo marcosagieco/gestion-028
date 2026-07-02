@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package, UserCircle,
-  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw, Target, RefreshCw, Receipt, Minus, ArrowDownLeft, ArrowUpRight, Landmark
+  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw, Target, RefreshCw, Receipt, Minus, ArrowDownLeft, ArrowUpRight, Landmark, CreditCard
 } from 'lucide-react';
 
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
@@ -854,7 +854,8 @@ const AIChat = ({ darkMode, db }) => {
           isReseller: { type: 'boolean' }, isNewClient: { type: 'string' },
           seller: { type: 'string' },
           shippingPrice: { type: 'number', description: 'Total de envío cobrado al cliente (lo que pagó el cliente por el envío).' },
-          shippingCost: { type: 'number', description: 'Costo real del envío (lo que le costó al negocio mandar el pedido).' }
+          shippingCost: { type: 'number', description: 'Costo real del envío (lo que le costó al negocio mandar el pedido).' },
+          medioPago: { type: 'string', description: 'Medio de pago: alias1 (Galicia), alias2 (Astropay), alias3 (Lemon), efectivo. Si el usuario lo menciona, siempre incluirlo.' }
         },
         required: ['date', 'batchId', 'batchName', 'itemId', 'productName', 'quantity', 'unitPrice']
       }
@@ -1113,6 +1114,15 @@ const AIChat = ({ darkMode, db }) => {
         );
         await updateDoc(doc(db, 'batches', batchId), { items: updItems });
         pushAction(chatId, { type: 'venta', saleId: saleRef.id, batchId, itemId, quantity: Number(quantity), previousStock: prevStock });
+      }
+      const aliasWalletMap = { alias1: 'GALICIA', alias2: 'ASTROPAY', alias3: 'LEMON' };
+      const mp = toolInput.medioPago;
+      if (mp && aliasWalletMap[mp]) {
+        const wName = aliasWalletMap[mp];
+        const wAmount = totalSaleRaw + shippingProfit;
+        const updatedW = { ...wallets, [wName]: (wallets[wName] || 0) + wAmount };
+        setWallets(updatedW);
+        await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
       }
       return JSON.stringify({ success: true, saleId: saleRef.id, totalSaleRaw, costArsAtSale, shippingPrice, shippingCost, shippingProfit });
     }
@@ -2225,9 +2235,13 @@ export default function App() {
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '', repeatCount: '1' });
   const [newExpense, setNewExpense] = useState({ description: '', amount: '', batchId: '', date: getTodayDate() });
   const [cashFlow, setCashFlow] = useState([]);
+  const [wallets, setWallets] = useState({ LEMON: 0, ASTROPAY: 0, GALICIA: 0, EFECTIVO: 0 });
+  const [editingWallet, setEditingWallet] = useState(null);
+  const [editingWalletValue, setEditingWalletValue] = useState('');
   const [newCashMovement, setNewCashMovement] = useState({ type: 'ingreso', account: 'LEMON', date: getTodayDate(), description: '', amount: '' });
   const [expensesSubTab, setExpensesSubTab] = useState('gastos');
   const [cashFlowFilter, setCashFlowFilter] = useState('TODAS');
+  const [showAjustesHistory, setShowAjustesHistory] = useState(false);
   const [showBuonoCommission, setShowBuonoCommission] = useState(false);
   const [showBuono, setShowBuono] = useState(false);
   const [showAllTopProducts, setShowAllTopProducts] = useState(false);
@@ -2352,9 +2366,13 @@ export default function App() {
             if (docSnap.exists()) setHiddenSuggestions(docSnap.data());
             else setHiddenSuggestions({ products: [], variants: [] });
         }, (error) => console.error("Error settings:", error));
-        
+
+        const unsubWallets = onSnapshot(doc(db, 'settings', 'wallets'), (docSnap) => {
+            if (docSnap.exists()) setWallets({ LEMON: 0, ASTROPAY: 0, GALICIA: 0, EFECTIVO: 0, ...docSnap.data() });
+        }, () => {});
+
         setLoading(false);
-        return () => { unsubBatches(); unsubSales(); unsubExp(); unsubCash(); unsubNeutralStock(); unsubConsignments(); unsubSettings(); };
+        return () => { unsubBatches(); unsubSales(); unsubExp(); unsubCash(); unsubNeutralStock(); unsubConsignments(); unsubSettings(); unsubWallets(); };
     } catch (e) {
         setIsOffline(true);
         setLoading(false);
@@ -2701,7 +2719,7 @@ export default function App() {
           fSales.forEach(s => {
               totalRevenue += s.totalSaleRaw || 0;
               itemsSold += s.quantity || 0;
-              totalShippingProfit += (s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0));
+              totalShippingProfit += Number(s.shippingProfit) || 0;
               const src = s.source || 'Otro';
               sourceCounts[src] = (sourceCounts[src] || 0) + 1;
               if (s.isReseller === 'Si' || s.isReseller === true) typeCounts.Revendedor++; else typeCounts.Final++;
@@ -3176,7 +3194,7 @@ export default function App() {
     batchSales.forEach(s => {
       totalRevenue += s.totalSaleRaw || 0;
       itemsSold += s.quantity || 0;
-      const saleShippingProfit = (s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0));
+      const saleShippingProfit = s.shippingProfit != null ? (s.shippingProfit || 0) : ((s.clientShippingCharge || 0) - (s.shippingCostArs || 0));
       totalShippingProfit += saleShippingProfit;
       const src = s.source || 'Otro';
       sourceCounts[src] = (sourceCounts[src] || 0) + 1;
@@ -4547,20 +4565,70 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
   const handleAddCashMovement = async () => {
     if (!newCashMovement.description.trim() || !newCashMovement.amount || !newCashMovement.date) return showToast('Completá todos los campos', 'error');
     const [y, m, d] = newCashMovement.date.split('-');
+    const amount = parseFloat(newCashMovement.amount);
+    const account = newCashMovement.account || 'LEMON';
     await addDoc(collection(db, 'cashFlow'), {
       type: newCashMovement.type,
-      account: newCashMovement.account || 'LEMON',
+      account,
       date: new Date(Number(y), Number(m) - 1, Number(d), 12, 0, 0).toISOString(),
       description: newCashMovement.description.trim(),
-      amount: parseFloat(newCashMovement.amount),
+      amount,
     });
+    const delta = newCashMovement.type === 'ingreso' ? amount : -amount;
+    const updatedW = { ...wallets, [account]: (wallets[account] || 0) + delta };
+    setWallets(updatedW);
+    await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
     setNewCashMovement(prev => ({ ...prev, description: '', amount: '' }));
-    showToast(`${newCashMovement.type === 'ingreso' ? 'Ingreso' : 'Retiro'} registrado`, 'success');
+    showToast(`${newCashMovement.type === 'ingreso' ? 'Ingreso' : newCashMovement.type === 'pago' ? 'Pago' : 'Retiro'} registrado`, 'success');
   };
 
   const handleDeleteCashMovement = async (id) => {
+    if (!window.confirm('¿Seguro que querés eliminar este movimiento?')) return;
+    const mov = cashFlow.find(m => m.id === id);
     await deleteDoc(doc(db, 'cashFlow', id));
+    if (mov?.account && mov?.amount && mov.type !== 'ajuste') {
+      const delta = mov.type === 'ingreso' ? -mov.amount : mov.amount; // retiro y pago ambos restan
+      const updatedW = { ...wallets, [mov.account]: (wallets[mov.account] || 0) + delta };
+      setWallets(updatedW);
+      await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+    }
     showToast('Movimiento eliminado', 'success');
+  };
+
+  const handleSincronizarBilleteras = async () => {
+    if (!window.confirm('¿Sincronizar billeteras con todas las ventas históricas con Alias 1/2/3? Esto va a pisar los saldos actuales.')) return;
+    const aliasWalletMap = { alias1: 'GALICIA', alias2: 'ASTROPAY', alias3: 'LEMON' };
+    const totales = { GALICIA: 0, ASTROPAY: 0, LEMON: 0, EFECTIVO: 0 };
+    const snap = await getDocs(collection(db, 'sales'));
+    snap.docs.forEach(d => {
+      const s = d.data();
+      if (s.medioPago && aliasWalletMap[s.medioPago]) {
+        totales[aliasWalletMap[s.medioPago]] += (s.totalSaleRaw || 0) + (s.shippingProfit || 0);
+      }
+    });
+    await setDoc(doc(db, 'settings', 'wallets'), totales);
+    setWallets(totales);
+    showToast(`Billeteras sincronizadas — Galicia: ${formatMoney(totales.GALICIA)} · Astropay: ${formatMoney(totales.ASTROPAY)} · Lemon: ${formatMoney(totales.LEMON)} · Efectivo: ${formatMoney(totales.EFECTIVO)}`, 'success');
+  };
+
+  const handleSaveWalletBalance = async (account) => {
+    const val = parseFloat(editingWalletValue);
+    if (isNaN(val)) return showToast('Ingresá un número válido', 'error');
+    const prev = wallets[account] || 0;
+    const updated = { ...wallets, [account]: val };
+    setWallets(updated);
+    await setDoc(doc(db, 'settings', 'wallets'), updated, { merge: true });
+    await addDoc(collection(db, 'cashFlow'), {
+      type: 'ajuste',
+      account,
+      date: new Date().toISOString(),
+      description: `Ajuste manual: ${formatMoney(prev)} → ${formatMoney(val)}`,
+      amount: val,
+      previousAmount: prev,
+    });
+    setEditingWallet(null);
+    setEditingWalletValue('');
+    showToast(`Saldo de ${account} actualizado`, 'success');
   };
 
 
@@ -5320,6 +5388,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                         <PremiumMetricCard darkMode={darkMode} title="Facturación" value={formatMoney(cur.totalRevenue)} subtitle="Bruto facturado" change={pct(cur.totalRevenue, prev?.totalRevenue)} sparkline={sparklineData7d.revenue} sparklineLabels={L} sparklineFormatter={fMoney} />
                                         <PremiumMetricCard darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(cur.grossProfit)} subtitle={`${formatPercent(cur.grossMargin)} margen`} change={pct(cur.grossProfit, prev?.grossProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} />
                                         <PremiumMetricCard darkMode={darkMode} title="Ganancia Neta" value={formatMoney(netProfitWithAds)} subtitle={`${formatPercent(netMarginWithAds)} neto${homeAdSpend > 0 ? ' · incl. ads' : ''}`} change={pct(cur.netProfit, prev?.netProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Ganancia neta descontando el gasto en Meta Ads del período (${formatMoney(homeAdSpend)}). Gastos fijos: ${formatMoney(cur.totalGlobalExpenses)}.` : undefined} />
+                                        <PremiumMetricCard darkMode={darkMode} title="Ganancia Envío" value={formatMoney(cur.totalShippingProfit)} subtitle="Cobrado menos costo" change={pct(cur.totalShippingProfit, prev?.totalShippingProfit)} sparkline={null} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Diferencia entre lo que cobraste al cliente por envío y lo que te costó a vos el envío." />
                                         <PremiumMetricCard darkMode={darkMode} title="Gastos Totales" value={formatMoney(totalExpWithAds)} subtitle={homeAdSpend > 0 ? `incl. ${formatMoney(homeAdSpend)} en ads` : 'Logística y operativos'} change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Gastos fijos (${formatMoney(cur.totalGlobalExpenses)}) + Meta Ads del período (${formatMoney(homeAdSpend)}).` : undefined} />
                                         <PremiumMetricCard darkMode={darkMode} title="Gastos Empresa" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Gastos anotados" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gastos operativos, logística y fijos registrados en el sistema para el período" />
                                         <PremiumMetricCard darkMode={darkMode} title="Gasto Meta Ads" value={homeAdSpend > 0 ? formatMoney(homeAdSpend) : '—'} subtitle="Inversión publicitaria" change={null} sparkline={null} tooltip="Gasto total en publicidad de Meta Ads durante el período seleccionado" />
@@ -7448,20 +7517,26 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                 <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in duration-300">
 
                 {/* Sub-tabs */}
-                <div className={`flex gap-1 p-1 rounded-2xl ${darkMode ? 'bg-zinc-900/60' : 'bg-zinc-100'}`}>
-                  {[
-                    { id: 'gastos',      label: 'Gastos',      icon: Wallet },
-                    { id: 'movimientos', label: 'Movimientos', icon: Landmark },
-                  ].map(({ id, label, icon: Icon }) => (
-                    <button key={id} onClick={() => setExpensesSubTab(id)}
-                      className={`flex items-center gap-2 flex-1 justify-center px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                        expensesSubTab === id
-                          ? (darkMode ? 'bg-zinc-700 text-zinc-100 shadow-sm' : 'bg-white text-zinc-900 shadow-sm')
-                          : 'text-zinc-500 hover:text-zinc-400'
-                      }`}>
-                      <Icon size={15}/>{label}
-                    </button>
-                  ))}
+                <div className="flex items-center gap-3">
+                  <div className={`flex gap-1 p-1 rounded-2xl flex-1 ${darkMode ? 'bg-zinc-900/60' : 'bg-zinc-100'}`}>
+                    {[
+                      { id: 'gastos',      label: 'Gastos',      icon: Wallet },
+                      { id: 'movimientos', label: 'Movimientos', icon: Landmark },
+                    ].map(({ id, label, icon: Icon }) => (
+                      <button key={id} onClick={() => setExpensesSubTab(id)}
+                        className={`flex items-center gap-2 flex-1 justify-center px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${
+                          expensesSubTab === id
+                            ? (darkMode ? 'bg-zinc-700 text-zinc-100 shadow-sm' : 'bg-white text-zinc-900 shadow-sm')
+                            : 'text-zinc-500 hover:text-zinc-400'
+                        }`}>
+                        <Icon size={15}/>{label}
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={handleSincronizarBilleteras}
+                    className={`flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-[11px] font-bold border transition-all whitespace-nowrap ${darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300 hover:border-white/20' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
+                    <RefreshCw size={11}/> Sincronizar con ventas
+                  </button>
                 </div>
 
                 {/* Pestaña Movimientos */}
@@ -7472,27 +7547,65 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                   const movimientos   = [...cashFlow].sort((a, b) => new Date(b.date) - new Date(a.date));
                   return (
                     <>
-                      {/* Saldos por cuenta */}
+                      {/* Billeteras */}
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        {['LEMON', 'ASTROPAY', 'GALICIA'].map(acc => {
-                          const accIngresos = cashFlow.filter(m => m.account === acc && m.type === 'ingreso').reduce((s, m) => s + (m.amount || 0), 0);
-                          const accRetiros  = cashFlow.filter(m => m.account === acc && m.type === 'retiro').reduce((s, m) => s + (m.amount || 0), 0);
-                          const accSaldo    = accIngresos - accRetiros;
+                        {['LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO'].map(acc => {
+                          const saldo = wallets[acc] || 0;
+                          const isEditing = editingWallet === acc;
                           return (
                             <div key={acc} className={`rounded-2xl border p-4 ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}
                               style={darkMode ? {background:'linear-gradient(145deg,#101010,#181818)'} : {}}>
-                              <div className="flex items-center gap-2 mb-3">
-                                <div className={`p-1.5 rounded-lg ${accSaldo >= 0 ? 'bg-emerald-500/10' : 'bg-rose-500/10'}`}>
-                                  <Landmark size={14} className={accSaldo >= 0 ? 'text-emerald-400' : 'text-rose-400'}/>
+                              <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-2">
+                                  <div className={`p-1.5 rounded-lg ${saldo >= 0 ? 'bg-emerald-500/10' : 'bg-rose-500/10'}`}>
+                                    <Landmark size={14} className={saldo >= 0 ? 'text-emerald-400' : 'text-rose-400'}/>
+                                  </div>
+                                  <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">{acc}</span>
                                 </div>
-                                <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">{acc}</span>
+                                {!isEditing && (
+                                  <button onClick={() => { setEditingWallet(acc); setEditingWalletValue(String(saldo)); }}
+                                    className={`p-1 rounded-lg text-xs transition-all ${darkMode ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/5' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}
+                                    title="Editar saldo">
+                                    <Settings size={13}/>
+                                  </button>
+                                )}
                               </div>
-                              <div className={`text-lg font-black tracking-tight ${accSaldo >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                {accSaldo < 0 ? '-' : ''}{formatMoney(Math.abs(accSaldo))}
-                              </div>
-                              <div className={`text-[10px] mt-1 ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
-                                +{formatMoney(accIngresos)} / -{formatMoney(accRetiros)}
-                              </div>
+                              {isEditing ? (
+                                <div className="flex flex-col gap-2">
+                                  <input
+                                    type="number"
+                                    value={editingWalletValue}
+                                    onChange={e => setEditingWalletValue(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Enter') handleSaveWalletBalance(acc); if (e.key === 'Escape') setEditingWallet(null); }}
+                                    autoFocus
+                                    className={`w-full px-3 py-1.5 rounded-xl text-sm font-bold border outline-none ${darkMode ? 'bg-zinc-800 border-zinc-600 text-zinc-100' : 'bg-zinc-50 border-zinc-300 text-zinc-900'}`}
+                                    placeholder="Saldo actual"
+                                  />
+                                  <div className="flex gap-1.5">
+                                    <button onClick={() => handleSaveWalletBalance(acc)}
+                                      className="flex-1 py-1 rounded-lg text-[11px] font-bold bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-all">
+                                      Guardar
+                                    </button>
+                                    <button onClick={() => setEditingWallet(null)}
+                                      className={`flex-1 py-1 rounded-lg text-[11px] font-bold transition-all ${darkMode ? 'bg-white/5 text-zinc-400 hover:bg-white/10' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}>
+                                      Cancelar
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  <div className={`text-lg font-black tracking-tight ${saldo >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                    {saldo < 0 ? '-' : ''}{formatMoney(Math.abs(saldo))}
+                                  </div>
+                                  <div className={`text-[10px] mt-1 ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                                    {(() => {
+                                      const ing = cashFlow.filter(m => m.account === acc && m.type === 'ingreso').reduce((s, m) => s + (m.amount || 0), 0);
+                                      const ret = cashFlow.filter(m => m.account === acc && m.type === 'retiro').reduce((s, m) => s + (m.amount || 0), 0);
+                                      return `+${formatMoney(ing)} / -${formatMoney(ret)}`;
+                                    })()}
+                                  </div>
+                                </>
+                              )}
                             </div>
                           );
                         })}
@@ -7502,20 +7615,21 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         <h2 className="text-xl font-bold tracking-tight mb-5 flex items-center gap-2">
                           <Landmark size={20} className="text-indigo-400"/> Registrar Movimiento
                         </h2>
-                        {/* Selector de cuenta */}
+                        <p className={`text-xs font-bold uppercase tracking-widest mb-2 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Wallet</p>
                         <div className="flex gap-2 mb-3">
-                          {['LEMON', 'ASTROPAY', 'GALICIA'].map(acc => (
+                          {['LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO'].map(acc => (
                             <button key={acc} onClick={() => setNewCashMovement(p => ({ ...p, account: acc }))}
                               className={`px-4 py-2 rounded-xl border text-sm font-bold transition-all ${newCashMovement.account === acc ? (darkMode ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40' : 'bg-indigo-50 text-indigo-700 border-indigo-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
                               {acc}
                             </button>
                           ))}
                         </div>
-                        {/* Selector ingreso / retiro */}
+                        <p className={`text-xs font-bold uppercase tracking-widest mb-2 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Tipo de movimiento</p>
                         <div className="flex gap-2 mb-5">
                           {[
                             { type: 'ingreso', label: 'Ingreso', icon: ArrowDownLeft, active: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
                             { type: 'retiro',  label: 'Retiro',  icon: ArrowUpRight,  active: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
+                            { type: 'pago',    label: 'Pago',    icon: CreditCard,    active: 'bg-blue-500/15 text-blue-400 border-blue-500/30' },
                           ].map(({ type, label, icon: Icon, active }) => (
                             <button key={type} onClick={() => setNewCashMovement(p => ({ ...p, type }))}
                               className={`flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-bold transition-all ${newCashMovement.type === type ? active : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
@@ -7525,49 +7639,65 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 mb-4">
                           <div className="sm:col-span-3"><Input darkMode={darkMode} type="date" label="Fecha" value={newCashMovement.date} onChange={e => setNewCashMovement(p => ({ ...p, date: e.target.value }))} /></div>
-                          <div className="sm:col-span-6"><Input darkMode={darkMode} label="Descripción" placeholder={newCashMovement.type === 'ingreso' ? 'Ej: Transferencia cliente, Venta efectivo...' : 'Ej: Retiro personal, Pago proveedor...'} value={newCashMovement.description} onChange={e => setNewCashMovement(p => ({ ...p, description: e.target.value }))} /></div>
+                          <div className="sm:col-span-6"><Input darkMode={darkMode} label="Descripción" placeholder={newCashMovement.type === 'ingreso' ? 'Ej: Transferencia cliente, Venta efectivo...' : newCashMovement.type === 'pago' ? 'Ej: Pago proveedor, Servicio...' : 'Ej: Retiro personal...'} value={newCashMovement.description} onChange={e => setNewCashMovement(p => ({ ...p, description: e.target.value }))} /></div>
                           <div className="sm:col-span-3"><Input darkMode={darkMode} label="Importe" type="number" symbol="$" value={newCashMovement.amount} onChange={e => setNewCashMovement(p => ({ ...p, amount: e.target.value }))} /></div>
                         </div>
                         <div className="flex justify-end">
                           <Button darkMode={darkMode} onClick={handleAddCashMovement}
-                            variant={newCashMovement.type === 'ingreso' ? 'primary' : 'danger'}
+                            variant={newCashMovement.type === 'ingreso' ? 'primary' : newCashMovement.type === 'pago' ? 'secondary' : 'danger'}
                             className="w-full sm:w-56">
-                            {newCashMovement.type === 'ingreso' ? <ArrowDownLeft size={15}/> : <ArrowUpRight size={15}/>}
-                            Registrar {newCashMovement.type === 'ingreso' ? 'Ingreso' : 'Retiro'}
+                            {newCashMovement.type === 'ingreso' ? <ArrowDownLeft size={15}/> : newCashMovement.type === 'pago' ? <CreditCard size={15}/> : <ArrowUpRight size={15}/>}
+                            Registrar {newCashMovement.type === 'ingreso' ? 'Ingreso' : newCashMovement.type === 'pago' ? 'Pago' : 'Retiro'}
                           </Button>
                         </div>
                       </Card>
 
                       <Card darkMode={darkMode} className="p-0 overflow-hidden">
                         <div className={`p-4 md:p-5 border-b flex flex-wrap items-center justify-between gap-3 ${darkMode ? 'bg-[#181818] border-[#1F1F1F]' : 'bg-white border-zinc-200'}`}>
-                          <h3 className="font-bold text-base tracking-tight">Movimientos de Caja</h3>
-                          <div className="flex gap-1.5 flex-wrap">
-                            {['TODAS', 'LEMON', 'ASTROPAY', 'GALICIA'].map(f => (
+                          <div className="flex items-center gap-3">
+                            <h3 className="font-bold text-base tracking-tight">Movimientos de Caja</h3>
+                            <button onClick={() => setShowAjustesHistory(v => !v)}
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-md border transition-all ${showAjustesHistory ? (darkMode ? 'bg-violet-500/20 text-violet-400 border-violet-500/40' : 'bg-violet-50 text-violet-600 border-violet-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-600'}`}>
+                              Historial de saldos
+                            </button>
+                          </div>
+                          {!showAjustesHistory && <div className="flex gap-1.5 flex-wrap">
+                            {['TODAS', 'LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO'].map(f => (
                               <button key={f} onClick={() => setCashFlowFilter(f)}
                                 className={`px-3 py-1 rounded-lg text-[11px] font-bold border transition-all ${cashFlowFilter === f ? (darkMode ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40' : 'bg-indigo-50 text-indigo-700 border-indigo-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-600'}`}>
                                 {f}
                               </button>
                             ))}
-                          </div>
+                          </div>}
                         </div>
                         <div className={`divide-y ${darkMode ? 'divide-zinc-800' : 'divide-zinc-100'}`}>
-                          {movimientos.filter(m => cashFlowFilter === 'TODAS' || m.account === cashFlowFilter).length === 0 && <div className="p-12 text-center text-sm font-medium opacity-50">No hay movimientos registrados.</div>}
-                          {movimientos.filter(m => cashFlowFilter === 'TODAS' || m.account === cashFlowFilter).map(m => {
+                          {showAjustesHistory
+                            ? movimientos.filter(m => m.type === 'ajuste').length === 0 && <div className="p-12 text-center text-sm font-medium opacity-50">No hay ajustes de saldo registrados.</div>
+                            : movimientos.filter(m => m.type !== 'ajuste' && (cashFlowFilter === 'TODAS' || m.account === cashFlowFilter)).length === 0 && <div className="p-12 text-center text-sm font-medium opacity-50">No hay movimientos registrados.</div>
+                          }
+                          {(showAjustesHistory
+                            ? movimientos.filter(m => m.type === 'ajuste')
+                            : movimientos.filter(m => m.type !== 'ajuste' && (cashFlowFilter === 'TODAS' || m.account === cashFlowFilter))
+                          ).map(m => {
                             const isIngreso = m.type === 'ingreso';
+                            const isAjuste  = m.type === 'ajuste';
+                            const isPago    = m.type === 'pago';
+                            const iconEl    = isAjuste ? <Settings size={20}/> : isIngreso ? <ArrowDownLeft size={20}/> : isPago ? <CreditCard size={20}/> : <ArrowUpRight size={20}/>;
+                            const colorIcon = isAjuste ? (darkMode ? 'bg-violet-500/10 text-violet-400' : 'bg-violet-50 text-violet-600') : isIngreso ? (darkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-600') : isPago ? (darkMode ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600') : (darkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-50 text-amber-600');
+                            const colorBadge = isAjuste ? (darkMode ? 'border-violet-500/30 text-violet-400' : 'border-violet-200 text-violet-600') : isIngreso ? (darkMode ? 'border-emerald-500/30 text-emerald-400' : 'border-emerald-200 text-emerald-600') : isPago ? (darkMode ? 'border-blue-500/30 text-blue-400' : 'border-blue-200 text-blue-600') : (darkMode ? 'border-amber-500/30 text-amber-400' : 'border-amber-200 text-amber-600');
+                            const colorAmt  = isAjuste ? (darkMode ? 'text-violet-400' : 'text-violet-600') : isIngreso ? 'text-emerald-400' : isPago ? (darkMode ? 'text-blue-400' : 'text-blue-600') : 'text-amber-400';
+                            const badgeLabel = isAjuste ? 'Ajuste' : isIngreso ? 'Ingreso' : isPago ? 'Pago' : 'Retiro';
+                            const amtLabel   = isAjuste ? formatMoney(m.amount) : isIngreso ? '+' + formatMoney(m.amount) : '-' + formatMoney(m.amount);
                             return (
                               <div key={m.id} className={`flex justify-between items-center p-4 md:p-5 transition-colors group ${darkMode ? 'hover:bg-zinc-900/50 bg-[#101010]' : 'hover:bg-zinc-50 bg-white'}`}>
                                 <div className="flex items-center gap-4">
-                                  <div className={`p-2.5 rounded-lg ${isIngreso ? (darkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-600') : (darkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-50 text-amber-600')}`}>
-                                    {isIngreso ? <ArrowDownLeft size={20}/> : <ArrowUpRight size={20}/>}
-                                  </div>
+                                  <div className={`p-2.5 rounded-lg ${colorIcon}`}>{iconEl}</div>
                                   <div>
                                     <div className="font-semibold text-sm">{m.description || 'Sin descripción'}</div>
                                     <div className="flex items-center gap-2 mt-1">
                                       <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{safeDateStr(m.date, {month:'long', day:'numeric'})}</span>
                                       <span className="text-zinc-300 dark:text-zinc-700">•</span>
-                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${isIngreso ? (darkMode ? 'border-emerald-500/30 text-emerald-400' : 'border-emerald-200 text-emerald-600') : (darkMode ? 'border-amber-500/30 text-amber-400' : 'border-amber-200 text-amber-600')}`}>
-                                        {isIngreso ? 'Ingreso' : 'Retiro'}
-                                      </span>
+                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${colorBadge}`}>{badgeLabel}</span>
                                       {m.account && (
                                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
                                           {m.account}
@@ -7577,10 +7707,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-6">
-                                  <span className={`font-bold tracking-tight text-lg ${isIngreso ? 'text-emerald-400' : 'text-amber-400'}`}>
-                                    {isIngreso ? '+' : '-'}{formatMoney(m.amount)}
-                                  </span>
-                                  <button onClick={() => handleDeleteCashMovement(m.id)} className={`p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}><Trash2 size={18}/></button>
+                                  <span className={`font-bold tracking-tight text-lg ${colorAmt}`}>{amtLabel}</span>
+                                  {!isAjuste && <button onClick={() => handleDeleteCashMovement(m.id)} className={`p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}><Trash2 size={18}/></button>}
                                 </div>
                               </div>
                             );

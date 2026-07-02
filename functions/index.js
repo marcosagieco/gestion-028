@@ -1429,6 +1429,17 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
             seller: vendedor
         });
 
+        const aliasWalletMap = { alias1: 'GALICIA', alias2: 'ASTROPAY', alias3: 'LEMON' };
+        if (medioPago && aliasWalletMap[medioPago]) {
+            const wName = aliasWalletMap[medioPago];
+            const wAmount = totalVentaCalculado + Math.max(0, (precioEnvioCliente || 0) - (costoEnvioMio || 0));
+            const walletsRef = db.collection('settings').doc('wallets');
+            await db.runTransaction(async t => {
+                const walletsDoc = await t.get(walletsRef);
+                const current = walletsDoc.exists ? (walletsDoc.data()[wName] || 0) : 0;
+                t.set(walletsRef, { [wName]: current + wAmount }, { merge: true });
+            });
+        }
         return { exito: true, saleId: saleRef.id, totalSaleRaw: totalVentaCalculado, clientShippingCharge: precioEnvioCliente, medioPago: medioPago || null };
     } 
     else {
@@ -1441,6 +1452,39 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
         }
     }
 }
+
+// ==========================================
+// MIGRACIÓN: SINCRONIZAR BILLETERAS CON VENTAS HISTÓRICAS
+// Llamar UNA SOLA VEZ: POST /sincronizarBilleteras
+// Suma todos los totales de ventas con alias1/2/3 y pisa los saldos.
+// ==========================================
+exports.sincronizarBilleteras = functions.https.onRequest(async (req, res) => {
+    if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
+
+    const aliasWalletMap = { alias1: 'GALICIA', alias2: 'ASTROPAY', alias3: 'LEMON' };
+    const totales = { GALICIA: 0, ASTROPAY: 0, LEMON: 0 };
+
+    const snap = await db.collection('sales').get();
+    let contadas = 0;
+
+    snap.docs.forEach(doc => {
+        const s = doc.data();
+        const mp = s.medioPago;
+        if (mp && aliasWalletMap[mp]) {
+            const wallet = aliasWalletMap[mp];
+            totales[wallet] += (s.totalSaleRaw || 0) + (s.clientShippingCharge || 0);
+            contadas++;
+        }
+    });
+
+    await db.collection('settings').doc('wallets').set(totales);
+
+    return res.status(200).json({
+        ok: true,
+        ventasContadas: contadas,
+        saldos: totales
+    });
+});
 
 // ==========================================
 // FÓRMULAS MATEMÁTICAS INTACTAS
