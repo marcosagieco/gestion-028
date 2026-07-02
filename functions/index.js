@@ -900,10 +900,45 @@ async function procesarMensajeNuevoWhatsapp(mensaje, numeroRemitente, fechaHoySh
     let unidades = 0;
     if (tipo === "VENTA" || tipo === "MAYORISTA") {
         const medioPago = normalizarMedioPago(general.medioPago);
+
+        // Fase 1: validar todos los items en memoria sin escribir nada
+        const batchesSnap = await db.collection("batches").orderBy("createdAt", "asc").get();
+        const memBatches = batchesSnap.docs
+            .filter(doc => !doc.data().finalizedAt)
+            .map(doc => ({ id: doc.id, items: (doc.data().items || []).map(it => ({ ...it })) }));
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (!item.precio || item.precio <= 0)
+                return { exito: false, error_msg: errorConProducto(item, i, `❌ Falta precio en ${item.producto} (${item.variante}).`) };
+            const pBuscar = normalizarParaComparar(item.producto);
+            const vBuscar = normalizarParaComparar(item.variante);
+            let restante = item.cantidad;
+            let encontrado = false;
+            for (const mb of memBatches) {
+                if (restante <= 0) break;
+                for (const mi of mb.items) {
+                    if (restante <= 0) break;
+                    if (esParecido(pBuscar, normalizarParaComparar(mi.product)) && esParecido(vBuscar, normalizarParaComparar(mi.variant))) {
+                        encontrado = true;
+                        const descontar = Math.min(mi.currentStock, restante);
+                        mi.currentStock -= descontar;
+                        restante -= descontar;
+                    }
+                }
+            }
+            if (restante > 0) {
+                const msg = encontrado
+                    ? `❌ Stock insuficiente para "${item.producto} (${item.variante})". Ningún producto del mensaje fue registrado.`
+                    : `❌ No encontré "${item.producto} (${item.variante})" en el stock. Ningún producto del mensaje fue registrado.`;
+                return { exito: false, error_msg: errorConProducto(item, i, msg) };
+            }
+        }
+
+        // Fase 2: todos válidos — ahora sí escribir
         const saleIds = [];
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
-            if (!item.precio || item.precio <= 0) return { exito: false, error_msg: errorConProducto(item, i, `❌ Falta precio en ${item.producto} (${item.variante}).`) };
             const costoEnvio = i === 0 ? limpiarNumero(general.envioCosto || 0) : 0;
             const cobroEnvio = i === 0 ? limpiarNumero(general.envioCobro || 0) : 0;
             const r = await procesarVenta(item.producto, item.variante, item.cantidad, item.precio, fecha, costoEnvio, cobroEnvio, esRevendedor, tipoCliente, vendedor, ticketIdGrupo, canal, clienteMayorista, medioPago);
