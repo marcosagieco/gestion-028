@@ -7545,8 +7545,23 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                   const totalRetiros  = cashFlow.filter(m => m.type === 'retiro').reduce((s, m) => s + (m.amount || 0), 0);
                   const saldo         = totalIngresos - totalRetiros;
                   const movimientos   = [...cashFlow].sort((a, b) => new Date(b.date) - new Date(a.date));
+                  const totalWallets = ['LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO'].reduce((s, acc) => s + (wallets[acc] || 0), 0);
                   return (
                     <>
+                      {/* Total en caja */}
+                      <div className={`rounded-2xl border p-4 md:p-5 flex items-center justify-between ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}
+                        style={darkMode ? {background:'linear-gradient(145deg,#141414,#1c1c1c)'} : {}}>
+                        <div className="flex items-center gap-2.5">
+                          <div className={`p-2 rounded-lg ${totalWallets >= 0 ? 'bg-indigo-500/10' : 'bg-rose-500/10'}`}>
+                            <Landmark size={16} className={totalWallets >= 0 ? 'text-indigo-400' : 'text-rose-400'}/>
+                          </div>
+                          <span className="text-xs font-bold uppercase tracking-widest text-zinc-500">Total en Caja (todas las cuentas)</span>
+                        </div>
+                        <div className={`text-2xl font-black tracking-tight ${totalWallets >= 0 ? 'text-indigo-400' : 'text-rose-400'}`}>
+                          {totalWallets < 0 ? '-' : ''}{formatMoney(Math.abs(totalWallets))}
+                        </div>
+                      </div>
+
                       {/* Billeteras */}
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         {['LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO'].map(acc => {
