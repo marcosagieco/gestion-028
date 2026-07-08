@@ -2781,7 +2781,7 @@ export default function App() {
           return {
               totalRevenue, neutralRevenue, neutralCost, neutralProfit, totalInvestment, totalGlobalExpenses, grossProfit, grossMargin,
               totalShippingProfit, netProfit, netMargin, cashBalance, currentStockValue,
-              itemsSold, salesCount: fSales.length, sourceCounts, typeCounts, dailyAvgItems,
+              itemsSold, salesCount: new Set(fSales.map(s => s.ticketId || s.id)).size, sourceCounts, typeCounts, dailyAvgItems,
               daysActive, currentStreak, filteredSales: fSales, pieSourceData, pieTypeData
           };
       };
