@@ -5366,8 +5366,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 const ingAlias2 = byMP('alias2');
                                 const ingAlias3 = byMP('alias3');
                                 const ingEfectivo = byMP('efectivo');
-                                const avgTicket = cur.salesCount > 0 ? cur.totalRevenue / cur.salesCount : 0;
-                                const prevAvgTicket = prev && prev.salesCount > 0 ? prev.totalRevenue / prev.salesCount : null;
+                                const avgTicket = cur.itemsSold > 0 ? cur.totalRevenue / cur.itemsSold : 0;
+                                const prevAvgTicket = prev && prev.itemsSold > 0 ? prev.totalRevenue / prev.itemsSold : null;
                                 const L = sparklineData7d.labels;
                                 const fMoney = v => formatMoney(v);
                                 const fUds = v => `${v} uds`;
@@ -5395,7 +5395,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                         <PremiumMetricCard darkMode={darkMode} title="Inversión" value={formatMoney(cur.totalInvestment)} subtitle="Capital apostado" change={null} sparkline={sparklineData7d.investment} sparklineLabels={L} sparklineFormatter={fMoney} />
                                         <PremiumMetricCard darkMode={darkMode} title="Inversión Activa" value={formatMoney(cur.currentStockValue)} subtitle="Stock a costo actual" change={null} sparkline={null} />
                                         <PremiumMetricCard darkMode={darkMode} title="Productos Vendidos" value={cur.itemsSold} subtitle={`${cur.salesCount} pedidos`} change={pct(cur.itemsSold, prev?.itemsSold)} sparkline={sparklineData7d.units} sparklineLabels={L} sparklineFormatter={fUds} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Ticket Promedio" value={formatMoney(avgTicket)} subtitle="por pedido" change={pct(avgTicket, prevAvgTicket)} sparkline={sparklineData7d.avgTicket} sparklineLabels={L} sparklineFormatter={fMoney} />
+                                        <PremiumMetricCard darkMode={darkMode} title="Ticket Promedio" value={formatMoney(avgTicket)} subtitle="por producto" change={pct(avgTicket, prevAvgTicket)} sparkline={sparklineData7d.avgTicket} sparklineLabels={L} sparklineFormatter={fMoney} />
                                         <PremiumMetricCard darkMode={darkMode} title="Clientes Nuevos" value={newClientsList.length} subtitle="Total del período" change={null} sparkline={sparklineData7d.clients} sparklineLabels={L} sparklineFormatter={fClientes} />
                                         <PremiumMetricCard darkMode={darkMode} title="Clientes Orgánicos" value={newClientsOrganic} subtitle="Sin inversión en ads" change={null} sparkline={sparklineData7d.organicClients} sparklineLabels={L} sparklineFormatter={fClientes} />
                                         <PremiumMetricCard darkMode={darkMode} title="Clientes por Ads" value={newClientsAds} subtitle="Captados por publicidad" change={null} sparkline={sparklineData7d.adsClients} sparklineLabels={L} sparklineFormatter={fClientes} />
