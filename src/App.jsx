@@ -2985,6 +2985,18 @@ export default function App() {
     return { revenue, netProfit: revenue - cost, grossProfit: revenue - cost, totalExp, salesCount: fs.length, uniqueClientsCount: uniqueClients.size, totalAllRevenue, adsByDate, allByDate };
   }, [sales, expenses, metaPeriod, metaCustomRange]);
 
+  const fetchAllMetaPages = async (url) => {
+    const allData = [];
+    while (url) {
+      const res = await fetch(url);
+      const json = await res.json();
+      if (json.error) return { data: allData, error: json.error };
+      if (Array.isArray(json.data)) allData.push(...json.data);
+      url = json.paging?.next || null;
+    }
+    return { data: allData, error: null };
+  };
+
   const fetchMetaInsights = async () => {
     const token = import.meta.env.VITE_META_ACCESS_TOKEN;
     const accountId = import.meta.env.VITE_META_AD_ACCOUNT_ID;
@@ -3006,15 +3018,14 @@ export default function App() {
         ? `time_range={"since":"${sinceDate}","until":"${today}"}`
         : `date_preset=${metaPeriod}`;
       const params = `${periodParam}&access_token=${token}`;
-      const [sRes, dRes] = await Promise.all([
+      const [sRes, dResult] = await Promise.all([
         fetch(`${base}?fields=spend,reach,frequency,ctr,cpm,impressions,clicks,actions&${params}`),
-        fetch(`${base}?fields=spend,ctr,clicks,impressions,reach,frequency,cpm,actions&time_increment=1&${params}`)
+        fetchAllMetaPages(`${base}?fields=spend,ctr,clicks,impressions,reach,frequency,cpm,actions&time_increment=1&${params}`)
       ]);
       const sJson = await sRes.json();
-      const dJson = await dRes.json();
       if (sJson.error) throw new Error(sJson.error.message);
       setMetaData(sJson.data?.[0] || null);
-      setMetaDailyData(dJson.data || []);
+      setMetaDailyData(dResult.data);
 
       // Campañas activas + sus insights
       setMetaCampaignsLoading(true);
@@ -3064,11 +3075,9 @@ export default function App() {
       try {
         const today = new Date().toISOString().slice(0, 10);
         const base = `https://graph.facebook.com/v19.0/${accountId}/insights`;
-        const res = await fetch(
-          `${base}?fields=spend&time_increment=1&time_range={"since":"2026-05-30","until":"${today}"}&access_token=${token}`
-        );
-        const json = await res.json();
-        if (!json.error && Array.isArray(json.data)) setHomeMetaDailyData(json.data);
+        const url = `${base}?fields=spend&time_increment=1&time_range={"since":"2026-05-30","until":"${today}"}&access_token=${token}`;
+        const { data } = await fetchAllMetaPages(url);
+        setHomeMetaDailyData(data);
       } catch {}
     };
     fetchHomeMetaDaily();
