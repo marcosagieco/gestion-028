@@ -36,6 +36,7 @@ try {
 const formatMoney = (val) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(val || 0);
 const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val || 0);
 const formatPercent = (val) => new Intl.NumberFormat('es-AR', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format((val || 0) / 100);
+const accountLabel = (acc) => acc === 'SIN_CUENTA' ? 'Sin cuenta' : acc;
 
 const safeDateStr = (dateStr, options) => {
   if (!dateStr) return 'Sin fecha';
@@ -2232,16 +2233,17 @@ export default function App() {
   const [compareDateRange, setCompareDateRange] = useState({ start: getPreviousDayStr(getTodayDate()), end: getPreviousDayStr(getTodayDate()) });
 
   const [newBatchName, setNewBatchName] = useState('');
+  const [newBatchAccount, setNewBatchAccount] = useState('LEMON');
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '', repeatCount: '1' });
-  const [newExpense, setNewExpense] = useState({ description: '', amount: '', batchId: '', date: getTodayDate() });
   const [cashFlow, setCashFlow] = useState([]);
-  const [wallets, setWallets] = useState({ LEMON: 0, ASTROPAY: 0, GALICIA: 0, EFECTIVO: 0 });
+  const [wallets, setWallets] = useState({ LEMON: 0, ASTROPAY: 0, GALICIA: 0, EFECTIVO: 0, SIN_CUENTA: 0 });
   const [editingWallet, setEditingWallet] = useState(null);
   const [editingWalletValue, setEditingWalletValue] = useState('');
-  const [newCashMovement, setNewCashMovement] = useState({ type: 'ingreso', account: 'LEMON', date: getTodayDate(), description: '', amount: '' });
-  const [expensesSubTab, setExpensesSubTab] = useState('gastos');
+  const [newCashMovement, setNewCashMovement] = useState({ type: 'ingreso', account: 'LEMON', date: getTodayDate(), description: '', amount: '', batchId: '' });
   const [cashFlowFilter, setCashFlowFilter] = useState('TODAS');
   const [showAjustesHistory, setShowAjustesHistory] = useState(false);
+  const [showStockHistory, setShowStockHistory] = useState(false);
+  const [expandedStockGroup, setExpandedStockGroup] = useState(null);
   const [showBuonoCommission, setShowBuonoCommission] = useState(false);
   const [showBuono, setShowBuono] = useState(false);
   const [showAllTopProducts, setShowAllTopProducts] = useState(false);
@@ -2270,6 +2272,7 @@ export default function App() {
   const [restoringItem, setRestoringItem] = useState(null);
   const [subtractingItem, setSubtractingItem] = useState(null);
   const [editingBatchName, setEditingBatchName] = useState('');
+  const [editingBatchAccount, setEditingBatchAccount] = useState('LEMON');
 
   const [selectedBatchStats, setSelectedBatchStats] = useState(null);
   const [hiddenSuggestions, setHiddenSuggestions] = useState({ products: [], variants: [] });
@@ -4187,32 +4190,77 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
   const handleCreateBatch = async () => {
     if (!newBatchName) return showToast("Debes ingresar un nombre para el lote", 'error');
-    try { await addDoc(collection(db, 'batches'), { name: newBatchName, createdAt: new Date().toISOString(), items: [] }); setNewBatchName(''); showToast("Lote creado correctamente", 'success'); } catch (e) { showToast("Error: " + e.message, 'error'); }
+    try {
+      await addDoc(collection(db, 'batches'), { name: newBatchName, createdAt: new Date().toISOString(), items: [], account: newBatchAccount });
+      setNewBatchName('');
+      showToast("Lote creado correctamente", 'success');
+    } catch (e) { showToast("Error: " + e.message, 'error'); }
   };
 
   const handleSaveEditBatchName = async (batchId) => {
     if (!editingBatchName.trim()) return showToast("El nombre no puede estar vacío", "error");
     try {
-        await updateDoc(doc(db, 'batches', batchId), { name: editingBatchName });
-        
+        const batch = batches.find(b => b.id === batchId);
+        const oldAccount = batch?.account;
+        const accountChanged = oldAccount !== editingBatchAccount;
+
+        await updateDoc(doc(db, 'batches', batchId), { name: editingBatchName, account: editingBatchAccount });
+
         const salesToUpdate = sales.filter(s => s.batchId === batchId);
         for (const s of salesToUpdate) {
             await updateDoc(doc(db, 'sales', s.id), { batchName: editingBatchName });
         }
-        
+
         const expensesToUpdate = expenses.filter(e => e.batchId === batchId);
         for (const e of expensesToUpdate) {
             await updateDoc(doc(db, 'expenses', e.id), { batchName: editingBatchName });
         }
-        
+
+        const stockEntries = cashFlow.filter(m => m.batchId === batchId && m.type === 'stock');
+        for (const entry of stockEntries) {
+            await updateDoc(doc(db, 'cashFlow', entry.id), { batchName: editingBatchName, ...(accountChanged ? { account: editingBatchAccount } : {}) });
+        }
+
+        if (accountChanged) {
+            const total = stockEntries.reduce((s, e) => s + (e.amount || 0), 0);
+            if (total > 0) {
+                const updatedW = { ...wallets };
+                if (oldAccount) updatedW[oldAccount] = (updatedW[oldAccount] || 0) + total;
+                updatedW[editingBatchAccount] = (updatedW[editingBatchAccount] || 0) - total;
+                setWallets(updatedW);
+                await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+            }
+        }
+
         setEditingBatchId(null);
-        showToast("Nombre actualizado en todos los registros", "success");
+        showToast("Lote actualizado" + (accountChanged ? " y movimientos migrados a la nueva cuenta" : ""), "success");
     } catch (e) {
-        showToast("Error al renombrar: " + e.message, "error");
+        showToast("Error al actualizar: " + e.message, "error");
     }
   };
 
-  const handleDeleteBatch = async (id) => { if (window.confirm('¿Borrar carpeta completa? Se perderá el historial interno.')) await deleteDoc(doc(db, 'batches', id)); };
+  const handleDeleteBatch = async (id) => {
+    const salesCount = sales.filter(s => s.batchId === id).length;
+    const confirmMsg = salesCount > 0
+      ? `Este lote tiene ${salesCount} venta${salesCount > 1 ? 's' : ''} ya registrada${salesCount > 1 ? 's' : ''}. Si lo borrás, esas ventas van a quedar sin lote asociado (no se pierden ni afectan tus ingresos, pero perdés la referencia). ¿Borrar de todas formas?`
+      : '¿Borrar carpeta completa? Se perderá el historial interno.';
+    if (!window.confirm(confirmMsg)) return;
+    const linkedEntries = cashFlow.filter(m => m.batchId === id && m.type === 'stock');
+    if (linkedEntries.length > 0) {
+      const deltas = {};
+      for (const entry of linkedEntries) {
+        await deleteDoc(doc(db, 'cashFlow', entry.id));
+        if (entry.account && entry.amount) deltas[entry.account] = (deltas[entry.account] || 0) + entry.amount;
+      }
+      if (Object.keys(deltas).length > 0) {
+        const updatedW = { ...wallets };
+        for (const acc in deltas) updatedW[acc] = (updatedW[acc] || 0) + deltas[acc];
+        setWallets(updatedW);
+        await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+      }
+    }
+    await deleteDoc(doc(db, 'batches', id));
+  };
 
   const handleUpdateBatchStatus = async (batchId, isFinalizing) => {
     if (isFinalizing) {
@@ -4233,15 +4281,37 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     if (!batch) return;
     const count = Math.max(1, Math.min(parseInt(newItem.repeatCount) || 1, 500));
     const now = Date.now();
+    const unitCost = parseFloat(newItem.costArs) || 0;
+    const qty = parseInt(newItem.initialStock) || 0;
     const newItems = Array.from({ length: count }, (_, i) => ({
       id: now + i + '-' + Math.random().toString(36).substr(2, 9),
       product: newItem.product, variant: newItem.variant || 'Único',
-      costArs: parseFloat(newItem.costArs) || 0,
-      initialStock: parseInt(newItem.initialStock) || 0,
-      currentStock: parseInt(newItem.initialStock) || 0,
+      costArs: unitCost,
+      initialStock: qty,
+      currentStock: qty,
     }));
     try {
       await updateDoc(doc(db, 'batches', batchId), { items: [...(batch.items || []), ...newItems] });
+      const itemCost = unitCost * qty;
+      if (itemCost > 0 && batch.account) {
+        const nowIso = new Date().toISOString();
+        for (const it of newItems) {
+          await addDoc(collection(db, 'cashFlow'), {
+            type: 'stock',
+            account: batch.account,
+            date: nowIso,
+            description: `Compra stock: ${newItem.product}${newItem.variant ? ' / ' + newItem.variant : ''} (${batch.name})`,
+            amount: itemCost,
+            batchId: batch.id,
+            batchName: batch.name,
+            itemId: it.id,
+          });
+        }
+        const totalCost = itemCost * count;
+        const updatedW = { ...wallets, [batch.account]: (wallets[batch.account] || 0) - totalCost };
+        setWallets(updatedW);
+        await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+      }
       setNewItem({ product: '', variant: '', costArs: '', initialStock: '', repeatCount: '1' });
       showToast(count > 1 ? `${count} entradas agregadas` : 'Producto agregado', 'success');
     } catch (e) { showToast("Error: " + e.message, 'error'); }
@@ -4252,7 +4322,24 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     const batch = batches.find(b => b.id === batchId);
     if (!batch) return;
     const updatedItems = batch.items.filter(i => i.id !== itemId);
-    try { await updateDoc(doc(db, 'batches', batchId), { items: updatedItems }); showToast("Producto eliminado", 'success'); } catch (e) { showToast("Error al borrar: " + e.message, 'error'); }
+    try {
+      await updateDoc(doc(db, 'batches', batchId), { items: updatedItems });
+      const linkedEntries = cashFlow.filter(m => m.itemId === itemId);
+      if (linkedEntries.length > 0) {
+        const deltas = {};
+        for (const entry of linkedEntries) {
+          await deleteDoc(doc(db, 'cashFlow', entry.id));
+          if (entry.account && entry.amount) deltas[entry.account] = (deltas[entry.account] || 0) + entry.amount;
+        }
+        if (Object.keys(deltas).length > 0) {
+          const updatedW = { ...wallets };
+          for (const acc in deltas) updatedW[acc] = (updatedW[acc] || 0) + deltas[acc];
+          setWallets(updatedW);
+          await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+        }
+      }
+      showToast("Producto eliminado", 'success');
+    } catch (e) { showToast("Error al borrar: " + e.message, 'error'); }
   };
 
   const handleConfirmRestore = async (batchId) => {
@@ -4315,8 +4402,26 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
         await updateDoc(doc(db, 'sales', s.id), {
           productName: updatedItem.product,
           variant: updatedItem.variant,
-          costArsAtSale: newCost, 
+          costArsAtSale: newCost,
         });
+      }
+
+      const linkedEntries = cashFlow.filter(m => m.itemId === oldItem.id && m.type === 'stock');
+      if (linkedEntries.length > 0 && batch.account) {
+        const oldRecordedTotal = linkedEntries.reduce((s, e) => s + (e.amount || 0), 0);
+        const newTotal = newCost * newInitialStock;
+        const diff = newTotal - oldRecordedTotal;
+        if (linkedEntries.length === 1) {
+          await updateDoc(doc(db, 'cashFlow', linkedEntries[0].id), {
+            amount: newTotal,
+            description: `Compra stock: ${updatedItem.product}${updatedItem.variant ? ' / ' + updatedItem.variant : ''} (${batch.name})`,
+          });
+        }
+        if (diff !== 0) {
+          const updatedW = { ...wallets, [batch.account]: (wallets[batch.account] || 0) - diff };
+          setWallets(updatedW);
+          await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+        }
       }
 
       setEditingItem(null);
@@ -4539,30 +4644,42 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
   };
 
   const handleAddExpense = async () => {
-    if (!newExpense.description || !newExpense.amount || !newExpense.date) return showToast('Completa descripción, fecha y monto', 'error');
+    if (!newCashMovement.description.trim() || !newCashMovement.amount || !newCashMovement.date) return showToast('Completa descripción, fecha y monto', 'error');
     let batchName = 'General';
-    if (newExpense.batchId) {
-        const foundBatch = batches.find(b => b.id === newExpense.batchId);
+    if (newCashMovement.batchId) {
+        const foundBatch = batches.find(b => b.id === newCashMovement.batchId);
         if (foundBatch) batchName = foundBatch.name;
     }
-    
-    const [y, m, d] = newExpense.date.split('-');
-    const expenseDateStr = new Date(y, m - 1, d, 12, 0, 0).toISOString();
 
-    await addDoc(collection(db, 'expenses'), { 
-        date: expenseDateStr, description: newExpense.description, amount: parseFloat(newExpense.amount),
-        batchId: newExpense.batchId || null, batchName: batchName
+    const [y, m, d] = newCashMovement.date.split('-');
+    const expenseDateStr = new Date(y, m - 1, d, 12, 0, 0).toISOString();
+    const amount = parseFloat(newCashMovement.amount);
+    const account = newCashMovement.account || 'LEMON';
+
+    await addDoc(collection(db, 'expenses'), {
+        date: expenseDateStr, description: newCashMovement.description.trim(), amount,
+        batchId: newCashMovement.batchId || null, batchName: batchName, account
     });
-    setNewExpense({ description: '', amount: '', batchId: '', date: getTodayDate() });
+    const updatedW = { ...wallets, [account]: (wallets[account] || 0) - amount };
+    setWallets(updatedW);
+    await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+    setNewCashMovement(prev => ({ ...prev, description: '', amount: '', batchId: '' }));
     showToast('Gasto asentado', 'success');
   };
 
   const handleDeleteExpense = async (id) => {
+      const exp = expenses.find(e => e.id === id);
       await deleteDoc(doc(db, 'expenses', id));
+      if (exp?.account && exp?.amount) {
+        const updatedW = { ...wallets, [exp.account]: (wallets[exp.account] || 0) + exp.amount };
+        setWallets(updatedW);
+        await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+      }
       showToast('Gasto eliminado', 'success');
   };
 
   const handleAddCashMovement = async () => {
+    if (newCashMovement.type === 'gasto') return handleAddExpense();
     if (!newCashMovement.description.trim() || !newCashMovement.amount || !newCashMovement.date) return showToast('Completá todos los campos', 'error');
     const [y, m, d] = newCashMovement.date.split('-');
     const amount = parseFloat(newCashMovement.amount);
@@ -4595,6 +4712,23 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     showToast('Movimiento eliminado', 'success');
   };
 
+  const handleDeleteStockGroup = async (group) => {
+    const label = group.entries.length > 1 ? `las ${group.entries.length} compras de stock` : 'esta compra de stock';
+    if (!window.confirm(`¿Eliminar ${label} de "${group.batchName}"? Esto no borra los productos del lote, solo el registro de gasto.`)) return;
+    const deltas = {};
+    for (const entry of group.entries) {
+      await deleteDoc(doc(db, 'cashFlow', entry.id));
+      if (entry.account && entry.amount) deltas[entry.account] = (deltas[entry.account] || 0) + entry.amount;
+    }
+    if (Object.keys(deltas).length > 0) {
+      const updatedW = { ...wallets };
+      for (const acc in deltas) updatedW[acc] = (updatedW[acc] || 0) + deltas[acc];
+      setWallets(updatedW);
+      await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+    }
+    showToast('Registro de stock eliminado', 'success');
+  };
+
   const handleSincronizarBilleteras = async () => {
     if (!window.confirm('¿Sincronizar billeteras con todas las ventas históricas con Alias 1/2/3? Esto va a pisar los saldos actuales.')) return;
     const aliasWalletMap = { alias1: 'GALICIA', alias2: 'ASTROPAY', alias3: 'LEMON' };
@@ -4606,8 +4740,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
         totales[aliasWalletMap[s.medioPago]] += (s.totalSaleRaw || 0) + (s.shippingProfit || 0);
       }
     });
-    await setDoc(doc(db, 'settings', 'wallets'), totales);
-    setWallets(totales);
+    await setDoc(doc(db, 'settings', 'wallets'), totales, { merge: true });
+    setWallets(prev => ({ ...prev, ...totales }));
     showToast(`Billeteras sincronizadas — Galicia: ${formatMoney(totales.GALICIA)} · Astropay: ${formatMoney(totales.ASTROPAY)} · Lemon: ${formatMoney(totales.LEMON)} · Efectivo: ${formatMoney(totales.EFECTIVO)}`, 'success');
   };
 
@@ -6064,8 +6198,12 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                           <h2 className="text-xl font-bold mb-1">Inventario de Lotes</h2>
                           <p className={`text-sm ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Administra tus importaciones y catálogos de productos.</p>
                       </div>
-                      <div className="flex gap-3 items-end w-full md:w-auto">
-                        <div className="flex-1 md:w-64"><Input darkMode={darkMode} placeholder="Nombre del nuevo lote..." value={newBatchName} onChange={e => setNewBatchName(e.target.value)} /></div>
+                      <div className="flex flex-wrap gap-3 items-end w-full md:w-auto">
+                        <div className="flex-1 md:w-56"><Input darkMode={darkMode} placeholder="Nombre del nuevo lote..." value={newBatchName} onChange={e => setNewBatchName(e.target.value)} /></div>
+                        <div className="w-full sm:w-40">
+                          <Select darkMode={darkMode} label="Cuenta de compra" value={newBatchAccount} onChange={e => setNewBatchAccount(e.target.value)}
+                            options={['LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO', 'SIN_CUENTA'].map(acc => ({ value: acc, label: accountLabel(acc) }))} />
+                        </div>
                         <Button darkMode={darkMode} onClick={handleCreateBatch} className="shrink-0"><Plus size={16}/> Crear Lote</Button>
                       </div>
                   </div>
@@ -6095,14 +6233,23 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                             value={editingBatchName}
                                             onChange={(e) => setEditingBatchName(e.target.value)}
                                         />
+                                        <select
+                                            value={editingBatchAccount}
+                                            onChange={(e) => setEditingBatchAccount(e.target.value)}
+                                            className={`px-2 py-1 text-sm border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0D0D0D] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`}
+                                        >
+                                            {['LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO', 'SIN_CUENTA'].map(acc => (
+                                                <option key={acc} value={acc}>{accountLabel(acc)}</option>
+                                            ))}
+                                        </select>
                                         <button onClick={() => handleSaveEditBatchName(b.id)} className={`p-1.5 rounded-lg ${darkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-600'}`}><Save size={14}/></button>
                                         <button onClick={() => setEditingBatchId(null)} className={`p-1.5 rounded-lg ${darkMode ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-200 text-zinc-600'}`}><XCircle size={14}/></button>
                                     </div>
                                 ) : (
                                     <div className="flex items-center gap-2">
                                         <h3 className={`font-bold text-base ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{b.name || 'Sin nombre'}</h3>
-                                        <button 
-                                            onClick={(e) => { e.stopPropagation(); setEditingBatchId(b.id); setEditingBatchName(b.name || ''); }} 
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); setEditingBatchId(b.id); setEditingBatchName(b.name || ''); setEditingBatchAccount(b.account || 'LEMON'); }}
                                             className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md ${darkMode ? 'hover:bg-zinc-800 text-zinc-400' : 'hover:bg-zinc-200 text-zinc-500'}`}
                                         >
                                             <Settings size={14}/>
@@ -6114,6 +6261,10 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                     <span className={`text-xs font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{(b.items || []).length} Ítems</span>
                                     <span className="text-zinc-300 dark:text-zinc-700">•</span>
                                     <span className={`text-xs font-bold ${b.finalizedAt ? (darkMode ? 'text-zinc-500' : 'text-zinc-500') : (darkMode ? 'text-emerald-400' : 'text-emerald-600')}`}>{b.finalizedAt ? 'Archivado' : 'En Venta'}</span>
+                                    {b.account && (<>
+                                      <span className="text-zinc-300 dark:text-zinc-700">•</span>
+                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-fuchsia-500/30 text-fuchsia-400' : 'border-fuchsia-200 text-fuchsia-600'}`}>{accountLabel(b.account)}</span>
+                                    </>)}
                                 </div>
                             </div>
                         </div>
@@ -7512,42 +7663,40 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
             )}
 
 
-            {/* --- PESTAÑA GASTOS --- */}
-            {activeTab === 'expenses' && (
-                <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in duration-300">
-
-                {/* Sub-tabs */}
-                <div className="flex items-center gap-3">
-                  <div className={`flex gap-1 p-1 rounded-2xl flex-1 ${darkMode ? 'bg-zinc-900/60' : 'bg-zinc-100'}`}>
-                    {[
-                      { id: 'gastos',      label: 'Gastos',      icon: Wallet },
-                      { id: 'movimientos', label: 'Movimientos', icon: Landmark },
-                    ].map(({ id, label, icon: Icon }) => (
-                      <button key={id} onClick={() => setExpensesSubTab(id)}
-                        className={`flex items-center gap-2 flex-1 justify-center px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                          expensesSubTab === id
-                            ? (darkMode ? 'bg-zinc-700 text-zinc-100 shadow-sm' : 'bg-white text-zinc-900 shadow-sm')
-                            : 'text-zinc-500 hover:text-zinc-400'
-                        }`}>
-                        <Icon size={15}/>{label}
-                      </button>
-                    ))}
-                  </div>
-                  <button onClick={handleSincronizarBilleteras}
-                    className={`flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-[11px] font-bold border transition-all whitespace-nowrap ${darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300 hover:border-white/20' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
-                    <RefreshCw size={11}/> Sincronizar con ventas
-                  </button>
-                </div>
-
-                {/* Pestaña Movimientos */}
-                {expensesSubTab === 'movimientos' && (() => {
-                  const totalIngresos = cashFlow.filter(m => m.type === 'ingreso').reduce((s, m) => s + (m.amount || 0), 0);
-                  const totalRetiros  = cashFlow.filter(m => m.type === 'retiro').reduce((s, m) => s + (m.amount || 0), 0);
-                  const saldo         = totalIngresos - totalRetiros;
-                  const movimientos   = [...cashFlow].sort((a, b) => new Date(b.date) - new Date(a.date));
-                  const totalWallets = ['LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO'].reduce((s, acc) => s + (wallets[acc] || 0), 0);
+            {/* --- PESTAÑA GASTOS (Gastos + Movimientos unificados) --- */}
+            {activeTab === 'expenses' && (() => {
+                  const totalWallets = ['LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO', 'SIN_CUENTA'].reduce((s, acc) => s + (wallets[acc] || 0), 0);
+                  const feed = [
+                    ...cashFlow.map(m => ({ ...m, kind: 'movimiento' })),
+                    ...expenses.map(e => ({ ...e, kind: 'gasto' })),
+                  ].sort((a, b) => new Date(b.date) - new Date(a.date));
+                  const filteredFeed = feed.filter(item => {
+                    if (showStockHistory) return item.type === 'stock';
+                    if (showAjustesHistory) return item.type === 'ajuste';
+                    if (item.type === 'ajuste' || item.type === 'stock') return false;
+                    if (cashFlowFilter === 'TODAS') return true;
+                    if (cashFlowFilter === 'GASTOS') return item.kind === 'gasto';
+                    return item.account === cashFlowFilter;
+                  });
+                  const stockGroups = showStockHistory ? Object.values(
+                    filteredFeed.reduce((acc, item) => {
+                      const key = item.batchId || item.id;
+                      if (!acc[key]) acc[key] = { key, batchId: item.batchId, batchName: item.batchName || item.description, account: item.account, entries: [], total: 0 };
+                      acc[key].entries.push(item);
+                      acc[key].total += item.amount || 0;
+                      return acc;
+                    }, {})
+                  ).sort((a, b) => new Date(b.entries[0].date) - new Date(a.entries[0].date)) : [];
                   return (
-                    <>
+                    <div className="space-y-6 animate-in fade-in duration-300">
+
+                      <div className="flex items-center justify-end">
+                        <button onClick={handleSincronizarBilleteras}
+                          className={`flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-[11px] font-bold border transition-all whitespace-nowrap ${darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300 hover:border-white/20' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
+                          <RefreshCw size={11}/> Sincronizar con ventas
+                        </button>
+                      </div>
+
                       {/* Total en caja */}
                       <div className={`rounded-2xl border p-4 md:p-5 flex items-center justify-between ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}
                         style={darkMode ? {background:'linear-gradient(145deg,#141414,#1c1c1c)'} : {}}>
@@ -7563,7 +7712,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                       </div>
 
                       {/* Billeteras */}
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                         {['LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO'].map(acc => {
                           const saldo = wallets[acc] || 0;
                           const isEditing = editingWallet === acc;
@@ -7575,7 +7724,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                   <div className={`p-1.5 rounded-lg ${saldo >= 0 ? 'bg-emerald-500/10' : 'bg-rose-500/10'}`}>
                                     <Landmark size={14} className={saldo >= 0 ? 'text-emerald-400' : 'text-rose-400'}/>
                                   </div>
-                                  <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">{acc}</span>
+                                  <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">{accountLabel(acc)}</span>
                                 </div>
                                 {!isEditing && (
                                   <button onClick={() => { setEditingWallet(acc); setEditingWalletValue(String(saldo)); }}
@@ -7627,84 +7776,237 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                       </div>
 
                       <Card darkMode={darkMode} className="p-5 md:p-6">
-                        <h2 className="text-xl font-bold tracking-tight mb-5 flex items-center gap-2">
+                        <h2 className="text-xl font-bold tracking-tight mb-6 flex items-center gap-2">
                           <Landmark size={20} className="text-indigo-400"/> Registrar Movimiento
                         </h2>
-                        <p className={`text-xs font-bold uppercase tracking-widest mb-2 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Wallet</p>
-                        <div className="flex gap-2 mb-3">
-                          {['LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO'].map(acc => (
-                            <button key={acc} onClick={() => setNewCashMovement(p => ({ ...p, account: acc }))}
-                              className={`px-4 py-2 rounded-xl border text-sm font-bold transition-all ${newCashMovement.account === acc ? (darkMode ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40' : 'bg-indigo-50 text-indigo-700 border-indigo-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
-                              {acc}
-                            </button>
-                          ))}
-                        </div>
-                        <p className={`text-xs font-bold uppercase tracking-widest mb-2 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Tipo de movimiento</p>
-                        <div className="flex gap-2 mb-5">
-                          {[
-                            { type: 'ingreso', label: 'Ingreso', icon: ArrowDownLeft, active: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
-                            { type: 'retiro',  label: 'Retiro',  icon: ArrowUpRight,  active: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
-                            { type: 'pago',    label: 'Pago',    icon: CreditCard,    active: 'bg-blue-500/15 text-blue-400 border-blue-500/30' },
-                          ].map(({ type, label, icon: Icon, active }) => (
-                            <button key={type} onClick={() => setNewCashMovement(p => ({ ...p, type }))}
-                              className={`flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-bold transition-all ${newCashMovement.type === type ? active : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
-                              <Icon size={15}/>{label}
-                            </button>
-                          ))}
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 mb-4">
-                          <div className="sm:col-span-3"><Input darkMode={darkMode} type="date" label="Fecha" value={newCashMovement.date} onChange={e => setNewCashMovement(p => ({ ...p, date: e.target.value }))} /></div>
-                          <div className="sm:col-span-6"><Input darkMode={darkMode} label="Descripción" placeholder={newCashMovement.type === 'ingreso' ? 'Ej: Transferencia cliente, Venta efectivo...' : newCashMovement.type === 'pago' ? 'Ej: Pago proveedor, Servicio...' : 'Ej: Retiro personal...'} value={newCashMovement.description} onChange={e => setNewCashMovement(p => ({ ...p, description: e.target.value }))} /></div>
-                          <div className="sm:col-span-3"><Input darkMode={darkMode} label="Importe" type="number" symbol="$" value={newCashMovement.amount} onChange={e => setNewCashMovement(p => ({ ...p, amount: e.target.value }))} /></div>
-                        </div>
-                        <div className="flex justify-end">
-                          <Button darkMode={darkMode} onClick={handleAddCashMovement}
-                            variant={newCashMovement.type === 'ingreso' ? 'primary' : newCashMovement.type === 'pago' ? 'secondary' : 'danger'}
-                            className="w-full sm:w-56">
-                            {newCashMovement.type === 'ingreso' ? <ArrowDownLeft size={15}/> : newCashMovement.type === 'pago' ? <CreditCard size={15}/> : <ArrowUpRight size={15}/>}
-                            Registrar {newCashMovement.type === 'ingreso' ? 'Ingreso' : newCashMovement.type === 'pago' ? 'Pago' : 'Retiro'}
-                          </Button>
+
+                        <div className="space-y-4">
+                          {/* Tipo de movimiento */}
+                          <div className={`rounded-2xl p-4 border ${darkMode ? 'border-white/[0.06] bg-white/[0.02]' : 'border-zinc-100 bg-zinc-50'}`}>
+                            <p className={`text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-1.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                              <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${darkMode ? 'bg-white/10 text-zinc-300' : 'bg-zinc-200 text-zinc-600'}`}>1</span>
+                              Tipo de movimiento
+                            </p>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                              {[
+                                { type: 'ingreso', label: 'Ingreso', icon: ArrowDownLeft, active: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
+                                { type: 'retiro',  label: 'Retiro',  icon: ArrowUpRight,  active: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
+                                { type: 'pago',    label: 'Pago',    icon: CreditCard,    active: 'bg-blue-500/15 text-blue-400 border-blue-500/30' },
+                                { type: 'gasto',   label: 'Gasto',   icon: Wallet,        active: 'bg-rose-500/15 text-rose-400 border-rose-500/30' },
+                              ].map(({ type, label, icon: Icon, active }) => (
+                                <button key={type} onClick={() => setNewCashMovement(p => ({ ...p, type }))}
+                                  className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border text-sm font-bold transition-all ${newCashMovement.type === type ? active : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
+                                  <Icon size={15}/>{label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Wallet */}
+                          <div className={`rounded-2xl p-4 border ${darkMode ? 'border-white/[0.06] bg-white/[0.02]' : 'border-zinc-100 bg-zinc-50'}`}>
+                            <p className={`text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-1.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                              <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${darkMode ? 'bg-white/10 text-zinc-300' : 'bg-zinc-200 text-zinc-600'}`}>2</span>
+                              Cuenta / Wallet
+                            </p>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                              {['LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO'].map(acc => (
+                                <button key={acc} onClick={() => setNewCashMovement(p => ({ ...p, account: acc }))}
+                                  className={`px-3 py-2.5 rounded-xl border text-sm font-bold transition-all ${newCashMovement.account === acc ? (darkMode ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40' : 'bg-indigo-50 text-indigo-700 border-indigo-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
+                                  {acc}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Detalle */}
+                          <div className={`rounded-2xl p-4 border ${darkMode ? 'border-white/[0.06] bg-white/[0.02]' : 'border-zinc-100 bg-zinc-50'}`}>
+                            <p className={`text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-1.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                              <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${darkMode ? 'bg-white/10 text-zinc-300' : 'bg-zinc-200 text-zinc-600'}`}>3</span>
+                              Detalle
+                            </p>
+                            <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
+                              <div className="sm:col-span-3"><Input darkMode={darkMode} type="date" label="Fecha" value={newCashMovement.date} onChange={e => setNewCashMovement(p => ({ ...p, date: e.target.value }))} /></div>
+                              <div className="sm:col-span-6"><Input darkMode={darkMode} label="Descripción" placeholder={newCashMovement.type === 'ingreso' ? 'Ej: Transferencia cliente, Venta efectivo...' : newCashMovement.type === 'pago' ? 'Ej: Pago proveedor, Servicio...' : newCashMovement.type === 'gasto' ? 'Ej: Publicidad Ads, Envío Extra...' : 'Ej: Retiro personal...'} value={newCashMovement.description} onChange={e => setNewCashMovement(p => ({ ...p, description: e.target.value }))} /></div>
+                              <div className="sm:col-span-3"><Input darkMode={darkMode} label="Importe" type="number" symbol="$" value={newCashMovement.amount} onChange={e => setNewCashMovement(p => ({ ...p, amount: e.target.value }))} /></div>
+                            </div>
+                          </div>
+
+                          {/* Asignación contable (solo gasto) + confirmación */}
+                          {newCashMovement.type === 'gasto' ? (
+                            <div className={`rounded-2xl p-4 border ${darkMode ? 'border-rose-500/20 bg-rose-500/[0.04]' : 'border-rose-200 bg-rose-50/60'}`}>
+                              <p className={`text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-1.5 ${darkMode ? 'text-rose-400/80' : 'text-rose-500'}`}>
+                                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${darkMode ? 'bg-rose-500/20 text-rose-300' : 'bg-rose-200 text-rose-700'}`}>4</span>
+                                Asignación contable (opcional)
+                              </p>
+                              <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
+                                <div className="flex-1 w-full">
+                                  <Select darkMode={darkMode} value={newCashMovement.batchId} onChange={e => setNewCashMovement(p => ({ ...p, batchId: e.target.value }))}
+                                      options={[{ value: '', label: '-- Gasto General del Negocio --' }, ...batches.map(b => ({ value: b.id, label: b.name || 'Sin nombre' }))]} />
+                                </div>
+                                <Button darkMode={darkMode} onClick={handleAddCashMovement} variant="danger" className="w-full sm:w-56 flex-shrink-0">
+                                  <Wallet size={15}/> Registrar Gasto
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex justify-end pt-1">
+                              <Button darkMode={darkMode} onClick={handleAddCashMovement}
+                                variant={newCashMovement.type === 'ingreso' ? 'primary' : newCashMovement.type === 'pago' ? 'secondary' : 'danger'}
+                                className="w-full sm:w-56">
+                                {newCashMovement.type === 'ingreso' ? <ArrowDownLeft size={15}/> : newCashMovement.type === 'pago' ? <CreditCard size={15}/> : <ArrowUpRight size={15}/>}
+                                Registrar {newCashMovement.type === 'ingreso' ? 'Ingreso' : newCashMovement.type === 'pago' ? 'Pago' : 'Retiro'}
+                              </Button>
+                            </div>
+                          )}
                         </div>
                       </Card>
 
                       <Card darkMode={darkMode} className="p-0 overflow-hidden">
                         <div className={`p-4 md:p-5 border-b flex flex-wrap items-center justify-between gap-3 ${darkMode ? 'bg-[#181818] border-[#1F1F1F]' : 'bg-white border-zinc-200'}`}>
-                          <div className="flex items-center gap-3">
-                            <h3 className="font-bold text-base tracking-tight">Movimientos de Caja</h3>
-                            <button onClick={() => setShowAjustesHistory(v => !v)}
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <h3 className="font-bold text-base tracking-tight">Historial (Movimientos y Gastos)</h3>
+                            <button onClick={() => { setShowAjustesHistory(v => !v); setShowStockHistory(false); }}
                               className={`text-[10px] font-bold px-2 py-0.5 rounded-md border transition-all ${showAjustesHistory ? (darkMode ? 'bg-violet-500/20 text-violet-400 border-violet-500/40' : 'bg-violet-50 text-violet-600 border-violet-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-600'}`}>
                               Historial de saldos
                             </button>
+                            <button onClick={() => { setShowStockHistory(v => !v); setShowAjustesHistory(false); }}
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-md border transition-all ${showStockHistory ? (darkMode ? 'bg-fuchsia-500/20 text-fuchsia-400 border-fuchsia-500/40' : 'bg-fuchsia-50 text-fuchsia-600 border-fuchsia-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-600'}`}>
+                              Historial de Stock
+                            </button>
                           </div>
-                          {!showAjustesHistory && <div className="flex gap-1.5 flex-wrap">
-                            {['TODAS', 'LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO'].map(f => (
+                          {!showAjustesHistory && !showStockHistory && <div className="flex gap-1.5 flex-wrap">
+                            {['TODAS', 'GASTOS', 'LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO', 'SIN_CUENTA'].map(f => (
                               <button key={f} onClick={() => setCashFlowFilter(f)}
                                 className={`px-3 py-1 rounded-lg text-[11px] font-bold border transition-all ${cashFlowFilter === f ? (darkMode ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40' : 'bg-indigo-50 text-indigo-700 border-indigo-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-600'}`}>
-                                {f}
+                                {accountLabel(f)}
                               </button>
                             ))}
                           </div>}
                         </div>
                         <div className={`divide-y ${darkMode ? 'divide-zinc-800' : 'divide-zinc-100'}`}>
-                          {showAjustesHistory
-                            ? movimientos.filter(m => m.type === 'ajuste').length === 0 && <div className="p-12 text-center text-sm font-medium opacity-50">No hay ajustes de saldo registrados.</div>
-                            : movimientos.filter(m => m.type !== 'ajuste' && (cashFlowFilter === 'TODAS' || m.account === cashFlowFilter)).length === 0 && <div className="p-12 text-center text-sm font-medium opacity-50">No hay movimientos registrados.</div>
-                          }
-                          {(showAjustesHistory
-                            ? movimientos.filter(m => m.type === 'ajuste')
-                            : movimientos.filter(m => m.type !== 'ajuste' && (cashFlowFilter === 'TODAS' || m.account === cashFlowFilter))
-                          ).map(m => {
+                          {showStockHistory ? (
+                            <>
+                              {stockGroups.length === 0 && (
+                                <div className="p-12 text-center text-sm font-medium opacity-50">No hay compras de stock registradas.</div>
+                              )}
+                              {stockGroups.map(group => {
+                                const batch = batches.find(b => b.id === group.batchId);
+                                const isExpanded = expandedStockGroup === group.key;
+                                return (
+                                  <div key={group.key} className={darkMode ? 'bg-[#101010]' : 'bg-white'}>
+                                    <div className="flex flex-wrap justify-between items-center gap-3 p-4 md:p-5 transition-colors group">
+                                      <div className="flex items-center gap-4">
+                                        <div className={`p-2.5 rounded-lg ${darkMode ? 'bg-fuchsia-500/10 text-fuchsia-400' : 'bg-fuchsia-50 text-fuchsia-600'}`}><FolderOpen size={20}/></div>
+                                        <div>
+                                          <div className="font-semibold text-sm">{group.batchName || 'Sin lote'}</div>
+                                          <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                            <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{safeDateStr(group.entries[0].date, {month:'long', day:'numeric'})}</span>
+                                            <span className="text-zinc-300 dark:text-zinc-700">•</span>
+                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-fuchsia-500/30 text-fuchsia-400' : 'border-fuchsia-200 text-fuchsia-600'}`}>Compra Stock</span>
+                                            {group.account && (
+                                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
+                                                {accountLabel(group.account)}
+                                              </span>
+                                            )}
+                                            {group.entries.length > 1 && (
+                                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-zinc-700 text-zinc-400' : 'border-zinc-200 text-zinc-500'}`}>{group.entries.length} compras</span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-3">
+                                        <span className="font-bold tracking-tight text-fuchsia-500 text-lg">-{formatMoney(group.total)}</span>
+                                        <button onClick={() => setExpandedStockGroup(isExpanded ? null : group.key)}
+                                          className={`flex items-center gap-1 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all ${darkMode ? 'border-white/[0.08] text-zinc-400 hover:text-zinc-200' : 'border-zinc-200 text-zinc-500 hover:text-zinc-800'}`}>
+                                          {isExpanded ? 'Ver menos' : 'Ver más'}
+                                          {isExpanded ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}
+                                        </button>
+                                        <button onClick={() => handleDeleteStockGroup(group)}
+                                          className={`p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}>
+                                          <Trash2 size={18}/>
+                                        </button>
+                                      </div>
+                                    </div>
+                                    {isExpanded && (() => {
+                                      const items = batch?.items || [];
+                                      const itemsTotal = items.reduce((s, it) => s + ((it.costArs || 0) * (it.initialStock || 0)), 0);
+                                      return (
+                                      <div className="px-5 pb-5">
+                                        <div className={`rounded-xl border divide-y ${darkMode ? 'border-white/[0.07] divide-zinc-800' : 'border-zinc-200 divide-zinc-100'}`}>
+                                          {items.length === 0 && (
+                                            <div className="p-4 text-xs text-center opacity-50">Este lote no tiene productos cargados.</div>
+                                          )}
+                                          {items.map(it => (
+                                            <div key={it.id} className="flex justify-between items-center p-3">
+                                              <div>
+                                                <div className="text-sm font-semibold">{it.product}</div>
+                                                <div className={`text-xs ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{it.variant || 'Único'} · {it.currentStock ?? 0}/{it.initialStock ?? 0} unidades · {formatMoney(it.costArs)} c/u</div>
+                                              </div>
+                                              <div className="text-sm font-bold">{formatMoney((it.costArs || 0) * (it.initialStock || 0))}</div>
+                                            </div>
+                                          ))}
+                                          {items.length > 0 && (
+                                            <div className={`flex justify-between items-center p-3 ${darkMode ? 'bg-white/[0.03]' : 'bg-zinc-50'}`}>
+                                              <div className="text-xs font-bold uppercase tracking-widest opacity-60">Total productos</div>
+                                              <div className="text-sm font-black">{formatMoney(itemsTotal)}</div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                      );
+                                    })()}
+                                  </div>
+                                );
+                              })}
+                            </>
+                          ) : (
+                          <>
+                          {filteredFeed.length === 0 && (
+                            <div className="p-12 text-center text-sm font-medium opacity-50">
+                              {showAjustesHistory ? 'No hay ajustes de saldo registrados.' : 'No hay registros para este filtro.'}
+                            </div>
+                          )}
+                          {filteredFeed.map(item => {
+                            if (item.kind === 'gasto') {
+                              return (
+                                <div key={`gasto-${item.id}`} className={`flex justify-between items-center p-4 md:p-5 transition-colors group ${darkMode ? 'hover:bg-zinc-900/50 bg-[#101010]' : 'hover:bg-zinc-50 bg-white'}`}>
+                                  <div className="flex items-center gap-4">
+                                    <div className={`p-2.5 rounded-lg ${darkMode ? 'bg-red-500/10 text-red-500' : 'bg-red-50 text-red-600'}`}><Wallet size={20}/></div>
+                                    <div>
+                                      <div className="font-semibold text-sm">{item.description || 'Sin descripción'}</div>
+                                      <div className="flex items-center gap-2 mt-1">
+                                        <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{safeDateStr(item.date, {month:'long', day:'numeric'})}</span>
+                                        <span className="text-zinc-300 dark:text-zinc-700">•</span>
+                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-red-500/30 text-red-400' : 'border-red-200 text-red-600'}`}>Gasto</span>
+                                        {item.account && (
+                                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
+                                            {accountLabel(item.account)}
+                                          </span>
+                                        )}
+                                        {item.batchName && (<span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-zinc-700 text-zinc-400' : 'border-zinc-200 text-zinc-500'}`}>{item.batchName}</span>)}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-6">
+                                    <span className="font-bold tracking-tight text-red-500 text-lg">-{formatMoney(item.amount)}</span>
+                                    <button onClick={() => handleDeleteExpense(item.id)} className={`p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}><Trash2 size={18}/></button>
+                                  </div>
+                                </div>
+                              );
+                            }
+                            const m = item;
                             const isIngreso = m.type === 'ingreso';
                             const isAjuste  = m.type === 'ajuste';
                             const isPago    = m.type === 'pago';
-                            const iconEl    = isAjuste ? <Settings size={20}/> : isIngreso ? <ArrowDownLeft size={20}/> : isPago ? <CreditCard size={20}/> : <ArrowUpRight size={20}/>;
-                            const colorIcon = isAjuste ? (darkMode ? 'bg-violet-500/10 text-violet-400' : 'bg-violet-50 text-violet-600') : isIngreso ? (darkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-600') : isPago ? (darkMode ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600') : (darkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-50 text-amber-600');
-                            const colorBadge = isAjuste ? (darkMode ? 'border-violet-500/30 text-violet-400' : 'border-violet-200 text-violet-600') : isIngreso ? (darkMode ? 'border-emerald-500/30 text-emerald-400' : 'border-emerald-200 text-emerald-600') : isPago ? (darkMode ? 'border-blue-500/30 text-blue-400' : 'border-blue-200 text-blue-600') : (darkMode ? 'border-amber-500/30 text-amber-400' : 'border-amber-200 text-amber-600');
-                            const colorAmt  = isAjuste ? (darkMode ? 'text-violet-400' : 'text-violet-600') : isIngreso ? 'text-emerald-400' : isPago ? (darkMode ? 'text-blue-400' : 'text-blue-600') : 'text-amber-400';
-                            const badgeLabel = isAjuste ? 'Ajuste' : isIngreso ? 'Ingreso' : isPago ? 'Pago' : 'Retiro';
+                            const isStock   = m.type === 'stock';
+                            const iconEl    = isAjuste ? <Settings size={20}/> : isIngreso ? <ArrowDownLeft size={20}/> : isPago ? <CreditCard size={20}/> : isStock ? <FolderOpen size={20}/> : <ArrowUpRight size={20}/>;
+                            const colorIcon = isAjuste ? (darkMode ? 'bg-violet-500/10 text-violet-400' : 'bg-violet-50 text-violet-600') : isIngreso ? (darkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-600') : isPago ? (darkMode ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600') : isStock ? (darkMode ? 'bg-fuchsia-500/10 text-fuchsia-400' : 'bg-fuchsia-50 text-fuchsia-600') : (darkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-50 text-amber-600');
+                            const colorBadge = isAjuste ? (darkMode ? 'border-violet-500/30 text-violet-400' : 'border-violet-200 text-violet-600') : isIngreso ? (darkMode ? 'border-emerald-500/30 text-emerald-400' : 'border-emerald-200 text-emerald-600') : isPago ? (darkMode ? 'border-blue-500/30 text-blue-400' : 'border-blue-200 text-blue-600') : isStock ? (darkMode ? 'border-fuchsia-500/30 text-fuchsia-400' : 'border-fuchsia-200 text-fuchsia-600') : (darkMode ? 'border-amber-500/30 text-amber-400' : 'border-amber-200 text-amber-600');
+                            const colorAmt  = isAjuste ? (darkMode ? 'text-violet-400' : 'text-violet-600') : isIngreso ? 'text-emerald-400' : isPago ? (darkMode ? 'text-blue-400' : 'text-blue-600') : isStock ? (darkMode ? 'text-fuchsia-400' : 'text-fuchsia-600') : 'text-amber-400';
+                            const badgeLabel = isAjuste ? 'Ajuste' : isIngreso ? 'Ingreso' : isPago ? 'Pago' : isStock ? 'Compra Stock' : 'Retiro';
                             const amtLabel   = isAjuste ? formatMoney(m.amount) : isIngreso ? '+' + formatMoney(m.amount) : '-' + formatMoney(m.amount);
                             return (
-                              <div key={m.id} className={`flex justify-between items-center p-4 md:p-5 transition-colors group ${darkMode ? 'hover:bg-zinc-900/50 bg-[#101010]' : 'hover:bg-zinc-50 bg-white'}`}>
+                              <div key={`mov-${m.id}`} className={`flex justify-between items-center p-4 md:p-5 transition-colors group ${darkMode ? 'hover:bg-zinc-900/50 bg-[#101010]' : 'hover:bg-zinc-50 bg-white'}`}>
                                 <div className="flex items-center gap-4">
                                   <div className={`p-2.5 rounded-lg ${colorIcon}`}>{iconEl}</div>
                                   <div>
@@ -7715,7 +8017,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${colorBadge}`}>{badgeLabel}</span>
                                       {m.account && (
                                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
-                                          {m.account}
+                                          {accountLabel(m.account)}
                                         </span>
                                       )}
                                     </div>
@@ -7728,63 +8030,14 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                               </div>
                             );
                           })}
+                          </>
+                          )}
                         </div>
                       </Card>
-                    </>
+
+                    </div>
                   );
                 })()}
-
-                {/* Pestaña Gastos */}
-                {expensesSubTab === 'gastos' && (
-                  <>
-                    <Card darkMode={darkMode} className="border-t-4 border-t-rose-500 p-5 md:p-6">
-                        <h2 className="text-xl font-bold tracking-tight mb-5 flex items-center gap-2"><Wallet size={20} className="text-rose-500"/> Declarar Egreso</h2>
-                        <div className="flex flex-col gap-4">
-                            <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
-                                <div className="sm:col-span-3"><Input darkMode={darkMode} type="date" label="Fecha" value={newExpense.date} onChange={e => setNewExpense({...newExpense, date: e.target.value})} /></div>
-                                <div className="sm:col-span-6"><Input darkMode={darkMode} label="Descripción del Gasto" placeholder="Ej: Publicidad Ads, Envío Extra..." value={newExpense.description} onChange={e => setNewExpense({...newExpense, description: e.target.value})} /></div>
-                                <div className="sm:col-span-3"><Input darkMode={darkMode} label="Importe" type="number" symbol="$" value={newExpense.amount} onChange={e => setNewExpense({...newExpense, amount: e.target.value})} /></div>
-                            </div>
-                            <div className="flex flex-col sm:flex-row gap-4 items-end">
-                                <div className="flex-1 w-full">
-                                    <Select darkMode={darkMode} label="Asignación Contable (Opcional)" value={newExpense.batchId} onChange={e => setNewExpense({...newExpense, batchId: e.target.value})}
-                                        options={[{ value: '', label: '-- Gasto General del Negocio --' }, ...batches.map(b => ({ value: b.id, label: b.name || 'Sin nombre' }))]} />
-                                </div>
-                                <Button darkMode={darkMode} onClick={handleAddExpense} variant="danger" className="w-full sm:w-48">Registrar Salida</Button>
-                            </div>
-                        </div>
-                    </Card>
-                    <Card darkMode={darkMode} className="p-0 overflow-hidden border-zinc-200 dark:border-[#1F1F1F]">
-                        <div className={`p-4 md:p-5 border-b ${darkMode ? 'bg-[#181818] border-[#1F1F1F]' : 'bg-white border-zinc-200'}`}>
-                            <h3 className="font-bold text-base tracking-tight">Registro de Egresos</h3>
-                        </div>
-                        <div className={`divide-y ${darkMode ? 'divide-zinc-800' : 'divide-zinc-100'}`}>
-                            {expenses.length === 0 && <div className="p-12 text-center text-sm font-medium opacity-50">No hay movimientos de salida registrados.</div>}
-                            {expenses.map(e => (
-                            <div key={e.id} className={`flex justify-between items-center p-4 md:p-5 transition-colors group ${darkMode ? 'hover:bg-zinc-900/50 bg-[#101010]' : 'hover:bg-zinc-50 bg-white'}`}>
-                                <div className="flex items-center gap-4">
-                                    <div className={`p-2.5 rounded-lg ${darkMode ? 'bg-red-500/10 text-red-500' : 'bg-red-50 text-red-600'}`}><Wallet size={20}/></div>
-                                    <div>
-                                        <div className="font-semibold text-sm">{e.description || 'Sin descripción'}</div>
-                                        <div className="flex items-center gap-2 mt-1">
-                                            <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{safeDateStr(e.date, {month:'long', day:'numeric'})}</span>
-                                            {e.batchName && (<><span className="text-zinc-300 dark:text-zinc-700">•</span><span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-zinc-700 text-zinc-400' : 'border-zinc-200 text-zinc-500'}`}>{e.batchName}</span></>)}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-6">
-                                    <span className="font-bold tracking-tight text-red-500 text-lg">-{formatMoney(e.amount)}</span>
-                                    <button onClick={() => handleDeleteExpense(e.id)} className={`p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}><Trash2 size={18}/></button>
-                                </div>
-                            </div>
-                            ))}
-                        </div>
-                    </Card>
-                  </>
-                )}
-
-                </div>
-            )}
 
             {/* --- PESTAÑA META ADS --- */}
             {activeTab === 'metaads' && (
