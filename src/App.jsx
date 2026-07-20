@@ -1512,10 +1512,10 @@ EMPLEADO — Lucas Buono: Lucas trabaja por comisión del 3% sobre sus ventas. E
 - Calcular y mostrar su comisión: facturación_Buono × 0.03
 - Mostrar sus productos más vendidos
 
-EMPLEADO — Delfina: Delfina trabaja por comisión del 4% sobre sus ventas. En el sistema sus ventas tienen el campo seller = "Delfina". Cuando el usuario pida análisis de Delfina o cuando hagas un cierre completo, siempre:
+EMPLEADO — Delfina: Delfina trabaja por comisión del 5% sobre sus ventas. En el sistema sus ventas tienen el campo seller = "Delfina". Cuando el usuario pida análisis de Delfina o cuando hagas un cierre completo, siempre:
 - Filtrar las ventas con seller = "Delfina"
 - Mostrar su facturación total y cantidad de ventas
-- Calcular y mostrar su comisión: facturación_Delfina × 0.04
+- Calcular y mostrar su comisión: facturación_Delfina × 0.05
 - Mostrar sus productos más vendidos
 
 MARKETING — Meta Ads vs orgánico: El negocio trabaja con una agencia de Meta Ads. Los clientes nuevos se registran en el campo isNewClient con valores como "Nuevo orgánico", "Nuevo por ads", o similares. Durante mayo 2026 se apagaron los ads para medir el volumen orgánico real. Cuando analicés clientes nuevos o marketing, siempre:
@@ -2234,6 +2234,7 @@ export default function App() {
 
   const [newBatchName, setNewBatchName] = useState('');
   const [newBatchAccount, setNewBatchAccount] = useState('LEMON');
+  const [newBatchSkipExpense, setNewBatchSkipExpense] = useState(false);
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '', repeatCount: '1' });
   const [cashFlow, setCashFlow] = useState([]);
   const [wallets, setWallets] = useState({ LEMON: 0, ASTROPAY: 0, GALICIA: 0, EFECTIVO: 0, SIN_CUENTA: 0 });
@@ -2856,7 +2857,7 @@ export default function App() {
           items:       d.items,
           avgTicket:   d.count > 0 ? d.revenue / d.count : 0,
           share:       totalRevenue > 0 ? (d.revenue / totalRevenue) * 100 : 0,
-          commission:  name === 'Buono' ? d.revenue * 0.03 : name === 'Delfina' ? d.revenue * 0.04 : null,
+          commission:  name === 'Buono' ? d.revenue * 0.03 : name === 'Delfina' ? d.revenue * 0.05 : null,
       })).sort((a, b) => b.revenue - a.revenue);
   }, [analysisData.baseStats.filteredSales]);
 
@@ -4200,8 +4201,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
   const handleCreateBatch = async () => {
     if (!newBatchName) return showToast("Debes ingresar un nombre para el lote", 'error');
     try {
-      await addDoc(collection(db, 'batches'), { name: newBatchName, createdAt: new Date().toISOString(), items: [], account: newBatchAccount });
+      await addDoc(collection(db, 'batches'), { name: newBatchName, createdAt: new Date().toISOString(), items: [], account: newBatchAccount, skipExpense: newBatchSkipExpense });
       setNewBatchName('');
+      setNewBatchSkipExpense(false);
       showToast("Lote creado correctamente", 'success');
     } catch (e) { showToast("Error: " + e.message, 'error'); }
   };
@@ -4302,7 +4304,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     try {
       await updateDoc(doc(db, 'batches', batchId), { items: [...(batch.items || []), ...newItems] });
       const itemCost = unitCost * qty;
-      if (itemCost > 0 && batch.account) {
+      if (!batch.skipExpense && itemCost > 0 && batch.account) {
         const nowIso = new Date().toISOString();
         for (const it of newItems) {
           await addDoc(collection(db, 'cashFlow'), {
@@ -5640,7 +5642,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                             </div>
                                             {member.commission !== null && (
                                                 <div className="col-span-2">
-                                                    <div className="text-[9px] uppercase tracking-widest text-zinc-500 mb-0.5">Comisión ({member.name === 'Delfina' ? '4' : '3'}%)</div>
+                                                    <div className="text-[9px] uppercase tracking-widest text-zinc-500 mb-0.5">Comisión ({member.name === 'Delfina' ? '5' : '3'}%)</div>
                                                     {member.name === 'Buono' ? (
                                                         <div className="flex items-center gap-2">
                                                             <div className="text-sm font-bold leading-none text-amber-400">
@@ -6213,6 +6215,15 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                           <Select darkMode={darkMode} label="Cuenta de compra" value={newBatchAccount} onChange={e => setNewBatchAccount(e.target.value)}
                             options={['LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO', 'SIN_CUENTA'].map(acc => ({ value: acc, label: accountLabel(acc) }))} />
                         </div>
+                        <label className={`flex items-center gap-2 text-xs font-medium cursor-pointer select-none pb-2 ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                          <input
+                            type="checkbox"
+                            checked={newBatchSkipExpense}
+                            onChange={e => setNewBatchSkipExpense(e.target.checked)}
+                            className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                          />
+                          No registrar como gasto en la billetera
+                        </label>
                         <Button darkMode={darkMode} onClick={handleCreateBatch} className="shrink-0"><Plus size={16}/> Crear Lote</Button>
                       </div>
                   </div>
