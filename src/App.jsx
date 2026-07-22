@@ -121,6 +121,7 @@ const normalizeSellerName = (name) => {
   if (lower === "marcos" || lower === "028import" || lower === "028 import") return "028 Import";
   if (lower === "b" || lower === "buono") return "Buono";
   if (lower === "d" || lower === "delfina") return "Delfina";
+  if (lower === "j" || lower === "jero" || lower === "jeronimo") return "Jeronimo";
   return name;
 };
 
@@ -1494,7 +1495,7 @@ FORMA DE ACTUAR: Cuando hagás cierres o resúmenes, SIEMPRE mostrar en este ord
 6. Ticket promedio
 7. Productos más vendidos (por volumen)
 8. Productos más rentables (por ganancia)
-9. Ventas y comisión de Lucas Buono (ver sección EMPLEADO)
+9. Ventas y comisión de Lucas Buono, Delfina y Jeronimo (ver sección EMPLEADO)
 10. Resumen ejecutivo: solo los números clave, sin repetir el detalle anterior
 
 PRECISIÓN: Nunca usar aproximaciones. Siempre calcular con los datos reales. Antes de mostrar resultados, revisá si hay registros duplicados o inconsistentes y avisá si detectás algo raro. Mostrá todos los números sin redondear.
@@ -1516,6 +1517,12 @@ EMPLEADO — Delfina: Delfina trabaja por comisión del 5% sobre sus ventas. En 
 - Filtrar las ventas con seller = "Delfina"
 - Mostrar su facturación total y cantidad de ventas
 - Calcular y mostrar su comisión: facturación_Delfina × 0.05
+- Mostrar sus productos más vendidos
+
+EMPLEADO — Jeronimo: Jeronimo trabaja por comisión del 5% sobre sus ventas. En el sistema sus ventas tienen el campo seller = "Jeronimo". Cuando el usuario pida análisis de Jeronimo o cuando hagas un cierre completo, siempre:
+- Filtrar las ventas con seller = "Jeronimo"
+- Mostrar su facturación total y cantidad de ventas
+- Calcular y mostrar su comisión: facturación_Jeronimo × 0.05
 - Mostrar sus productos más vendidos
 
 MARKETING — Meta Ads vs orgánico: El negocio trabaja con una agencia de Meta Ads. Los clientes nuevos se registran en el campo isNewClient con valores como "Nuevo orgánico", "Nuevo por ads", o similares. Durante mayo 2026 se apagaron los ads para medir el volumen orgánico real. Cuando analicés clientes nuevos o marketing, siempre:
@@ -2857,7 +2864,7 @@ export default function App() {
           items:       d.items,
           avgTicket:   d.count > 0 ? d.revenue / d.count : 0,
           share:       totalRevenue > 0 ? (d.revenue / totalRevenue) * 100 : 0,
-          commission:  name === 'Buono' ? d.revenue * 0.03 : name === 'Delfina' ? d.revenue * 0.05 : null,
+          commission:  name === 'Buono' ? d.revenue * 0.03 : (name === 'Delfina' || name === 'Jeronimo') ? d.revenue * 0.05 : null,
       })).sort((a, b) => b.revenue - a.revenue);
   }, [analysisData.baseStats.filteredSales]);
 
@@ -5642,7 +5649,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                             </div>
                                             {member.commission !== null && (
                                                 <div className="col-span-2">
-                                                    <div className="text-[9px] uppercase tracking-widest text-zinc-500 mb-0.5">Comisión ({member.name === 'Delfina' ? '5' : '3'}%)</div>
+                                                    <div className="text-[9px] uppercase tracking-widest text-zinc-500 mb-0.5">Comisión ({(member.name === 'Delfina' || member.name === 'Jeronimo') ? '5' : '3'}%)</div>
                                                     {member.name === 'Buono' ? (
                                                         <div className="flex items-center gap-2">
                                                             <div className="text-sm font-bold leading-none text-amber-400">

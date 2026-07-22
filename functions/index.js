@@ -637,6 +637,7 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                             const u = (v || "").toUpperCase().trim();
                             if (u === "B" || u === "BUONO") return "Buono";
                             if (u === "D" || u === "DELFINA") return "Delfina";
+                            if (u === "J" || u === "JERO" || u === "JERONIMO") return "Jeronimo";
                             if (u.length <= 2) return u; // otras siglas
                             return null;
                         };
@@ -1189,6 +1190,7 @@ exports.resumenDiario = onSchedule({
             let nomVend = v.seller || "028 Import";
             if (nomVend.toUpperCase() === "B") nomVend = "Buono"; // Por si quedó alguno viejo
             if (nomVend.toUpperCase() === "D") nomVend = "Delfina"; // Por si quedó alguno viejo
+            if (nomVend.toUpperCase() === "J") nomVend = "Jeronimo"; // Por si quedó alguno viejo
             const etiquetaVendedor = (nomVend !== "028 Import" && nomVend.toLowerCase() !== "marcos") ? `[${nomVend}] ` : "";
             
             resumenText += `• ${etiquetaVendedor}${v.quantity}x ${v.productName} (${v.variant}) - $${v.totalSaleRaw}\n`;
