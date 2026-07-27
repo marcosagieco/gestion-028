@@ -401,9 +401,10 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
       if(isNaN(d.getTime())) return;
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       if (map[key]) {
+        const saleShippingProfit = s.shippingProfit != null ? (s.shippingProfit || 0) : ((s.clientShippingCharge || 0) - (s.shippingCostArs || 0));
         map[key].Ingresos += s.totalSaleRaw || 0;
         map[key].Unidades += s.quantity || 0;
-        map[key].Ganancia += (s.totalSaleRaw || 0) - (s.costArsAtSale || 0);
+        map[key].Ganancia += (s.totalSaleRaw || 0) - ((s.costArsAtSale || 0) * (s.quantity || 0)) + saleShippingProfit;
       }
     });
 
@@ -2741,9 +2742,9 @@ export default function App() {
           const costOfSoldFiltered = fSales.reduce((acc, s) => acc + ((s.costArsAtSale || 0) * (s.quantity || 0)), 0);
 
           // La ganancia neutra no modifica ventas diarias/mensuales, pero sí el global histórico.
-          const grossProfit = (totalRevenue - costOfSoldFiltered) + neutralProfit;
+          const grossProfit = (totalRevenue - costOfSoldFiltered) + neutralProfit + totalShippingProfit;
           const netProfit = grossProfit - totalGlobalExpenses;
-          const cashBalance = (totalRevenue + neutralRevenue) - totalInvestment - totalGlobalExpenses;
+          const cashBalance = (totalRevenue + neutralRevenue + totalShippingProfit) - totalInvestment - totalGlobalExpenses;
 
           const currentStockValue = batches.filter(b => !b.finalizedAt).reduce((acc, b) => acc + (b.items || []).reduce((a, i) => a + ((i.costArs || 0) * (i.currentStock || 0)), 0), 0);
 
@@ -2915,9 +2916,10 @@ export default function App() {
       const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
       const idx = dayKeys.indexOf(key);
       if (idx >= 0) {
+        const saleShippingProfit = s.shippingProfit != null ? (s.shippingProfit || 0) : ((s.clientShippingCharge || 0) - (s.shippingCostArs || 0));
         rev[idx] += s.totalSaleRaw || 0;
         units[idx] += s.quantity || 0;
-        profit[idx] += (s.totalSaleRaw || 0) - (s.costArsAtSale || 0);
+        profit[idx] += (s.totalSaleRaw || 0) - ((s.costArsAtSale || 0) * (s.quantity || 0)) + saleShippingProfit;
         txCount[idx] += 1;
         if (isNewClientStatus(s.isNewClient)) clients[idx] += 1;
         if (s.isNewClient === 'Nuevo - Organico' || s.isNewClient === true) organicClients[idx] += 1;
@@ -3223,10 +3225,10 @@ export default function App() {
 
     const totalInvestment = (batch.items || []).reduce((acc, i) => acc + ((i.costArs || 0) * (i.initialStock || 0)), 0);
     const costOfSold = batchSales.reduce((acc, s) => acc + ((s.costArsAtSale || 0) * (s.quantity || 0)), 0);
-    const grossProfit = totalRevenue - costOfSold; 
+    const grossProfit = totalRevenue - costOfSold + totalShippingProfit;
     const totalBatchExpenses = batchExpenses.reduce((acc, e) => acc + (e.amount || 0), 0);
     const netProfit = grossProfit - totalBatchExpenses;
-    const cashBalance = totalRevenue - totalInvestment - totalBatchExpenses;
+    const cashBalance = totalRevenue + totalShippingProfit - totalInvestment - totalBatchExpenses;
     
     const currentStockValue = batch.finalizedAt ? 0 : (batch.items || []).reduce((acc, item) => acc + ((item.costArs || 0) * (item.currentStock || 0)), 0);
 
@@ -3441,8 +3443,9 @@ export default function App() {
         isNeutral: !!s.isNeutral || s.accountingType === 'neutral',
         neutralReason: s.neutralReason || ''
       });
+      const saleShippingProfit = s.shippingProfit != null ? (s.shippingProfit || 0) : ((s.clientShippingCharge || 0) - (s.shippingCostArs || 0));
       map[key].totalSaleRaw += (s.totalSaleRaw || 0);
-      map[key].totalProfit += ((s.totalSaleRaw || 0) - ((s.costArsAtSale || 0) * (s.quantity || 0)));
+      map[key].totalProfit += ((s.totalSaleRaw || 0) - ((s.costArsAtSale || 0) * (s.quantity || 0))) + saleShippingProfit;
       map[key].originalSales.push(s);
     });
     return result;
