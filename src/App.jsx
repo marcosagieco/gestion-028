@@ -2730,7 +2730,7 @@ export default function App() {
           fSales.forEach(s => {
               totalRevenue += s.totalSaleRaw || 0;
               itemsSold += s.quantity || 0;
-              totalShippingProfit += Number(s.shippingProfit) || 0;
+              totalShippingProfit += s.shippingProfit != null ? (s.shippingProfit || 0) : ((s.clientShippingCharge || 0) - (s.shippingCostArs || 0));
               const src = s.source || 'Otro';
               sourceCounts[src] = (sourceCounts[src] || 0) + 1;
               if (s.isReseller === 'Si' || s.isReseller === true) typeCounts.Revendedor++; else typeCounts.Final++;
@@ -4755,7 +4755,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     snap.docs.forEach(d => {
       const s = d.data();
       if (s.medioPago && aliasWalletMap[s.medioPago]) {
-        totales[aliasWalletMap[s.medioPago]] += (s.totalSaleRaw || 0) + (s.shippingProfit || 0);
+        const saleShippingProfit = s.shippingProfit != null ? (s.shippingProfit || 0) : ((s.clientShippingCharge || 0) - (s.shippingCostArs || 0));
+        totales[aliasWalletMap[s.medioPago]] += (s.totalSaleRaw || 0) + saleShippingProfit;
       }
     });
     await setDoc(doc(db, 'settings', 'wallets'), totales, { merge: true });
