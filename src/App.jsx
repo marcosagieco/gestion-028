@@ -153,6 +153,7 @@ const getClientStatusLabel = (value) => {
   if (value === true || String(value ?? '').trim().toLowerCase() === 'si') return 'Nuevo - Orgánico';
   const normalized = String(value ?? '').trim().toLowerCase();
   if (normalized === 'nuevo - publicidad') return 'Nuevo - Publicidad';
+  if (normalized === 'clientes - publicidad') return 'Clientes - Publicidad';
   if (normalized === 'nuevo - organico' || normalized === 'nuevo - orgánico' || normalized == 'nuevo') return 'Nuevo - Orgánico';
   if (normalized === 'revendedor') return 'Revendedor';
   return 'Frecuente';
@@ -161,6 +162,7 @@ const getClientStatusLabel = (value) => {
 const getClientSearchLabel = (value) => {
   const label = getClientStatusLabel(value);
   if (label === 'Nuevo - Publicidad') return 'cliente nuevo publicidad primera compra ads anuncios';
+  if (label === 'Clientes - Publicidad') return 'cliente fijo publicidad recurrente ads anuncios';
   if (label === 'Nuevo - Orgánico') return 'cliente nuevo organico orgánico primera compra';
   if (label === 'Revendedor') return 'cliente revendedor distribuidor mayorista reventa';
   return 'cliente frecuente recurrente';
@@ -2905,6 +2907,7 @@ export default function App() {
     const clients = new Array(7).fill(0);
     const organicClients = new Array(7).fill(0);
     const adsClients = new Array(7).fill(0);
+    const fixedAdsClients = new Array(7).fill(0);
     const resellerClients = new Array(7).fill(0);
     const exps = new Array(7).fill(0);
     const txCount = new Array(7).fill(0);
@@ -2924,6 +2927,7 @@ export default function App() {
         if (isNewClientStatus(s.isNewClient)) clients[idx] += 1;
         if (s.isNewClient === 'Nuevo - Organico' || s.isNewClient === true) organicClients[idx] += 1;
         if (s.isNewClient === 'Nuevo - Publicidad') adsClients[idx] += 1;
+        if (s.isNewClient === 'Clientes - Publicidad') fixedAdsClients[idx] += 1;
         if (s.isNewClient === 'Revendedor') resellerClients[idx] += 1;
       }
     });
@@ -2944,7 +2948,7 @@ export default function App() {
       if (idx >= 0) invest[idx] += (b.items || []).reduce((s, i) => s + (i.costArs||0)*(i.initialStock||0), 0);
     });
     const avgTicket = rev.map((r, i) => txCount[i] > 0 ? r / txCount[i] : 0);
-    return { revenue: rev, units, profit, clients, organicClients, adsClients, resellerClients, expenses: exps, avgTicket, investment: invest, labels };
+    return { revenue: rev, units, profit, clients, organicClients, adsClients, fixedAdsClients, resellerClients, expenses: exps, avgTicket, investment: invest, labels };
   }, [sales, expenses, batches]);
 
   const metaFirebaseStats = useMemo(() => {
@@ -2972,7 +2976,7 @@ export default function App() {
       start = new Date(today); start.setDate(start.getDate()-(days-1)); start.setHours(0,0,0,0);
     }
     const inR = d => { const dt = new Date(d); return !isNaN(dt) && dt >= start && dt <= end; };
-    const fs = sales.filter(s => s.date && inR(s.date) && s.isNewClient === 'Nuevo - Publicidad');
+    const fs = sales.filter(s => s.date && inR(s.date) && (s.isNewClient === 'Nuevo - Publicidad' || s.isNewClient === 'Clientes - Publicidad'));
     const fe = expenses.filter(e => e.date && inR(e.date));
     const revenue = fs.reduce((s,v) => s+(v.totalSaleRaw||0), 0);
     const cost    = fs.reduce((s,v) => s+(v.costArsAtSale||0), 0);
@@ -5514,6 +5518,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 const pct = (c, p) => (p && p !== 0) ? ((c - p) / Math.abs(p)) * 100 : null;
                                 const newClientsOrganic = newClientsList.filter(s => s.isNewClient === 'Nuevo - Organico' || s.isNewClient === true).length;
                                 const newClientsAds = newClientsList.filter(s => s.isNewClient === 'Nuevo - Publicidad').length;
+                                const fixedAdsList = analysisData.baseStats.filteredSales.filter(s => s.isNewClient === 'Clientes - Publicidad');
+                                const fixedAdsCount = fixedAdsList.length;
+                                const fixedAdsRevenue = fixedAdsList.reduce((a, s) => a + (s.totalSaleRaw || 0), 0);
                                 const revendedoresList = analysisData.baseStats.filteredSales.filter(s => s.isNewClient === 'Revendedor');
                                 const revendedoresCount = revendedoresList.length;
                                 const revendedoresRevenue = revendedoresList.reduce((a, s) => a + (s.totalSaleRaw || 0), 0);
@@ -5555,6 +5562,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                         <PremiumMetricCard darkMode={darkMode} title="Clientes Nuevos" value={newClientsList.length} subtitle="Total del período" change={null} sparkline={sparklineData7d.clients} sparklineLabels={L} sparklineFormatter={fClientes} />
                                         <PremiumMetricCard darkMode={darkMode} title="Clientes Orgánicos" value={newClientsOrganic} subtitle="Sin inversión en ads" change={null} sparkline={sparklineData7d.organicClients} sparklineLabels={L} sparklineFormatter={fClientes} />
                                         <PremiumMetricCard darkMode={darkMode} title="Clientes por Ads" value={newClientsAds} subtitle="Captados por publicidad" change={null} sparkline={sparklineData7d.adsClients} sparklineLabels={L} sparklineFormatter={fClientes} />
+                                        <PremiumMetricCard darkMode={darkMode} title="Clientes Fijos Ads" value={fixedAdsCount} subtitle={fixedAdsCount > 0 ? formatMoney(fixedAdsRevenue) : 'Sin ventas'} change={null} sparkline={sparklineData7d.fixedAdsClients} sparklineLabels={L} sparklineFormatter={fClientes} tooltip="Clientes que originalmente llegaron por publicidad y ya son clientes fijos/recurrentes" />
                                         <PremiumMetricCard darkMode={darkMode} title="Ventas Revendedor" value={revendedoresCount} subtitle={revendedoresCount > 0 ? formatMoney(revendedoresRevenue) : 'Sin ventas'} change={null} sparkline={sparklineData7d.resellerClients} sparklineLabels={L} sparklineFormatter={fClientes} />
                                         <PremiumMetricCard darkMode={darkMode} title="Alias 1" value={formatMoney(ingAlias1)} subtitle="Ingresos" change={null} sparkline={null} color="blue" />
                                         <PremiumMetricCard darkMode={darkMode} title="Alias 2" value={formatMoney(ingAlias2)} subtitle="Ingresos" change={null} sparkline={null} color="violet" />
@@ -5805,7 +5813,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                     <Select darkMode={darkMode} label="Registro" value={saleGeneral.accountingType || 'Normal'} onChange={e => setSaleGeneral({...saleGeneral, accountingType: e.target.value})} options={[{value:'Normal', label:'Venta normal'}, {value:'Neutro', label:'Neutro / Global'}]} />
                                     <Select darkMode={darkMode} label="Canal" value={saleGeneral.source} onChange={e => setSaleGeneral({...saleGeneral, source: e.target.value})} options={[{value:'Instagram', label:'Instagram'}, {value:'Whatsapp', label:'Whatsapp'}, {value:'Personal', label:'Personal'}, {value:'Web', label:'Web'}]} />
                                     <Select darkMode={darkMode} label="Tipo" value={saleGeneral.isReseller} onChange={e => setSaleGeneral({...saleGeneral, isReseller: e.target.value})} options={[{value:'No', label:'Consumidor'}, {value:'Si', label:'Revendedor'}]} />
-                                    <Select darkMode={darkMode} label="Cliente" value={saleGeneral.isNewClient} onChange={e => setSaleGeneral({...saleGeneral, isNewClient: e.target.value})} options={[{value:'Frecuente', label:'Frecuente'}, {value:'Nuevo - Organico', label:'Nuevo - Orgánico'}, {value:'Nuevo - Publicidad', label:'Nuevo - Publicidad'}, {value:'Revendedor', label:'Revendedor'}]} />
+                                    <Select darkMode={darkMode} label="Cliente" value={saleGeneral.isNewClient} onChange={e => setSaleGeneral({...saleGeneral, isNewClient: e.target.value})} options={[{value:'Frecuente', label:'Frecuente'}, {value:'Nuevo - Organico', label:'Nuevo - Orgánico'}, {value:'Nuevo - Publicidad', label:'Nuevo - Publicidad'}, {value:'Clientes - Publicidad', label:'Clientes - Publicidad'}, {value:'Revendedor', label:'Revendedor'}]} />
                                 </div>
 
                                 {saleGeneral.isReseller === 'Si' && (
@@ -6012,10 +6020,12 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                       <div className="flex flex-col gap-1 mt-1.5 items-start">
                                           <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-zinc-800 text-zinc-300' : 'bg-zinc-200 text-zinc-700'}`}>👤 {group.seller}</span>
                                           {group.isNeutral && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-100 text-indigo-700'}`}>Neutro</span>}
-                                          {(isNewClientStatus(group.isNewClient) || group.isNewClient === 'Revendedor') && (
+                                          {(isNewClientStatus(group.isNewClient) || group.isNewClient === 'Revendedor' || group.isNewClient === 'Clientes - Publicidad') && (
                                             <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
                                               group.isNewClient === 'Revendedor'
                                                 ? (darkMode ? 'bg-violet-500/10 text-violet-400' : 'bg-violet-100 text-violet-700')
+                                                : group.isNewClient === 'Clientes - Publicidad'
+                                                ? (darkMode ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-100 text-blue-700')
                                                 : (darkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-100 text-amber-600')
                                             }`}>{getClientStatusLabel(group.isNewClient)}</span>
                                           )}

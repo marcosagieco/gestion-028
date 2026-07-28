@@ -233,6 +233,7 @@ const normalizarTipoCliente = (value) => {
     const raw = String(value ?? "").trim();
     if (!raw) return "Frecuente";
     const v = normalizarParaComparar(raw);
+    if (["publicidad 1", "publi 1", "publicidad fijo", "publicidad fija", "fijo publicidad", "cliente publicidad", "clientes publicidad", "publicidad recurrente", "publicidad viejo", "publicidad antiguo"].includes(v)) return "Clientes - Publicidad";
     if (["publicidad", "publi", "ads", "ad", "anuncio", "anuncios", "pauta", "pago", "paid", "nuevo publicidad", "nuevo por publicidad"].includes(v)) return "Nuevo - Publicidad";
     if (["organico", "orgánico", "org", "ig", "instagram", "instagram organico", "instagram orgánico", "nuevo organico", "nuevo orgánico"].includes(v)) return "Nuevo - Organico";
     if (["si", "sí", "true", "nuevo", "yes", "1"].includes(v)) return "Nuevo - Organico";
