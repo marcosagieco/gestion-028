@@ -1467,7 +1467,7 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
             seller: vendedor
         });
 
-        const aliasWalletMap = { alias1: 'GALICIA', alias2: 'ASTROPAY', alias3: 'LEMON' };
+        const aliasWalletMap = { alias1: 'GALICIA', alias3: 'LEMON' };
         if (medioPago && aliasWalletMap[medioPago]) {
             const wName = aliasWalletMap[medioPago];
             const wAmount = totalVentaCalculado + Math.max(0, (precioEnvioCliente || 0) - (costoEnvioMio || 0));
@@ -1499,8 +1499,8 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
 exports.sincronizarBilleteras = functions.https.onRequest(async (req, res) => {
     if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
 
-    const aliasWalletMap = { alias1: 'GALICIA', alias2: 'ASTROPAY', alias3: 'LEMON' };
-    const totales = { GALICIA: 0, ASTROPAY: 0, LEMON: 0 };
+    const aliasWalletMap = { alias1: 'GALICIA', alias3: 'LEMON' };
+    const totales = { GALICIA: 0, LEMON: 0 };
 
     const snap = await db.collection('sales').get();
     let contadas = 0;

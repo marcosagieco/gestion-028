@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package, UserCircle,
-  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw, Target, RefreshCw, Receipt, Minus, ArrowDownLeft, ArrowUpRight, Landmark, CreditCard
+  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw, Target, RefreshCw, Receipt, Minus, ArrowDownLeft, ArrowUpRight, Landmark, CreditCard, ArrowLeftRight
 } from 'lucide-react';
 
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
@@ -34,6 +34,7 @@ try {
 
 // --- UTILIDADES ---
 const formatMoney = (val) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(val || 0);
+const formatUsd = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(val || 0);
 const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val || 0);
 const formatPercent = (val) => new Intl.NumberFormat('es-AR', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format((val || 0) / 100);
 const accountLabel = (acc) => acc === 'SIN_CUENTA' ? 'Sin cuenta' : acc;
@@ -1120,7 +1121,7 @@ const AIChat = ({ darkMode, db }) => {
         await updateDoc(doc(db, 'batches', batchId), { items: updItems });
         pushAction(chatId, { type: 'venta', saleId: saleRef.id, batchId, itemId, quantity: Number(quantity), previousStock: prevStock });
       }
-      const aliasWalletMap = { alias1: 'GALICIA', alias2: 'ASTROPAY', alias3: 'LEMON' };
+      const aliasWalletMap = { alias1: 'GALICIA', alias3: 'LEMON' };
       const mp = toolInput.medioPago;
       if (mp && aliasWalletMap[mp]) {
         const wName = aliasWalletMap[mp];
@@ -2247,10 +2248,11 @@ export default function App() {
   const [newBatchSkipExpense, setNewBatchSkipExpense] = useState(false);
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '', repeatCount: '1' });
   const [cashFlow, setCashFlow] = useState([]);
-  const [wallets, setWallets] = useState({ LEMON: 0, ASTROPAY: 0, GALICIA: 0, EFECTIVO: 0, SIN_CUENTA: 0 });
+  const [wallets, setWallets] = useState({ LEMON: 0, AHORROS: 0, GALICIA: 0, EFECTIVO: 0, USDT: 0, USD: 0, SIN_CUENTA: 0 });
+  const walletsScrollRef = useRef(null);
   const [editingWallet, setEditingWallet] = useState(null);
   const [editingWalletValue, setEditingWalletValue] = useState('');
-  const [newCashMovement, setNewCashMovement] = useState({ type: 'ingreso', account: 'LEMON', date: getTodayDate(), description: '', amount: '', batchId: '' });
+  const [newCashMovement, setNewCashMovement] = useState({ type: 'ingreso', account: 'LEMON', accountTo: '', date: getTodayDate(), description: '', amount: '', batchId: '' });
   const [cashFlowFilter, setCashFlowFilter] = useState('TODAS');
   const [showAjustesHistory, setShowAjustesHistory] = useState(false);
   const [showStockHistory, setShowStockHistory] = useState(false);
@@ -2382,7 +2384,7 @@ export default function App() {
         }, (error) => console.error("Error settings:", error));
 
         const unsubWallets = onSnapshot(doc(db, 'settings', 'wallets'), (docSnap) => {
-            if (docSnap.exists()) setWallets({ LEMON: 0, ASTROPAY: 0, GALICIA: 0, EFECTIVO: 0, ...docSnap.data() });
+            if (docSnap.exists()) setWallets({ LEMON: 0, AHORROS: 0, GALICIA: 0, EFECTIVO: 0, USDT: 0, USD: 0, ...docSnap.data() });
         }, () => {});
 
         setLoading(false);
@@ -4703,8 +4705,32 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       showToast('Gasto eliminado', 'success');
   };
 
+  const handleAddTransfer = async () => {
+    if (!newCashMovement.amount || !newCashMovement.date) return showToast('Completá el importe y la fecha', 'error');
+    const fromAcc = newCashMovement.account || 'LEMON';
+    const toAcc = newCashMovement.accountTo;
+    if (!toAcc) return showToast('Elegí la cuenta destino', 'error');
+    if (fromAcc === toAcc) return showToast('La cuenta de origen y destino no pueden ser la misma', 'error');
+    const [y, m, d] = newCashMovement.date.split('-');
+    const amount = parseFloat(newCashMovement.amount);
+    await addDoc(collection(db, 'cashFlow'), {
+      type: 'transferencia',
+      account: fromAcc,
+      accountTo: toAcc,
+      date: new Date(Number(y), Number(m) - 1, Number(d), 12, 0, 0).toISOString(),
+      description: newCashMovement.description.trim() || `Transferencia ${accountLabel(fromAcc)} → ${accountLabel(toAcc)}`,
+      amount,
+    });
+    const updatedW = { ...wallets, [fromAcc]: (wallets[fromAcc] || 0) - amount, [toAcc]: (wallets[toAcc] || 0) + amount };
+    setWallets(updatedW);
+    await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+    setNewCashMovement(prev => ({ ...prev, description: '', amount: '' }));
+    showToast(`Transferencia registrada: ${accountLabel(fromAcc)} → ${accountLabel(toAcc)}`, 'success');
+  };
+
   const handleAddCashMovement = async () => {
     if (newCashMovement.type === 'gasto') return handleAddExpense();
+    if (newCashMovement.type === 'transferencia') return handleAddTransfer();
     if (!newCashMovement.description.trim() || !newCashMovement.amount || !newCashMovement.date) return showToast('Completá todos los campos', 'error');
     const [y, m, d] = newCashMovement.date.split('-');
     const amount = parseFloat(newCashMovement.amount);
@@ -4728,7 +4754,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     if (!window.confirm('¿Seguro que querés eliminar este movimiento?')) return;
     const mov = cashFlow.find(m => m.id === id);
     await deleteDoc(doc(db, 'cashFlow', id));
-    if (mov?.account && mov?.amount && mov.type !== 'ajuste') {
+    if (mov?.type === 'transferencia' && mov.account && mov.accountTo && mov.amount) {
+      const updatedW = { ...wallets, [mov.account]: (wallets[mov.account] || 0) + mov.amount, [mov.accountTo]: (wallets[mov.accountTo] || 0) - mov.amount };
+      setWallets(updatedW);
+      await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+    } else if (mov?.account && mov?.amount && mov.type !== 'ajuste') {
       const delta = mov.type === 'ingreso' ? -mov.amount : mov.amount; // retiro y pago ambos restan
       const updatedW = { ...wallets, [mov.account]: (wallets[mov.account] || 0) + delta };
       setWallets(updatedW);
@@ -4755,9 +4785,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
   };
 
   const handleSincronizarBilleteras = async () => {
-    if (!window.confirm('¿Sincronizar billeteras con todas las ventas históricas con Alias 1/2/3? Esto va a pisar los saldos actuales.')) return;
-    const aliasWalletMap = { alias1: 'GALICIA', alias2: 'ASTROPAY', alias3: 'LEMON' };
-    const totales = { GALICIA: 0, ASTROPAY: 0, LEMON: 0, EFECTIVO: 0 };
+    if (!window.confirm('¿Sincronizar billeteras con todas las ventas históricas con Alias 1/3? Esto va a pisar los saldos actuales.')) return;
+    const aliasWalletMap = { alias1: 'GALICIA', alias3: 'LEMON' };
+    const totales = { GALICIA: 0, LEMON: 0, EFECTIVO: 0 };
     const snap = await getDocs(collection(db, 'sales'));
     snap.docs.forEach(d => {
       const s = d.data();
@@ -4768,7 +4798,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     });
     await setDoc(doc(db, 'settings', 'wallets'), totales, { merge: true });
     setWallets(prev => ({ ...prev, ...totales }));
-    showToast(`Billeteras sincronizadas — Galicia: ${formatMoney(totales.GALICIA)} · Astropay: ${formatMoney(totales.ASTROPAY)} · Lemon: ${formatMoney(totales.LEMON)} · Efectivo: ${formatMoney(totales.EFECTIVO)}`, 'success');
+    showToast(`Billeteras sincronizadas — Galicia: ${formatMoney(totales.GALICIA)} · Lemon: ${formatMoney(totales.LEMON)} · Efectivo: ${formatMoney(totales.EFECTIVO)}`, 'success');
   };
 
   const handleSaveWalletBalance = async (account) => {
@@ -6234,7 +6264,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         <div className="flex-1 md:w-56"><Input darkMode={darkMode} placeholder="Nombre del nuevo lote..." value={newBatchName} onChange={e => setNewBatchName(e.target.value)} /></div>
                         <div className="w-full sm:w-40">
                           <Select darkMode={darkMode} label="Cuenta de compra" value={newBatchAccount} onChange={e => setNewBatchAccount(e.target.value)}
-                            options={['LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO', 'SIN_CUENTA'].map(acc => ({ value: acc, label: accountLabel(acc) }))} />
+                            options={['LEMON', 'AHORROS', 'GALICIA', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(acc => ({ value: acc, label: accountLabel(acc) }))} />
                         </div>
                         <label className={`flex items-center gap-2 text-xs font-medium cursor-pointer select-none pb-2 ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
                           <input
@@ -6279,7 +6309,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                             onChange={(e) => setEditingBatchAccount(e.target.value)}
                                             className={`px-2 py-1 text-sm border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0D0D0D] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`}
                                         >
-                                            {['LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO', 'SIN_CUENTA'].map(acc => (
+                                            {['LEMON', 'AHORROS', 'GALICIA', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(acc => (
                                                 <option key={acc} value={acc}>{accountLabel(acc)}</option>
                                             ))}
                                         </select>
@@ -7706,7 +7736,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
             {/* --- PESTAÑA GASTOS (Gastos + Movimientos unificados) --- */}
             {activeTab === 'expenses' && (() => {
-                  const totalWallets = ['LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO', 'SIN_CUENTA'].reduce((s, acc) => s + (wallets[acc] || 0), 0);
+                  const totalWallets = ['LEMON', 'AHORROS', 'GALICIA', 'EFECTIVO', 'SIN_CUENTA'].reduce((s, acc) => s + (wallets[acc] || 0), 0);
+                  const totalWalletsUsd = ['USDT', 'USD'].reduce((s, acc) => s + (wallets[acc] || 0), 0);
                   const feed = [
                     ...cashFlow.map(m => ({ ...m, kind: 'movimiento' })),
                     ...expenses.map(e => ({ ...e, kind: 'gasto' })),
@@ -7717,7 +7748,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                     if (item.type === 'ajuste' || item.type === 'stock') return false;
                     if (cashFlowFilter === 'TODAS') return true;
                     if (cashFlowFilter === 'GASTOS') return item.kind === 'gasto';
-                    return item.account === cashFlowFilter;
+                    return item.account === cashFlowFilter || item.accountTo === cashFlowFilter;
                   });
                   const stockGroups = showStockHistory ? Object.values(
                     filteredFeed.reduce((acc, item) => {
@@ -7752,14 +7783,40 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         </div>
                       </div>
 
+                      {/* Total en caja USD */}
+                      <div className={`rounded-2xl border p-4 md:p-5 flex items-center justify-between ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}
+                        style={darkMode ? {background:'linear-gradient(145deg,#141414,#1c1c1c)'} : {}}>
+                        <div className="flex items-center gap-2.5">
+                          <div className={`p-2 rounded-lg ${totalWalletsUsd >= 0 ? 'bg-emerald-500/10' : 'bg-rose-500/10'}`}>
+                            <Landmark size={16} className={totalWalletsUsd >= 0 ? 'text-emerald-400' : 'text-rose-400'}/>
+                          </div>
+                          <span className="text-xs font-bold uppercase tracking-widest text-zinc-500">Total en Caja (USD)</span>
+                        </div>
+                        <div className={`text-2xl font-black tracking-tight ${totalWalletsUsd >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {totalWalletsUsd < 0 ? '-' : ''}{formatUsd(Math.abs(totalWalletsUsd))}
+                        </div>
+                      </div>
+
                       {/* Billeteras */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                        {['LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO'].map(acc => {
+                      <div className="relative group/wallets">
+                        <button type="button" onClick={() => walletsScrollRef.current?.scrollBy({ left: -240, behavior: 'smooth' })}
+                          className={`hidden sm:flex items-center justify-center absolute -left-3 top-1/2 -translate-y-1/2 z-10 w-7 h-7 rounded-full border shadow-lg opacity-0 group-hover/wallets:opacity-100 transition-opacity ${darkMode ? 'bg-[#181818] border-white/10 text-zinc-300 hover:bg-[#222]' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
+                          aria-label="Ver billeteras anteriores">
+                          <ChevronLeft size={15}/>
+                        </button>
+                        <button type="button" onClick={() => walletsScrollRef.current?.scrollBy({ left: 240, behavior: 'smooth' })}
+                          className={`hidden sm:flex items-center justify-center absolute -right-3 top-1/2 -translate-y-1/2 z-10 w-7 h-7 rounded-full border shadow-lg opacity-0 group-hover/wallets:opacity-100 transition-opacity ${darkMode ? 'bg-[#181818] border-white/10 text-zinc-300 hover:bg-[#222]' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
+                          aria-label="Ver más billeteras">
+                          <ChevronRight size={15}/>
+                        </button>
+                        <div ref={walletsScrollRef} className="overflow-x-auto scrollbar-none -mx-1 px-1 pb-1" style={{ scrollSnapType: 'x mandatory' }}>
+                        <div className="flex gap-3">
+                        {['LEMON', 'AHORROS', 'GALICIA', 'EFECTIVO', 'USDT', 'USD'].map(acc => {
                           const saldo = wallets[acc] || 0;
                           const isEditing = editingWallet === acc;
                           return (
-                            <div key={acc} className={`rounded-2xl border p-4 ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}
-                              style={darkMode ? {background:'linear-gradient(145deg,#101010,#181818)'} : {}}>
+                            <div key={acc} className={`rounded-2xl border p-4 flex-shrink-0 w-[calc(50%-6px)] sm:w-[calc(25%-9px)] ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}
+                              style={{ scrollSnapAlign: 'start', ...(darkMode ? {background:'linear-gradient(145deg,#101010,#181818)'} : {}) }}>
                               <div className="flex items-center justify-between mb-3">
                                 <div className="flex items-center gap-2">
                                   <div className={`p-1.5 rounded-lg ${saldo >= 0 ? 'bg-emerald-500/10' : 'bg-rose-500/10'}`}>
@@ -7814,6 +7871,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             </div>
                           );
                         })}
+                        </div>
+                        </div>
                       </div>
 
                       <Card darkMode={darkMode} className="p-5 md:p-6">
@@ -7828,12 +7887,13 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                               <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${darkMode ? 'bg-white/10 text-zinc-300' : 'bg-zinc-200 text-zinc-600'}`}>1</span>
                               Tipo de movimiento
                             </p>
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                               {[
                                 { type: 'ingreso', label: 'Ingreso', icon: ArrowDownLeft, active: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
                                 { type: 'retiro',  label: 'Retiro',  icon: ArrowUpRight,  active: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
                                 { type: 'pago',    label: 'Pago',    icon: CreditCard,    active: 'bg-blue-500/15 text-blue-400 border-blue-500/30' },
                                 { type: 'gasto',   label: 'Gasto',   icon: Wallet,        active: 'bg-rose-500/15 text-rose-400 border-rose-500/30' },
+                                { type: 'transferencia', label: 'Transferencia', icon: ArrowLeftRight, active: 'bg-sky-500/15 text-sky-400 border-sky-500/30' },
                               ].map(({ type, label, icon: Icon, active }) => (
                                 <button key={type} onClick={() => setNewCashMovement(p => ({ ...p, type }))}
                                   className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border text-sm font-bold transition-all ${newCashMovement.type === type ? active : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
@@ -7847,16 +7907,31 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                           <div className={`rounded-2xl p-4 border ${darkMode ? 'border-white/[0.06] bg-white/[0.02]' : 'border-zinc-100 bg-zinc-50'}`}>
                             <p className={`text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-1.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
                               <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${darkMode ? 'bg-white/10 text-zinc-300' : 'bg-zinc-200 text-zinc-600'}`}>2</span>
-                              Cuenta / Wallet
+                              {newCashMovement.type === 'transferencia' ? 'Cuenta origen' : 'Cuenta / Wallet'}
                             </p>
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                              {['LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO'].map(acc => (
-                                <button key={acc} onClick={() => setNewCashMovement(p => ({ ...p, account: acc }))}
+                              {['LEMON', 'AHORROS', 'GALICIA', 'EFECTIVO', 'USDT', 'USD'].map(acc => (
+                                <button key={acc} onClick={() => setNewCashMovement(p => ({ ...p, account: acc, accountTo: p.accountTo === acc ? '' : p.accountTo }))}
                                   className={`px-3 py-2.5 rounded-xl border text-sm font-bold transition-all ${newCashMovement.account === acc ? (darkMode ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40' : 'bg-indigo-50 text-indigo-700 border-indigo-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
                                   {acc}
                                 </button>
                               ))}
                             </div>
+                            {newCashMovement.type === 'transferencia' && (
+                              <>
+                                <p className={`text-xs font-bold uppercase tracking-widest mb-3 mt-4 flex items-center gap-1.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                                  <ArrowLeftRight size={12}/> Cuenta destino
+                                </p>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                  {['LEMON', 'AHORROS', 'GALICIA', 'EFECTIVO', 'USDT', 'USD'].filter(acc => acc !== newCashMovement.account).map(acc => (
+                                    <button key={acc} onClick={() => setNewCashMovement(p => ({ ...p, accountTo: acc }))}
+                                      className={`px-3 py-2.5 rounded-xl border text-sm font-bold transition-all ${newCashMovement.accountTo === acc ? (darkMode ? 'bg-sky-500/20 text-sky-400 border-sky-500/40' : 'bg-sky-50 text-sky-700 border-sky-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
+                                      {acc}
+                                    </button>
+                                  ))}
+                                </div>
+                              </>
+                            )}
                           </div>
 
                           {/* Detalle */}
@@ -7867,7 +7942,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             </p>
                             <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
                               <div className="sm:col-span-3"><Input darkMode={darkMode} type="date" label="Fecha" value={newCashMovement.date} onChange={e => setNewCashMovement(p => ({ ...p, date: e.target.value }))} /></div>
-                              <div className="sm:col-span-6"><Input darkMode={darkMode} label="Descripción" placeholder={newCashMovement.type === 'ingreso' ? 'Ej: Transferencia cliente, Venta efectivo...' : newCashMovement.type === 'pago' ? 'Ej: Pago proveedor, Servicio...' : newCashMovement.type === 'gasto' ? 'Ej: Publicidad Ads, Envío Extra...' : 'Ej: Retiro personal...'} value={newCashMovement.description} onChange={e => setNewCashMovement(p => ({ ...p, description: e.target.value }))} /></div>
+                              <div className="sm:col-span-6"><Input darkMode={darkMode} label="Descripción" placeholder={newCashMovement.type === 'ingreso' ? 'Ej: Transferencia cliente, Venta efectivo...' : newCashMovement.type === 'pago' ? 'Ej: Pago proveedor, Servicio...' : newCashMovement.type === 'gasto' ? 'Ej: Publicidad Ads, Envío Extra...' : newCashMovement.type === 'transferencia' ? 'Opcional: motivo de la transferencia...' : 'Ej: Retiro personal...'} value={newCashMovement.description} onChange={e => setNewCashMovement(p => ({ ...p, description: e.target.value }))} /></div>
                               <div className="sm:col-span-3"><Input darkMode={darkMode} label="Importe" type="number" symbol="$" value={newCashMovement.amount} onChange={e => setNewCashMovement(p => ({ ...p, amount: e.target.value }))} /></div>
                             </div>
                           </div>
@@ -7892,10 +7967,10 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                           ) : (
                             <div className="flex justify-end pt-1">
                               <Button darkMode={darkMode} onClick={handleAddCashMovement}
-                                variant={newCashMovement.type === 'ingreso' ? 'primary' : newCashMovement.type === 'pago' ? 'secondary' : 'danger'}
+                                variant={newCashMovement.type === 'ingreso' ? 'primary' : newCashMovement.type === 'pago' ? 'secondary' : newCashMovement.type === 'transferencia' ? 'secondary' : 'danger'}
                                 className="w-full sm:w-56">
-                                {newCashMovement.type === 'ingreso' ? <ArrowDownLeft size={15}/> : newCashMovement.type === 'pago' ? <CreditCard size={15}/> : <ArrowUpRight size={15}/>}
-                                Registrar {newCashMovement.type === 'ingreso' ? 'Ingreso' : newCashMovement.type === 'pago' ? 'Pago' : 'Retiro'}
+                                {newCashMovement.type === 'ingreso' ? <ArrowDownLeft size={15}/> : newCashMovement.type === 'pago' ? <CreditCard size={15}/> : newCashMovement.type === 'transferencia' ? <ArrowLeftRight size={15}/> : <ArrowUpRight size={15}/>}
+                                Registrar {newCashMovement.type === 'ingreso' ? 'Ingreso' : newCashMovement.type === 'pago' ? 'Pago' : newCashMovement.type === 'transferencia' ? 'Transferencia' : 'Retiro'}
                               </Button>
                             </div>
                           )}
@@ -7916,7 +7991,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             </button>
                           </div>
                           {!showAjustesHistory && !showStockHistory && <div className="flex gap-1.5 flex-wrap">
-                            {['TODAS', 'GASTOS', 'LEMON', 'ASTROPAY', 'GALICIA', 'EFECTIVO', 'SIN_CUENTA'].map(f => (
+                            {['TODAS', 'GASTOS', 'LEMON', 'AHORROS', 'GALICIA', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(f => (
                               <button key={f} onClick={() => setCashFlowFilter(f)}
                                 className={`px-3 py-1 rounded-lg text-[11px] font-bold border transition-all ${cashFlowFilter === f ? (darkMode ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40' : 'bg-indigo-50 text-indigo-700 border-indigo-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-600'}`}>
                                 {accountLabel(f)}
@@ -8040,12 +8115,13 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             const isAjuste  = m.type === 'ajuste';
                             const isPago    = m.type === 'pago';
                             const isStock   = m.type === 'stock';
-                            const iconEl    = isAjuste ? <Settings size={20}/> : isIngreso ? <ArrowDownLeft size={20}/> : isPago ? <CreditCard size={20}/> : isStock ? <FolderOpen size={20}/> : <ArrowUpRight size={20}/>;
-                            const colorIcon = isAjuste ? (darkMode ? 'bg-violet-500/10 text-violet-400' : 'bg-violet-50 text-violet-600') : isIngreso ? (darkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-600') : isPago ? (darkMode ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600') : isStock ? (darkMode ? 'bg-fuchsia-500/10 text-fuchsia-400' : 'bg-fuchsia-50 text-fuchsia-600') : (darkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-50 text-amber-600');
-                            const colorBadge = isAjuste ? (darkMode ? 'border-violet-500/30 text-violet-400' : 'border-violet-200 text-violet-600') : isIngreso ? (darkMode ? 'border-emerald-500/30 text-emerald-400' : 'border-emerald-200 text-emerald-600') : isPago ? (darkMode ? 'border-blue-500/30 text-blue-400' : 'border-blue-200 text-blue-600') : isStock ? (darkMode ? 'border-fuchsia-500/30 text-fuchsia-400' : 'border-fuchsia-200 text-fuchsia-600') : (darkMode ? 'border-amber-500/30 text-amber-400' : 'border-amber-200 text-amber-600');
-                            const colorAmt  = isAjuste ? (darkMode ? 'text-violet-400' : 'text-violet-600') : isIngreso ? 'text-emerald-400' : isPago ? (darkMode ? 'text-blue-400' : 'text-blue-600') : isStock ? (darkMode ? 'text-fuchsia-400' : 'text-fuchsia-600') : 'text-amber-400';
-                            const badgeLabel = isAjuste ? 'Ajuste' : isIngreso ? 'Ingreso' : isPago ? 'Pago' : isStock ? 'Compra Stock' : 'Retiro';
-                            const amtLabel   = isAjuste ? formatMoney(m.amount) : isIngreso ? '+' + formatMoney(m.amount) : '-' + formatMoney(m.amount);
+                            const isTransferencia = m.type === 'transferencia';
+                            const iconEl    = isAjuste ? <Settings size={20}/> : isIngreso ? <ArrowDownLeft size={20}/> : isPago ? <CreditCard size={20}/> : isStock ? <FolderOpen size={20}/> : isTransferencia ? <ArrowLeftRight size={20}/> : <ArrowUpRight size={20}/>;
+                            const colorIcon = isAjuste ? (darkMode ? 'bg-violet-500/10 text-violet-400' : 'bg-violet-50 text-violet-600') : isIngreso ? (darkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-600') : isPago ? (darkMode ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600') : isStock ? (darkMode ? 'bg-fuchsia-500/10 text-fuchsia-400' : 'bg-fuchsia-50 text-fuchsia-600') : isTransferencia ? (darkMode ? 'bg-sky-500/10 text-sky-400' : 'bg-sky-50 text-sky-600') : (darkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-50 text-amber-600');
+                            const colorBadge = isAjuste ? (darkMode ? 'border-violet-500/30 text-violet-400' : 'border-violet-200 text-violet-600') : isIngreso ? (darkMode ? 'border-emerald-500/30 text-emerald-400' : 'border-emerald-200 text-emerald-600') : isPago ? (darkMode ? 'border-blue-500/30 text-blue-400' : 'border-blue-200 text-blue-600') : isStock ? (darkMode ? 'border-fuchsia-500/30 text-fuchsia-400' : 'border-fuchsia-200 text-fuchsia-600') : isTransferencia ? (darkMode ? 'border-sky-500/30 text-sky-400' : 'border-sky-200 text-sky-600') : (darkMode ? 'border-amber-500/30 text-amber-400' : 'border-amber-200 text-amber-600');
+                            const colorAmt  = isAjuste ? (darkMode ? 'text-violet-400' : 'text-violet-600') : isIngreso ? 'text-emerald-400' : isPago ? (darkMode ? 'text-blue-400' : 'text-blue-600') : isStock ? (darkMode ? 'text-fuchsia-400' : 'text-fuchsia-600') : isTransferencia ? (darkMode ? 'text-sky-400' : 'text-sky-600') : 'text-amber-400';
+                            const badgeLabel = isAjuste ? 'Ajuste' : isIngreso ? 'Ingreso' : isPago ? 'Pago' : isStock ? 'Compra Stock' : isTransferencia ? 'Transferencia' : 'Retiro';
+                            const amtLabel   = isAjuste ? formatMoney(m.amount) : isIngreso ? '+' + formatMoney(m.amount) : isTransferencia ? formatMoney(m.amount) : '-' + formatMoney(m.amount);
                             return (
                               <div key={`mov-${m.id}`} className={`flex justify-between items-center p-4 md:p-5 transition-colors group ${darkMode ? 'hover:bg-zinc-900/50 bg-[#101010]' : 'hover:bg-zinc-50 bg-white'}`}>
                                 <div className="flex items-center gap-4">
@@ -8056,7 +8132,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                       <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{safeDateStr(m.date, {month:'long', day:'numeric'})}</span>
                                       <span className="text-zinc-300 dark:text-zinc-700">•</span>
                                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${colorBadge}`}>{badgeLabel}</span>
-                                      {m.account && (
+                                      {isTransferencia ? (
+                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
+                                          {accountLabel(m.account)} → {accountLabel(m.accountTo)}
+                                        </span>
+                                      ) : m.account && (
                                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
                                           {accountLabel(m.account)}
                                         </span>
