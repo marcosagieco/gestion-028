@@ -12,7 +12,8 @@ import { Link } from 'react-router-dom';
 import { initializeApp } from "firebase/app";
 import {
   initializeFirestore, collection, addDoc, deleteDoc, doc, updateDoc, setDoc,
-  onSnapshot, query, orderBy, where, getDocs, deleteField
+  onSnapshot, query, orderBy, where, getDocs, deleteField,
+  persistentLocalCache, persistentMultipleTabManager
 } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -27,7 +28,10 @@ const firebaseConfig = {
 let db;
 try {
   const app = initializeApp(firebaseConfig);
-  db = initializeFirestore(app, { experimentalForceLongPolling: true });
+  db = initializeFirestore(app, {
+    experimentalForceLongPolling: true,
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+  });
 } catch (error) {
   console.error("Error inicializando Firebase:", error);
 }
@@ -352,7 +356,7 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
             const mStr = String(d.getMonth() + 1).padStart(2, '0');
             const dayStr = String(d.getDate()).padStart(2, '0');
             const key = `${yStr}-${mStr}-${dayStr}`;
-            map[key] = { key, name: `${dayStr}/${mStr}`, fullLabel: `${dayStr} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0, Ganancia: 0 };
+            map[key] = { key, name: `${dayStr}/${mStr}`, fullLabel: `${dayStr} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0, Ganancia: 0, 'Ganancia Envío': 0 };
         }
     };
 
@@ -369,7 +373,7 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
           const m = String(d.getMonth() + 1).padStart(2, '0');
           const day = String(d.getDate()).padStart(2, '0');
           const key = `${y}-${m}-${day}`;
-          map[key] = { key, name: `${day}/${m}`, fullLabel: `${day} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0, Ganancia: 0 };
+          map[key] = { key, name: `${day}/${m}`, fullLabel: `${day} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0, Ganancia: 0, 'Ganancia Envío': 0 };
         }
       }
     }
@@ -381,7 +385,7 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
       for (let i = 1; i <= daysInMonth; i++) {
         const dayStr = String(i).padStart(2, '0');
         const key = `${yStr}-${mStr}-${dayStr}`;
-        map[key] = { key, name: `${dayStr}/${mStr}`, fullLabel: `${i} de ${monthNames[m - 1]}`, Ingresos: 0, Unidades: 0, Ganancia: 0 };
+        map[key] = { key, name: `${dayStr}/${mStr}`, fullLabel: `${i} de ${monthNames[m - 1]}`, Ingresos: 0, Unidades: 0, Ganancia: 0, 'Ganancia Envío': 0 };
       }
     } else {
       if (!sales || sales.length === 0) return [];
@@ -394,7 +398,7 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
         const m = String(d.getMonth() + 1).padStart(2, '0');
         const day = String(d.getDate()).padStart(2, '0');
         const key = `${y}-${m}-${day}`;
-        map[key] = { key, name: `${day}/${m}`, fullLabel: `${day} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0, Ganancia: 0 };
+        map[key] = { key, name: `${day}/${m}`, fullLabel: `${day} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0, Ganancia: 0, 'Ganancia Envío': 0 };
       }
     }
 
@@ -408,6 +412,7 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
         map[key].Ingresos += s.totalSaleRaw || 0;
         map[key].Unidades += s.quantity || 0;
         map[key].Ganancia += (s.totalSaleRaw || 0) - ((s.costArsAtSale || 0) * (s.quantity || 0)) + saleShippingProfit;
+        map[key]['Ganancia Envío'] += saleShippingProfit;
       }
     });
 
@@ -427,6 +432,7 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
               <button onClick={() => setMetric('revenue')} className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${metric === 'revenue' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Ingresos</button>
               <button onClick={() => setMetric('quantity')} className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${metric === 'quantity' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Unidades</button>
               <button onClick={() => setMetric('profit')} className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${metric === 'profit' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Ganancia</button>
+              <button onClick={() => setMetric('shipping')} className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${metric === 'shipping' ? (darkMode ? 'bg-zinc-800 text-white shadow-sm' : 'bg-white text-zinc-900 shadow-sm') : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}>Ganancia Envío</button>
           </div>
       </div>
       
@@ -448,7 +454,7 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
               width={45}
             />
             <RechartsTooltip content={<CustomTooltip darkMode={darkMode} />} cursor={{ stroke: textColor, strokeWidth: 1, strokeDasharray: '3 3' }} />
-            <Area type="monotone" dataKey={metric === 'revenue' ? 'Ingresos' : metric === 'quantity' ? 'Unidades' : 'Ganancia'} stroke={metric === 'profit' ? '#a78bfa' : themeColor} strokeWidth={3} fillOpacity={1} fill={`url(#colorMetric-${isCompareMode ? 'vs' : 'base'})`} activeDot={{ r: 6, strokeWidth: 0 }} />
+            <Area type="monotone" dataKey={metric === 'revenue' ? 'Ingresos' : metric === 'quantity' ? 'Unidades' : metric === 'shipping' ? 'Ganancia Envío' : 'Ganancia'} stroke={metric === 'profit' ? '#a78bfa' : metric === 'shipping' ? '#f59e0b' : themeColor} strokeWidth={3} fillOpacity={1} fill={`url(#colorMetric-${isCompareMode ? 'vs' : 'base'})`} activeDot={{ r: 6, strokeWidth: 0 }} />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -2853,8 +2859,8 @@ export default function App() {
       const fs = analysisData.baseStats.filteredSales;
       fs.forEach(s => {
           const seller = normalizeSellerName(s.seller);
-          if (!stats[seller]) stats[seller] = { count: 0, revenue: 0, cost: 0, items: 0 };
-          stats[seller].count += 1;
+          if (!stats[seller]) stats[seller] = { tickets: new Set(), revenue: 0, cost: 0, items: 0 };
+          stats[seller].tickets.add(s.ticketId || s.id);
           stats[seller].revenue += s.totalSaleRaw || 0;
           stats[seller].cost   += (s.costArsAtSale || 0) * (s.quantity || 1);
           stats[seller].items  += s.quantity || 0;
@@ -2862,12 +2868,12 @@ export default function App() {
       const totalRevenue = fs.reduce((a, s) => a + (s.totalSaleRaw || 0), 0);
       return Object.entries(stats).map(([name, d]) => ({
           name,
-          count:       d.count,
+          count:       d.tickets.size,
           revenue:     d.revenue,
           cost:        d.cost,
           profit:      d.revenue - d.cost,
           items:       d.items,
-          avgTicket:   d.count > 0 ? d.revenue / d.count : 0,
+          avgTicket:   d.tickets.size > 0 ? d.revenue / d.tickets.size : 0,
           share:       totalRevenue > 0 ? (d.revenue / totalRevenue) * 100 : 0,
           commission:  name === 'Buono' ? d.revenue * 0.03 : (name === 'Delfina' || name === 'Jeronimo') ? d.revenue * 0.05 : null,
       })).sort((a, b) => b.revenue - a.revenue);
@@ -4525,6 +4531,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                 totalSaleRaw: itemTotalRaw,
                 costArsAtSale: item.costArs,
                 shippingCostArs: isFirstItem ? parseFloat(saleGeneral.shippingCost || 0) : 0,
+                shippingProfit: itemShippingProfit,
                 source: saleGeneral.source,
                 isReseller: saleGeneral.isReseller === 'Si',
                 isNewClient: saleGeneral.isNewClient,
