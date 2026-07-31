@@ -42,6 +42,7 @@ const formatUsd = (val) => new Intl.NumberFormat('en-US', { style: 'currency', c
 const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val || 0);
 const formatPercent = (val) => new Intl.NumberFormat('es-AR', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format((val || 0) / 100);
 const accountLabel = (acc) => acc === 'SIN_CUENTA' ? 'Sin cuenta' : acc;
+const BATCH_CATEGORIES = ['THC', 'APPLE', 'PERFUMES', 'NICOTINA'];
 
 const safeDateStr = (dateStr, options) => {
   if (!dateStr) return 'Sin fecha';
@@ -127,6 +128,7 @@ const normalizeSellerName = (name) => {
   if (lower === "b" || lower === "buono") return "Buono";
   if (lower === "d" || lower === "delfina") return "Delfina";
   if (lower === "j" || lower === "jero" || lower === "jeronimo") return "Jeronimo";
+  if (lower === "ba" || lower === "bautista") return "Bautista";
   return name;
 };
 
@@ -141,11 +143,21 @@ const PRODUCT_GROUPS = [
   { name: 'Ignite V400',     keywords: ['ignite v4', 'v400'] },
 ];
 
+const stripAccents = (str) => str.normalize('NFD').replace(new RegExp('[̀-ͯ]', 'g'), '');
+
 const normalizeProductName = (name) => {
   if (!name) return null;
-  const lower = name.toLowerCase().trim();
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const lower = trimmed.toLowerCase();
   const group = PRODUCT_GROUPS.find(g => g.keywords.some(kw => lower.includes(kw)));
-  return group ? group.name : name.trim();
+  if (group) return group.name;
+  // Unifica variantes que solo difieren en tilde, mayúscula o un plural simple (ej: Cápsulas / capsula / Cápsula)
+  let key = stripAccents(lower).replace(/\s+/g, ' ').trim();
+  if (key.length > 3 && key.endsWith('es')) key = key.slice(0, -2);
+  else if (key.length > 3 && key.endsWith('s')) key = key.slice(0, -1);
+  if (!key) return trimmed;
+  return key.charAt(0).toUpperCase() + key.slice(1);
 };
 
 const isNewClientStatus = (value) => {
@@ -867,7 +879,8 @@ const AIChat = ({ darkMode, db }) => {
           seller: { type: 'string' },
           shippingPrice: { type: 'number', description: 'Total de envío cobrado al cliente (lo que pagó el cliente por el envío).' },
           shippingCost: { type: 'number', description: 'Costo real del envío (lo que le costó al negocio mandar el pedido).' },
-          medioPago: { type: 'string', description: 'Medio de pago: alias1 (Galicia), alias2 (Astropay), alias3 (Lemon), efectivo. Si el usuario lo menciona, siempre incluirlo.' }
+          medioPago: { type: 'string', description: 'Medio de pago: alias1 (Galicia), alias2 (Astropay), alias3 (Lemon), efectivo. Si el usuario lo menciona, siempre incluirlo.' },
+          adCampaign: { type: 'string', description: 'Nombre de la campaña de Meta Ads de la que vino el cliente. Solo completar si isNewClient es "Nuevo - Publicidad" o "Clientes - Publicidad" y el usuario menciona de qué campaña vino.' }
         },
         required: ['date', 'batchId', 'batchName', 'itemId', 'productName', 'quantity', 'unitPrice']
       }
@@ -945,7 +958,14 @@ const AIChat = ({ darkMode, db }) => {
     {
       name: 'crear_lote',
       description: 'Crea un lote nuevo en batches. Requiere confirmación.',
-      input_schema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] }
+      input_schema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          category: { type: 'string', enum: BATCH_CATEGORIES, description: 'Rubro del lote, para identificarlo por signo/categoría' }
+        },
+        required: ['name']
+      }
     },
     {
       name: 'agregar_producto_a_lote',
@@ -1282,10 +1302,10 @@ const AIChat = ({ darkMode, db }) => {
     }
 
     if (toolName === 'crear_lote') {
-      const { name } = toolInput;
-      const batchRef = await addDoc(collection(db, 'batches'), { name, createdAt: new Date().toISOString(), items: [] });
+      const { name, category } = toolInput;
+      const batchRef = await addDoc(collection(db, 'batches'), { name, createdAt: new Date().toISOString(), items: [], category: category || null });
       pushAction(chatId, { type: 'crear_lote', batchId: batchRef.id, name });
-      return JSON.stringify({ success: true, batchId: batchRef.id, name });
+      return JSON.stringify({ success: true, batchId: batchRef.id, name, category: category || null });
     }
 
     if (toolName === 'agregar_producto_a_lote') {
@@ -1484,8 +1504,8 @@ const AIChat = ({ darkMode, db }) => {
 ⚠️ REGLA ABSOLUTA — NOMBRES EXACTOS: NUNCA inventes nombres de lotes, productos o variantes. Los únicos nombres válidos son los que obtuviste de consultar_stock en esta conversación. Si vas a operar sobre un lote o producto específico y no ejecutaste consultar_stock antes, ejecutalo primero para obtener los nombres exactos. Si una tool devuelve "lotesDisponibles" o "productosDisponibles", elegí el nombre correcto de esa lista y reintentá la operación con ese nombre exacto — no inventes una alternativa.
 
 COLECCIONES FIREBASE (fechas como ISO UTC):
-- sales: date(ISO), batchId, batchName, itemId, productName, variant, quantity, unitPrice, totalSaleRaw, costArsAtSale, source, isReseller, isNewClient, seller, shippingPrice(total cobrado al cliente por envío), shippingCost(lo que costó el envío al negocio), shippingProfit(ganancia del envío = shippingPrice - shippingCost)
-- batches: name, items[]{id,product,variant,costArs,initialStock,currentStock}
+- sales: date(ISO), batchId, batchName, itemId, productName, variant, quantity, unitPrice, totalSaleRaw, costArsAtSale, source, isReseller, isNewClient, seller, shippingPrice(total cobrado al cliente por envío), shippingCost(lo que costó el envío al negocio), shippingProfit(ganancia del envío = shippingPrice - shippingCost), adCampaign(nombre de la campaña de Meta Ads, solo cuando isNewClient es "Nuevo - Publicidad" o "Clientes - Publicidad")
+- batches: name, category(rubro del lote: THC, APPLE, PERFUMES o NICOTINA — puede venir vacío en lotes viejos), items[]{id,product,variant,costArs,initialStock,currentStock}
 - expenses: date(ISO), description, amount, batchId, batchName
 - neutral_stock: reason, note, batchId, itemId, productName, variant, quantity, unitPrice, costArsAtEntry
 - consignments: clientName, productName, variant, quantityPending, quantityPaid, unitPrice, dueDate
@@ -1534,6 +1554,12 @@ EMPLEADO — Jeronimo: Jeronimo trabaja por comisión del 5% sobre sus ventas. E
 - Mostrar su facturación total y cantidad de ventas
 - Calcular y mostrar su comisión: facturación_Jeronimo × 0.05
 - Mostrar sus productos más vendidos
+
+EMPLEADO — Bautista: En el sistema sus ventas tienen el campo seller = "Bautista" (se identifica con el código "BA", no confundir con "B" que es Buono). Cuando el usuario pida análisis de Bautista o cuando hagas un cierre completo:
+- Filtrar las ventas con seller = "Bautista"
+- Mostrar su facturación total y cantidad de ventas
+- Mostrar sus productos más vendidos
+- No tiene comisión configurada todavía; si el usuario pregunta por su comisión, avisale que falta definir el porcentaje.
 
 MARKETING — Meta Ads vs orgánico: El negocio trabaja con una agencia de Meta Ads. Los clientes nuevos se registran en el campo isNewClient con valores como "Nuevo orgánico", "Nuevo por ads", o similares. Durante mayo 2026 se apagaron los ads para medir el volumen orgánico real. Cuando analicés clientes nuevos o marketing, siempre:
 - Separar clientes nuevos orgánicos de clientes nuevos por ads usando el campo isNewClient
@@ -2235,6 +2261,7 @@ export default function App() {
   const [manualFinalizeDate, setManualFinalizeDate] = useState(getTodayDate());
   const [globalMonth, setGlobalMonth] = useState('30days');
   const [newClientsFilter, setNewClientsFilter] = useState('all');
+  const [newClientsSort, setNewClientsSort] = useState('recent');
   const [chartMedioPago, setChartMedioPago] = useState('all');
   const [metaData, setMetaData] = useState(null);
   const [metaDailyData, setMetaDailyData] = useState([]);
@@ -2243,6 +2270,7 @@ export default function App() {
   const [metaCampaigns, setMetaCampaigns] = useState([]);
   const [metaCampaignsLoading, setMetaCampaignsLoading] = useState(false);
   const [homeMetaDailyData, setHomeMetaDailyData] = useState([]);
+  const [metaAllCampaignNames, setMetaAllCampaignNames] = useState([]);
   const [metaPeriod, setMetaPeriod] = useState('last_30d');
   const [metaCustomRange, setMetaCustomRange] = useState({ start: '2026-05-30', end: getTodayDate() });
 
@@ -2251,6 +2279,7 @@ export default function App() {
 
   const [newBatchName, setNewBatchName] = useState('');
   const [newBatchAccount, setNewBatchAccount] = useState('LEMON');
+  const [newBatchCategory, setNewBatchCategory] = useState('');
   const [newBatchSkipExpense, setNewBatchSkipExpense] = useState(false);
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '', repeatCount: '1' });
   const [cashFlow, setCashFlow] = useState([]);
@@ -2266,6 +2295,12 @@ export default function App() {
   const [showBuonoCommission, setShowBuonoCommission] = useState(false);
   const [showBuono, setShowBuono] = useState(false);
   const [showAllTopProducts, setShowAllTopProducts] = useState(false);
+  const [topProductsBySeñaView, setTopProductsBySeñaView] = useState(false);
+  const [showAllTopFailed, setShowAllTopFailed] = useState(false);
+  const [topFailedBySeñaView, setTopFailedBySeñaView] = useState(false);
+  const [productsCardPage, setProductsCardPage] = useState(0);
+  const [topProfitBySeñaView, setTopProfitBySeñaView] = useState(false);
+  const [showAllTopProfit, setShowAllTopProfit] = useState(false);
   const [newNeutralStock, setNewNeutralStock] = useState({
     batchId: '',
     itemId: '',
@@ -2292,6 +2327,7 @@ export default function App() {
   const [subtractingItem, setSubtractingItem] = useState(null);
   const [editingBatchName, setEditingBatchName] = useState('');
   const [editingBatchAccount, setEditingBatchAccount] = useState('LEMON');
+  const [editingBatchCategory, setEditingBatchCategory] = useState('');
 
   const [selectedBatchStats, setSelectedBatchStats] = useState(null);
   const [hiddenSuggestions, setHiddenSuggestions] = useState({ products: [], variants: [] });
@@ -2312,7 +2348,7 @@ export default function App() {
   const [selectedSaleTickets, setSelectedSaleTickets] = useState({});
   const [salesDisplayLimit, setSalesDisplayLimit] = useState(120);
 
-  const [saleGeneral, setSaleGeneral] = useState({ saleDate: getTodayDate(), accountingType: 'Normal', shippingCost: '', shippingPrice: '', source: 'Instagram', isReseller: 'No', isNewClient: 'Frecuente', wholesaleClient: '' });
+  const [saleGeneral, setSaleGeneral] = useState({ saleDate: getTodayDate(), accountingType: 'Normal', shippingCost: '', shippingPrice: '', source: 'Instagram', isReseller: 'No', isNewClient: 'Frecuente', wholesaleClient: '', adCampaign: '' });
   const [saleItems, setSaleItems] = useState([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
 
   const updateSaleItem = (id, field, value) => {
@@ -2724,7 +2760,7 @@ export default function App() {
               return d >= start && d <= end;
           };
 
-          const fSales = sales.filter(s => inRange(s.date));
+          const fSales = sales.filter(s => inRange(s.date) && !s.isFalla);
           const fExp = expenses.filter(e => inRange(e.date));
           const fBatches = batches.filter(b => inRange(b.createdAt));
 
@@ -2757,6 +2793,7 @@ export default function App() {
           const cashBalance = (totalRevenue + neutralRevenue + totalShippingProfit) - totalInvestment - totalGlobalExpenses;
 
           const currentStockValue = batches.filter(b => !b.finalizedAt).reduce((acc, b) => acc + (b.items || []).reduce((a, i) => a + ((i.costArs || 0) * (i.currentStock || 0)), 0), 0);
+          const currentStockUnits = batches.filter(b => !b.finalizedAt).reduce((acc, b) => acc + (b.items || []).reduce((a, i) => a + (i.currentStock || 0), 0), 0);
 
           const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
           const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
@@ -2802,7 +2839,7 @@ export default function App() {
 
           return {
               totalRevenue, neutralRevenue, neutralCost, neutralProfit, totalInvestment, totalGlobalExpenses, grossProfit, grossMargin,
-              totalShippingProfit, netProfit, netMargin, cashBalance, currentStockValue,
+              totalShippingProfit, netProfit, netMargin, cashBalance, currentStockValue, currentStockUnits,
               itemsSold, salesCount: new Set(fSales.map(s => s.ticketId || s.id)).size, sourceCounts, typeCounts, dailyAvgItems,
               daysActive, currentStreak, filteredSales: fSales, pieSourceData, pieTypeData
           };
@@ -2851,7 +2888,17 @@ export default function App() {
            prevBaseStats = calculateForRange(pStart, pEnd, false);
       }
 
-      return { baseStats, compareStats, prevBaseStats, rangeStart: bStart, rangeEnd: bEnd };
+      const failedInRange = (dateString) => {
+          if (!dateString) return false;
+          if (isAll) return true;
+          const d = new Date(dateString);
+          return !isNaN(d.getTime()) && d >= bStart && d <= bEnd;
+      };
+      const failedSales = sales.filter(s => s.isFalla && failedInRange(s.date));
+      const failedUnits = failedSales.reduce((a, s) => a + (s.quantity || 0), 0);
+      const failedValue = failedSales.reduce((a, s) => a + (s.failedValue ?? ((s.costArsAtSale || 0) * (s.quantity || 0))), 0);
+
+      return { baseStats, compareStats, prevBaseStats, rangeStart: bStart, rangeEnd: bEnd, failedSales, failedUnits, failedValue };
   }, [sales, batches, expenses, neutralStockEntries, globalMonth, customDateRange, compareDateRange]);
 
   const teamStats = useMemo(() => {
@@ -2891,12 +2938,55 @@ export default function App() {
     analysisData.baseStats.filteredSales.forEach(s => {
       const name = normalizeProductName(s.productName);
       if (!name) return;
-      if (!map[name]) map[name] = { name, units: 0, revenue: 0 };
+      if (!map[name]) map[name] = { name, units: 0, revenue: 0, cost: 0 };
       map[name].units   += s.quantity || 0;
       map[name].revenue += s.totalSaleRaw || 0;
+      map[name].cost    += (s.costArsAtSale || 0) * (s.quantity || 0);
+    });
+    return Object.values(map).map(p => ({ ...p, profit: p.revenue - p.cost })).sort((a, b) => b.units - a.units);
+  }, [analysisData.baseStats.filteredSales]);
+
+  const topProductsBySeña = useMemo(() => {
+    const map = {};
+    analysisData.baseStats.filteredSales.forEach(s => {
+      const raw = String(s.batchName || '').trim();
+      const prefix = (raw.includes('|') ? raw.split('|')[0] : raw).toUpperCase();
+      const name = ['THC', 'NIC', 'APPLE', 'PERFUMES'].find(cat => prefix.includes(cat)) || 'Otros';
+      if (!map[name]) map[name] = { name, units: 0, revenue: 0, cost: 0 };
+      map[name].units   += s.quantity || 0;
+      map[name].revenue += s.totalSaleRaw || 0;
+      map[name].cost    += (s.costArsAtSale || 0) * (s.quantity || 0);
+    });
+    return Object.values(map).map(p => ({ ...p, profit: p.revenue - p.cost })).sort((a, b) => b.units - a.units);
+  }, [analysisData.baseStats.filteredSales]);
+
+  const topProductsByProfit = useMemo(() => [...topProducts].sort((a, b) => b.profit - a.profit), [topProducts]);
+  const topProductsByProfitBySeña = useMemo(() => [...topProductsBySeña].sort((a, b) => b.profit - a.profit), [topProductsBySeña]);
+
+  const topFailedProducts = useMemo(() => {
+    const map = {};
+    analysisData.failedSales.forEach(s => {
+      const name = normalizeProductName(s.productName);
+      if (!name) return;
+      if (!map[name]) map[name] = { name, units: 0, revenue: 0 };
+      map[name].units   += s.quantity || 0;
+      map[name].revenue += s.failedValue ?? ((s.costArsAtSale || 0) * (s.quantity || 0));
     });
     return Object.values(map).sort((a, b) => b.units - a.units);
-  }, [analysisData.baseStats.filteredSales]);
+  }, [analysisData.failedSales]);
+
+  const topFailedProductsBySeña = useMemo(() => {
+    const map = {};
+    analysisData.failedSales.forEach(s => {
+      const raw = String(s.batchName || '').trim();
+      const prefix = (raw.includes('|') ? raw.split('|')[0] : raw).toUpperCase();
+      const name = ['THC', 'NIC', 'APPLE', 'PERFUMES'].find(cat => prefix.includes(cat)) || 'Otros';
+      if (!map[name]) map[name] = { name, units: 0, revenue: 0 };
+      map[name].units   += s.quantity || 0;
+      map[name].revenue += s.failedValue ?? ((s.costArsAtSale || 0) * (s.quantity || 0));
+    });
+    return Object.values(map).sort((a, b) => b.units - a.units);
+  }, [analysisData.failedSales]);
 
   const sparklineData7d = useMemo(() => {
     const MN = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
@@ -2921,7 +3011,7 @@ export default function App() {
     const txCount = new Array(7).fill(0);
     const invest = new Array(7).fill(0);
     sales.forEach(s => {
-      if (!s.date) return;
+      if (!s.date || s.isFalla) return;
       const d = new Date(s.date);
       if (isNaN(d.getTime())) return;
       const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -2984,19 +3074,21 @@ export default function App() {
       start = new Date(today); start.setDate(start.getDate()-(days-1)); start.setHours(0,0,0,0);
     }
     const inR = d => { const dt = new Date(d); return !isNaN(dt) && dt >= start && dt <= end; };
-    const fs = sales.filter(s => s.date && inR(s.date) && (s.isNewClient === 'Nuevo - Publicidad' || s.isNewClient === 'Clientes - Publicidad'));
+    const fs = sales.filter(s => s.date && inR(s.date) && !s.isFalla && (s.isNewClient === 'Nuevo - Publicidad' || s.isNewClient === 'Clientes - Publicidad'));
     const fe = expenses.filter(e => e.date && inR(e.date));
     const revenue = fs.reduce((s,v) => s+(v.totalSaleRaw||0), 0);
     const cost    = fs.reduce((s,v) => s+(v.costArsAtSale||0), 0);
     const totalExp = fe.reduce((s,v) => s+(v.amount||0), 0);
     const totalAllRevenue = sales.filter(s => s.date && inR(s.date)).reduce((s,v) => s+(v.totalSaleRaw||0), 0);
     const adsByDate = {};
+    const newAdsByDate = {};
     fs.forEach(s => {
       const d = s.date?.slice(0, 10); if (!d) return;
       if (!adsByDate[d]) adsByDate[d] = { revenue: 0, cost: 0, count: 0 };
       adsByDate[d].revenue += s.totalSaleRaw || 0;
       adsByDate[d].cost    += s.costArsAtSale || 0;
       adsByDate[d].count   += 1;
+      if (s.isNewClient === 'Nuevo - Publicidad') newAdsByDate[d] = (newAdsByDate[d] || 0) + 1;
     });
     const allByDate = {};
     sales.filter(s => s.date && inR(s.date)).forEach(s => {
@@ -3004,8 +3096,51 @@ export default function App() {
       allByDate[d] = (allByDate[d] || 0) + (s.totalSaleRaw || 0);
     });
     const uniqueClients = new Set(fs.map(s => String(s.clientName || '').trim().toLowerCase()).filter(Boolean));
-    return { revenue, netProfit: revenue - cost, grossProfit: revenue - cost, totalExp, salesCount: fs.length, uniqueClientsCount: uniqueClients.size, totalAllRevenue, adsByDate, allByDate };
+    const byAdType = {};
+    ['Nuevo - Publicidad', 'Clientes - Publicidad'].forEach(type => {
+      const fsType = fs.filter(s => s.isNewClient === type);
+      const revenueType = fsType.reduce((s,v) => s+(v.totalSaleRaw||0), 0);
+      const costType    = fsType.reduce((s,v) => s+(v.costArsAtSale||0), 0);
+      byAdType[type] = { revenue: revenueType, cost: costType, netProfit: revenueType - costType, count: fsType.length };
+    });
+    const adsByCampaign = {};
+    fs.forEach(s => {
+      const camp = String(s.adCampaign || '').trim() || 'Sin campaña asignada';
+      if (!adsByCampaign[camp]) adsByCampaign[camp] = { revenue: 0, cost: 0, count: 0 };
+      adsByCampaign[camp].revenue += s.totalSaleRaw || 0;
+      adsByCampaign[camp].cost    += s.costArsAtSale || 0;
+      adsByCampaign[camp].count   += 1;
+    });
+    return { revenue, netProfit: revenue - cost, grossProfit: revenue - cost, totalExp, salesCount: fs.length, uniqueClientsCount: uniqueClients.size, totalAllRevenue, adsByDate, newAdsByDate, allByDate, adsByCampaign, byAdType };
   }, [sales, expenses, metaPeriod, metaCustomRange]);
+
+  // Evolución mensual de CAC (cliente nuevo) vs Costo por Venta (origen ads, incl. recompras)
+  const monthlyAdsCostTrend = useMemo(() => {
+    const map = {};
+    homeMetaDailyData.forEach(d => {
+      if (!d.date_start) return;
+      const month = d.date_start.slice(0, 7);
+      if (!map[month]) map[month] = { month, spend: 0, newAdsCount: 0, totalAdsCount: 0 };
+      map[month].spend += parseFloat(d.spend || 0);
+    });
+    sales.forEach(s => {
+      const month = s.date?.slice(0, 7); if (!month || !map[month]) return;
+      if (s.isNewClient === 'Nuevo - Publicidad') { map[month].newAdsCount++; map[month].totalAdsCount++; }
+      else if (s.isNewClient === 'Clientes - Publicidad') { map[month].totalAdsCount++; }
+    });
+    const MN = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+    return Object.values(map)
+      .sort((a, b) => a.month.localeCompare(b.month))
+      .map(m => {
+        const [y, mo] = m.month.split('-').map(Number);
+        return {
+          ...m,
+          label: `${MN[mo - 1]} ${y}`,
+          cacNuevo: m.newAdsCount > 0 ? m.spend / m.newAdsCount : null,
+          cpvAds: m.totalAdsCount > 0 ? m.spend / m.totalAdsCount : null,
+        };
+      });
+  }, [homeMetaDailyData, sales]);
 
   const fetchAllMetaPages = async (url) => {
     const allData = [];
@@ -3103,6 +3238,21 @@ export default function App() {
       } catch {}
     };
     fetchHomeMetaDaily();
+  }, []);
+
+  // Carga silenciosa de nombres de campañas (todas, activas o no) para sugerir al cargar una venta
+  useEffect(() => {
+    const fetchCampaignNames = async () => {
+      const token = import.meta.env.VITE_META_ACCESS_TOKEN;
+      const accountId = import.meta.env.VITE_META_AD_ACCOUNT_ID;
+      if (!token || !accountId) return;
+      try {
+        const res = await fetch(`https://graph.facebook.com/v19.0/${accountId}/campaigns?fields=name&limit=100&access_token=${token}`);
+        const json = await res.json();
+        if (!json.error && json.data) setMetaAllCampaignNames(json.data.map(c => c.name).filter(Boolean));
+      } catch {}
+    };
+    fetchCampaignNames();
   }, []);
 
   const wholesaleData = useMemo(() => {
@@ -3431,15 +3581,21 @@ export default function App() {
           createdAt: s.createdAt || s.date,
           totalSaleRaw: 0,
           totalProfit: 0,
-          isReseller: s.isReseller, 
-          isNewClient: s.isNewClient, 
+          isReseller: s.isReseller,
+          isNewClient: s.isNewClient,
           seller: normalizeSellerName(s.seller),
           isNeutral: !!s.isNeutral || s.accountingType === 'neutral',
           neutralReason: s.neutralReason || '',
+          isFalla: false,
+          failedValue: 0,
           items: [],
           originalSales: []
         };
-        result.push(map[key]); 
+        result.push(map[key]);
+      }
+      if (s.isFalla) {
+        map[key].isFalla = true;
+        map[key].failedValue += (s.failedValue || 0);
       }
       if (s.isNeutral || s.accountingType === 'neutral') {
         map[key].isNeutral = true;
@@ -4223,8 +4379,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
   const handleCreateBatch = async () => {
     if (!newBatchName) return showToast("Debes ingresar un nombre para el lote", 'error');
     try {
-      await addDoc(collection(db, 'batches'), { name: newBatchName, createdAt: new Date().toISOString(), items: [], account: newBatchAccount, skipExpense: newBatchSkipExpense });
+      await addDoc(collection(db, 'batches'), { name: newBatchName, createdAt: new Date().toISOString(), items: [], account: newBatchAccount, category: newBatchCategory || null, skipExpense: newBatchSkipExpense });
       setNewBatchName('');
+      setNewBatchCategory('');
       setNewBatchSkipExpense(false);
       showToast("Lote creado correctamente", 'success');
     } catch (e) { showToast("Error: " + e.message, 'error'); }
@@ -4237,7 +4394,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
         const oldAccount = batch?.account;
         const accountChanged = oldAccount !== editingBatchAccount;
 
-        await updateDoc(doc(db, 'batches', batchId), { name: editingBatchName, account: editingBatchAccount });
+        await updateDoc(doc(db, 'batches', batchId), { name: editingBatchName, account: editingBatchAccount, category: editingBatchCategory || null });
 
         const salesToUpdate = sales.filter(s => s.batchId === batchId);
         for (const s of salesToUpdate) {
@@ -4501,6 +4658,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     const ticketId = Date.now().toString(); 
 
     let totalCashIn = 0;
+    let totalFailedValue = 0;
     const batchUpdates = {};
 
     try {
@@ -4508,14 +4666,17 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
             const si = saleItems[i];
             const isFirstItem = i === 0; 
             const qty = parseInt(si.quantity) || 1;
-            const uPrice = parseFloat(si.unitPrice) || 0;
+            const isFalla = String(si.unitPrice).trim().toLowerCase() === 'falla';
+            const uPrice = isFalla ? 0 : (parseFloat(si.unitPrice) || 0);
 
             const batch = batches.find(b => b.id === si.batchId);
             const item = batch.items.find(it => it.id === si.itemId);
 
-            const itemShippingProfit = (!isNeutralSale && isFirstItem) ? shippingProfit : 0;
-            const itemTotalRaw = (uPrice * qty) + itemShippingProfit;
+            const itemShippingProfit = (!isNeutralSale && isFirstItem && !isFalla) ? shippingProfit : 0;
+            const itemTotalRaw = isFalla ? 0 : (uPrice * qty) + itemShippingProfit;
+            const itemFailedValue = isFalla ? (item.costArs || 0) * qty : 0;
             totalCashIn += itemTotalRaw;
+            totalFailedValue += itemFailedValue;
 
             const saleData = {
                 ticketId,
@@ -4530,11 +4691,14 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                 unitPrice: uPrice,
                 totalSaleRaw: itemTotalRaw,
                 costArsAtSale: item.costArs,
+                isFalla,
+                failedValue: itemFailedValue,
                 shippingCostArs: isFirstItem ? parseFloat(saleGeneral.shippingCost || 0) : 0,
                 shippingProfit: itemShippingProfit,
                 source: saleGeneral.source,
                 isReseller: saleGeneral.isReseller === 'Si',
                 isNewClient: saleGeneral.isNewClient,
+                adCampaign: (saleGeneral.isNewClient === 'Nuevo - Publicidad' || saleGeneral.isNewClient === 'Clientes - Publicidad') ? String(saleGeneral.adCampaign || '').trim() : '',
                 clientName: saleGeneral.isReseller === 'Si' ? String(saleGeneral.wholesaleClient || '').trim() : '',
                 operationType: saleGeneral.isReseller === 'Si' ? 'MAYORISTA' : 'VENTA',
                 seller: '028 Import' 
@@ -4582,9 +4746,10 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
             await updateDoc(doc(db, 'batches', bId), updates);
         }
 
-        showToast(isNeutralSale ? `Stock neutro registrado. Ganancia global estimada: ${formatMoney(totalCashIn)}` : `Pedido registrado. Ingreso total: ${formatMoney(totalCashIn)}`, 'success');
+        const failaMsg = totalFailedValue > 0 ? ` · ${formatMoney(totalFailedValue)} perdidos por falla` : '';
+        showToast(isNeutralSale ? `Stock neutro registrado. Ganancia global estimada: ${formatMoney(totalCashIn)}` : `Pedido registrado. Ingreso total: ${formatMoney(totalCashIn)}${failaMsg}`, 'success');
         
-        setSaleGeneral({ ...saleGeneral, shippingCost: '', shippingPrice: '', wholesaleClient: '' });
+        setSaleGeneral({ ...saleGeneral, shippingCost: '', shippingPrice: '', wholesaleClient: '', adCampaign: '' });
         setSaleItems([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
 
     } catch (e) {
@@ -5584,37 +5749,53 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 const netProfitWithAds = cur.netProfit - homeAdSpend;
                                 const netMarginWithAds = cur.totalRevenue > 0 ? (netProfitWithAds / cur.totalRevenue) * 100 : 0;
                                 return (
-                                    <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
-                                        <PremiumMetricCard darkMode={darkMode} title="Facturación" value={formatMoney(cur.totalRevenue)} subtitle="Bruto facturado" change={pct(cur.totalRevenue, prev?.totalRevenue)} sparkline={sparklineData7d.revenue} sparklineLabels={L} sparklineFormatter={fMoney} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(cur.grossProfit)} subtitle={`${formatPercent(cur.grossMargin)} margen`} change={pct(cur.grossProfit, prev?.grossProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Ganancia Neta" value={formatMoney(netProfitWithAds)} subtitle={`${formatPercent(netMarginWithAds)} neto${homeAdSpend > 0 ? ' · incl. ads' : ''}`} change={pct(cur.netProfit, prev?.netProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Ganancia neta descontando el gasto en Meta Ads del período (${formatMoney(homeAdSpend)}). Gastos fijos: ${formatMoney(cur.totalGlobalExpenses)}.` : undefined} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Ganancia Envío" value={formatMoney(cur.totalShippingProfit)} subtitle="Cobrado menos costo" change={pct(cur.totalShippingProfit, prev?.totalShippingProfit)} sparkline={null} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Diferencia entre lo que cobraste al cliente por envío y lo que te costó a vos el envío." />
-                                        <PremiumMetricCard darkMode={darkMode} title="Gastos Totales" value={formatMoney(totalExpWithAds)} subtitle={homeAdSpend > 0 ? `incl. ${formatMoney(homeAdSpend)} en ads` : 'Logística y operativos'} change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Gastos fijos (${formatMoney(cur.totalGlobalExpenses)}) + Meta Ads del período (${formatMoney(homeAdSpend)}).` : undefined} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Gastos Empresa" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Gastos anotados" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gastos operativos, logística y fijos registrados en el sistema para el período" />
-                                        <PremiumMetricCard darkMode={darkMode} title="Gasto Meta Ads" value={homeAdSpend > 0 ? formatMoney(homeAdSpend) : '—'} subtitle="Inversión publicitaria" change={null} sparkline={null} tooltip="Gasto total en publicidad de Meta Ads durante el período seleccionado" />
-                                        <PremiumMetricCard darkMode={darkMode} title="Inversión" value={formatMoney(cur.totalInvestment)} subtitle="Capital apostado" change={null} sparkline={sparklineData7d.investment} sparklineLabels={L} sparklineFormatter={fMoney} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Inversión Activa" value={formatMoney(cur.currentStockValue)} subtitle="Stock a costo actual" change={null} sparkline={null} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Productos Vendidos" value={cur.itemsSold} subtitle={`${cur.salesCount} pedidos`} change={pct(cur.itemsSold, prev?.itemsSold)} sparkline={sparklineData7d.units} sparklineLabels={L} sparklineFormatter={fUds} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Ticket Promedio" value={formatMoney(avgTicket)} subtitle="por producto" change={pct(avgTicket, prevAvgTicket)} sparkline={sparklineData7d.avgTicket} sparklineLabels={L} sparklineFormatter={fMoney} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Clientes Nuevos" value={newClientsList.length} subtitle="Total del período" change={null} sparkline={sparklineData7d.clients} sparklineLabels={L} sparklineFormatter={fClientes} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Clientes Orgánicos" value={newClientsOrganic} subtitle="Sin inversión en ads" change={null} sparkline={sparklineData7d.organicClients} sparklineLabels={L} sparklineFormatter={fClientes} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Clientes por Ads" value={newClientsAds} subtitle="Captados por publicidad" change={null} sparkline={sparklineData7d.adsClients} sparklineLabels={L} sparklineFormatter={fClientes} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Clientes Fijos Ads" value={fixedAdsCount} subtitle={fixedAdsCount > 0 ? formatMoney(fixedAdsRevenue) : 'Sin ventas'} change={null} sparkline={sparklineData7d.fixedAdsClients} sparklineLabels={L} sparklineFormatter={fClientes} tooltip="Clientes que originalmente llegaron por publicidad y ya son clientes fijos/recurrentes" />
-                                        <PremiumMetricCard darkMode={darkMode} title="Ventas Revendedor" value={revendedoresCount} subtitle={revendedoresCount > 0 ? formatMoney(revendedoresRevenue) : 'Sin ventas'} change={null} sparkline={sparklineData7d.resellerClients} sparklineLabels={L} sparklineFormatter={fClientes} />
-                                        <PremiumMetricCard darkMode={darkMode} title="Alias 1" value={formatMoney(ingAlias1)} subtitle="Ingresos" change={null} sparkline={null} color="blue" />
-                                        <PremiumMetricCard darkMode={darkMode} title="Alias 2" value={formatMoney(ingAlias2)} subtitle="Ingresos" change={null} sparkline={null} color="violet" />
-                                        <PremiumMetricCard darkMode={darkMode} title="Alias 3" value={formatMoney(ingAlias3)} subtitle="Ingresos" change={null} sparkline={null} color="amber" />
-                                        <PremiumMetricCard darkMode={darkMode} title="Efectivo" value={formatMoney(ingEfectivo)} subtitle="Ingresos" change={null} sparkline={null} color="emerald" />
-                                        <PremiumMetricCard darkMode={darkMode} title="Promedio de Ventas" value={cur.dailyAvgItems.toFixed(1)} subtitle="uds por día" change={pct(cur.dailyAvgItems, prev?.dailyAvgItems)} sparkline={sparklineData7d.units} sparklineLabels={L} sparklineFormatter={fUds}
-                                            extra={cur.currentStreak > 0 && (
-                                                <div className="flex items-center gap-1.5 mt-1.5">
-                                                    <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md" style={{background:'rgba(168,85,247,0.15)', border:'1px solid rgba(168,85,247,0.25)'}}>
-                                                        <Flame size={11} style={{color:'#a855f7'}}/>
-                                                        <span className="text-[11px] font-bold" style={{color:'#a855f7'}}>{cur.currentStreak}</span>
+                                    <div className="space-y-5">
+                                        {/* Sector 1: Plata (facturación, ganancias, gastos, inversión) */}
+                                        <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+                                            <PremiumMetricCard darkMode={darkMode} title="Facturación" value={formatMoney(cur.totalRevenue)} subtitle="Bruto facturado" change={pct(cur.totalRevenue, prev?.totalRevenue)} sparkline={sparklineData7d.revenue} sparklineLabels={L} sparklineFormatter={fMoney} />
+                                            <PremiumMetricCard darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(cur.grossProfit)} subtitle={`${formatPercent(cur.grossMargin)} margen`} change={pct(cur.grossProfit, prev?.grossProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} />
+                                            <PremiumMetricCard darkMode={darkMode} title="Ganancia Neta" value={formatMoney(netProfitWithAds)} subtitle={`${formatPercent(netMarginWithAds)} neto${homeAdSpend > 0 ? ' · incl. ads' : ''}`} change={pct(cur.netProfit, prev?.netProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Ganancia neta descontando el gasto en Meta Ads del período (${formatMoney(homeAdSpend)}). Gastos fijos: ${formatMoney(cur.totalGlobalExpenses)}.` : undefined} />
+                                            <PremiumMetricCard darkMode={darkMode} title="Ganancia Envío" value={formatMoney(cur.totalShippingProfit)} subtitle="Cobrado menos costo" change={pct(cur.totalShippingProfit, prev?.totalShippingProfit)} sparkline={null} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Diferencia entre lo que cobraste al cliente por envío y lo que te costó a vos el envío." />
+                                            <PremiumMetricCard darkMode={darkMode} title="Gastos Totales" value={formatMoney(totalExpWithAds)} subtitle={homeAdSpend > 0 ? `incl. ${formatMoney(homeAdSpend)} en ads` : 'Logística y operativos'} change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Gastos fijos (${formatMoney(cur.totalGlobalExpenses)}) + Meta Ads del período (${formatMoney(homeAdSpend)}).` : undefined} />
+                                            <PremiumMetricCard darkMode={darkMode} title="Gastos Empresa" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Gastos anotados" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gastos operativos, logística y fijos registrados en el sistema para el período" />
+                                            <PremiumMetricCard darkMode={darkMode} title="Gasto Meta Ads" value={homeAdSpend > 0 ? formatMoney(homeAdSpend) : '—'} subtitle="Inversión publicitaria" change={null} sparkline={null} tooltip="Gasto total en publicidad de Meta Ads durante el período seleccionado" />
+                                            <PremiumMetricCard darkMode={darkMode} title="Inversión" value={formatMoney(cur.totalInvestment)} subtitle="Capital apostado" change={null} sparkline={sparklineData7d.investment} sparklineLabels={L} sparklineFormatter={fMoney} />
+                                            <PremiumMetricCard darkMode={darkMode} title="Productos Fallados" value={formatMoney(analysisData.failedValue)} subtitle={`${analysisData.failedUnits} unidad${analysisData.failedUnits !== 1 ? 'es' : ''} perdida${analysisData.failedUnits !== 1 ? 's' : ''}`} change={null} sparkline={null} tooltip="Productos marcados como 'falla' al cargar la venta: se descontaron del stock pero no se cuentan como venta real (no suman a facturación, ganancia ni productos vendidos)." />
+                                            <PremiumMetricCard darkMode={darkMode} title="Promedio de Ventas" value={cur.dailyAvgItems.toFixed(1)} subtitle="uds por día" change={pct(cur.dailyAvgItems, prev?.dailyAvgItems)} sparkline={sparklineData7d.units} sparklineLabels={L} sparklineFormatter={fUds}
+                                                extra={cur.currentStreak > 0 && (
+                                                    <div className="flex items-center gap-1.5 mt-1.5">
+                                                        <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md" style={{background:'rgba(168,85,247,0.15)', border:'1px solid rgba(168,85,247,0.25)'}}>
+                                                            <Flame size={11} style={{color:'#a855f7'}}/>
+                                                            <span className="text-[11px] font-bold" style={{color:'#a855f7'}}>{cur.currentStreak}</span>
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            )}
-                                        />
+                                                )}
+                                            />
+                                            <PremiumMetricCard darkMode={darkMode} title="Productos Vendidos" value={cur.itemsSold} subtitle={`${cur.salesCount} pedidos`} change={pct(cur.itemsSold, prev?.itemsSold)} sparkline={sparklineData7d.units} sparklineLabels={L} sparklineFormatter={fUds} />
+                                            <PremiumMetricCard darkMode={darkMode} title="Ticket Promedio" value={formatMoney(avgTicket)} subtitle="por producto" change={pct(avgTicket, prevAvgTicket)} sparkline={sparklineData7d.avgTicket} sparklineLabels={L} sparklineFormatter={fMoney} />
+                                            <PremiumMetricCard darkMode={darkMode} title="Ventas Revendedor" value={revendedoresCount} subtitle={revendedoresCount > 0 ? formatMoney(revendedoresRevenue) : 'Sin ventas'} change={null} sparkline={sparklineData7d.resellerClients} sparklineLabels={L} sparklineFormatter={fClientes} />
+                                        </div>
+
+                                        <div className={`h-px w-full ${darkMode ? 'bg-white/[0.07]' : 'bg-zinc-200'}`} />
+
+                                        {/* Sector 2: Clientes y ventas */}
+                                        <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+                                            <PremiumMetricCard darkMode={darkMode} title="Clientes Nuevos" value={newClientsList.length} subtitle="Total del período" change={null} sparkline={sparklineData7d.clients} sparklineLabels={L} sparklineFormatter={fClientes} />
+                                            <PremiumMetricCard darkMode={darkMode} title="Clientes Orgánicos" value={newClientsOrganic} subtitle="Sin inversión en ads" change={null} sparkline={sparklineData7d.organicClients} sparklineLabels={L} sparklineFormatter={fClientes} />
+                                            <PremiumMetricCard darkMode={darkMode} title="Clientes por Ads" value={newClientsAds} subtitle="Captados por publicidad" change={null} sparkline={sparklineData7d.adsClients} sparklineLabels={L} sparklineFormatter={fClientes} />
+                                            <PremiumMetricCard darkMode={darkMode} title="Clientes Fijos Ads" value={fixedAdsCount} subtitle={fixedAdsCount > 0 ? formatMoney(fixedAdsRevenue) : 'Sin ventas'} change={null} sparkline={sparklineData7d.fixedAdsClients} sparklineLabels={L} sparklineFormatter={fClientes} tooltip="Clientes que originalmente llegaron por publicidad y ya son clientes fijos/recurrentes" />
+                                        </div>
+
+                                        <div className={`h-px w-full ${darkMode ? 'bg-white/[0.07]' : 'bg-zinc-200'}`} />
+
+                                        {/* Sector 3: Cuentas (alias, efectivo, inversión activa) */}
+                                        <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+                                            <PremiumMetricCard darkMode={darkMode} title="Alias 1" value={formatMoney(ingAlias1)} subtitle="Ingresos" change={null} sparkline={null} color="blue" />
+                                            <PremiumMetricCard darkMode={darkMode} title="Alias 2" value={formatMoney(ingAlias2)} subtitle="Ingresos" change={null} sparkline={null} color="violet" />
+                                            <PremiumMetricCard darkMode={darkMode} title="Alias 3" value={formatMoney(ingAlias3)} subtitle="Ingresos" change={null} sparkline={null} color="amber" />
+                                            <PremiumMetricCard darkMode={darkMode} title="Efectivo" value={formatMoney(ingEfectivo)} subtitle="Ingresos" change={null} sparkline={null} color="emerald" />
+                                            <PremiumMetricCard darkMode={darkMode} title="Inversión Activa" value={formatMoney(cur.currentStockValue)} subtitle={`Stock a costo actual · ${cur.currentStockUnits.toLocaleString('es-AR')} uds`} change={null} sparkline={null} />
+                                        </div>
                                     </div>
                                 );
                             })()}
@@ -5729,22 +5910,42 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 const org = newClientsList.filter(s => s.isNewClient === 'Nuevo - Organico' || s.isNewClient === true).length;
                                 const ads = newClientsList.filter(s => s.isNewClient === 'Nuevo - Publicidad').length;
                                 const allClientsForFilter = [...newClientsList, ...revendedoresList];
-                                const filtered = newClientsFilter === 'organic'
+                                const filteredUnsorted = newClientsFilter === 'organic'
                                     ? newClientsList.filter(s => s.isNewClient === 'Nuevo - Organico' || s.isNewClient === true)
                                     : newClientsFilter === 'ads'
                                     ? newClientsList.filter(s => s.isNewClient === 'Nuevo - Publicidad')
                                     : newClientsFilter === 'reseller'
                                     ? revendedoresList
                                     : allClientsForFilter;
+                                const filtered = [...filteredUnsorted].sort((a, b) => {
+                                    if (newClientsSort === 'moneyDesc') return (b.totalSaleRaw || 0) - (a.totalSaleRaw || 0);
+                                    if (newClientsSort === 'moneyAsc') return (a.totalSaleRaw || 0) - (b.totalSaleRaw || 0);
+                                    return new Date(b.date) - new Date(a.date);
+                                });
                                 const tabs = [
                                     { key: 'all',      label: `Todos · ${allClientsForFilter.length}` },
                                     { key: 'organic',  label: `Orgánico · ${org}` },
                                     { key: 'ads',      label: `Ads · ${ads}` },
                                     { key: 'reseller', label: `Revendedor · ${revendedoresCount}` },
                                 ];
+                                const sortOptions = [
+                                    { key: 'recent',     label: 'Recientes' },
+                                    { key: 'moneyDesc',  label: '+ plata' },
+                                    { key: 'moneyAsc',   label: '- plata' },
+                                ];
                                 return (<>
-                                    <div className="flex items-center justify-between mb-3">
+                                    <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
                                         <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Nuevos Clientes</h3>
+                                        <div className={`flex items-center gap-0.5 p-0.5 rounded-lg ${darkMode ? 'bg-zinc-900/60' : 'bg-zinc-100'}`}>
+                                            {sortOptions.map(o => (
+                                                <button key={o.key} onClick={() => setNewClientsSort(o.key)}
+                                                    className={`px-2 py-0.5 text-[9px] font-bold rounded-md transition-all duration-150 ${
+                                                        newClientsSort === o.key
+                                                            ? (darkMode ? 'bg-zinc-700 text-zinc-100 shadow-sm' : 'bg-white text-zinc-900 shadow-sm')
+                                                            : 'text-zinc-500 hover:text-zinc-400'
+                                                    }`}>{o.label}</button>
+                                            ))}
+                                        </div>
                                     </div>
                                     <div className={`flex items-center gap-1 p-1 rounded-xl mb-4 ${darkMode ? 'bg-zinc-900/60' : 'bg-zinc-100'}`}>
                                         {tabs.map(t => (
@@ -5756,59 +5957,220 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                                 }`}>{t.label}</button>
                                         ))}
                                     </div>
-                                    <div className="max-h-[240px] overflow-y-auto custom-scrollbar space-y-2 pr-1 flex-1">
-                                        {filtered.length === 0 ? (
-                                            <div className="flex flex-col items-center justify-center py-8 opacity-50">
-                                                <Star size={28} className="mb-2 text-zinc-500"/>
-                                                <span className="text-sm text-zinc-500">Sin clientes nuevos en este período</span>
-                                            </div>
-                                        ) : filtered.map((nc, i) => (
-                                            <div key={nc.id || i} className={`flex items-center justify-between p-3 rounded-xl border ${darkMode ? 'bg-zinc-900/40 border-[#1F1F1F] hover:border-zinc-700' : 'bg-zinc-50 border-zinc-200'}`}>
-                                                <div className="flex items-center gap-3 min-w-0">
-                                                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-black flex-shrink-0 ${
-                                                        nc.isNewClient === 'Nuevo - Publicidad' ? 'bg-blue-500/10 text-blue-400'
-                                                        : nc.isNewClient === 'Revendedor' ? 'bg-violet-500/10 text-violet-400'
-                                                        : 'bg-emerald-500/10 text-emerald-400'}`}>
-                                                        {nc.isNewClient === 'Nuevo - Publicidad' ? 'AD' : nc.isNewClient === 'Revendedor' ? 'RE' : 'OR'}
-                                                    </div>
-                                                    <div className="min-w-0">
-                                                        <div className={`text-xs font-semibold truncate ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>
-                                                            {nc.productName}{nc.variant && <span className="font-normal opacity-60"> {nc.variant}</span>}
-                                                        </div>
-                                                        <div className="text-[10px] text-zinc-500">{safeDateStr(nc.date, {day:'numeric', month:'short'})} · {nc.seller || '028 Import'}</div>
-                                                    </div>
+                                    <div className="relative flex-1 min-h-[240px]">
+                                        <div className="absolute inset-0 overflow-y-auto custom-scrollbar space-y-2 pr-1">
+                                            {filtered.length === 0 ? (
+                                                <div className="flex flex-col items-center justify-center py-8 opacity-50">
+                                                    <Star size={28} className="mb-2 text-zinc-500"/>
+                                                    <span className="text-sm text-zinc-500">Sin clientes nuevos en este período</span>
                                                 </div>
-                                                <div className="text-xs font-black text-emerald-400 flex-shrink-0 ml-2">{formatCompact(nc.totalSaleRaw)}</div>
-                                            </div>
-                                        ))}
+                                            ) : filtered.map((nc, i) => (
+                                                <div key={nc.id || i} className={`flex items-center justify-between p-3 rounded-xl border ${darkMode ? 'bg-zinc-900/40 border-[#1F1F1F] hover:border-zinc-700' : 'bg-zinc-50 border-zinc-200'}`}>
+                                                    <div className="flex items-center gap-3 min-w-0">
+                                                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-black flex-shrink-0 ${
+                                                            nc.isNewClient === 'Nuevo - Publicidad' ? 'bg-blue-500/10 text-blue-400'
+                                                            : nc.isNewClient === 'Revendedor' ? 'bg-violet-500/10 text-violet-400'
+                                                            : 'bg-emerald-500/10 text-emerald-400'}`}>
+                                                            {nc.isNewClient === 'Nuevo - Publicidad' ? 'AD' : nc.isNewClient === 'Revendedor' ? 'RE' : 'OR'}
+                                                        </div>
+                                                        <div className="min-w-0">
+                                                            <div className={`text-xs font-semibold truncate ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>
+                                                                {nc.productName}{nc.variant && <span className="font-normal opacity-60"> {nc.variant}</span>}
+                                                            </div>
+                                                            <div className="text-[10px] text-zinc-500">{safeDateStr(nc.date, {day:'numeric', month:'short'})} · {nc.seller || '028 Import'}</div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-xs font-black text-emerald-400 flex-shrink-0 ml-2">{formatCompact(nc.totalSaleRaw)}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        {filtered.length > 0 && (
+                                            <div className={`pointer-events-none absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t ${darkMode ? 'from-[#101010]' : 'from-white'} to-transparent`} />
+                                        )}
                                     </div>
                                 </>);
                             })()}
                         </div>
                     </div>
 
-                    {/* TOP PRODUCTOS */}
-                    {topProducts.length > 0 && (
+                    {/* TOP PRODUCTOS (carrusel: Más Vendidos <-> Rentabilidad) */}
+                    {topProducts.length > 0 && (() => {
+                        const activeList = topProductsBySeñaView ? topProductsBySeña : topProducts;
+                        const activeProfitList = topProfitBySeñaView ? topProductsByProfitBySeña : topProductsByProfit;
+                        return (
+                        <div className={`relative overflow-hidden rounded-2xl border ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
+                            <div className="flex transition-transform duration-500 ease-in-out" style={{ transform: `translateX(-${productsCardPage * 100}%)` }}>
+
+                                {/* Slide 1: Más vendidos (por unidades) */}
+                                <div className="w-full shrink-0 p-5">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <div>
+                                            <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Productos más vendidos</h3>
+                                            <p className="text-[10px] text-zinc-600 mt-0.5">{topProductsBySeñaView ? 'por seña de lote · período seleccionado' : 'por unidades · período seleccionado'}</p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                onClick={() => setTopProductsBySeñaView(v => !v)}
+                                                aria-label={topProductsBySeñaView ? 'Ver por producto' : 'Ver por categoría'}
+                                                className={`flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-colors ${
+                                                    topProductsBySeñaView
+                                                        ? 'border-indigo-400 text-indigo-400 bg-indigo-500/10'
+                                                        : (darkMode ? 'border-indigo-500/40 text-indigo-400 hover:border-indigo-400 hover:bg-indigo-500/10' : 'border-indigo-300 text-indigo-500 hover:border-indigo-400 hover:bg-indigo-50')
+                                                }`}>
+                                                <BarChart3 size={11} />
+                                                {topProductsBySeñaView ? 'Ver por producto' : 'Ver por categoría'}
+                                            </button>
+                                            {!topProductsBySeñaView && topProducts.length > 5 && (
+                                                <button onClick={() => setShowAllTopProducts(v => !v)}
+                                                    className={`text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-all ${darkMode ? 'text-zinc-400 hover:text-zinc-200 bg-white/[0.04]' : 'text-zinc-500 hover:text-zinc-700 bg-zinc-100'}`}>
+                                                    {showAllTopProducts ? 'Ver menos' : `Ver más (${topProducts.length - 5} más)`}
+                                                </button>
+                                            )}
+                                            <button onClick={() => setProductsCardPage(1)}
+                                                aria-label="Ver rentabilidad de productos"
+                                                className={`flex items-center justify-center w-6 h-6 rounded-lg border transition-colors ${darkMode ? 'border-emerald-500/40 text-emerald-400 hover:border-emerald-400 hover:bg-emerald-500/10' : 'border-emerald-300 text-emerald-600 hover:border-emerald-400 hover:bg-emerald-50'}`}>
+                                                <ChevronRight size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                        {(topProductsBySeñaView ? activeList : (showAllTopProducts ? activeList : activeList.slice(0, 5))).map((p, i) => {
+                                            const maxUnits = activeList[0].units;
+                                            const pct = maxUnits > 0 ? (p.units / maxUnits) * 100 : 0;
+                                            return (
+                                                <div key={p.name} className="flex items-center gap-3">
+                                                    <div className={`w-5 text-[10px] font-black text-right shrink-0 ${i === 0 ? 'text-indigo-400' : darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                                                        {i + 1}
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center justify-between mb-1">
+                                                            <span className={`text-xs font-semibold truncate ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{p.name}</span>
+                                                            <div className="flex items-center gap-3 shrink-0 ml-2">
+                                                                <span className={`text-[10px] font-bold ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{p.units} uds</span>
+                                                                <span className={`text-[10px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{formatMoney(p.revenue)}</span>
+                                                            </div>
+                                                        </div>
+                                                        <div className={`h-1 rounded-full overflow-hidden ${darkMode ? 'bg-white/[0.06]' : 'bg-zinc-100'}`}>
+                                                            <div className="h-full rounded-full transition-all duration-500"
+                                                                style={{ width: `${pct}%`, background: i === 0 ? '#6366f1' : darkMode ? 'rgba(255,255,255,0.15)' : '#d4d4d8' }}/>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                {/* Slide 2: Rentabilidad (por ganancia) */}
+                                <div className="w-full shrink-0 p-5">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <div>
+                                            <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Rentabilidad de productos</h3>
+                                            <p className="text-[10px] text-zinc-600 mt-0.5">{topProfitBySeñaView ? 'por seña de lote · ganancia · período seleccionado' : 'por ganancia · período seleccionado'}</p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                onClick={() => setTopProfitBySeñaView(v => !v)}
+                                                aria-label={topProfitBySeñaView ? 'Ver por producto' : 'Ver por categoría'}
+                                                className={`flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-colors ${
+                                                    topProfitBySeñaView
+                                                        ? 'border-emerald-400 text-emerald-400 bg-emerald-500/10'
+                                                        : (darkMode ? 'border-emerald-500/40 text-emerald-400 hover:border-emerald-400 hover:bg-emerald-500/10' : 'border-emerald-300 text-emerald-600 hover:border-emerald-400 hover:bg-emerald-50')
+                                                }`}>
+                                                <BarChart3 size={11} />
+                                                {topProfitBySeñaView ? 'Ver por producto' : 'Ver por categoría'}
+                                            </button>
+                                            {!topProfitBySeñaView && topProductsByProfit.length > 5 && (
+                                                <button onClick={() => setShowAllTopProfit(v => !v)}
+                                                    className={`text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-all ${darkMode ? 'text-zinc-400 hover:text-zinc-200 bg-white/[0.04]' : 'text-zinc-500 hover:text-zinc-700 bg-zinc-100'}`}>
+                                                    {showAllTopProfit ? 'Ver menos' : `Ver más (${topProductsByProfit.length - 5} más)`}
+                                                </button>
+                                            )}
+                                            <button onClick={() => setProductsCardPage(0)}
+                                                aria-label="Ver más vendidos"
+                                                className={`flex items-center justify-center w-6 h-6 rounded-lg border transition-colors ${darkMode ? 'border-indigo-500/40 text-indigo-400 hover:border-indigo-400 hover:bg-indigo-500/10' : 'border-indigo-300 text-indigo-500 hover:border-indigo-400 hover:bg-indigo-50'}`}>
+                                                <ChevronLeft size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                        {(topProfitBySeñaView ? activeProfitList : (showAllTopProfit ? activeProfitList : activeProfitList.slice(0, 5))).map((p, i) => {
+                                            const maxProfit = activeProfitList[0].profit;
+                                            const pct = maxProfit > 0 ? (p.profit / maxProfit) * 100 : 0;
+                                            const margin = p.revenue > 0 ? (p.profit / p.revenue) * 100 : 0;
+                                            return (
+                                                <div key={p.name} className="flex items-center gap-3">
+                                                    <div className={`w-5 text-[10px] font-black text-right shrink-0 ${i === 0 ? 'text-emerald-400' : darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                                                        {i + 1}
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center justify-between mb-1">
+                                                            <span className={`text-xs font-semibold truncate ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{p.name}</span>
+                                                            <div className="flex items-center gap-2 shrink-0 ml-2">
+                                                                <span className={`text-[10px] font-bold ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{p.units} uds</span>
+                                                                <span className="text-[10px] font-bold text-emerald-400">{formatMoney(p.profit)}</span>
+                                                                <span
+                                                                    title="Margen de ganancia: qué porcentaje de lo facturado por este producto quedó como ganancia después de descontar el costo"
+                                                                    className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full cursor-help ${darkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-100 text-emerald-600'}`}>{margin.toFixed(1)}%</span>
+                                                            </div>
+                                                        </div>
+                                                        <div className={`h-1 rounded-full overflow-hidden ${darkMode ? 'bg-white/[0.06]' : 'bg-zinc-100'}`}>
+                                                            <div className="h-full rounded-full transition-all duration-500"
+                                                                style={{ width: `${Math.max(0, pct)}%`, background: i === 0 ? '#34d399' : darkMode ? 'rgba(52,211,153,0.3)' : '#a7f3d0' }}/>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                            </div>
+                            <div className="flex items-center justify-center gap-1.5 pb-3">
+                                <button onClick={() => setProductsCardPage(0)} aria-label="Más vendidos" className={`h-1.5 rounded-full transition-all ${productsCardPage === 0 ? 'w-4 bg-indigo-500' : `w-1.5 ${darkMode ? 'bg-zinc-700' : 'bg-zinc-300'}`}`} />
+                                <button onClick={() => setProductsCardPage(1)} aria-label="Rentabilidad" className={`h-1.5 rounded-full transition-all ${productsCardPage === 1 ? 'w-4 bg-emerald-500' : `w-1.5 ${darkMode ? 'bg-zinc-700' : 'bg-zinc-300'}`}`} />
+                            </div>
+                        </div>
+                        );
+                    })()}
+
+                    {/* TOP PRODUCTOS FALLADOS */}
+                    {topFailedProducts.length > 0 && (() => {
+                        const activeFailedList = topFailedBySeñaView ? topFailedProductsBySeña : topFailedProducts;
+                        return (
                         <div className={`rounded-2xl border p-5 ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
                             <div className="flex items-center justify-between mb-4">
                                 <div>
-                                    <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Productos más vendidos</h3>
-                                    <p className="text-[10px] text-zinc-600 mt-0.5">por unidades · período seleccionado</p>
+                                    <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Productos con más fallas</h3>
+                                    <p className="text-[10px] text-zinc-600 mt-0.5">{topFailedBySeñaView ? 'por seña de lote · período seleccionado' : 'por unidades falladas · período seleccionado'}</p>
                                 </div>
-                                {topProducts.length > 5 && (
-                                    <button onClick={() => setShowAllTopProducts(v => !v)}
-                                        className={`text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-all ${darkMode ? 'text-zinc-400 hover:text-zinc-200 bg-white/[0.04]' : 'text-zinc-500 hover:text-zinc-700 bg-zinc-100'}`}>
-                                        {showAllTopProducts ? 'Ver menos' : `Ver más (${topProducts.length - 5} más)`}
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => setTopFailedBySeñaView(v => !v)}
+                                        aria-label={topFailedBySeñaView ? 'Ver por producto' : 'Ver por categoría'}
+                                        className={`flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-colors ${
+                                            topFailedBySeñaView
+                                                ? 'border-red-400 text-red-400 bg-red-500/10'
+                                                : (darkMode ? 'border-red-500/40 text-red-400 hover:border-red-400 hover:bg-red-500/10' : 'border-red-300 text-red-500 hover:border-red-400 hover:bg-red-50')
+                                        }`}>
+                                        <BarChart3 size={11} />
+                                        {topFailedBySeñaView ? 'Ver por producto' : 'Ver por categoría'}
                                     </button>
-                                )}
+                                    {!topFailedBySeñaView && topFailedProducts.length > 5 && (
+                                        <button onClick={() => setShowAllTopFailed(v => !v)}
+                                            className={`text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-all ${darkMode ? 'text-zinc-400 hover:text-zinc-200 bg-white/[0.04]' : 'text-zinc-500 hover:text-zinc-700 bg-zinc-100'}`}>
+                                            {showAllTopFailed ? 'Ver menos' : `Ver más (${topFailedProducts.length - 5} más)`}
+                                        </button>
+                                    )}
+                                </div>
                             </div>
                             <div className="space-y-2">
-                                {(showAllTopProducts ? topProducts : topProducts.slice(0, 5)).map((p, i) => {
-                                    const maxUnits = topProducts[0].units;
+                                {(topFailedBySeñaView ? activeFailedList : (showAllTopFailed ? activeFailedList : activeFailedList.slice(0, 5))).map((p, i) => {
+                                    const maxUnits = activeFailedList[0].units;
                                     const pct = maxUnits > 0 ? (p.units / maxUnits) * 100 : 0;
                                     return (
                                         <div key={p.name} className="flex items-center gap-3">
-                                            <div className={`w-5 text-[10px] font-black text-right shrink-0 ${i === 0 ? 'text-indigo-400' : darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                                            <div className={`w-5 text-[10px] font-black text-right shrink-0 ${i === 0 ? 'text-red-400' : darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
                                                 {i + 1}
                                             </div>
                                             <div className="flex-1 min-w-0">
@@ -5816,12 +6178,12 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                                     <span className={`text-xs font-semibold truncate ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{p.name}</span>
                                                     <div className="flex items-center gap-3 shrink-0 ml-2">
                                                         <span className={`text-[10px] font-bold ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{p.units} uds</span>
-                                                        <span className={`text-[10px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{formatMoney(p.revenue)}</span>
+                                                        <span className={`text-[10px] font-medium text-red-400`}>-{formatMoney(p.revenue)}</span>
                                                     </div>
                                                 </div>
                                                 <div className={`h-1 rounded-full overflow-hidden ${darkMode ? 'bg-white/[0.06]' : 'bg-zinc-100'}`}>
                                                     <div className="h-full rounded-full transition-all duration-500"
-                                                        style={{ width: `${pct}%`, background: i === 0 ? '#6366f1' : darkMode ? 'rgba(255,255,255,0.15)' : '#d4d4d8' }}/>
+                                                        style={{ width: `${pct}%`, background: i === 0 ? '#f87171' : darkMode ? 'rgba(248,113,113,0.3)' : '#fca5a5' }}/>
                                                 </div>
                                             </div>
                                         </div>
@@ -5829,7 +6191,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 })}
                             </div>
                         </div>
-                    )}
+                        );
+                    })()}
 
                 </div>
             )}
@@ -5861,6 +6224,22 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                     value={saleGeneral.wholesaleClient || ''}
                                     onChange={e => setSaleGeneral({...saleGeneral, wholesaleClient: e.target.value})}
                                   />
+                                )}
+
+                                {(saleGeneral.isNewClient === 'Nuevo - Publicidad' || saleGeneral.isNewClient === 'Clientes - Publicidad') && (
+                                  <>
+                                    <datalist id="ad-campaign-suggestions">
+                                      {metaAllCampaignNames.map(name => <option key={name} value={name} />)}
+                                    </datalist>
+                                    <Input
+                                      darkMode={darkMode}
+                                      label="Campaña de Meta Ads"
+                                      placeholder="Ej: Mensajes - Promo verano..."
+                                      list="ad-campaign-suggestions"
+                                      value={saleGeneral.adCampaign || ''}
+                                      onChange={e => setSaleGeneral({...saleGeneral, adCampaign: e.target.value})}
+                                    />
+                                  </>
                                 )}
 
                                 {(saleGeneral.accountingType || 'Normal') === 'Neutro' && (
@@ -5933,7 +6312,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
                                                 <div className="grid grid-cols-2 gap-3">
                                                     <Input darkMode={darkMode} label="Cantidad" type="number" value={item.quantity} onChange={e => updateSaleItem(item.id, 'quantity', e.target.value)} />
-                                                    <Input darkMode={darkMode} label="Precio Un." type="number" symbol="$" value={item.unitPrice} onChange={e => updateSaleItem(item.id, 'unitPrice', e.target.value)} />
+                                                    <Input darkMode={darkMode} label="Precio Un." type="text" inputMode="decimal" placeholder="$ o 'falla'" symbol="$" value={item.unitPrice} onChange={e => updateSaleItem(item.id, 'unitPrice', e.target.value)} />
                                                 </div>
                                             </div>
                                         </div>
@@ -6057,6 +6436,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                       <div className="flex flex-col gap-1 mt-1.5 items-start">
                                           <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-zinc-800 text-zinc-300' : 'bg-zinc-200 text-zinc-700'}`}>👤 {group.seller}</span>
                                           {group.isNeutral && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-100 text-indigo-700'}`}>Neutro</span>}
+                                          {group.isFalla && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-red-500/10 text-red-400' : 'bg-red-100 text-red-700'}`} title={`${formatMoney(group.failedValue)} perdidos`}>⚠ Falla</span>}
                                           {(isNewClientStatus(group.isNewClient) || group.isNewClient === 'Revendedor' || group.isNewClient === 'Clientes - Publicidad') && (
                                             <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
                                               group.isNewClient === 'Revendedor'
@@ -6273,6 +6653,10 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                           <Select darkMode={darkMode} label="Cuenta de compra" value={newBatchAccount} onChange={e => setNewBatchAccount(e.target.value)}
                             options={['LEMON', 'AHORROS', 'GALICIA', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(acc => ({ value: acc, label: accountLabel(acc) }))} />
                         </div>
+                        <div className="w-full sm:w-40">
+                          <Select darkMode={darkMode} label="Categoría" value={newBatchCategory} onChange={e => setNewBatchCategory(e.target.value)}
+                            options={[{ value: '', label: 'Sin categoría' }, ...BATCH_CATEGORIES.map(cat => ({ value: cat, label: cat }))]} />
+                        </div>
                         <label className={`flex items-center gap-2 text-xs font-medium cursor-pointer select-none pb-2 ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
                           <input
                             type="checkbox"
@@ -6320,6 +6704,16 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                                 <option key={acc} value={acc}>{accountLabel(acc)}</option>
                                             ))}
                                         </select>
+                                        <select
+                                            value={editingBatchCategory}
+                                            onChange={(e) => setEditingBatchCategory(e.target.value)}
+                                            className={`px-2 py-1 text-sm border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0D0D0D] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`}
+                                        >
+                                            <option value="">Sin categoría</option>
+                                            {BATCH_CATEGORIES.map(cat => (
+                                                <option key={cat} value={cat}>{cat}</option>
+                                            ))}
+                                        </select>
                                         <button onClick={() => handleSaveEditBatchName(b.id)} className={`p-1.5 rounded-lg ${darkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-600'}`}><Save size={14}/></button>
                                         <button onClick={() => setEditingBatchId(null)} className={`p-1.5 rounded-lg ${darkMode ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-200 text-zinc-600'}`}><XCircle size={14}/></button>
                                     </div>
@@ -6327,7 +6721,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                     <div className="flex items-center gap-2">
                                         <h3 className={`font-bold text-base ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{b.name || 'Sin nombre'}</h3>
                                         <button
-                                            onClick={(e) => { e.stopPropagation(); setEditingBatchId(b.id); setEditingBatchName(b.name || ''); setEditingBatchAccount(b.account || 'LEMON'); }}
+                                            onClick={(e) => { e.stopPropagation(); setEditingBatchId(b.id); setEditingBatchName(b.name || ''); setEditingBatchAccount(b.account || 'LEMON'); setEditingBatchCategory(b.category || ''); }}
                                             className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md ${darkMode ? 'hover:bg-zinc-800 text-zinc-400' : 'hover:bg-zinc-200 text-zinc-500'}`}
                                         >
                                             <Settings size={14}/>
@@ -6342,6 +6736,10 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                     {b.account && (<>
                                       <span className="text-zinc-300 dark:text-zinc-700">•</span>
                                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-fuchsia-500/30 text-fuchsia-400' : 'border-fuchsia-200 text-fuchsia-600'}`}>{accountLabel(b.account)}</span>
+                                    </>)}
+                                    {b.category && (<>
+                                      <span className="text-zinc-300 dark:text-zinc-700">•</span>
+                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>{b.category}</span>
                                     </>)}
                                 </div>
                             </div>
@@ -8258,12 +8656,15 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                   const purchases  = parseInt(
                     metaData.actions?.find(a => ['purchase','offsite_conversion.fb_pixel_purchase','omni_purchase'].includes(a.action_type))?.value || 0
                   );
-                  const { revenue, netProfit, grossProfit, totalAllRevenue, adsByDate, allByDate, salesCount } = metaFirebaseStats;
+                  const { revenue, netProfit, grossProfit, totalAllRevenue, adsByDate, newAdsByDate, allByDate, salesCount, adsByCampaign, byAdType } = metaFirebaseStats;
                   const roas = adSpend > 0 ? revenue / adSpend : 0;
                   const roasProfit = adSpend > 0 ? grossProfit / adSpend : 0;
                   const mer  = adSpend > 0 ? totalAllRevenue / adSpend : 0;
                   const cpa  = purchases > 0 ? adSpend / purchases : 0;
                   const rentabilidad = netProfit - adSpend;
+                  const newAdsCount = byAdType['Nuevo - Publicidad'].count;
+                  const cacNuevo = newAdsCount > 0 ? adSpend / newAdsCount : 0;
+                  const cpvAds   = salesCount > 0 ? adSpend / salesCount : 0;
 
                   const dailySpend       = metaDailyData.map(d => parseFloat(d.spend||0));
                   const dailyCtr         = metaDailyData.map(d => parseFloat(d.ctr||0));
@@ -8281,6 +8682,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                   const dailyCpa         = metaDailyData.map((d, i) => { const p = dailyPurchases[i]; return p > 0 ? dailySpend[i] / p : 0; });
                   const dailySalesCount  = metaDailyData.map(d => adsByDate[d.date_start]?.count || 0);
                   const dailyTicketAvg   = metaDailyData.map(d => { const e = adsByDate[d.date_start]; return e && e.count > 0 ? e.revenue / e.count : 0; });
+                  const monthlyLabels    = monthlyAdsCostTrend.map(m => m.label);
+                  const monthlyCacNuevo  = monthlyAdsCostTrend.map(m => m.cacNuevo || 0);
+                  const monthlyCpvAds    = monthlyAdsCostTrend.map(m => m.cpvAds || 0);
 
                   const fARS = v => formatMoney(v);
 
@@ -8292,7 +8696,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         <PremiumMetricCard darkMode={darkMode} title="ROAS" value={`${roas.toFixed(2)}×`} subtitle={null} sparkline={null} lineSparkline={dailyRoas.length >= 2 ? dailyRoas : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v.toFixed(2)}×`} tooltip="Por cada peso que invertís en ads, cuántos pesos en ventas generás. Arriba de 3x es bueno, arriba de 5x es excelente" />
                         <PremiumMetricCard darkMode={darkMode} title="ROAS (Ganancia)" value={`${roasProfit.toFixed(2)}×`} subtitle={null} sparkline={null} lineSparkline={dailyRoasP.length >= 2 ? dailyRoasP : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v.toFixed(2)}×`} tooltip="Por cada peso invertido en ads, cuánto ganás neto descontando el costo del producto. Arriba de 1x significa que los ads son rentables" />
                         <PremiumMetricCard darkMode={darkMode} title="MER" value={`${mer.toFixed(2)}×`} subtitle={null} sparkline={null} lineSparkline={dailyMer.length >= 2 ? dailyMer : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v.toFixed(2)}×`} tooltip="Cuánto factura el negocio en total por cada peso que gastás en publicidad. Mide el impacto general de los ads" />
-                        <PremiumMetricCard darkMode={darkMode} title="CPA" value={cpa > 0 ? fARS(cpa) : '—'} subtitle={`${purchases} conversión${purchases !== 1 ? 'es' : ''}`} sparkline={null} lineSparkline={dailyCpa.length >= 2 ? dailyCpa : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Cuánto te cuesta conseguir un cliente. Mientras más bajo mejor, ideal que sea menor al margen de ganancia del producto" />
+                        <PremiumMetricCard darkMode={darkMode} title="CPA" value={cpa > 0 ? fARS(cpa) : '—'} subtitle={`${purchases} conversión${purchases !== 1 ? 'es' : ''}`} sparkline={null} lineSparkline={dailyCpa.length >= 2 ? dailyCpa : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Cuánto te cuesta conseguir un cliente según el píxel de Meta. Mientras más bajo mejor, ideal que sea menor al margen de ganancia del producto" />
+                        <PremiumMetricCard darkMode={darkMode} title="CAC — Cliente Nuevo" value={newAdsCount > 0 ? fARS(cacNuevo) : '—'} subtitle={`${newAdsCount} cliente${newAdsCount !== 1 ? 's' : ''} nuevo${newAdsCount !== 1 ? 's' : ''} por ads · evolución mensual`} sparkline={null} lineSparkline={monthlyCacNuevo.filter(v => v > 0).length >= 2 ? monthlyCacNuevo : null} lineSparklineLabels={monthlyLabels} lineSparklineFormatter={fARS} tooltip="Gasto en Meta Ads del período ÷ cantidad de clientes en su PRIMERA compra marcados como 'Nuevo - Publicidad'. Solo primera compra, no cuenta recompras. El gráfico muestra la evolución mes a mes." />
+                        <PremiumMetricCard darkMode={darkMode} title="Costo por Venta — Origen Ads" value={salesCount > 0 ? fARS(cpvAds) : '—'} subtitle={`${salesCount} pedido${salesCount !== 1 ? 's' : ''} (nuevos + recompras) · evolución mensual`} sparkline={null} lineSparkline={monthlyCpvAds.filter(v => v > 0).length >= 2 ? monthlyCpvAds : null} lineSparklineLabels={monthlyLabels} lineSparklineFormatter={fARS} tooltip="Gasto en Meta Ads del período ÷ TOTAL de pedidos de clientes de origen ads (primera compra 'Nuevo - Publicidad' + recompras 'Clientes - Publicidad'). No es lo mismo que el CAC de cliente nuevo — este incluye recompras. El gráfico muestra la evolución mes a mes." />
                         <PremiumMetricCard darkMode={darkMode} title="CTR" value={`${ctr.toFixed(2)}%`} subtitle={`${clicks.toLocaleString('es-AR')} clics · ${impressions.toLocaleString('es-AR')} impr.`} sparkline={null} lineSparkline={dailyCtr.length >= 2 ? dailyCtr : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v.toFixed(2)}%`} tooltip="De cada 100 personas que vieron tu anuncio, cuántas hicieron click. Arriba de 1% es aceptable, arriba de 2% es bueno" />
                         <PremiumMetricCard darkMode={darkMode} title="CPM" value={fARS(cpm)} subtitle={null} sparkline={null} lineSparkline={dailyCpm.length >= 2 ? dailyCpm : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Cuánto pagás para que 1000 personas vean tu anuncio. Mientras más bajo, más barato es llegar a la gente" />
                         <PremiumMetricCard darkMode={darkMode} title="Alcance" value={reach.toLocaleString('es-AR')} subtitle={`${impressions.toLocaleString('es-AR')} impr.`} sparkline={null} lineSparkline={dailyReach.length >= 2 ? dailyReach : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => v.toLocaleString('es-AR')} tooltip="Cantidad de personas distintas que vieron tu anuncio al menos una vez" />
@@ -8322,7 +8728,20 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             <div className="text-[11px] text-zinc-500 mt-1.5">Ganancia Firebase − Ads</div>
                           </div>
                         </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 pt-4 border-t border-dashed border-white/[0.07]">
+                          <div className={`rounded-xl p-4 border ${darkMode ? 'bg-blue-500/5 border-blue-500/15' : 'bg-blue-50 border-blue-200'}`}>
+                            <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Ganancia · Nuevo - Publicidad</div>
+                            <div className={`font-black leading-none tracking-tight ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`} style={{fontSize:'clamp(1.2rem,1.8vw,1.6rem)',letterSpacing:'-0.03em'}}>{fARS(byAdType['Nuevo - Publicidad'].netProfit)}</div>
+                            <div className="text-[11px] text-zinc-500 mt-1.5">{byAdType['Nuevo - Publicidad'].count} pedido{byAdType['Nuevo - Publicidad'].count !== 1 ? 's' : ''} · clientes nuevos por ads</div>
+                          </div>
+                          <div className={`rounded-xl p-4 border ${darkMode ? 'bg-violet-500/5 border-violet-500/15' : 'bg-violet-50 border-violet-200'}`}>
+                            <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Ganancia · Clientes - Publicidad</div>
+                            <div className={`font-black leading-none tracking-tight ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`} style={{fontSize:'clamp(1.2rem,1.8vw,1.6rem)',letterSpacing:'-0.03em'}}>{fARS(byAdType['Clientes - Publicidad'].netProfit)}</div>
+                            <div className="text-[11px] text-zinc-500 mt-1.5">{byAdType['Clientes - Publicidad'].count} pedido{byAdType['Clientes - Publicidad'].count !== 1 ? 's' : ''} · clientes recurrentes por ads</div>
+                          </div>
+                        </div>
                       </div>
+
                       {/* Campañas activas */}
                       {metaCampaignsLoading && (
                         <div className={`rounded-2xl border p-5 ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}
@@ -8385,6 +8804,59 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                           </div>
                         </div>
                       )}
+
+                      {/* Ganancia real por campaña (cruce Meta + Firebase) */}
+                      {(() => {
+                        const campaignNames = new Set([
+                          ...metaCampaigns.map(c => c.name),
+                          ...Object.keys(adsByCampaign)
+                        ]);
+                        const rows = Array.from(campaignNames).map(name => {
+                          const metaC = metaCampaigns.find(c => c.name === name);
+                          const spend = metaC ? parseFloat(metaC.insights?.spend || 0) : null;
+                          const fb = adsByCampaign[name] || { revenue: 0, cost: 0, count: 0 };
+                          const realProfit = fb.revenue - fb.cost;
+                          const rentabilidad = spend != null ? realProfit - spend : null;
+                          return { name, spend, ...fb, realProfit, rentabilidad };
+                        }).sort((a, b) => b.realProfit - a.realProfit);
+
+                        if (rows.length === 0) return null;
+                        return (
+                          <div className={`rounded-2xl border p-5 ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}
+                            style={darkMode ? {background:'linear-gradient(145deg,#101010,#181818)', boxShadow:'0 4px 24px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04)'} : {}}>
+                            <div className="mb-1">
+                              <h3 className="text-[9px] font-bold uppercase tracking-[0.14em] text-zinc-500">Ganancia Real por Campaña</h3>
+                              <p className="text-[11px] text-zinc-500 mt-1">Cruza el gasto de Meta con las ventas que cargaste marcadas con esa campaña. Requiere elegir la campaña al cargar la venta.</p>
+                            </div>
+                            <div className="overflow-x-auto -mx-1 mt-4">
+                              <table className="w-full min-w-[560px]">
+                                <thead>
+                                  <tr className={`text-[9px] font-bold uppercase tracking-widest ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                                    <th className="text-left pb-3 pr-4 pl-1">Campaña</th>
+                                    <th className="text-right pb-3 px-3">Gasto</th>
+                                    <th className="text-right pb-3 px-3">Ganancia Real</th>
+                                    <th className="text-right pb-3 px-3">Rentabilidad</th>
+                                    <th className="text-right pb-3 pl-3 pr-1">Pedidos</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {rows.map(r => (
+                                    <tr key={r.name} className={`border-t text-xs ${darkMode ? 'border-white/[0.05]' : 'border-zinc-100'}`}>
+                                      <td className="py-3 pr-4 pl-1">
+                                        <span className={`font-medium truncate max-w-[220px] inline-block align-middle ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`} title={r.name}>{r.name}</span>
+                                      </td>
+                                      <td className={`py-3 px-3 text-right font-semibold tabular-nums ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{r.spend != null ? fARS(r.spend) : '—'}</td>
+                                      <td className={`py-3 px-3 text-right font-semibold tabular-nums ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{fARS(r.realProfit)}</td>
+                                      <td className={`py-3 px-3 text-right font-bold tabular-nums ${r.rentabilidad == null ? (darkMode ? 'text-zinc-500' : 'text-zinc-400') : r.rentabilidad >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{r.rentabilidad != null ? fARS(r.rentabilidad) : '—'}</td>
+                                      <td className={`py-3 pl-3 pr-1 text-right font-medium tabular-nums ${darkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>{r.count}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </>
                   );
                 })()}
