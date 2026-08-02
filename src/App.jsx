@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package, UserCircle,
-  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw, Target, RefreshCw, Receipt, Minus, ArrowDownLeft, ArrowUpRight, Landmark, CreditCard, ArrowLeftRight
+  ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw, Target, RefreshCw, Receipt, Minus, ArrowDownLeft, ArrowUpRight, Landmark, CreditCard, ArrowLeftRight
 } from 'lucide-react';
 
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
@@ -41,8 +41,47 @@ const formatMoney = (val) => new Intl.NumberFormat('es-AR', { style: 'currency',
 const formatUsd = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(val || 0);
 const formatCompact = (val) => new Intl.NumberFormat('es-AR', { notation: "compact", compactDisplay: "short", maximumFractionDigits: 1 }).format(val || 0);
 const formatPercent = (val) => new Intl.NumberFormat('es-AR', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format((val || 0) / 100);
-const accountLabel = (acc) => acc === 'SIN_CUENTA' ? 'Sin cuenta' : acc;
+const accountLabel = (acc) => {
+  if (acc === 'SIN_CUENTA') return 'Sin cuenta';
+  if (acc === 'GALICIA_GIECO') return 'Galicia Gieco';
+  if (acc === 'MERCADO_PAGO') return 'Mercado Pago';
+  return acc;
+};
 const BATCH_CATEGORIES = ['THC', 'APPLE', 'PERFUMES', 'NICOTINA'];
+
+// --- TARJETAS DE INICIO: metadata + orden por defecto (editable en "Personalizar Inicio") ---
+const HOME_CARD_META = {
+  facturacion:       { title: 'Facturación',          sector: 'sector1' },
+  gananciaBruta:      { title: 'Ganancia Bruta',        sector: 'sector1' },
+  gananciaNeta:       { title: 'Ganancia Neta',         sector: 'sector1' },
+  gananciaEnvio:      { title: 'Ganancia Envío',        sector: 'sector1' },
+  gastosTotales:      { title: 'Gastos Totales',        sector: 'sector1' },
+  gastosEmpresa:      { title: 'Gastos Empresa',        sector: 'sector1' },
+  gastoMetaAds:       { title: 'Gasto Meta Ads',        sector: 'sector1' },
+  inversion:          { title: 'Inversión',             sector: 'sector1' },
+  productosFallados:  { title: 'Productos Fallados',    sector: 'sector1' },
+  promedioVentas:     { title: 'Promedio de Ventas',    sector: 'sector1' },
+  productosVendidos:  { title: 'Productos Vendidos',    sector: 'sector1' },
+  ticketPromedio:     { title: 'Ticket Promedio',       sector: 'sector1' },
+  clientesNuevos:     { title: 'Clientes Nuevos',       sector: 'sector2' },
+  clientesOrganicos:  { title: 'Clientes Orgánicos',    sector: 'sector2' },
+  clientesPorAds:     { title: 'Clientes por Ads',      sector: 'sector2' },
+  clientesFijosAds:   { title: 'Clientes Fijos Ads',    sector: 'sector2' },
+  ventasRevendedor:   { title: 'Ventas Revendedor',     sector: 'sector2' },
+  alias1:             { title: 'Alias 1',               sector: 'sector3' },
+  alias2:             { title: 'Alias 2',               sector: 'sector3' },
+  alias3:             { title: 'Alias 3',               sector: 'sector3' },
+  efectivo:           { title: 'Efectivo',              sector: 'sector3' },
+  inversionActiva:    { title: 'Inversión Activa',      sector: 'sector3' },
+};
+
+const DEFAULT_HOME_CARD_ORDER = {
+  sector1: ['facturacion','gananciaBruta','gananciaNeta','gananciaEnvio','gastosTotales','gastosEmpresa','gastoMetaAds','inversion','productosFallados','promedioVentas','productosVendidos','ticketPromedio'],
+  sector2: ['clientesNuevos','clientesOrganicos','clientesPorAds','clientesFijosAds','ventasRevendedor'],
+  sector3: ['alias1','alias2','alias3','efectivo','inversionActiva'],
+};
+
+const HOME_SECTOR_LABELS = { sector1: 'Plata', sector2: 'Clientes', sector3: 'Cuentas' };
 
 const safeDateStr = (dateStr, options) => {
   if (!dateStr) return 'Sin fecha';
@@ -134,7 +173,12 @@ const normalizeSellerName = (name) => {
 
 
 const PRODUCT_GROUPS = [
-  { name: 'Elfbar Ice',      keywords: ['elfbar'] },
+  { name: 'Elfbar BC Pro',   keywords: ['elfbar bc pro', 'elfbar bcpro', 'elfbar bc'] },
+  { name: 'Elfbar Duke',     keywords: ['elfbar duke'] },
+  { name: 'Elfbar Te',       keywords: ['elfbar te'] },
+  { name: 'Elfbar EB Create', keywords: ['elfbar eb create', 'elfbar ebcreate', 'elfbar eb'] },
+  { name: 'Elfbar Ice',      keywords: ['elfbar ice'] },
+  { name: 'Elfbar',          keywords: ['elfbar'] },
   { name: 'Blow Real Honey', keywords: ['blow'] },
   { name: 'Sumo',            keywords: ['sumo'] },
   { name: 'Phenom',          keywords: ['phenom'] },
@@ -879,7 +923,7 @@ const AIChat = ({ darkMode, db }) => {
           seller: { type: 'string' },
           shippingPrice: { type: 'number', description: 'Total de envío cobrado al cliente (lo que pagó el cliente por el envío).' },
           shippingCost: { type: 'number', description: 'Costo real del envío (lo que le costó al negocio mandar el pedido).' },
-          medioPago: { type: 'string', description: 'Medio de pago: alias1 (Galicia), alias2 (Astropay), alias3 (Lemon), efectivo. Si el usuario lo menciona, siempre incluirlo.' },
+          medioPago: { type: 'string', description: 'Medio de pago: alias1 (Galicia), alias2 (Galicia Gieco), alias3 (Mercado Pago), efectivo. Si el usuario lo menciona, siempre incluirlo.' },
           adCampaign: { type: 'string', description: 'Nombre de la campaña de Meta Ads de la que vino el cliente. Solo completar si isNewClient es "Nuevo - Publicidad" o "Clientes - Publicidad" y el usuario menciona de qué campaña vino.' }
         },
         required: ['date', 'batchId', 'batchName', 'itemId', 'productName', 'quantity', 'unitPrice']
@@ -1134,7 +1178,8 @@ const AIChat = ({ darkMode, db }) => {
       const totalSaleRaw = (toolInput.unitPrice || 0) * quantity;
       const shippingPrice = Number(toolInput.shippingPrice || 0);
       const shippingCost  = Number(toolInput.shippingCost  || 0);
-      const shippingProfit = shippingPrice - shippingCost;
+      // Si no se cobró envío al cliente, el costo de envío es solo informativo: no debe sumar ni restar a la ganancia.
+      const shippingProfit = shippingPrice ? (shippingPrice - shippingCost) : 0;
       const saleRef = await addDoc(collection(db, 'sales'), {
         ...toolInput, quantity: Number(quantity), totalSaleRaw, costArsAtSale,
         shippingPrice, shippingCost, shippingProfit,
@@ -1147,7 +1192,7 @@ const AIChat = ({ darkMode, db }) => {
         await updateDoc(doc(db, 'batches', batchId), { items: updItems });
         pushAction(chatId, { type: 'venta', saleId: saleRef.id, batchId, itemId, quantity: Number(quantity), previousStock: prevStock });
       }
-      const aliasWalletMap = { alias1: 'GALICIA', alias3: 'LEMON' };
+      const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO' };
       const mp = toolInput.medioPago;
       if (mp && aliasWalletMap[mp]) {
         const wName = aliasWalletMap[mp];
@@ -2283,7 +2328,7 @@ export default function App() {
   const [newBatchSkipExpense, setNewBatchSkipExpense] = useState(false);
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '', repeatCount: '1' });
   const [cashFlow, setCashFlow] = useState([]);
-  const [wallets, setWallets] = useState({ LEMON: 0, AHORROS: 0, GALICIA: 0, EFECTIVO: 0, USDT: 0, USD: 0, SIN_CUENTA: 0 });
+  const [wallets, setWallets] = useState({ LEMON: 0, AHORROS: 0, GALICIA: 0, GALICIA_GIECO: 0, MERCADO_PAGO: 0, EFECTIVO: 0, USDT: 0, USD: 0, SIN_CUENTA: 0 });
   const walletsScrollRef = useRef(null);
   const [editingWallet, setEditingWallet] = useState(null);
   const [editingWalletValue, setEditingWalletValue] = useState('');
@@ -2299,6 +2344,48 @@ export default function App() {
   const [showAllTopFailed, setShowAllTopFailed] = useState(false);
   const [topFailedBySeñaView, setTopFailedBySeñaView] = useState(false);
   const [productsCardPage, setProductsCardPage] = useState(0);
+  const [homeCardOrder, setHomeCardOrder] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('homeCardOrder') || 'null');
+      if (saved && saved.sector1 && saved.sector2 && saved.sector3) {
+        const allIds = new Set([...saved.sector1, ...saved.sector2, ...saved.sector3]);
+        const missing = Object.keys(HOME_CARD_META).filter(id => !allIds.has(id));
+        if (missing.length === 0) return saved;
+        return {
+          sector1: [...saved.sector1, ...missing.filter(id => HOME_CARD_META[id].sector === 'sector1')],
+          sector2: [...saved.sector2, ...missing.filter(id => HOME_CARD_META[id].sector === 'sector2')],
+          sector3: [...saved.sector3, ...missing.filter(id => HOME_CARD_META[id].sector === 'sector3')],
+        };
+      }
+    } catch {}
+    return DEFAULT_HOME_CARD_ORDER;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('homeCardOrder', JSON.stringify(homeCardOrder));
+  }, [homeCardOrder]);
+
+  const moveHomeCard = (sectorKey, index, direction) => {
+    setHomeCardOrder(prev => {
+      const list = [...prev[sectorKey]];
+      const newIndex = index + direction;
+      if (newIndex < 0 || newIndex >= list.length) return prev;
+      [list[index], list[newIndex]] = [list[newIndex], list[index]];
+      return { ...prev, [sectorKey]: list };
+    });
+  };
+
+  const moveHomeCardToSector = (fromSectorKey, index, toSectorKey) => {
+    setHomeCardOrder(prev => {
+      if (fromSectorKey === toSectorKey) return prev;
+      const fromList = [...prev[fromSectorKey]];
+      const [id] = fromList.splice(index, 1);
+      const toList = [...prev[toSectorKey], id];
+      return { ...prev, [fromSectorKey]: fromList, [toSectorKey]: toList };
+    });
+  };
+
+  const resetHomeCardOrder = () => setHomeCardOrder(DEFAULT_HOME_CARD_ORDER);
   const [topProfitBySeñaView, setTopProfitBySeñaView] = useState(false);
   const [showAllTopProfit, setShowAllTopProfit] = useState(false);
   const [newNeutralStock, setNewNeutralStock] = useState({
@@ -2426,7 +2513,7 @@ export default function App() {
         }, (error) => console.error("Error settings:", error));
 
         const unsubWallets = onSnapshot(doc(db, 'settings', 'wallets'), (docSnap) => {
-            if (docSnap.exists()) setWallets({ LEMON: 0, AHORROS: 0, GALICIA: 0, EFECTIVO: 0, USDT: 0, USD: 0, ...docSnap.data() });
+            if (docSnap.exists()) setWallets({ LEMON: 0, AHORROS: 0, GALICIA: 0, GALICIA_GIECO: 0, MERCADO_PAGO: 0, EFECTIVO: 0, USDT: 0, USD: 0, ...docSnap.data() });
         }, () => {});
 
         setLoading(false);
@@ -4649,7 +4736,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     }
 
     const isNeutralSale = (saleGeneral.accountingType || 'Normal') === 'Neutro';
-    const shippingProfit = isNeutralSale ? 0 : (parseFloat(saleGeneral.shippingPrice || 0) - parseFloat(saleGeneral.shippingCost || 0));
+    const shippingPriceNum = parseFloat(saleGeneral.shippingPrice || 0);
+    // Si no se cobró envío al cliente, el costo de envío es solo informativo: no debe sumar ni restar a la ganancia.
+    const shippingProfit = (isNeutralSale || !shippingPriceNum) ? 0 : (shippingPriceNum - parseFloat(saleGeneral.shippingCost || 0));
     const [year, month, day] = saleGeneral.saleDate.split('-').map(Number);
     const saleDateObj = new Date(year, month - 1, day, new Date().getHours(), new Date().getMinutes());
     
@@ -5502,7 +5591,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       { id: 'consignment', icon: Users, label: 'Consignación' },
       { id: 'analysis', icon: BarChart3, label: 'Análisis' }, 
       { id: 'expenses', icon: Wallet, label: 'Gastos' },
-      { id: 'metaads', icon: Target, label: 'Meta Ads' }
+      { id: 'metaads', icon: Target, label: 'Meta Ads' },
+      { id: 'customize', icon: Settings, label: 'Personalizar Inicio' }
   ];
 
   return (
@@ -5748,53 +5838,58 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 const totalExpWithAds = cur.totalGlobalExpenses + homeAdSpend;
                                 const netProfitWithAds = cur.netProfit - homeAdSpend;
                                 const netMarginWithAds = cur.totalRevenue > 0 ? (netProfitWithAds / cur.totalRevenue) * 100 : 0;
+                                const cardNodes = {
+                                    facturacion:       <PremiumMetricCard key="facturacion" darkMode={darkMode} title="Facturación" value={formatMoney(cur.totalRevenue)} subtitle="Bruto facturado" change={pct(cur.totalRevenue, prev?.totalRevenue)} sparkline={sparklineData7d.revenue} sparklineLabels={L} sparklineFormatter={fMoney} />,
+                                    gananciaBruta:     <PremiumMetricCard key="gananciaBruta" darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(cur.grossProfit)} subtitle={`${formatPercent(cur.grossMargin)} margen`} change={pct(cur.grossProfit, prev?.grossProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} />,
+                                    gananciaNeta:      <PremiumMetricCard key="gananciaNeta" darkMode={darkMode} title="Ganancia Neta" value={formatMoney(netProfitWithAds)} subtitle={`${formatPercent(netMarginWithAds)} neto${homeAdSpend > 0 ? ' · incl. ads' : ''}`} change={pct(cur.netProfit, prev?.netProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Ganancia neta descontando el gasto en Meta Ads del período (${formatMoney(homeAdSpend)}). Gastos fijos: ${formatMoney(cur.totalGlobalExpenses)}.` : undefined} />,
+                                    gananciaEnvio:     <PremiumMetricCard key="gananciaEnvio" darkMode={darkMode} title="Ganancia Envío" value={formatMoney(cur.totalShippingProfit)} subtitle="Cobrado menos costo" change={pct(cur.totalShippingProfit, prev?.totalShippingProfit)} sparkline={null} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Diferencia entre lo que cobraste al cliente por envío y lo que te costó a vos el envío." />,
+                                    gastosTotales:     <PremiumMetricCard key="gastosTotales" darkMode={darkMode} title="Gastos Totales" value={formatMoney(totalExpWithAds)} subtitle={homeAdSpend > 0 ? `incl. ${formatMoney(homeAdSpend)} en ads` : 'Logística y operativos'} change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Gastos fijos (${formatMoney(cur.totalGlobalExpenses)}) + Meta Ads del período (${formatMoney(homeAdSpend)}).` : undefined} />,
+                                    gastosEmpresa:     <PremiumMetricCard key="gastosEmpresa" darkMode={darkMode} title="Gastos Empresa" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Gastos anotados" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gastos operativos, logística y fijos registrados en el sistema para el período" />,
+                                    gastoMetaAds:      <PremiumMetricCard key="gastoMetaAds" darkMode={darkMode} title="Gasto Meta Ads" value={homeAdSpend > 0 ? formatMoney(homeAdSpend) : '—'} subtitle="Inversión publicitaria" change={null} sparkline={null} tooltip="Gasto total en publicidad de Meta Ads durante el período seleccionado" />,
+                                    inversion:         <PremiumMetricCard key="inversion" darkMode={darkMode} title="Inversión" value={formatMoney(cur.totalInvestment)} subtitle="Capital apostado" change={null} sparkline={sparklineData7d.investment} sparklineLabels={L} sparklineFormatter={fMoney} />,
+                                    productosFallados: <PremiumMetricCard key="productosFallados" darkMode={darkMode} title="Productos Fallados" value={formatMoney(analysisData.failedValue)} subtitle={`${analysisData.failedUnits} unidad${analysisData.failedUnits !== 1 ? 'es' : ''} perdida${analysisData.failedUnits !== 1 ? 's' : ''}`} change={null} sparkline={null} tooltip="Productos marcados como 'falla' al cargar la venta: se descontaron del stock pero no se cuentan como venta real (no suman a facturación, ganancia ni productos vendidos)." />,
+                                    promedioVentas:    <PremiumMetricCard key="promedioVentas" darkMode={darkMode} title="Promedio de Ventas" value={cur.dailyAvgItems.toFixed(1)} subtitle="uds por día" change={pct(cur.dailyAvgItems, prev?.dailyAvgItems)} sparkline={sparklineData7d.units} sparklineLabels={L} sparklineFormatter={fUds}
+                                                        extra={cur.currentStreak > 0 && (
+                                                            <div className="flex items-center gap-1.5 mt-1.5">
+                                                                <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md" style={{background:'rgba(168,85,247,0.15)', border:'1px solid rgba(168,85,247,0.25)'}}>
+                                                                    <Flame size={11} style={{color:'#a855f7'}}/>
+                                                                    <span className="text-[11px] font-bold" style={{color:'#a855f7'}}>{cur.currentStreak}</span>
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    />,
+                                    productosVendidos: <PremiumMetricCard key="productosVendidos" darkMode={darkMode} title="Productos Vendidos" value={cur.itemsSold} subtitle={`${cur.salesCount} pedidos`} change={pct(cur.itemsSold, prev?.itemsSold)} sparkline={sparklineData7d.units} sparklineLabels={L} sparklineFormatter={fUds} />,
+                                    ticketPromedio:    <PremiumMetricCard key="ticketPromedio" darkMode={darkMode} title="Ticket Promedio" value={formatMoney(avgTicket)} subtitle="por producto" change={pct(avgTicket, prevAvgTicket)} sparkline={sparklineData7d.avgTicket} sparklineLabels={L} sparklineFormatter={fMoney} />,
+                                    clientesNuevos:    <PremiumMetricCard key="clientesNuevos" darkMode={darkMode} title="Clientes Nuevos" value={newClientsList.length} subtitle="Total del período" change={null} sparkline={sparklineData7d.clients} sparklineLabels={L} sparklineFormatter={fClientes} />,
+                                    clientesOrganicos: <PremiumMetricCard key="clientesOrganicos" darkMode={darkMode} title="Clientes Orgánicos" value={newClientsOrganic} subtitle="Sin inversión en ads" change={null} sparkline={sparklineData7d.organicClients} sparklineLabels={L} sparklineFormatter={fClientes} />,
+                                    clientesPorAds:    <PremiumMetricCard key="clientesPorAds" darkMode={darkMode} title="Clientes por Ads" value={newClientsAds} subtitle="Captados por publicidad" change={null} sparkline={sparklineData7d.adsClients} sparklineLabels={L} sparklineFormatter={fClientes} />,
+                                    clientesFijosAds:  <PremiumMetricCard key="clientesFijosAds" darkMode={darkMode} title="Clientes Fijos Ads" value={fixedAdsCount} subtitle={fixedAdsCount > 0 ? formatMoney(fixedAdsRevenue) : 'Sin ventas'} change={null} sparkline={sparklineData7d.fixedAdsClients} sparklineLabels={L} sparklineFormatter={fClientes} tooltip="Clientes que originalmente llegaron por publicidad y ya son clientes fijos/recurrentes" />,
+                                    ventasRevendedor:  <PremiumMetricCard key="ventasRevendedor" darkMode={darkMode} title="Ventas Revendedor" value={revendedoresCount} subtitle={revendedoresCount > 0 ? formatMoney(revendedoresRevenue) : 'Sin ventas'} change={null} sparkline={sparklineData7d.resellerClients} sparklineLabels={L} sparklineFormatter={fClientes} />,
+                                    alias1:            <PremiumMetricCard key="alias1" darkMode={darkMode} title="Alias 1" value={formatMoney(ingAlias1)} subtitle="Ingresos" change={null} sparkline={null} color="blue" />,
+                                    alias2:            <PremiumMetricCard key="alias2" darkMode={darkMode} title="Alias 2" value={formatMoney(ingAlias2)} subtitle="Ingresos" change={null} sparkline={null} color="violet" />,
+                                    alias3:            <PremiumMetricCard key="alias3" darkMode={darkMode} title="Alias 3" value={formatMoney(ingAlias3)} subtitle="Ingresos" change={null} sparkline={null} color="amber" />,
+                                    efectivo:          <PremiumMetricCard key="efectivo" darkMode={darkMode} title="Efectivo" value={formatMoney(ingEfectivo)} subtitle="Ingresos" change={null} sparkline={null} color="emerald" />,
+                                    inversionActiva:   <PremiumMetricCard key="inversionActiva" darkMode={darkMode} title="Inversión Activa" value={formatMoney(cur.currentStockValue)} subtitle={`Stock a costo actual · ${cur.currentStockUnits.toLocaleString('es-AR')} uds`} change={null} sparkline={null} />,
+                                };
                                 return (
                                     <div className="space-y-5">
-                                        {/* Sector 1: Plata (facturación, ganancias, gastos, inversión) */}
+                                        {/* Sector 1: Plata */}
                                         <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
-                                            <PremiumMetricCard darkMode={darkMode} title="Facturación" value={formatMoney(cur.totalRevenue)} subtitle="Bruto facturado" change={pct(cur.totalRevenue, prev?.totalRevenue)} sparkline={sparklineData7d.revenue} sparklineLabels={L} sparklineFormatter={fMoney} />
-                                            <PremiumMetricCard darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(cur.grossProfit)} subtitle={`${formatPercent(cur.grossMargin)} margen`} change={pct(cur.grossProfit, prev?.grossProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} />
-                                            <PremiumMetricCard darkMode={darkMode} title="Ganancia Neta" value={formatMoney(netProfitWithAds)} subtitle={`${formatPercent(netMarginWithAds)} neto${homeAdSpend > 0 ? ' · incl. ads' : ''}`} change={pct(cur.netProfit, prev?.netProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Ganancia neta descontando el gasto en Meta Ads del período (${formatMoney(homeAdSpend)}). Gastos fijos: ${formatMoney(cur.totalGlobalExpenses)}.` : undefined} />
-                                            <PremiumMetricCard darkMode={darkMode} title="Ganancia Envío" value={formatMoney(cur.totalShippingProfit)} subtitle="Cobrado menos costo" change={pct(cur.totalShippingProfit, prev?.totalShippingProfit)} sparkline={null} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Diferencia entre lo que cobraste al cliente por envío y lo que te costó a vos el envío." />
-                                            <PremiumMetricCard darkMode={darkMode} title="Gastos Totales" value={formatMoney(totalExpWithAds)} subtitle={homeAdSpend > 0 ? `incl. ${formatMoney(homeAdSpend)} en ads` : 'Logística y operativos'} change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Gastos fijos (${formatMoney(cur.totalGlobalExpenses)}) + Meta Ads del período (${formatMoney(homeAdSpend)}).` : undefined} />
-                                            <PremiumMetricCard darkMode={darkMode} title="Gastos Empresa" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Gastos anotados" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gastos operativos, logística y fijos registrados en el sistema para el período" />
-                                            <PremiumMetricCard darkMode={darkMode} title="Gasto Meta Ads" value={homeAdSpend > 0 ? formatMoney(homeAdSpend) : '—'} subtitle="Inversión publicitaria" change={null} sparkline={null} tooltip="Gasto total en publicidad de Meta Ads durante el período seleccionado" />
-                                            <PremiumMetricCard darkMode={darkMode} title="Inversión" value={formatMoney(cur.totalInvestment)} subtitle="Capital apostado" change={null} sparkline={sparklineData7d.investment} sparklineLabels={L} sparklineFormatter={fMoney} />
-                                            <PremiumMetricCard darkMode={darkMode} title="Productos Fallados" value={formatMoney(analysisData.failedValue)} subtitle={`${analysisData.failedUnits} unidad${analysisData.failedUnits !== 1 ? 'es' : ''} perdida${analysisData.failedUnits !== 1 ? 's' : ''}`} change={null} sparkline={null} tooltip="Productos marcados como 'falla' al cargar la venta: se descontaron del stock pero no se cuentan como venta real (no suman a facturación, ganancia ni productos vendidos)." />
-                                            <PremiumMetricCard darkMode={darkMode} title="Promedio de Ventas" value={cur.dailyAvgItems.toFixed(1)} subtitle="uds por día" change={pct(cur.dailyAvgItems, prev?.dailyAvgItems)} sparkline={sparklineData7d.units} sparklineLabels={L} sparklineFormatter={fUds}
-                                                extra={cur.currentStreak > 0 && (
-                                                    <div className="flex items-center gap-1.5 mt-1.5">
-                                                        <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md" style={{background:'rgba(168,85,247,0.15)', border:'1px solid rgba(168,85,247,0.25)'}}>
-                                                            <Flame size={11} style={{color:'#a855f7'}}/>
-                                                            <span className="text-[11px] font-bold" style={{color:'#a855f7'}}>{cur.currentStreak}</span>
-                                                        </div>
-                                                    </div>
-                                                )}
-                                            />
-                                            <PremiumMetricCard darkMode={darkMode} title="Productos Vendidos" value={cur.itemsSold} subtitle={`${cur.salesCount} pedidos`} change={pct(cur.itemsSold, prev?.itemsSold)} sparkline={sparklineData7d.units} sparklineLabels={L} sparklineFormatter={fUds} />
-                                            <PremiumMetricCard darkMode={darkMode} title="Ticket Promedio" value={formatMoney(avgTicket)} subtitle="por producto" change={pct(avgTicket, prevAvgTicket)} sparkline={sparklineData7d.avgTicket} sparklineLabels={L} sparklineFormatter={fMoney} />
-                                            <PremiumMetricCard darkMode={darkMode} title="Ventas Revendedor" value={revendedoresCount} subtitle={revendedoresCount > 0 ? formatMoney(revendedoresRevenue) : 'Sin ventas'} change={null} sparkline={sparklineData7d.resellerClients} sparklineLabels={L} sparklineFormatter={fClientes} />
+                                            {homeCardOrder.sector1.map(id => cardNodes[id]).filter(Boolean)}
                                         </div>
 
                                         <div className={`h-px w-full ${darkMode ? 'bg-white/[0.07]' : 'bg-zinc-200'}`} />
 
                                         {/* Sector 2: Clientes y ventas */}
                                         <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
-                                            <PremiumMetricCard darkMode={darkMode} title="Clientes Nuevos" value={newClientsList.length} subtitle="Total del período" change={null} sparkline={sparklineData7d.clients} sparklineLabels={L} sparklineFormatter={fClientes} />
-                                            <PremiumMetricCard darkMode={darkMode} title="Clientes Orgánicos" value={newClientsOrganic} subtitle="Sin inversión en ads" change={null} sparkline={sparklineData7d.organicClients} sparklineLabels={L} sparklineFormatter={fClientes} />
-                                            <PremiumMetricCard darkMode={darkMode} title="Clientes por Ads" value={newClientsAds} subtitle="Captados por publicidad" change={null} sparkline={sparklineData7d.adsClients} sparklineLabels={L} sparklineFormatter={fClientes} />
-                                            <PremiumMetricCard darkMode={darkMode} title="Clientes Fijos Ads" value={fixedAdsCount} subtitle={fixedAdsCount > 0 ? formatMoney(fixedAdsRevenue) : 'Sin ventas'} change={null} sparkline={sparklineData7d.fixedAdsClients} sparklineLabels={L} sparklineFormatter={fClientes} tooltip="Clientes que originalmente llegaron por publicidad y ya son clientes fijos/recurrentes" />
+                                            {homeCardOrder.sector2.map(id => cardNodes[id]).filter(Boolean)}
                                         </div>
 
                                         <div className={`h-px w-full ${darkMode ? 'bg-white/[0.07]' : 'bg-zinc-200'}`} />
 
-                                        {/* Sector 3: Cuentas (alias, efectivo, inversión activa) */}
+                                        {/* Sector 3: Cuentas */}
                                         <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
-                                            <PremiumMetricCard darkMode={darkMode} title="Alias 1" value={formatMoney(ingAlias1)} subtitle="Ingresos" change={null} sparkline={null} color="blue" />
-                                            <PremiumMetricCard darkMode={darkMode} title="Alias 2" value={formatMoney(ingAlias2)} subtitle="Ingresos" change={null} sparkline={null} color="violet" />
-                                            <PremiumMetricCard darkMode={darkMode} title="Alias 3" value={formatMoney(ingAlias3)} subtitle="Ingresos" change={null} sparkline={null} color="amber" />
-                                            <PremiumMetricCard darkMode={darkMode} title="Efectivo" value={formatMoney(ingEfectivo)} subtitle="Ingresos" change={null} sparkline={null} color="emerald" />
-                                            <PremiumMetricCard darkMode={darkMode} title="Inversión Activa" value={formatMoney(cur.currentStockValue)} subtitle={`Stock a costo actual · ${cur.currentStockUnits.toLocaleString('es-AR')} uds`} change={null} sparkline={null} />
+                                            {homeCardOrder.sector3.map(id => cardNodes[id]).filter(Boolean)}
                                         </div>
                                     </div>
                                 );
@@ -6651,7 +6746,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         <div className="flex-1 md:w-56"><Input darkMode={darkMode} placeholder="Nombre del nuevo lote..." value={newBatchName} onChange={e => setNewBatchName(e.target.value)} /></div>
                         <div className="w-full sm:w-40">
                           <Select darkMode={darkMode} label="Cuenta de compra" value={newBatchAccount} onChange={e => setNewBatchAccount(e.target.value)}
-                            options={['LEMON', 'AHORROS', 'GALICIA', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(acc => ({ value: acc, label: accountLabel(acc) }))} />
+                            options={['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(acc => ({ value: acc, label: accountLabel(acc) }))} />
                         </div>
                         <div className="w-full sm:w-40">
                           <Select darkMode={darkMode} label="Categoría" value={newBatchCategory} onChange={e => setNewBatchCategory(e.target.value)}
@@ -6700,7 +6795,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                             onChange={(e) => setEditingBatchAccount(e.target.value)}
                                             className={`px-2 py-1 text-sm border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0D0D0D] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`}
                                         >
-                                            {['LEMON', 'AHORROS', 'GALICIA', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(acc => (
+                                            {['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(acc => (
                                                 <option key={acc} value={acc}>{accountLabel(acc)}</option>
                                             ))}
                                         </select>
@@ -8141,7 +8236,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
             {/* --- PESTAÑA GASTOS (Gastos + Movimientos unificados) --- */}
             {activeTab === 'expenses' && (() => {
-                  const totalWallets = ['LEMON', 'AHORROS', 'GALICIA', 'EFECTIVO', 'SIN_CUENTA'].reduce((s, acc) => s + (wallets[acc] || 0), 0);
+                  const totalWallets = ['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'EFECTIVO', 'SIN_CUENTA'].reduce((s, acc) => s + (wallets[acc] || 0), 0);
                   const totalWalletsUsd = ['USDT', 'USD'].reduce((s, acc) => s + (wallets[acc] || 0), 0);
                   const feed = [
                     ...cashFlow.map(m => ({ ...m, kind: 'movimiento' })),
@@ -8216,7 +8311,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         </button>
                         <div ref={walletsScrollRef} className="overflow-x-auto scrollbar-none -mx-1 px-1 pb-1" style={{ scrollSnapType: 'x mandatory' }}>
                         <div className="flex gap-3">
-                        {['LEMON', 'AHORROS', 'GALICIA', 'EFECTIVO', 'USDT', 'USD'].map(acc => {
+                        {['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'EFECTIVO', 'USDT', 'USD'].map(acc => {
                           const saldo = wallets[acc] || 0;
                           const isEditing = editingWallet === acc;
                           return (
@@ -8315,10 +8410,10 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                               {newCashMovement.type === 'transferencia' ? 'Cuenta origen' : 'Cuenta / Wallet'}
                             </p>
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                              {['LEMON', 'AHORROS', 'GALICIA', 'EFECTIVO', 'USDT', 'USD'].map(acc => (
+                              {['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'EFECTIVO', 'USDT', 'USD'].map(acc => (
                                 <button key={acc} onClick={() => setNewCashMovement(p => ({ ...p, account: acc, accountTo: p.accountTo === acc ? '' : p.accountTo }))}
                                   className={`px-3 py-2.5 rounded-xl border text-sm font-bold transition-all ${newCashMovement.account === acc ? (darkMode ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40' : 'bg-indigo-50 text-indigo-700 border-indigo-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
-                                  {acc}
+                                  {accountLabel(acc)}
                                 </button>
                               ))}
                             </div>
@@ -8328,10 +8423,10 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                   <ArrowLeftRight size={12}/> Cuenta destino
                                 </p>
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                                  {['LEMON', 'AHORROS', 'GALICIA', 'EFECTIVO', 'USDT', 'USD'].filter(acc => acc !== newCashMovement.account).map(acc => (
+                                  {['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'EFECTIVO', 'USDT', 'USD'].filter(acc => acc !== newCashMovement.account).map(acc => (
                                     <button key={acc} onClick={() => setNewCashMovement(p => ({ ...p, accountTo: acc }))}
                                       className={`px-3 py-2.5 rounded-xl border text-sm font-bold transition-all ${newCashMovement.accountTo === acc ? (darkMode ? 'bg-sky-500/20 text-sky-400 border-sky-500/40' : 'bg-sky-50 text-sky-700 border-sky-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
-                                      {acc}
+                                      {accountLabel(acc)}
                                     </button>
                                   ))}
                                 </div>
@@ -8396,7 +8491,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             </button>
                           </div>
                           {!showAjustesHistory && !showStockHistory && <div className="flex gap-1.5 flex-wrap">
-                            {['TODAS', 'GASTOS', 'LEMON', 'AHORROS', 'GALICIA', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(f => (
+                            {['TODAS', 'GASTOS', 'LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(f => (
                               <button key={f} onClick={() => setCashFlowFilter(f)}
                                 className={`px-3 py-1 rounded-lg text-[11px] font-bold border transition-all ${cashFlowFilter === f ? (darkMode ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40' : 'bg-indigo-50 text-indigo-700 border-indigo-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-600'}`}>
                                 {accountLabel(f)}
@@ -8863,6 +8958,58 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
               </div>
             )}
+
+            {/* --- PESTAÑA PERSONALIZAR INICIO --- */}
+            {activeTab === 'customize' && (() => {
+              const sectorKeys = ['sector1', 'sector2', 'sector3'];
+              return (
+                <div className="space-y-5 animate-in fade-in duration-300 max-w-4xl">
+                  <div className={`rounded-2xl border p-5 flex items-center justify-between gap-4 flex-wrap ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
+                    <div>
+                      <h2 className="text-lg font-bold mb-1">Personalizar Inicio</h2>
+                      <p className={`text-sm ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Reordená las tarjetas del dashboard o movelas de sector. Se guarda en este navegador.</p>
+                    </div>
+                    <Button darkMode={darkMode} variant="outline" onClick={resetHomeCardOrder}><RotateCcw size={14}/> Restablecer orden</Button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {sectorKeys.map(sectorKey => (
+                      <div key={sectorKey} className={`rounded-2xl border p-4 ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
+                        <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-3">{HOME_SECTOR_LABELS[sectorKey]}</h3>
+                        <div className="space-y-2">
+                          {homeCardOrder[sectorKey].length === 0 && (
+                            <div className="text-xs text-zinc-500 text-center py-4 opacity-60">Sin tarjetas en este sector</div>
+                          )}
+                          {homeCardOrder[sectorKey].map((id, index) => (
+                            <div key={id} className={`flex items-center gap-2 p-2.5 rounded-xl border ${darkMode ? 'bg-zinc-900/40 border-[#1F1F1F]' : 'bg-zinc-50 border-zinc-200'}`}>
+                              <span className={`text-xs font-semibold flex-1 truncate ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{HOME_CARD_META[id]?.title || id}</span>
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                <button onClick={() => moveHomeCard(sectorKey, index, -1)} disabled={index === 0}
+                                  className={`p-1 rounded-md transition-colors ${index === 0 ? 'opacity-20 cursor-default' : (darkMode ? 'hover:bg-white/[0.08] text-zinc-400' : 'hover:bg-zinc-200 text-zinc-500')}`}
+                                  title="Subir"><ChevronUp size={14}/></button>
+                                <button onClick={() => moveHomeCard(sectorKey, index, 1)} disabled={index === homeCardOrder[sectorKey].length - 1}
+                                  className={`p-1 rounded-md transition-colors ${index === homeCardOrder[sectorKey].length - 1 ? 'opacity-20 cursor-default' : (darkMode ? 'hover:bg-white/[0.08] text-zinc-400' : 'hover:bg-zinc-200 text-zinc-500')}`}
+                                  title="Bajar"><ChevronDown size={14}/></button>
+                                {sectorKey !== 'sector1' && (
+                                  <button onClick={() => moveHomeCardToSector(sectorKey, index, sectorKeys[sectorKeys.indexOf(sectorKey) - 1])}
+                                    className={`p-1 rounded-md transition-colors ${darkMode ? 'hover:bg-indigo-500/10 text-indigo-400' : 'hover:bg-indigo-50 text-indigo-500'}`}
+                                    title={`Mover a ${HOME_SECTOR_LABELS[sectorKeys[sectorKeys.indexOf(sectorKey) - 1]]}`}><ChevronLeft size={14}/></button>
+                                )}
+                                {sectorKey !== 'sector3' && (
+                                  <button onClick={() => moveHomeCardToSector(sectorKey, index, sectorKeys[sectorKeys.indexOf(sectorKey) + 1])}
+                                    className={`p-1 rounded-md transition-colors ${darkMode ? 'hover:bg-indigo-500/10 text-indigo-400' : 'hover:bg-indigo-50 text-indigo-500'}`}
+                                    title={`Mover a ${HOME_SECTOR_LABELS[sectorKeys[sectorKeys.indexOf(sectorKey) + 1]]}`}><ChevronRight size={14}/></button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
         </div>
       </main>

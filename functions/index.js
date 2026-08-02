@@ -222,10 +222,10 @@ const normalizarMedioPago = (v) => {
 
 const detectarTipoMensajeNuevo = (linea) => {
     const t = normalizarParaComparar(linea).trim();
-    if (["venta", "vender"].includes(t)) return "VENTA";
-    if (["mayorista", "mayor", "revendedor", "mayoreo"].includes(t)) return "MAYORISTA";
-    if (["neutro", "neutral", "stock neutro"].includes(t)) return "NEUTRO";
-    if (["consignacion", "consignación", "consigna", "cons"].includes(t)) return "CONSIGNACION";
+    if (["venta", "ventas", "vender"].includes(t)) return "VENTA";
+    if (["mayorista", "mayoristas", "mayor", "revendedor", "revendedores", "mayoreo"].includes(t)) return "MAYORISTA";
+    if (["neutro", "neutros", "neutral", "stock neutro"].includes(t)) return "NEUTRO";
+    if (["consignacion", "consignación", "consignaciones", "consigna", "cons"].includes(t)) return "CONSIGNACION";
     return null;
 };
 
@@ -298,7 +298,7 @@ const parseMensajeNuevo = (textoOriginal) => {
         general[key] = value;
     }
     guardarItemActual();
-    const parsedItems = items.map((item, index) => ({ producto: String(item.producto || "").trim(), variante: String(item.variante || "").trim(), cantidad: parseInt(item.cantidad) || 0, precio: limpiarNumero(item.precio), index: index + 1 })).filter(item => item.producto && item.variante && item.cantidad > 0);
+    const parsedItems = items.map((item, index) => ({ producto: String(item.producto || "").trim(), variante: String(item.variante || "").trim(), cantidad: parseInt(item.cantidad) || 0, precio: limpiarNumero(item.precio), esFalla: String(item.precio ?? "").trim().toLowerCase() === "falla", index: index + 1 })).filter(item => item.producto && item.variante && item.cantidad > 0);
     return { tipo, general, items: parsedItems };
 };
 
@@ -653,7 +653,9 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                         const cantidad = parseInt(partes[baseIndex + 2 + indexOffset]) || 1;
 
                         const limpiarNum = (texto) => parseFloat(String(texto).replace(/[^0-9,-]+/g,"").replace(",", ".")) || 0;
-                        const precioUnitario = limpiarNum(partes[baseIndex + 3 + indexOffset]);
+                        const precioRaw = String(partes[baseIndex + 3 + indexOffset] || "").trim();
+                        const esFalla = precioRaw.toLowerCase() === "falla";
+                        const precioUnitario = limpiarNum(precioRaw);
 
                         if (!productoRaw || !varianteRaw || !cantidad) {
                             let numFallo = numeroRemitente.startsWith("549") ? numeroRemitente.replace(/^549/, "54") : numeroRemitente;
@@ -726,7 +728,7 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
 
                         const resultado = esMovimientoNeutro
                             ? await procesarStockNeutro(productoRaw, varianteRaw, cantidad, precioUnitario, motivoNeutro, notaNeutra, vendedor)
-                            : await procesarVenta(productoRaw, varianteRaw, cantidad, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor, null, "Whatsapp", "", medioPagoViejo);
+                            : await procesarVenta(productoRaw, varianteRaw, cantidad, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor, null, "Whatsapp", "", medioPagoViejo, esFalla);
 
                         let numeroParaMeta = numeroRemitente;
                         if (numeroParaMeta.startsWith("549") && numeroParaMeta.length === 13) {
@@ -911,7 +913,7 @@ async function procesarMensajeNuevoWhatsapp(mensaje, numeroRemitente, fechaHoySh
 
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
-            if (!item.precio || item.precio <= 0)
+            if (!item.esFalla && (!item.precio || item.precio <= 0))
                 return { exito: false, error_msg: errorConProducto(item, i, `❌ Falta precio en ${item.producto} (${item.variante}).`) };
             const pBuscar = normalizarParaComparar(item.producto);
             const vBuscar = normalizarParaComparar(item.variante);
@@ -943,10 +945,10 @@ async function procesarMensajeNuevoWhatsapp(mensaje, numeroRemitente, fechaHoySh
             const item = items[i];
             const costoEnvio = i === 0 ? limpiarNumero(general.envioCosto || 0) : 0;
             const cobroEnvio = i === 0 ? limpiarNumero(general.envioCobro || 0) : 0;
-            const r = await procesarVenta(item.producto, item.variante, item.cantidad, item.precio, fecha, costoEnvio, cobroEnvio, esRevendedor, tipoCliente, vendedor, ticketIdGrupo, canal, clienteMayorista, medioPago);
+            const r = await procesarVenta(item.producto, item.variante, item.cantidad, item.precio, fecha, costoEnvio, cobroEnvio, esRevendedor, tipoCliente, vendedor, ticketIdGrupo, canal, clienteMayorista, medioPago, item.esFalla);
             if (r && r.exito === false) return { ...r, error_msg: errorConProducto(item, i, r.error_msg) };
             if (r.saleId) saleIds.push(r.saleId);
-            total += item.precio * item.cantidad + (i === 0 ? (cobroEnvio || 0) : 0);
+            total += (item.esFalla ? 0 : item.precio * item.cantidad) + (i === 0 ? (cobroEnvio || 0) : 0);
             unidades += item.cantidad;
             await registrarEnSheet(tipo === "MAYORISTA" ? "Mayorista" : "Ventas", [fechaHoySheet, numeroRemitente, item.producto, item.variante, item.cantidad, item.precio, `ÉXITO (${vendedor})`, tipoCliente]);
         }
@@ -1356,7 +1358,7 @@ async function procesarStockNeutro(userProducto, userVariante, cantARestar, prec
 // ==========================================
 // FUNCIÓN PROCESAR VENTA
 // ==========================================
-async function procesarVenta(userProducto, userVariante, cantARestar, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor, ticketIdManual = null, source = "Whatsapp", clienteMayorista = "", medioPago = null) {
+async function procesarVenta(userProducto, userVariante, cantARestar, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor, ticketIdManual = null, source = "Whatsapp", clienteMayorista = "", medioPago = null, esFalla = false) {
     if (isNaN(cantARestar) || cantARestar <= 0) return { exito: false, error_msg: "❌ La cantidad ingresada no es válida." };
 
     const pBuscar = normalizarParaComparar(userProducto);
@@ -1439,9 +1441,12 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
 
     if (itemsActualizados) {
         // totalSaleRaw = solo producto (el envío no es ganancia del emisor)
-        const totalVentaCalculado = precioUnitario * cantARestar;
-        const ticketIdGenerado = ticketIdManual || Date.now().toString(); 
-        const fechaCreacionReal = new Date().toISOString(); 
+        const totalVentaCalculado = esFalla ? 0 : precioUnitario * cantARestar;
+        const failedValueCalculado = esFalla ? (costoUnitarioOficial || 0) * cantARestar : 0;
+        // Si no se cobró envío al cliente, el costo de envío es solo informativo: no debe sumar ni restar a la ganancia.
+        const shippingProfitCalculado = precioEnvioCliente ? (precioEnvioCliente - (costoEnvioMio || 0)) : 0;
+        const ticketIdGenerado = ticketIdManual || Date.now().toString();
+        const fechaCreacionReal = new Date().toISOString();
 
         const saleRef = await db.collection("sales").add({
             batchId: batchIdOficial,
@@ -1456,18 +1461,21 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
             quantity: cantARestar,
             shippingCostArs: costoEnvioMio,
             clientShippingCharge: precioEnvioCliente,
+            shippingProfit: shippingProfitCalculado,
             medioPago: medioPago || null,
             source: source || "Whatsapp",
             operationType: esRevendedor ? "MAYORISTA" : "VENTA",
             clientName: esRevendedor ? (clienteMayorista || "") : "",
             ticketId: ticketIdGenerado,
             totalSaleRaw: totalVentaCalculado,
-            unitPrice: precioUnitario,
+            unitPrice: esFalla ? 0 : precioUnitario,
+            isFalla: !!esFalla,
+            failedValue: failedValueCalculado,
             variant: varianteOficial,
             seller: vendedor
         });
 
-        const aliasWalletMap = { alias1: 'GALICIA', alias3: 'LEMON' };
+        const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO' };
         if (medioPago && aliasWalletMap[medioPago]) {
             const wName = aliasWalletMap[medioPago];
             const wAmount = totalVentaCalculado + Math.max(0, (precioEnvioCliente || 0) - (costoEnvioMio || 0));
