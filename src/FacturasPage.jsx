@@ -28,6 +28,17 @@ if (!db) db = getFirestore(fbApp);
 const formatMoney = n =>
   new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n || 0);
 
+// Solo para mostrar (label + color de badge) — esta página es frontend puro, no necesita
+// cuit/cert/key del emisor, por eso no importa functions/emisores.js (eso es Node/backend).
+// Las facturas emitidas antes del refactor multi-emisor no tienen emisorId: se tratan como
+// 'alias1' (todas lo eran), igual que en el fallback del backend.
+const EMISOR_LABELS = {
+  alias1: '028 Import',
+  alias2: 'GIECO M. Agustín',
+};
+const emisorIdDe = f => f.emisorId || 'alias1';
+const emisorLabelDe = f => EMISOR_LABELS[emisorIdDe(f)] || emisorIdDe(f);
+
 const fmtDate = s => {
   if (!s) return '—';
   const [y, m, d] = s.split('-');
@@ -44,6 +55,7 @@ function exportarExcel(facturas) {
   const hoy = new Date().toISOString().slice(0, 10);
   const rows = facturas.map(f => ({
     'Fecha emisión':        f.fechaEmision   ? fmtDate(f.fechaEmision)   : '—',
+    'Emisor':                emisorLabelDe(f),
     'Receptor / Cliente':   f.receptorNombre ?? '—',
     'Tipo comprobante':     f.tipoComprobante ?? '—',
     'Punto de venta':       f.puntoVenta != null ? String(f.puntoVenta).padStart(5, '0') : '—',
@@ -63,7 +75,7 @@ function exportarExcel(facturas) {
 
   // Ancho de columnas
   ws['!cols'] = [
-    { wch: 14 }, { wch: 22 }, { wch: 16 }, { wch: 14 },
+    { wch: 14 }, { wch: 16 }, { wch: 22 }, { wch: 16 }, { wch: 14 },
     { wch: 18 }, { wch: 20 }, { wch: 14 }, { wch: 20 },
     { wch: 16 }, { wch: 10 }, { wch: 20 }, { wch: 22 },
     { wch: 50 }, { wch: 80 },
@@ -185,11 +197,12 @@ export default function FacturasPage() {
   const [search, setSearch]       = useState('');
   const [fechaDesde, setFechaDesde] = useState('');
   const [fechaHasta, setFechaHasta] = useState('');
+  const [emisorFiltro, setEmisorFiltro] = useState('todos'); // 'todos' | 'alias1' | 'alias2'
   const [selected, setSelected]   = useState(new Set());
   const [zipLoading, setZipLoading] = useState(false);
 
   useEffect(() => { localStorage.setItem('028_dark_mode', dm); }, [dm]);
-  useEffect(() => { setSelected(new Set()); }, [search, fechaDesde, fechaHasta]);
+  useEffect(() => { setSelected(new Set()); }, [search, fechaDesde, fechaHasta, emisorFiltro]);
 
   // Arrancar el listener siempre, independiente del auth.
   // Así los datos están listos en cuanto el usuario ingresa la contraseña.
@@ -214,9 +227,23 @@ export default function FacturasPage() {
       }
       if (fechaDesde && f.fechaEmision < fechaDesde) return false;
       if (fechaHasta && f.fechaEmision > fechaHasta) return false;
+      if (emisorFiltro !== 'todos' && emisorIdDe(f) !== emisorFiltro) return false;
       return true;
     });
-  }, [facturas, search, fechaDesde, fechaHasta]);
+  }, [facturas, search, fechaDesde, fechaHasta, emisorFiltro]);
+
+  // Totales del filtro actual (búsqueda + fechas + emisor). Cuando el filtro de emisor es
+  // 'todos', además desglosa cuánto facturó cada emisor por separado.
+  const totales = useMemo(() => {
+    const porEmisor = {};
+    let total = 0;
+    for (const f of filtered) {
+      const id = emisorIdDe(f);
+      porEmisor[id] = (porEmisor[id] || 0) + (f.importeTotal || 0);
+      total += f.importeTotal || 0;
+    }
+    return { total, porEmisor };
+  }, [filtered]);
 
   // ── Clases base ──────────────────────────────────────────────────────────────
   const bg      = dm ? 'bg-[#050505] text-zinc-100' : 'bg-slate-50 text-zinc-900';
@@ -319,15 +346,62 @@ export default function FacturasPage() {
                   focus:ring-1 focus:ring-indigo-500/40 transition-all ${inp}`} />
             </div>
 
+            {/* Emisor */}
+            <div className="flex items-center gap-2">
+              <span className={`text-xs whitespace-nowrap ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>Emisor</span>
+              <select value={emisorFiltro} onChange={e => setEmisorFiltro(e.target.value)}
+                className={`px-3 py-2 text-sm rounded-lg border outline-none
+                  focus:ring-1 focus:ring-indigo-500/40 transition-all ${inp}`}>
+                <option value="todos">Todos</option>
+                <option value="alias1">{EMISOR_LABELS.alias1}</option>
+                <option value="alias2">{EMISOR_LABELS.alias2}</option>
+              </select>
+            </div>
+
             {/* Limpiar */}
-            {(search || fechaDesde || fechaHasta) && (
-              <button onClick={() => { setSearch(''); setFechaDesde(''); setFechaHasta(''); }}
+            {(search || fechaDesde || fechaHasta || emisorFiltro !== 'todos') && (
+              <button onClick={() => { setSearch(''); setFechaDesde(''); setFechaHasta(''); setEmisorFiltro('todos'); }}
                 className={`px-3 py-2 text-xs rounded-lg transition-all ${btnGhost}`}>
                 Limpiar
               </button>
             )}
           </div>
         </div>
+
+        {/* ── Totales del filtro actual ── */}
+        {!loading && filtered.length > 0 && (
+          <div className={`rounded-xl border p-4 flex flex-wrap items-center gap-x-6 gap-y-2 ${card}`}>
+            <div>
+              <span className={`text-[10px] uppercase tracking-wide font-bold ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                Total facturado {emisorFiltro !== 'todos' ? `(${EMISOR_LABELS[emisorFiltro] || emisorFiltro})` : '(filtro actual)'}
+              </span>
+              <p className={`text-lg font-bold tabular-nums ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>
+                {formatMoney(totales.total)}
+              </p>
+            </div>
+            {emisorFiltro === 'todos' && (
+              <>
+                <div className={`h-8 w-px ${dm ? 'bg-white/[0.08]' : 'bg-zinc-200'}`} />
+                <div>
+                  <span className={`text-[10px] uppercase tracking-wide font-bold ${dm ? 'text-indigo-400' : 'text-indigo-600'}`}>
+                    {EMISOR_LABELS.alias1}
+                  </span>
+                  <p className={`text-sm font-semibold tabular-nums ${dm ? 'text-zinc-200' : 'text-zinc-800'}`}>
+                    {formatMoney(totales.porEmisor.alias1 || 0)}
+                  </p>
+                </div>
+                <div>
+                  <span className={`text-[10px] uppercase tracking-wide font-bold ${dm ? 'text-amber-400' : 'text-amber-600'}`}>
+                    {EMISOR_LABELS.alias2}
+                  </span>
+                  <p className={`text-sm font-semibold tabular-nums ${dm ? 'text-zinc-200' : 'text-zinc-800'}`}>
+                    {formatMoney(totales.porEmisor.alias2 || 0)}
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         {/* ── Barra de acciones de selección ── */}
         {selected.size > 0 && (() => {
@@ -408,6 +482,7 @@ export default function FacturasPage() {
                       })()}
                     </th>
                     <th className="px-4 py-3 text-left whitespace-nowrap">Fecha</th>
+                    <th className="px-4 py-3 text-left whitespace-nowrap">Emisor</th>
                     <th className="px-4 py-3 text-left">Receptor</th>
                     <th className="px-4 py-3 text-left whitespace-nowrap">Tipo</th>
                     <th className="px-4 py-3 text-left whitespace-nowrap">Comprobante</th>
@@ -446,6 +521,17 @@ export default function FacturasPage() {
                       <td className="px-4 py-3 whitespace-nowrap">
                         <span className={`text-xs tabular-nums ${dm ? 'text-zinc-300' : 'text-zinc-700'}`}>
                           {fmtDate(f.fechaEmision)}
+                        </span>
+                      </td>
+
+                      {/* Emisor */}
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                          emisorIdDe(f) === 'alias2'
+                            ? (dm ? 'bg-amber-500/15 text-amber-400' : 'bg-amber-50 text-amber-600')
+                            : (dm ? 'bg-indigo-500/15 text-indigo-400' : 'bg-indigo-50 text-indigo-600')
+                        }`}>
+                          {emisorLabelDe(f)}
                         </span>
                       </td>
 

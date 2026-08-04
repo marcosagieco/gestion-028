@@ -4,16 +4,7 @@ const PDFDocument = require('pdfkit');
 const QRCode     = require('qrcode');
 const fs         = require('fs');
 const path       = require('path');
-
-// ─── Datos del emisor (constantes fiscales) ───────────────────────────────────
-const EMISOR = {
-    razonSocial:       '028 Import',
-    razonSocialFiscal: 'BUNGE LUCIO FELIX',
-    cuit:              '20-48459795-3',
-    cuitNum:           20484597953,
-    condIVA:           'Responsable Monotributo',
-    inicioAct:         '01/05/2026',
-};
+const { cuitNum, formatCuit } = require('./emisores');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const money      = n => '$ ' + n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -22,10 +13,10 @@ const padNroCbte = n => String(n).padStart(8, '0');
 const nroCbteStr = (pv, n) => `${padPtoVta(pv)}-${padNroCbte(n)}`;
 
 // ─── URL QR ARCA ──────────────────────────────────────────────────────────────
-function buildQRUrl({ ptoVta, nroCmp, fecha, importe, tipoDocRec, nroDocRec, codAut }) {
+function buildQRUrl({ cuit, ptoVta, nroCmp, fecha, importe, tipoDocRec, nroDocRec, codAut }) {
     const payload = {
         ver: 1, fecha,
-        cuit:       EMISOR.cuitNum,
+        cuit:       cuitNum(cuit),
         ptoVta,
         tipoCmp:    11,
         nroCmp,
@@ -41,7 +32,7 @@ function buildQRUrl({ ptoVta, nroCmp, fecha, importe, tipoDocRec, nroDocRec, cod
 }
 
 // ─── Render del contenido del PDF ────────────────────────────────────────────
-function _renderPDF(doc, { ptoVta, numero, fechaDisplay, cae, vencCAEDisp,
+function _renderPDF(doc, { emisor, ptoVta, numero, fechaDisplay, cae, vencCAEDisp,
     receptorNombre, condIVAReceptor, items, total, qrBuffer }) {
 
     const PW       = doc.page.width;
@@ -67,17 +58,23 @@ function _renderPDF(doc, { ptoVta, numero, fechaDisplay, cae, vencCAEDisp,
     const col3X = cBoxX + cBoxW + 8;
     const col3W = PW - MX - col3X;
 
-    // Emisor (izquierda)
+    // Emisor (izquierda) — si razonSocial y razonSocialFiscal son iguales (ej. monotributista
+    // individual, alias2), se imprime el nombre una sola vez en vez de repetirlo en dos líneas.
+    const mismoNombre = emisor.razonSocial === emisor.razonSocialFiscal;
     doc.fontSize(15).font('Helvetica-Bold').fillColor(C_DARK)
-       .text(EMISOR.razonSocial, MX, y, { width: col1W });
-    doc.fontSize(9).font('Helvetica-Bold').fillColor(C_DARK)
-       .text(EMISOR.razonSocialFiscal, MX, y + 19, { width: col1W });
+       .text(emisor.razonSocial, MX, y, { width: col1W });
+    let yBloque = y + 19;
+    if (!mismoNombre) {
+        doc.fontSize(9).font('Helvetica-Bold').fillColor(C_DARK)
+           .text(emisor.razonSocialFiscal, MX, yBloque, { width: col1W });
+        yBloque += 12;
+    }
     doc.fontSize(8).font('Helvetica').fillColor(C_GRAY)
-       .text(`CUIT: ${EMISOR.cuit}`,                           MX, y + 31, { width: col1W })
-       .text(`Cond. IVA: ${EMISOR.condIVA}`,                   MX, y + 43, { width: col1W })
-       .text('Domicilio: MIÑONES 2061',                        MX, y + 55, { width: col1W })
-       .text('1428 - Ciudad Autónoma de Buenos Aires',         MX, y + 65, { width: col1W })
-       .text(`Inicio de Actividades: ${EMISOR.inicioAct}`,     MX, y + 78, { width: col1W });
+       .text(`CUIT: ${formatCuit(emisor.cuit)}`,               MX, yBloque,      { width: col1W })
+       .text(`Cond. IVA: ${emisor.condIVA}`,                   MX, yBloque + 12, { width: col1W })
+       .text(`Domicilio: ${emisor.domicilio}`,                 MX, yBloque + 24, { width: col1W })
+       .text(emisor.localidad,                                 MX, yBloque + 34, { width: col1W })
+       .text(`Inicio de Actividades: ${emisor.inicioActividad}`, MX, yBloque + 47, { width: col1W });
 
     // Caja central con la letra C
     doc.rect(cBoxX, y, cBoxW, cBoxH).lineWidth(2.5).strokeColor(C_DARK).stroke();
@@ -220,12 +217,12 @@ function _renderPDF(doc, { ptoVta, numero, fechaDisplay, cae, vencCAEDisp,
 
 // ─── Función exportable: retorna Buffer ───────────────────────────────────────
 async function generarFacturaPDFBuffer({
-    ptoVta, numero, fecha, fechaDisplay,
+    emisor, ptoVta, numero, fecha, fechaDisplay,
     cae, vencCAEDisp,
     receptorNombre, tipoDoc, nroDoc, condIVAReceptor,
     items, total,
 }) {
-    const qrUrl    = buildQRUrl({ ptoVta, nroCmp: numero, fecha, importe: total,
+    const qrUrl    = buildQRUrl({ cuit: emisor.cuit, ptoVta, nroCmp: numero, fecha, importe: total,
                                   tipoDocRec: tipoDoc, nroDocRec: nroDoc, codAut: cae });
     const qrBuffer = await QRCode.toBuffer(qrUrl, {
         type: 'png', width: 150, margin: 1,
@@ -238,13 +235,13 @@ async function generarFacturaPDFBuffer({
         const doc = new PDFDocument({
             size:    'A4',
             margins: { top: 0, bottom: 0, left: 0, right: 0 },
-            info:    { Title: `Factura C ${nroCbteStr(ptoVta, numero)}`, Author: EMISOR.razonSocial },
+            info:    { Title: `Factura C ${nroCbteStr(ptoVta, numero)}`, Author: emisor.razonSocial },
         });
         doc.on('data',  chunk => chunks.push(chunk));
         doc.on('end',   () => resolve(Buffer.concat(chunks)));
         doc.on('error', reject);
 
-        _renderPDF(doc, { ptoVta, numero, fechaDisplay, cae, vencCAEDisp,
+        _renderPDF(doc, { emisor, ptoVta, numero, fechaDisplay, cae, vencCAEDisp,
                           receptorNombre, condIVAReceptor, items, total, qrBuffer });
         doc.end();
     });
@@ -254,10 +251,12 @@ module.exports = { generarFacturaPDFBuffer, buildQRUrl, nroCbteStr };
 
 // ─── Script standalone para uso manual ───────────────────────────────────────
 if (require.main === module) {
+    const { EMISORES } = require('./emisores');
     const FECHA = '2026-06-03';
     const [yy, mm, dd] = FECHA.split('-');
 
     generarFacturaPDFBuffer({
+        emisor:          EMISORES.alias1,
         ptoVta:          1,
         numero:          2,
         fecha:           FECHA,

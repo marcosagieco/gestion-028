@@ -8,6 +8,7 @@ const db = admin.firestore();
 
 const { emitirFacturaC } = require('./facturacion');
 const { generarFacturaPDFBuffer } = require('./generar-factura-pdf');
+const { EMISORES, cuitNum } = require('./emisores');
 const crypto = require('crypto');
 
 const STORAGE_BUCKET  = 'gestion-028.firebasestorage.app';
@@ -21,11 +22,13 @@ async function subirPDFStorage(pdfBuffer, filePath) {
 }
 
 // ─── Generar PDF + subir + guardar en colección facturas ─────────────────────
-async function guardarFacturaConPDF({ ventaId, ptoVta, numero, fecha, fechaDisplay,
+// receptorNombre queda fijo en 'Consumidor Final' a propósito (no es parte de este refactor
+// multi-emisor, ambos emisores facturan siempre a Consumidor Final por ahora).
+async function guardarFacturaConPDF({ emisor, ventaId, ptoVta, numero, fecha, fechaDisplay,
     cae, vencimientoCAE, vencCAEDisp, monto }) {
 
     const qrPayload = {
-        ver: 1, fecha, cuit: 20484597953,
+        ver: 1, fecha, cuit: cuitNum(emisor.cuit),
         ptoVta, tipoCmp: 11, nroCmp: numero, importe: monto,
         moneda: 'PES', ctz: 1, tipoDocRec: 99, nroDocRec: 0,
         tipoCodAut: 'E', codAut: parseInt(cae),
@@ -34,7 +37,7 @@ async function guardarFacturaConPDF({ ventaId, ptoVta, numero, fecha, fechaDispl
         Buffer.from(JSON.stringify(qrPayload)).toString('base64');
 
     const pdfBuffer = await generarFacturaPDFBuffer({
-        ptoVta, numero, fecha, fechaDisplay,
+        emisor, ptoVta, numero, fecha, fechaDisplay,
         cae, vencCAEDisp,
         receptorNombre:  'Consumidor Final',
         tipoDoc:         99,
@@ -56,6 +59,7 @@ async function guardarFacturaConPDF({ ventaId, ptoVta, numero, fecha, fechaDispl
     const comprobanteFormateado = `${pvStr}-${nroStr}`;
     await db.collection('facturas').doc(cae).set({
         ventaId,
+        emisorId:             emisor.id,
         fechaEmision:         fecha,
         tipoComprobante:      'Factura C',
         cbteTipo:             11,
@@ -748,8 +752,8 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                                 await registrarEnSheet("Ventas", [fechaHoySheet, numeroRemitente, productoRaw, varianteRaw, cantidad, precioUnitario, `ÉXITO (${vendedor})`]);
                                 if (resultado.saleId) {
                                     const monto = (resultado.totalSaleRaw || 0) + (resultado.clientShippingCharge || 0);
-                                    if (resultado.medioPago === 'alias1') {
-                                        await guardarPendingFactura(numeroRemitente, [resultado.saleId], monto);
+                                    if (resultado.medioPago === 'alias1' || resultado.medioPago === 'alias2') {
+                                        await guardarPendingFactura(numeroRemitente, [resultado.saleId], monto, resultado.medioPago);
                                         await enviarMensajeWhatsApp(numeroParaMeta, `✅ Venta registrada.\n\n🧾 ¿Emito Factura C por $${monto.toLocaleString('es-AR')} a Consumidor Final?\nRespondé *sí* o *no*.`);
                                     } else {
                                         await enviarMensajeWhatsApp(numeroParaMeta, `✅ Venta registrada.`);
@@ -778,16 +782,59 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
 // FACTURACIÓN ELECTRÓNICA — ESTADO PENDIENTE
 // ==========================================
 
-async function guardarPendingFactura(numeroRemitente, saleIds, monto) {
+async function guardarPendingFactura(numeroRemitente, saleIds, monto, emisorId) {
     await db.collection('pending_invoice').doc(numeroRemitente).set({
         saleIds,
         monto,
+        emisorId,
         createdAt: new Date().toISOString(),
     });
 }
 
+// Marca atómicamente que ninguna de las saleIds tiene ya CAE / está en proceso, y las pasa a
+// 'procesando' — cierra la ventana de carrera que existía con un simple chequeo de lectura (dos
+// invocaciones concurrentes, ej. reintento de webhook de Meta, podían pasar el check ambas y
+// llamar a ARCA dos veces). Nunca se llama a ARCA dentro de la transacción.
+// 'procesando' con más de 3 minutos se considera abandonado (crash/timeout a mitad de camino) y
+// se puede reclamar, para no dejar ventas bloqueadas para siempre.
+async function marcarProcesandoTransaccional(saleIds) {
+    const PROCESANDO_STALE_MS = 3 * 60 * 1000;
+    try {
+        await db.runTransaction(async (tx) => {
+            const refs  = saleIds.map(id => db.collection('sales').doc(id));
+            const snaps = await tx.getAll(...refs);
+            for (const snap of snaps) {
+                const d = snap.data();
+                if (!d) continue;
+                const procesandoStale = d.invoiceStatus === 'procesando' &&
+                    d.procesandoDesde && (Date.now() - new Date(d.procesandoDesde).getTime()) > PROCESANDO_STALE_MS;
+                if (d.invoiceCAE || d.invoiceStatus === 'emitida' ||
+                    (d.invoiceStatus === 'procesando' && !procesandoStale)) {
+                    const err = new Error('YA_EMITIDA_O_EN_PROCESO');
+                    err.detalle = { invoiceCAE: d.invoiceCAE, facturaId: d.facturaId, invoiceNumber: d.invoiceNumber };
+                    throw err;
+                }
+            }
+            for (const snap of snaps) {
+                tx.update(snap.ref, { invoiceStatus: 'procesando', procesandoDesde: new Date().toISOString() });
+            }
+        });
+        return { ok: true };
+    } catch (e) {
+        if (e.message === 'YA_EMITIDA_O_EN_PROCESO') return { ok: false, detalle: e.detalle };
+        throw e;
+    }
+}
+
 async function resolverPendingFactura(pendingSnap, textoRespuesta) {
-    const { saleIds, monto, createdAt } = pendingSnap.data();
+    const { saleIds, monto, createdAt, emisorId: emisorIdGuardado } = pendingSnap.data();
+
+    // Compatibilidad hacia atrás: los pending_invoice creados antes de este refactor no tienen
+    // emisorId (el campo no existía) — se cae a alias1, que era el único comportamiento posible.
+    const emisor = EMISORES[emisorIdGuardado] || EMISORES.alias1;
+    if (!EMISORES[emisorIdGuardado]) {
+        console.warn(`⚠️ pending_invoice sin emisorId reconocido ("${emisorIdGuardado}") — usando alias1 por defecto. saleIds: ${saleIds.join(',')}`);
+    }
 
     // Expiración: si tiene más de 1 hora, auto-skip sin molestar
     const edadMs = Date.now() - new Date(createdAt).getTime();
@@ -823,25 +870,22 @@ async function resolverPendingFactura(pendingSnap, textoRespuesta) {
         return { texto: '✅ Venta registrada sin factura.', solo: true };
     }
 
-    // Afirmativo → verificar anti-duplicado ANTES de llamar a ARCA
-    for (const id of saleIds) {
-        const snap = await db.collection('sales').doc(id).get();
-        if (!snap.exists) continue;
-        const d = snap.data();
-        if (d.invoiceStatus === 'emitida' || d.invoiceCAE || d.invoiceNumber || d.facturaId) {
-            return {
-                texto: `⚠️ La factura ya fue emitida (CAE: ${d.invoiceCAE || d.facturaId}, Nro: ${d.invoiceNumber}).`,
-                solo: true,
-            };
-        }
+    // Afirmativo → marcar 'procesando' de forma atómica ANTES de llamar a ARCA
+    const marcado = await marcarProcesandoTransaccional(saleIds);
+    if (!marcado.ok) {
+        const d = marcado.detalle || {};
+        return {
+            texto: `⚠️ La factura ya fue emitida o está en proceso (CAE: ${d.invoiceCAE || d.facturaId || '—'}, Nro: ${d.invoiceNumber || '—'}).`,
+            solo: true,
+        };
     }
 
     try {
-        const resultado = await emitirFacturaC(monto);
+        const resultado = await emitirFacturaC(monto, emisor);
         const hoy             = new Date().toISOString().slice(0, 10);
         const [yy, mm, dd]    = hoy.split('-');
         const fechaDisplay    = `${dd}/${mm}/${yy}`;
-        const ptoVta          = 1;
+        const ptoVta          = emisor.ptoVta;
         const vencParts       = (resultado.vencimientoCAE || '').split('-');
         const vencCAEDisp     = vencParts.length === 3
             ? `${vencParts[2]}/${vencParts[1]}/${vencParts[0]}` : '';
@@ -854,11 +898,13 @@ async function resolverPendingFactura(pendingSnap, textoRespuesta) {
                 invoiceNumber:  resultado.nroComprobante,
                 invoiceDate:    hoy,
                 facturaId:      resultado.CAE,
+                emisorId:       emisor.id,
             });
         }
 
         // PDF + Storage + Firestore facturas (no bloquea la respuesta WhatsApp)
         guardarFacturaConPDF({
+            emisor,
             ventaId:       saleIds[0] || '',
             ptoVta,
             numero:        resultado.nroComprobante,
@@ -952,8 +998,8 @@ async function procesarMensajeNuevoWhatsapp(mensaje, numeroRemitente, fechaHoySh
             unidades += item.cantidad;
             await registrarEnSheet(tipo === "MAYORISTA" ? "Mayorista" : "Ventas", [fechaHoySheet, numeroRemitente, item.producto, item.variante, item.cantidad, item.precio, `ÉXITO (${vendedor})`, tipoCliente]);
         }
-        if (saleIds.length > 0 && medioPago === 'alias1') {
-            await guardarPendingFactura(numeroRemitente, saleIds, total);
+        if (saleIds.length > 0 && (medioPago === 'alias1' || medioPago === 'alias2')) {
+            await guardarPendingFactura(numeroRemitente, saleIds, total, medioPago);
             const montoFmt = total.toLocaleString('es-AR');
             return { exito: true, mensaje: `✅ Venta registrada.\n\n🧾 ¿Emito Factura C por $${montoFmt} a Consumidor Final?\nRespondé *sí* o *no*.` };
         }

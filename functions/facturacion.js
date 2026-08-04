@@ -1,10 +1,52 @@
 'use strict';
 
-require('dotenv').config();
+const fs     = require('fs');
+const path   = require('path');
+
+// Ruta explícita: dotenv por defecto busca ".env" relativo al directorio desde el que se invocó
+// node (process.cwd()), no relativo a este archivo. Si este módulo se corre como script suelto
+// desde la raíz del repo (ej. "node functions/verificar-emisor1.js"), sin esto cargaría por
+// error el .env de la raíz (el del frontend, con las variables VITE_*) en vez de functions/.env.
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const https  = require('https');
 const forge  = require('node-forge');
 const axios  = require('axios');
+
+// Reutiliza la app default de Firebase Admin si ya fue inicializada (caso normal: index.js
+// la inicializa antes de hacer require('./facturacion')). Necesario para cachear el Ticket de
+// Acceso de WSAA en Firestore (ver obtenerTA).
+//
+// En Cloud Functions / el emulador, admin.initializeApp() sin argumentos sigue funcionando
+// exactamente igual que antes (detecta projectId/credenciales del entorno solo).
+//
+// Corriendo como script suelto local (node functions/verificar-emisor1.js) NO hay metadata de
+// GCP de la que inferir el projectId ("Unable to detect a Project Id in the current environment")
+// — en ese caso lo tomamos de .firebaserc (mismo project que usa el resto del repo) y usamos
+// functions/service-account.json (ya existe, lo usa la integración de Google Sheets) como
+// credencial explícita.
+const admin = require('firebase-admin');
+if (!admin.apps.length) {
+    const enEntornoCloud = !!(process.env.K_SERVICE || process.env.FUNCTION_TARGET || process.env.FUNCTIONS_EMULATOR);
+    if (enEntornoCloud) {
+        admin.initializeApp();
+    } else {
+        const firebaseRcPath = path.join(__dirname, '..', '.firebaserc');
+        const serviceAccountPath = path.join(__dirname, 'service-account.json');
+        if (!fs.existsSync(firebaseRcPath) || !fs.existsSync(serviceAccountPath)) {
+            throw new Error(
+                'No se pudo inicializar Firebase Admin para un script local: falta .firebaserc ' +
+                'en la raíz del repo o functions/service-account.json.'
+            );
+        }
+        const { projects } = JSON.parse(fs.readFileSync(firebaseRcPath, 'utf8'));
+        admin.initializeApp({
+            credential: admin.credential.cert(require(serviceAccountPath)),
+            projectId:  projects.default,
+        });
+    }
+}
+const db = admin.firestore();
 
 // AFIP/ARCA usa DH keys de 1024 bits que Node.js 18+ rechaza por defecto.
 // Este agente baja el SECLEVEL solo para las llamadas al WSFE.
@@ -12,29 +54,21 @@ const wsfeAgent = new https.Agent({
     ciphers: 'DEFAULT:@SECLEVEL=0',
 });
 
-const CUIT    = '20484597953';
-const PTO_VTA = 1;
-
-// ⚠️  PRODUCCIÓN — este certificado es real, las facturas emitidas son válidas ante ARCA
+// ⚠️  PRODUCCIÓN — estos certificados son reales, las facturas emitidas son válidas ante ARCA
 const WSAA_URL = 'https://wsaa.afip.gov.ar/ws/services/LoginCms';
 const WSFE_URL = 'https://servicios1.afip.gov.ar/wsfev1/service.asmx';
 
-// Cache en memoria del Ticket de Acceso (válido ~12 h)
-let _taCache = null;
-
 // ---------------------------------------------------------------------------
-// Credenciales desde variables de entorno
+// Credenciales del emisor (objeto de functions/emisores.js)
 // ---------------------------------------------------------------------------
-function leerCredenciales() {
-    // Firebase Functions incluye automáticamente functions/.env en el deploy.
-    // En desarrollo local dotenv (llamado al top del archivo) carga el mismo archivo.
-    const raw_cert = process.env.AFIP_CERT;
-    const raw_key  = process.env.AFIP_KEY;
+function leerCredenciales(emisor) {
+    const raw_cert = emisor.cert;
+    const raw_key  = emisor.key;
 
-    if (!raw_cert || !raw_key) {
+    if (!raw_cert || !raw_key || !emisor.cuit || !emisor.ptoVta) {
         throw new Error(
-            'AFIP_CERT y/o AFIP_KEY no encontradas.\n' +
-            'Asegurate de que functions/.env contenga ambas variables.'
+            `Faltan credenciales/configuración para el emisor "${emisor.id}".\n` +
+            'Revisá functions/.env y functions/emisores.js (cuit/cert/key/ptoVta deben estar completos).'
         );
     }
 
@@ -98,16 +132,41 @@ function firmarTRA(tra, certPem, keyPem) {
 }
 
 // ---------------------------------------------------------------------------
-// WSAA — Obtener Ticket de Acceso (con caché)
+// WSAA — Obtener Ticket de Acceso, cacheado en Firestore por CUIT (colección
+// wsaa_tokens, doc ID = emisor.cuit). ARCA rechaza pedir un TA nuevo si el
+// anterior sigue vigente (~12hs), así que el cache tiene que sobrevivir entre
+// cold starts e instancias concurrentes de la Cloud Function — un solo valor
+// en memoria de proceso (como antes) no alcanza con dos emisores.
+//
+// Lock optimista (fetchingDesde): si dos invocaciones concurrentes del MISMO
+// CUIT ven "no hay TA vigente" al mismo tiempo, sin esto ambas pedirían un TA
+// nuevo a WSAA y una de las dos recibiría el fault "el CEE ya posee un TA
+// válido para el acceso solicitado". Con el lock, la segunda espera unos
+// segundos y relee el cache en vez de duplicar el pedido.
 // ---------------------------------------------------------------------------
-async function obtenerTA(certPem, keyPem) {
+async function obtenerTA(emisor) {
+    const ref     = db.collection('wsaa_tokens').doc(emisor.cuit);
     const margenMs = 5 * 60 * 1000; // 5 min de margen antes de expirar
-    if (_taCache && new Date(_taCache.expiracion) > new Date(Date.now() + margenMs)) {
-        return _taCache;
+
+    const snap = await ref.get();
+    const data = snap.data();
+
+    if (data?.expiracion && new Date(data.expiracion) > new Date(Date.now() + margenMs)) {
+        return { token: data.token, sign: data.sign };
     }
 
+    const lockVigente = data?.fetchingDesde &&
+        (Date.now() - new Date(data.fetchingDesde).getTime()) < 15000; // 15s
+    if (lockVigente) {
+        await new Promise(r => setTimeout(r, 3000));
+        return obtenerTA(emisor);
+    }
+
+    await ref.set({ fetchingDesde: new Date().toISOString() }, { merge: true });
+
+    const { cert, key } = leerCredenciales(emisor);
     const tra        = crearTRA('wsfe');
-    const cmsFirmado = firmarTRA(tra, certPem, keyPem);
+    const cmsFirmado = firmarTRA(tra, cert, key);
 
     const envelope = `<?xml version="1.0" encoding="utf-8"?>
 <soapenv:Envelope
@@ -150,18 +209,19 @@ async function obtenerTA(certPem, keyPem) {
 
     if (!token || !sign) throw new Error('WSAA: no se encontraron token/sign en:\n' + innerXml);
 
-    _taCache = { token, sign, expiracion: exp || new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString() };
-    return _taCache;
+    const nuevoTA = { token, sign, expiracion: exp || new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(), fetchingDesde: null };
+    await ref.set(nuevoTA);
+    return { token: nuevoTA.token, sign: nuevoTA.sign };
 }
 
 // ---------------------------------------------------------------------------
 // WSFE — Helpers
 // ---------------------------------------------------------------------------
-function authXml(token, sign) {
+function authXml(token, sign, cuit) {
     return `<ar:Auth>
         <ar:Token>${token}</ar:Token>
         <ar:Sign>${sign}</ar:Sign>
-        <ar:Cuit>${CUIT}</ar:Cuit>
+        <ar:Cuit>${cuit}</ar:Cuit>
       </ar:Auth>`;
 }
 
@@ -194,11 +254,11 @@ async function llamarWSFE(method, bodyXml) {
 // ---------------------------------------------------------------------------
 // WSFE — FECompUltimoAutorizado
 // ---------------------------------------------------------------------------
-async function getUltimoComprobante(token, sign, ptoVta, cbteTipo) {
+async function getUltimoComprobante(ta, emisor, cbteTipo) {
     const xml = await llamarWSFE('FECompUltimoAutorizado', `
     <ar:FECompUltimoAutorizado>
-      ${authXml(token, sign)}
-      <ar:PtoVta>${ptoVta}</ar:PtoVta>
+      ${authXml(ta.token, ta.sign, emisor.cuit)}
+      <ar:PtoVta>${emisor.ptoVta}</ar:PtoVta>
       <ar:CbteTipo>${cbteTipo}</ar:CbteTipo>
     </ar:FECompUltimoAutorizado>`);
 
@@ -208,16 +268,47 @@ async function getUltimoComprobante(token, sign, ptoVta, cbteTipo) {
 }
 
 // ---------------------------------------------------------------------------
+// WSFE — FEParamGetCondicionIvaReceptor
+// Tabla de referencia de ARCA con los Id/Desc válidos para "Condición Frente
+// al IVA del receptor" (obligatorio en FECAESolicitar desde el 01/09/2026).
+// Es una tabla GLOBAL (no depende del CUIT que la consulta), así que el
+// cache es una simple variable de módulo, no hace falta Firestore.
+// ---------------------------------------------------------------------------
+let _condIvaReceptorCache = null;
+
+async function obtenerCondicionIvaReceptorId(token, sign, cuit, descripcionBuscada = 'Consumidor Final') {
+    if (_condIvaReceptorCache != null) return _condIvaReceptorCache;
+
+    const xml = await llamarWSFE('FEParamGetCondicionIvaReceptor', `
+    <ar:FEParamGetCondicionIvaReceptor>
+      ${authXml(token, sign, cuit)}
+    </ar:FEParamGetCondicionIvaReceptor>`);
+
+    const buscado = descripcionBuscada.trim().toLowerCase();
+    const bloques = [...xml.matchAll(/<CondicionIvaReceptor>([\s\S]*?)<\/CondicionIvaReceptor>/g)];
+    for (const [, bloque] of bloques) {
+        const id   = bloque.match(/<Id>(\d+)<\/Id>/)?.[1];
+        const desc = bloque.match(/<Desc>([\s\S]*?)<\/Desc>/)?.[1]?.trim();
+        if (id && desc && desc.toLowerCase() === buscado) {
+            _condIvaReceptorCache = parseInt(id, 10);
+            return _condIvaReceptorCache;
+        }
+    }
+
+    throw new Error(`FEParamGetCondicionIvaReceptor: no se encontró "${descripcionBuscada}" en la respuesta:\n${xml}`);
+}
+
+// ---------------------------------------------------------------------------
 // WSFE — FECAESolicitar
 // ---------------------------------------------------------------------------
-async function solicitarCAE(token, sign, datos) {
+async function solicitarCAE(ta, emisor, datos) {
     const xml = await llamarWSFE('FECAESolicitar', `
     <ar:FECAESolicitar>
-      ${authXml(token, sign)}
+      ${authXml(ta.token, ta.sign, emisor.cuit)}
       <ar:FeCAEReq>
         <ar:FeCabReq>
           <ar:CantReg>1</ar:CantReg>
-          <ar:PtoVta>${datos.ptoVta}</ar:PtoVta>
+          <ar:PtoVta>${emisor.ptoVta}</ar:PtoVta>
           <ar:CbteTipo>${datos.cbteTipo}</ar:CbteTipo>
         </ar:FeCabReq>
         <ar:FeDetReq>
@@ -262,34 +353,38 @@ async function solicitarCAE(token, sign, datos) {
 }
 
 // ---------------------------------------------------------------------------
-// Función pública
+// Funciones públicas
 // ---------------------------------------------------------------------------
 
 /**
  * Emite una Factura C a Consumidor Final (sin IVA, monotributo/exento).
  *
- * Lee AFIP_CERT y AFIP_KEY desde variables de entorno (PEM completo).
- *
  * @param {number} monto  Importe total en pesos
+ * @param {object} emisor Objeto de functions/emisores.js (EMISORES.alias1 / EMISORES.alias2)
  * @returns {{ CAE: string, vencimientoCAE: string, nroComprobante: number }}
  */
-async function emitirFacturaC(monto) {
-    const { cert, key } = leerCredenciales();
+async function emitirFacturaC(monto, emisor) {
+    // 1. Autenticación WSAA (cacheada por CUIT en Firestore)
+    const ta = await obtenerTA(emisor);
 
-    // 1. Autenticación WSAA
-    const ta = await obtenerTA(cert, key);
+    // 2. Condición Frente al IVA del receptor — ver "Rollout seguro" en emisores.js:
+    //    valor histórico hardcodeado para emisores con el flag apagado, dinámico (consultado
+    //    en vivo contra WSFEv1) para los que lo tengan activado.
+    let condIVAReceptor = 5; // 5 = Consumidor Final (valor histórico, sin cambios para emisores con el flag en false)
+    if (emisor.usarCondicionIvaDinamica) {
+        condIVAReceptor = await obtenerCondicionIvaReceptorId(ta.token, ta.sign, emisor.cuit);
+    }
 
-    // 2. Último comprobante autorizado para Factura C (tipo 11), punto de venta 1
-    const ultimo         = await getUltimoComprobante(ta.token, ta.sign, PTO_VTA, 11);
+    // 3. Último comprobante autorizado para Factura C (tipo 11), punto de venta del emisor
+    const ultimo         = await getUltimoComprobante(ta, emisor, 11);
     const nroComprobante = ultimo + 1;
 
-    // 3. Fecha de emisión YYYYMMDD
+    // 4. Fecha de emisión YYYYMMDD
     const hoy   = new Date();
     const fecha = `${hoy.getFullYear()}${String(hoy.getMonth() + 1).padStart(2, '0')}${String(hoy.getDate()).padStart(2, '0')}`;
 
-    // 4. Solicitar CAE
-    const { cae, vencimientoCAE } = await solicitarCAE(ta.token, ta.sign, {
-        ptoVta:         PTO_VTA,
+    // 5. Solicitar CAE
+    const { cae, vencimientoCAE } = await solicitarCAE(ta, emisor, {
         cbteTipo:       11,   // Factura C
         concepto:       1,    // Productos
         docTipo:        99,   // Consumidor Final
@@ -297,10 +392,22 @@ async function emitirFacturaC(monto) {
         nroComprobante,
         fecha,
         impTotal:          monto,
-        condIVAReceptor:   5,   // 5 = Consumidor Final (RG 5616)
+        condIVAReceptor,
     });
 
     return { CAE: cae, vencimientoCAE, nroComprobante };
 }
 
-module.exports = { emitirFacturaC };
+/**
+ * Consulta de SOLO LECTURA: último comprobante autorizado para un emisor. No llama a
+ * FECAESolicitar bajo ninguna circunstancia — no puede emitir ni consumir numeración fiscal.
+ *
+ * @param {object} emisor
+ * @param {number} cbteTipo Default 11 (Factura C)
+ */
+async function consultarUltimoComprobante(emisor, cbteTipo = 11) {
+    const ta = await obtenerTA(emisor);
+    return getUltimoComprobante(ta, emisor, cbteTipo);
+}
+
+module.exports = { emitirFacturaC, consultarUltimoComprobante };

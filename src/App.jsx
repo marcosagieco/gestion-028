@@ -9,6 +9,10 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Link } from 'react-router-dom';
 
+import ProjectionChart, { ProjectionStatCard } from './ProjectionChart';
+import MetricSlider from './MetricSlider';
+import { buildDailySeries, buildRatioSeries, computeProjection, PROJECTION_CUTOFF_DATE } from './projectionEngine';
+
 import { initializeApp } from "firebase/app";
 import {
   initializeFirestore, collection, addDoc, deleteDoc, doc, updateDoc, setDoc,
@@ -48,6 +52,18 @@ const accountLabel = (acc) => {
   return acc;
 };
 const BATCH_CATEGORIES = ['THC', 'APPLE', 'PERFUMES', 'NICOTINA'];
+
+// --- Proyección del Negocio (Inicio): horizonte hasta fin de año, elegible por el usuario en la tarjeta acumulada ---
+const PROJECTION_YEAR_END_DATE = '2026-12-31';
+const toDateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const daysUntilDate = (targetDateStr) => {
+  const [y, m, d] = targetDateStr.split('-').map(Number);
+  const target = new Date(y, m - 1, d, 12, 0, 0);
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  yesterday.setHours(12, 0, 0, 0);
+  return Math.max(14, Math.ceil((target - yesterday) / 86400000));
+};
 
 // --- TARJETAS DE INICIO: metadata + orden por defecto (editable en "Personalizar Inicio") ---
 const HOME_CARD_META = {
@@ -1588,10 +1604,10 @@ EMPLEADO — Lucas Buono: Lucas trabaja por comisión del 3% sobre sus ventas. E
 - Calcular y mostrar su comisión: facturación_Buono × 0.03
 - Mostrar sus productos más vendidos
 
-EMPLEADO — Delfina: Delfina trabaja por comisión del 5% sobre sus ventas. En el sistema sus ventas tienen el campo seller = "Delfina". Cuando el usuario pida análisis de Delfina o cuando hagas un cierre completo, siempre:
+EMPLEADO — Delfina: Delfina trabaja por comisión del 6% sobre sus ventas. En el sistema sus ventas tienen el campo seller = "Delfina". Cuando el usuario pida análisis de Delfina o cuando hagas un cierre completo, siempre:
 - Filtrar las ventas con seller = "Delfina"
 - Mostrar su facturación total y cantidad de ventas
-- Calcular y mostrar su comisión: facturación_Delfina × 0.05
+- Calcular y mostrar su comisión: facturación_Delfina × 0.06
 - Mostrar sus productos más vendidos
 
 EMPLEADO — Jeronimo: Jeronimo trabaja por comisión del 5% sobre sus ventas. En el sistema sus ventas tienen el campo seller = "Jeronimo". Cuando el usuario pida análisis de Jeronimo o cuando hagas un cierre completo, siempre:
@@ -1600,11 +1616,11 @@ EMPLEADO — Jeronimo: Jeronimo trabaja por comisión del 5% sobre sus ventas. E
 - Calcular y mostrar su comisión: facturación_Jeronimo × 0.05
 - Mostrar sus productos más vendidos
 
-EMPLEADO — Bautista: En el sistema sus ventas tienen el campo seller = "Bautista" (se identifica con el código "BA", no confundir con "B" que es Buono). Cuando el usuario pida análisis de Bautista o cuando hagas un cierre completo:
+EMPLEADO — Bautista: Bautista trabaja por comisión del 5% sobre sus ventas. En el sistema sus ventas tienen el campo seller = "Bautista" (se identifica con el código "BA", no confundir con "B" que es Buono). Cuando el usuario pida análisis de Bautista o cuando hagas un cierre completo, siempre:
 - Filtrar las ventas con seller = "Bautista"
 - Mostrar su facturación total y cantidad de ventas
+- Calcular y mostrar su comisión: facturación_Bautista × 0.05
 - Mostrar sus productos más vendidos
-- No tiene comisión configurada todavía; si el usuario pregunta por su comisión, avisale que falta definir el porcentaje.
 
 MARKETING — Meta Ads vs orgánico: El negocio trabaja con una agencia de Meta Ads. Los clientes nuevos se registran en el campo isNewClient con valores como "Nuevo orgánico", "Nuevo por ads", o similares. Durante mayo 2026 se apagaron los ads para medir el volumen orgánico real. Cuando analicés clientes nuevos o marketing, siempre:
 - Separar clientes nuevos orgánicos de clientes nuevos por ads usando el campo isNewClient
@@ -2315,6 +2331,7 @@ export default function App() {
   const [metaCampaigns, setMetaCampaigns] = useState([]);
   const [metaCampaignsLoading, setMetaCampaignsLoading] = useState(false);
   const [homeMetaDailyData, setHomeMetaDailyData] = useState([]);
+  const [metaAdsDailySinceCutoff, setMetaAdsDailySinceCutoff] = useState([]); // spend diario desde PROJECTION_CUTOFF_DATE, para proyección de Meta Ads
   const [metaAllCampaignNames, setMetaAllCampaignNames] = useState([]);
   const [metaPeriod, setMetaPeriod] = useState('last_30d');
   const [metaCustomRange, setMetaCustomRange] = useState({ start: '2026-05-30', end: getTodayDate() });
@@ -3009,7 +3026,7 @@ export default function App() {
           items:       d.items,
           avgTicket:   d.tickets.size > 0 ? d.revenue / d.tickets.size : 0,
           share:       totalRevenue > 0 ? (d.revenue / totalRevenue) * 100 : 0,
-          commission:  name === 'Buono' ? d.revenue * 0.03 : (name === 'Delfina' || name === 'Jeronimo') ? d.revenue * 0.05 : null,
+          commission:  name === 'Buono' ? d.revenue * 0.03 : name === 'Delfina' ? d.revenue * 0.06 : (name === 'Jeronimo' || name === 'Bautista') ? d.revenue * 0.05 : null,
       })).sort((a, b) => b.revenue - a.revenue);
   }, [analysisData.baseStats.filteredSales]);
 
@@ -3229,6 +3246,118 @@ export default function App() {
       });
   }, [homeMetaDailyData, sales]);
 
+  // --- Proyección de facturación (Inicio) y de Meta Ads, desde PROJECTION_CUTOFF_DATE ---
+  // Horizonte de la Proyección del Negocio (Inicio): hasta fin de año, aunque el tramo lejano sea poco probable
+  // (se aclara igual con banda ancha + badge "Estimación"). Meta Ads y las tarjetas chicas siguen con 60 días default.
+  const homeFarHorizonDays = daysUntilDate(PROJECTION_YEAR_END_DATE);
+
+  const homeRevenueProjection = useMemo(() => {
+    const series = buildDailySeries(sales, {
+      valueOf: (s) => s.totalSaleRaw || 0,
+      filter: (s) => !s.isFalla,
+    });
+    return computeProjection(series, { farHorizonDays: homeFarHorizonDays });
+  }, [sales, homeFarHorizonDays]);
+
+  const homeUnitsProjection = useMemo(() => {
+    const series = buildDailySeries(sales, {
+      valueOf: (s) => s.quantity || 0,
+      filter: (s) => !s.isFalla,
+    });
+    return computeProjection(series, { farHorizonDays: homeFarHorizonDays });
+  }, [sales, homeFarHorizonDays]);
+
+  const homeProfitProjection = useMemo(() => {
+    const series = buildDailySeries(sales, {
+      valueOf: (s) => {
+        const shippingProfit = s.shippingProfit != null ? s.shippingProfit : ((s.clientShippingCharge || 0) - (s.shippingCostArs || 0));
+        return (s.totalSaleRaw || 0) - ((s.costArsAtSale || 0) * (s.quantity || 0)) + shippingProfit;
+      },
+      filter: (s) => !s.isFalla,
+    });
+    return computeProjection(series, { farHorizonDays: homeFarHorizonDays });
+  }, [sales, homeFarHorizonDays]);
+
+  // Totales de todos los tiempos (sin límite de corte), para la tarjeta "histórico completo + proyectado a fecha"
+  const homeAllTimeTotals = useMemo(() => {
+    let revenue = 0, units = 0, profit = 0;
+    sales.forEach((s) => {
+      if (s.isFalla) return;
+      const rev = s.totalSaleRaw || 0;
+      const qty = s.quantity || 0;
+      const shippingProfit = s.shippingProfit != null ? s.shippingProfit : ((s.clientShippingCharge || 0) - (s.shippingCostArs || 0));
+      revenue += rev;
+      units += qty;
+      profit += rev - ((s.costArsAtSale || 0) * qty) + shippingProfit;
+    });
+    return { revenue, units, profit };
+  }, [sales]);
+
+  const homeFailedProductsProjection = useMemo(() => {
+    const series = buildDailySeries(sales, {
+      valueOf: (s) => s.failedValue ?? ((s.costArsAtSale || 0) * (s.quantity || 0)),
+      filter: (s) => !!s.isFalla,
+    });
+    return computeProjection(series);
+  }, [sales]);
+
+  const homeFixedAdsClientsProjection = useMemo(() => {
+    const series = buildDailySeries(sales, {
+      valueOf: () => 1,
+      filter: (s) => s.isNewClient === 'Clientes - Publicidad',
+    });
+    return computeProjection(series);
+  }, [sales]);
+
+  const metaAdsSpendProjection = useMemo(() => {
+    const series = buildDailySeries(metaAdsDailySinceCutoff, {
+      dateOf: (d) => d.date_start,
+      valueOf: (d) => parseFloat(d.spend || 0),
+    });
+    return computeProjection(series);
+  }, [metaAdsDailySinceCutoff]);
+
+  const metaAdsRevenueProjection = useMemo(() => {
+    const series = buildDailySeries(sales, {
+      valueOf: (s) => s.totalSaleRaw || 0,
+      filter: (s) => !s.isFalla && (s.isNewClient === 'Nuevo - Publicidad' || s.isNewClient === 'Clientes - Publicidad'),
+    });
+    return computeProjection(series);
+  }, [sales]);
+
+  const metaAdsCpaProjection = useMemo(() => {
+    const spendSeries = buildDailySeries(metaAdsDailySinceCutoff, {
+      dateOf: (d) => d.date_start,
+      valueOf: (d) => parseFloat(d.spend || 0),
+    });
+    const newClientsSeries = buildDailySeries(sales, {
+      valueOf: () => 1,
+      filter: (s) => s.isNewClient === 'Nuevo - Publicidad',
+    });
+    const cpaSeries = buildRatioSeries(spendSeries, newClientsSeries);
+    return computeProjection(cpaSeries);
+  }, [metaAdsDailySinceCutoff, sales]);
+
+  // ROAS proyectado = facturación de ads proyectada / spend proyectado (no es su propia regresión:
+  // dividir dos series ruidosas día a día sería estadísticamente débil).
+  const metaAdsRoasStats = useMemo(() => {
+    if (metaAdsSpendProjection.insufficientData || metaAdsRevenueProjection.insufficientData) return null;
+    const sumForecast = (arr) => arr.reduce((a, f) => a + f.forecast, 0);
+    const spendStats = metaAdsSpendProjection.stats;
+    const revenueStats = metaAdsRevenueProjection.stats;
+    const current = spendStats.avgDaily > 0 ? revenueStats.avgDaily / spendStats.avgDaily : null;
+
+    const nearSpend = sumForecast(metaAdsSpendProjection.forecastNear);
+    const nearRevenue = sumForecast(metaAdsRevenueProjection.forecastNear);
+    const near = nearSpend > 0 ? nearRevenue / nearSpend : null;
+
+    const farSpend = nearSpend + sumForecast(metaAdsSpendProjection.forecastFar);
+    const farRevenue = nearRevenue + sumForecast(metaAdsRevenueProjection.forecastFar);
+    const far = farSpend > 0 ? farRevenue / farSpend : null;
+
+    return { current, near, far };
+  }, [metaAdsSpendProjection, metaAdsRevenueProjection]);
+
   const fetchAllMetaPages = async (url) => {
     const allData = [];
     while (url) {
@@ -3325,6 +3454,23 @@ export default function App() {
       } catch {}
     };
     fetchHomeMetaDaily();
+  }, []);
+
+  // Carga silenciosa de gasto diario de Meta Ads desde PROJECTION_CUTOFF_DATE, para la Proyección de Meta Ads
+  useEffect(() => {
+    const fetchProjectionMetaDaily = async () => {
+      const token = import.meta.env.VITE_META_ACCESS_TOKEN;
+      const accountId = import.meta.env.VITE_META_AD_ACCOUNT_ID;
+      if (!token || !accountId) return;
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const base = `https://graph.facebook.com/v19.0/${accountId}/insights`;
+        const url = `${base}?fields=spend&time_increment=1&time_range={"since":"${PROJECTION_CUTOFF_DATE}","until":"${today}"}&access_token=${token}`;
+        const { data } = await fetchAllMetaPages(url);
+        setMetaAdsDailySinceCutoff(data);
+      } catch {}
+    };
+    fetchProjectionMetaDaily();
   }, []);
 
   // Carga silenciosa de nombres de campañas (todas, activas o no) para sugerir al cargar una venta
@@ -5803,8 +5949,12 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                     ) : (
                         /* VISTA NORMAL */
                         <>
-                            {/* METRIC CARDS */}
-                            {(() => {
+                            {/* METRIC CARDS + PROYECCIÓN (slider de 2 páginas, drag horizontal) */}
+                            <MetricSlider
+                              darkMode={darkMode}
+                              ariaLabel="vistas de inicio"
+                              pages={[
+                                { id: 'metrics', content: (() => {
                                 const prev = analysisData.prevBaseStats;
                                 const cur = analysisData.baseStats;
                                 const pct = (c, p) => (p && p !== 0) ? ((c - p) / Math.abs(p)) * 100 : null;
@@ -5893,7 +6043,31 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                         </div>
                                     </div>
                                 );
-                            })()}
+                                })() },
+                                { id: 'projection', content: (
+                                  <div className="space-y-4">
+                                    <ProjectionChart
+                                      darkMode={darkMode}
+                                      subtitle="Regresión lineal + promedio móvil 7d + estacionalidad semanal, desde el 1 de junio hasta el 31 de diciembre de 2026 — el tramo lejano es poco probable, se muestra igual con banda ancha"
+                                      views={[
+                                        { key: 'facturacion', label: 'Facturación', title: 'Facturación Proyectada', cumulativeLabel: 'Facturación histórica completa + proyectada a fecha', projection: homeRevenueProjection, valueFormatter: formatMoney, axisFormatter: formatCompact, allTimeTotal: homeAllTimeTotals.revenue },
+                                        { key: 'unidades', label: 'Unidades', title: 'Unidades Proyectadas', cumulativeLabel: 'Unidades históricas totales + proyectadas a fecha', projection: homeUnitsProjection, valueFormatter: (v) => `${Math.round(v).toLocaleString('es-AR')} uds`, axisFormatter: formatCompact, allTimeTotal: homeAllTimeTotals.units },
+                                        { key: 'ganancia', label: 'Ganancia', title: 'Ganancia Proyectada', cumulativeLabel: 'Ganancia histórica completa + proyectada a fecha', projection: homeProfitProjection, valueFormatter: formatMoney, axisFormatter: formatCompact, allTimeTotal: homeAllTimeTotals.profit },
+                                      ]}
+                                      cumulativeMinDate={toDateKey(new Date())}
+                                      cumulativeMaxDate={PROJECTION_YEAR_END_DATE}
+                                      cumulativeDefaultDate={PROJECTION_YEAR_END_DATE}
+                                    />
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                      <ProjectionChart darkMode={darkMode} compact title="Productos Fallados"
+                                        projection={homeFailedProductsProjection} valueFormatter={formatMoney} axisFormatter={formatCompact} />
+                                      <ProjectionChart darkMode={darkMode} compact title="Clientes Fijos por Ads"
+                                        projection={homeFixedAdsClientsProjection} valueFormatter={(v) => `${v} cliente${v !== 1 ? 's' : ''}`} />
+                                    </div>
+                                  </div>
+                                ) },
+                              ]}
+                            />
 
                             {/* MAIN CHART */}
                             <div className={`rounded-2xl border p-5 ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
@@ -5974,7 +6148,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                             </div>
                                             {member.commission !== null && (
                                                 <div className="col-span-2">
-                                                    <div className="text-[9px] uppercase tracking-widest text-zinc-500 mb-0.5">Comisión ({(member.name === 'Delfina' || member.name === 'Jeronimo') ? '5' : '3'}%)</div>
+                                                    <div className="text-[9px] uppercase tracking-widest text-zinc-500 mb-0.5">Comisión ({member.name === 'Delfina' ? '6' : (member.name === 'Jeronimo' || member.name === 'Bautista') ? '5' : '3'}%)</div>
                                                     {member.name === 'Buono' ? (
                                                         <div className="flex items-center gap-2">
                                                             <div className="text-sm font-bold leading-none text-amber-400">
@@ -8800,6 +8974,29 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         <PremiumMetricCard darkMode={darkMode} title="Frecuencia" value={frequency.toFixed(2)} subtitle={`${reach.toLocaleString('es-AR')} personas`} sparkline={null} lineSparkline={dailyFrequency.length >= 2 ? dailyFrequency : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => v.toFixed(2)} tooltip="Cuántas veces en promedio vio tu anuncio cada persona. Entre 1.5 y 3 es ideal, más de 3 puede cansar a la audiencia" />
                         <PremiumMetricCard darkMode={darkMode} title="Ventas por Ads" value={salesCount} subtitle="pedidos atribuidos a publicidad" sparkline={null} lineSparkline={dailySalesCount.length >= 2 ? dailySalesCount : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v} pedido${v !== 1 ? 's' : ''}`} tooltip="Total de ventas registradas como provenientes de publicidad en el período seleccionado" />
                         <PremiumMetricCard darkMode={darkMode} title="Ticket Promedio Ads" value={salesCount > 0 ? fARS(revenue / salesCount) : '—'} subtitle="por pedido de publicidad" sparkline={null} lineSparkline={dailyTicketAvg.length >= 2 ? dailyTicketAvg : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Valor promedio de cada venta atribuida a ads. Cuanto más alto, más eficiente es la inversión publicitaria" />
+                      </div>
+
+                      {/* Proyección de Meta Ads */}
+                      <div className="space-y-4">
+                        <ProjectionChart darkMode={darkMode} title="Gasto en Ads Proyectado"
+                          subtitle="Desde el 1 de junio de 2026" projection={metaAdsSpendProjection}
+                          valueFormatter={fARS} axisFormatter={formatCompact} />
+                        <ProjectionChart darkMode={darkMode} title="Facturación por Ads Proyectada"
+                          subtitle="Ventas atribuidas a publicidad, desde el 1 de junio de 2026" projection={metaAdsRevenueProjection}
+                          valueFormatter={fARS} axisFormatter={formatCompact} />
+                        <ProjectionChart darkMode={darkMode} title="CPA — Tendencia Proyectada"
+                          subtitle="Gasto ÷ clientes nuevos por ads, desde el 1 de junio de 2026" projection={metaAdsCpaProjection}
+                          valueFormatter={fARS} axisFormatter={fARS} />
+                        {metaAdsRoasStats && (
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <ProjectionStatCard darkMode={darkMode} label="ROAS actual (7d)"
+                              value={metaAdsRoasStats.current != null ? `${metaAdsRoasStats.current.toFixed(2)}×` : '—'} />
+                            <ProjectionStatCard darkMode={darkMode} label="ROAS proyectado (14d)"
+                              value={metaAdsRoasStats.near != null ? `${metaAdsRoasStats.near.toFixed(2)}×` : '—'} badge="estimate" />
+                            <ProjectionStatCard darkMode={darkMode} label="ROAS proyectado (45-60d)"
+                              value={metaAdsRoasStats.far != null ? `${metaAdsRoasStats.far.toFixed(2)}×` : '—'} badge="estimate" />
+                          </div>
+                        )}
                       </div>
 
                       {/* Rentabilidad real */}

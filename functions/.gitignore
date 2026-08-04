@@ -3,4 +3,8 @@ node_modules/
 clave_privada.key
 solicitud.csr
 certificado.crt
+clave_privada_2.key
+solicitud_2.csr
+certificado_2.crt
 .env
+service-account.json
