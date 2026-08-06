@@ -2432,6 +2432,7 @@ export default function App() {
   const [editingBatchName, setEditingBatchName] = useState('');
   const [editingBatchAccount, setEditingBatchAccount] = useState('LEMON');
   const [editingBatchCategory, setEditingBatchCategory] = useState('');
+  const [editingBatchSkipExpense, setEditingBatchSkipExpense] = useState(false);
 
   const [selectedBatchStats, setSelectedBatchStats] = useState(null);
   const [hiddenSuggestions, setHiddenSuggestions] = useState({ products: [], variants: [] });
@@ -4627,7 +4628,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
         const oldAccount = batch?.account;
         const accountChanged = oldAccount !== editingBatchAccount;
 
-        await updateDoc(doc(db, 'batches', batchId), { name: editingBatchName, account: editingBatchAccount, category: editingBatchCategory || null });
+        await updateDoc(doc(db, 'batches', batchId), { name: editingBatchName, account: editingBatchAccount, category: editingBatchCategory || null, skipExpense: editingBatchSkipExpense });
 
         const salesToUpdate = sales.filter(s => s.batchId === batchId);
         for (const s of salesToUpdate) {
@@ -6983,6 +6984,15 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                                 <option key={cat} value={cat}>{cat}</option>
                                             ))}
                                         </select>
+                                        <label className={`flex items-center gap-1.5 text-xs font-medium cursor-pointer select-none whitespace-nowrap ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                                            <input
+                                                type="checkbox"
+                                                checked={editingBatchSkipExpense}
+                                                onChange={(e) => setEditingBatchSkipExpense(e.target.checked)}
+                                                className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                                            />
+                                            No registrar en ninguna billetera
+                                        </label>
                                         <button onClick={() => handleSaveEditBatchName(b.id)} className={`p-1.5 rounded-lg ${darkMode ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-600'}`}><Save size={14}/></button>
                                         <button onClick={() => setEditingBatchId(null)} className={`p-1.5 rounded-lg ${darkMode ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-200 text-zinc-600'}`}><XCircle size={14}/></button>
                                     </div>
@@ -6990,7 +7000,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                     <div className="flex items-center gap-2">
                                         <h3 className={`font-bold text-base ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{b.name || 'Sin nombre'}</h3>
                                         <button
-                                            onClick={(e) => { e.stopPropagation(); setEditingBatchId(b.id); setEditingBatchName(b.name || ''); setEditingBatchAccount(b.account || 'LEMON'); setEditingBatchCategory(b.category || ''); }}
+                                            onClick={(e) => { e.stopPropagation(); setEditingBatchId(b.id); setEditingBatchName(b.name || ''); setEditingBatchAccount(b.account || 'LEMON'); setEditingBatchCategory(b.category || ''); setEditingBatchSkipExpense(b.skipExpense || false); }}
                                             className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md ${darkMode ? 'hover:bg-zinc-800 text-zinc-400' : 'hover:bg-zinc-200 text-zinc-500'}`}
                                         >
                                             <Settings size={14}/>
