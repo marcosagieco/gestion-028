@@ -1194,8 +1194,8 @@ const AIChat = ({ darkMode, db }) => {
       const totalSaleRaw = (toolInput.unitPrice || 0) * quantity;
       const shippingPrice = Number(toolInput.shippingPrice || 0);
       const shippingCost  = Number(toolInput.shippingCost  || 0);
-      // Si no se cobró envío al cliente, el costo de envío es solo informativo: no debe sumar ni restar a la ganancia.
-      const shippingProfit = shippingPrice ? (shippingPrice - shippingCost) : 0;
+      // Si solo se cargó uno de los dos (precio o costo), es solo informativo: no debe sumar ni restar a la ganancia.
+      const shippingProfit = (shippingPrice && shippingCost) ? (shippingPrice - shippingCost) : 0;
       const saleRef = await addDoc(collection(db, 'sales'), {
         ...toolInput, quantity: Number(quantity), totalSaleRaw, costArsAtSale,
         shippingPrice, shippingCost, shippingProfit,
@@ -4884,8 +4884,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
     const isNeutralSale = (saleGeneral.accountingType || 'Normal') === 'Neutro';
     const shippingPriceNum = parseFloat(saleGeneral.shippingPrice || 0);
-    // Si no se cobró envío al cliente, el costo de envío es solo informativo: no debe sumar ni restar a la ganancia.
-    const shippingProfit = (isNeutralSale || !shippingPriceNum) ? 0 : (shippingPriceNum - parseFloat(saleGeneral.shippingCost || 0));
+    const shippingCostNum = parseFloat(saleGeneral.shippingCost || 0);
+    // Si solo se cargó uno de los dos (precio o costo), es solo informativo: no debe sumar ni restar a la ganancia.
+    const shippingProfit = (isNeutralSale || !shippingPriceNum || !shippingCostNum) ? 0 : (shippingPriceNum - shippingCostNum);
     const [year, month, day] = saleGeneral.saleDate.split('-').map(Number);
     const saleDateObj = new Date(year, month - 1, day, new Date().getHours(), new Date().getMinutes());
     

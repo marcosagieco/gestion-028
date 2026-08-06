@@ -1489,8 +1489,8 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
         // totalSaleRaw = solo producto (el envío no es ganancia del emisor)
         const totalVentaCalculado = esFalla ? 0 : precioUnitario * cantARestar;
         const failedValueCalculado = esFalla ? (costoUnitarioOficial || 0) * cantARestar : 0;
-        // Si no se cobró envío al cliente, el costo de envío es solo informativo: no debe sumar ni restar a la ganancia.
-        const shippingProfitCalculado = precioEnvioCliente ? (precioEnvioCliente - (costoEnvioMio || 0)) : 0;
+        // Si solo se cargó uno de los dos (precio o costo), es solo informativo: no debe sumar ni restar a la ganancia.
+        const shippingProfitCalculado = (precioEnvioCliente && costoEnvioMio) ? (precioEnvioCliente - costoEnvioMio) : 0;
         const ticketIdGenerado = ticketIdManual || Date.now().toString();
         const fechaCreacionReal = new Date().toISOString();
 
@@ -1524,7 +1524,7 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
         const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO' };
         if (medioPago && aliasWalletMap[medioPago]) {
             const wName = aliasWalletMap[medioPago];
-            const wAmount = totalVentaCalculado + Math.max(0, (precioEnvioCliente || 0) - (costoEnvioMio || 0));
+            const wAmount = totalVentaCalculado + Math.max(0, shippingProfitCalculado);
             const walletsRef = db.collection('settings').doc('wallets');
             await db.runTransaction(async t => {
                 const walletsDoc = await t.get(walletsRef);
