@@ -4635,6 +4635,32 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
             await updateDoc(doc(db, 'sales', s.id), { batchName: editingBatchName });
         }
 
+        if (editingBatchSkipExpense) {
+            // El lote no debe registrar gastos ni afectar ninguna billetera: se borra todo rastro
+            // existente (viejo o nuevo) y se revierte la plata a la(s) cuenta(s) de donde se había restado.
+            const stockEntries = cashFlow.filter(m => m.batchId === batchId && m.type === 'stock');
+            const expensesToDelete = expenses.filter(e => e.batchId === batchId);
+            const deltas = {};
+            for (const entry of stockEntries) {
+                await deleteDoc(doc(db, 'cashFlow', entry.id));
+                if (entry.account && entry.amount) deltas[entry.account] = (deltas[entry.account] || 0) + entry.amount;
+            }
+            for (const exp of expensesToDelete) {
+                await deleteDoc(doc(db, 'expenses', exp.id));
+                if (exp.account && exp.amount) deltas[exp.account] = (deltas[exp.account] || 0) + exp.amount;
+            }
+            if (Object.keys(deltas).length > 0) {
+                const updatedW = { ...wallets };
+                for (const acc in deltas) updatedW[acc] = (updatedW[acc] || 0) + deltas[acc];
+                setWallets(updatedW);
+                await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+            }
+            setEditingBatchId(null);
+            const removedCount = stockEntries.length + expensesToDelete.length;
+            showToast("Lote actualizado" + (removedCount > 0 ? ` y se revirtieron ${removedCount} movimiento(s) de caja` : ""), "success");
+            return;
+        }
+
         const expensesToUpdate = expenses.filter(e => e.batchId === batchId);
         for (const e of expensesToUpdate) {
             await updateDoc(doc(db, 'expenses', e.id), { batchName: editingBatchName });
