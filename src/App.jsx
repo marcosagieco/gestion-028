@@ -9168,14 +9168,32 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 pt-4 border-t border-dashed border-white/[0.07]">
                           <div className={`rounded-xl p-4 border ${darkMode ? 'bg-blue-500/5 border-blue-500/15' : 'bg-blue-50 border-blue-200'}`}>
-                            <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Ganancia · Nuevo - Publicidad</div>
-                            <div className={`font-black leading-none tracking-tight ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`} style={{fontSize:'clamp(1.2rem,1.8vw,1.6rem)',letterSpacing:'-0.03em'}}>{fARS(byAdType['Nuevo - Publicidad'].netProfit)}</div>
-                            <div className="text-[11px] text-zinc-500 mt-1.5">{byAdType['Nuevo - Publicidad'].count} pedido{byAdType['Nuevo - Publicidad'].count !== 1 ? 's' : ''} · clientes nuevos por ads</div>
+                            <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Nuevo - Publicidad</div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <div className="text-[9px] font-semibold uppercase tracking-widest text-zinc-500 mb-1">Facturación</div>
+                                <div className={`font-black leading-none tracking-tight ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`} style={{fontSize:'clamp(1.1rem,1.6vw,1.4rem)',letterSpacing:'-0.03em'}}>{fARS(byAdType['Nuevo - Publicidad'].revenue)}</div>
+                              </div>
+                              <div>
+                                <div className="text-[9px] font-semibold uppercase tracking-widest text-zinc-500 mb-1">Ganancia</div>
+                                <div className="font-black leading-none tracking-tight text-blue-400" style={{fontSize:'clamp(1.1rem,1.6vw,1.4rem)',letterSpacing:'-0.03em'}}>{fARS(byAdType['Nuevo - Publicidad'].netProfit)}</div>
+                              </div>
+                            </div>
+                            <div className="text-[11px] text-zinc-500 mt-2.5">{byAdType['Nuevo - Publicidad'].count} pedido{byAdType['Nuevo - Publicidad'].count !== 1 ? 's' : ''} · clientes nuevos por ads</div>
                           </div>
                           <div className={`rounded-xl p-4 border ${darkMode ? 'bg-violet-500/5 border-violet-500/15' : 'bg-violet-50 border-violet-200'}`}>
-                            <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Ganancia · Clientes - Publicidad</div>
-                            <div className={`font-black leading-none tracking-tight ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`} style={{fontSize:'clamp(1.2rem,1.8vw,1.6rem)',letterSpacing:'-0.03em'}}>{fARS(byAdType['Clientes - Publicidad'].netProfit)}</div>
-                            <div className="text-[11px] text-zinc-500 mt-1.5">{byAdType['Clientes - Publicidad'].count} pedido{byAdType['Clientes - Publicidad'].count !== 1 ? 's' : ''} · clientes recurrentes por ads</div>
+                            <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Clientes - Publicidad</div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <div className="text-[9px] font-semibold uppercase tracking-widest text-zinc-500 mb-1">Facturación</div>
+                                <div className={`font-black leading-none tracking-tight ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`} style={{fontSize:'clamp(1.1rem,1.6vw,1.4rem)',letterSpacing:'-0.03em'}}>{fARS(byAdType['Clientes - Publicidad'].revenue)}</div>
+                              </div>
+                              <div>
+                                <div className="text-[9px] font-semibold uppercase tracking-widest text-zinc-500 mb-1">Ganancia</div>
+                                <div className="font-black leading-none tracking-tight text-violet-400" style={{fontSize:'clamp(1.1rem,1.6vw,1.4rem)',letterSpacing:'-0.03em'}}>{fARS(byAdType['Clientes - Publicidad'].netProfit)}</div>
+                              </div>
+                            </div>
+                            <div className="text-[11px] text-zinc-500 mt-2.5">{byAdType['Clientes - Publicidad'].count} pedido{byAdType['Clientes - Publicidad'].count !== 1 ? 's' : ''} · clientes recurrentes por ads</div>
                           </div>
                         </div>
                       </div>
