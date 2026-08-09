@@ -9,7 +9,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Link } from 'react-router-dom';
 
-import ProjectionChart, { ProjectionStatCard } from './ProjectionChart';
+import ProjectionChart from './ProjectionChart';
 import MetricSlider from './MetricSlider';
 import { buildDailySeries, buildRatioSeries, computeProjection, PROJECTION_CUTOFF_DATE } from './projectionEngine';
 
@@ -76,6 +76,7 @@ const HOME_CARD_META = {
   gastoMetaAds:       { title: 'Gasto Meta Ads',        sector: 'sector1' },
   inversion:          { title: 'Inversión',             sector: 'sector1' },
   productosFallados:  { title: 'Productos Fallados',    sector: 'sector1' },
+  productosRobados:   { title: 'Productos Robados',     sector: 'sector1' },
   promedioVentas:     { title: 'Promedio de Ventas',    sector: 'sector1' },
   productosVendidos:  { title: 'Productos Vendidos',    sector: 'sector1' },
   ticketPromedio:     { title: 'Ticket Promedio',       sector: 'sector1' },
@@ -92,7 +93,7 @@ const HOME_CARD_META = {
 };
 
 const DEFAULT_HOME_CARD_ORDER = {
-  sector1: ['facturacion','gananciaBruta','gananciaNeta','gananciaEnvio','gastosTotales','gastosEmpresa','gastoMetaAds','inversion','productosFallados','promedioVentas','productosVendidos','ticketPromedio'],
+  sector1: ['facturacion','gananciaBruta','gananciaNeta','gananciaEnvio','gastosTotales','gastosEmpresa','gastoMetaAds','inversion','productosFallados','productosRobados','promedioVentas','productosVendidos','ticketPromedio'],
   sector2: ['clientesNuevos','clientesOrganicos','clientesPorAds','clientesFijosAds','ventasRevendedor'],
   sector3: ['alias1','alias2','alias3','efectivo','inversionActiva'],
 };
@@ -2360,6 +2361,8 @@ export default function App() {
   const [topProductsBySeñaView, setTopProductsBySeñaView] = useState(false);
   const [showAllTopFailed, setShowAllTopFailed] = useState(false);
   const [topFailedBySeñaView, setTopFailedBySeñaView] = useState(false);
+  const [showAllTopStolen, setShowAllTopStolen] = useState(false);
+  const [topStolenBySeñaView, setTopStolenBySeñaView] = useState(false);
   const [productsCardPage, setProductsCardPage] = useState(0);
   const [homeCardOrder, setHomeCardOrder] = useState(() => {
     try {
@@ -2865,8 +2868,10 @@ export default function App() {
               return d >= start && d <= end;
           };
 
-          const fSales = sales.filter(s => inRange(s.date) && !s.isFalla);
-          const fExp = expenses.filter(e => inRange(e.date));
+          const fSales = sales.filter(s => inRange(s.date) && !s.isFalla && !s.isRobo);
+          // "Pago" y "Retiro" del flujo de caja también se cuentan como gasto de la empresa.
+          const fCashExp = cashFlow.filter(m => (m.type === 'pago' || m.type === 'retiro') && inRange(m.date));
+          const fExp = [...expenses.filter(e => inRange(e.date)), ...fCashExp];
           const fBatches = batches.filter(b => inRange(b.createdAt));
 
           // Stock neutro: no entra por día/mes. Solo suma en Histórico Completo.
@@ -3002,9 +3007,12 @@ export default function App() {
       const failedSales = sales.filter(s => s.isFalla && failedInRange(s.date));
       const failedUnits = failedSales.reduce((a, s) => a + (s.quantity || 0), 0);
       const failedValue = failedSales.reduce((a, s) => a + (s.failedValue ?? ((s.costArsAtSale || 0) * (s.quantity || 0))), 0);
+      const stolenSales = sales.filter(s => s.isRobo && failedInRange(s.date));
+      const stolenUnits = stolenSales.reduce((a, s) => a + (s.quantity || 0), 0);
+      const stolenValue = stolenSales.reduce((a, s) => a + (s.stolenValue ?? ((s.costArsAtSale || 0) * (s.quantity || 0))), 0);
 
-      return { baseStats, compareStats, prevBaseStats, rangeStart: bStart, rangeEnd: bEnd, failedSales, failedUnits, failedValue };
-  }, [sales, batches, expenses, neutralStockEntries, globalMonth, customDateRange, compareDateRange]);
+      return { baseStats, compareStats, prevBaseStats, rangeStart: bStart, rangeEnd: bEnd, failedSales, failedUnits, failedValue, stolenSales, stolenUnits, stolenValue };
+  }, [sales, batches, expenses, cashFlow, neutralStockEntries, globalMonth, customDateRange, compareDateRange]);
 
   const teamStats = useMemo(() => {
       const stats = {};
@@ -3093,6 +3101,31 @@ export default function App() {
     return Object.values(map).sort((a, b) => b.units - a.units);
   }, [analysisData.failedSales]);
 
+  const topStolenProducts = useMemo(() => {
+    const map = {};
+    analysisData.stolenSales.forEach(s => {
+      const name = normalizeProductName(s.productName);
+      if (!name) return;
+      if (!map[name]) map[name] = { name, units: 0, revenue: 0 };
+      map[name].units   += s.quantity || 0;
+      map[name].revenue += s.stolenValue ?? ((s.costArsAtSale || 0) * (s.quantity || 0));
+    });
+    return Object.values(map).sort((a, b) => b.units - a.units);
+  }, [analysisData.stolenSales]);
+
+  const topStolenProductsBySeña = useMemo(() => {
+    const map = {};
+    analysisData.stolenSales.forEach(s => {
+      const raw = String(s.batchName || '').trim();
+      const prefix = (raw.includes('|') ? raw.split('|')[0] : raw).toUpperCase();
+      const name = ['THC', 'NIC', 'APPLE', 'PERFUMES'].find(cat => prefix.includes(cat)) || 'Otros';
+      if (!map[name]) map[name] = { name, units: 0, revenue: 0 };
+      map[name].units   += s.quantity || 0;
+      map[name].revenue += s.stolenValue ?? ((s.costArsAtSale || 0) * (s.quantity || 0));
+    });
+    return Object.values(map).sort((a, b) => b.units - a.units);
+  }, [analysisData.stolenSales]);
+
   const sparklineData7d = useMemo(() => {
     const MN = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
     const today = new Date();
@@ -3116,7 +3149,7 @@ export default function App() {
     const txCount = new Array(7).fill(0);
     const invest = new Array(7).fill(0);
     sales.forEach(s => {
-      if (!s.date || s.isFalla) return;
+      if (!s.date || s.isFalla || s.isRobo) return;
       const d = new Date(s.date);
       if (isNaN(d.getTime())) return;
       const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -3142,6 +3175,14 @@ export default function App() {
       const idx = dayKeys.indexOf(key);
       if (idx >= 0) exps[idx] += e.amount || 0;
     });
+    cashFlow.forEach(m => {
+      if (!m.date || (m.type !== 'pago' && m.type !== 'retiro')) return;
+      const d = new Date(m.date);
+      if (isNaN(d.getTime())) return;
+      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      const idx = dayKeys.indexOf(key);
+      if (idx >= 0) exps[idx] += m.amount || 0;
+    });
     batches.forEach(b => {
       if (!b.createdAt) return;
       const d = new Date(b.createdAt);
@@ -3152,7 +3193,7 @@ export default function App() {
     });
     const avgTicket = rev.map((r, i) => txCount[i] > 0 ? r / txCount[i] : 0);
     return { revenue: rev, units, profit, clients, organicClients, adsClients, fixedAdsClients, resellerClients, expenses: exps, avgTicket, investment: invest, labels };
-  }, [sales, expenses, batches]);
+  }, [sales, expenses, cashFlow, batches]);
 
   const metaFirebaseStats = useMemo(() => {
     const today = new Date(); today.setHours(23,59,59,999);
@@ -3179,7 +3220,7 @@ export default function App() {
       start = new Date(today); start.setDate(start.getDate()-(days-1)); start.setHours(0,0,0,0);
     }
     const inR = d => { const dt = new Date(d); return !isNaN(dt) && dt >= start && dt <= end; };
-    const fs = sales.filter(s => s.date && inR(s.date) && !s.isFalla && (s.isNewClient === 'Nuevo - Publicidad' || s.isNewClient === 'Clientes - Publicidad'));
+    const fs = sales.filter(s => s.date && inR(s.date) && !s.isFalla && !s.isRobo && (s.isNewClient === 'Nuevo - Publicidad' || s.isNewClient === 'Clientes - Publicidad'));
     const fe = expenses.filter(e => e.date && inR(e.date));
     const revenue = fs.reduce((s,v) => s+(v.totalSaleRaw||0), 0);
     const cost    = fs.reduce((s,v) => s+(v.costArsAtSale||0), 0);
@@ -3255,7 +3296,7 @@ export default function App() {
   const homeRevenueProjection = useMemo(() => {
     const series = buildDailySeries(sales, {
       valueOf: (s) => s.totalSaleRaw || 0,
-      filter: (s) => !s.isFalla,
+      filter: (s) => !s.isFalla && !s.isRobo,
     });
     return computeProjection(series, { farHorizonDays: homeFarHorizonDays });
   }, [sales, homeFarHorizonDays]);
@@ -3263,7 +3304,7 @@ export default function App() {
   const homeUnitsProjection = useMemo(() => {
     const series = buildDailySeries(sales, {
       valueOf: (s) => s.quantity || 0,
-      filter: (s) => !s.isFalla,
+      filter: (s) => !s.isFalla && !s.isRobo,
     });
     return computeProjection(series, { farHorizonDays: homeFarHorizonDays });
   }, [sales, homeFarHorizonDays]);
@@ -3274,7 +3315,7 @@ export default function App() {
         const shippingProfit = s.shippingProfit != null ? s.shippingProfit : ((s.clientShippingCharge || 0) - (s.shippingCostArs || 0));
         return (s.totalSaleRaw || 0) - ((s.costArsAtSale || 0) * (s.quantity || 0)) + shippingProfit;
       },
-      filter: (s) => !s.isFalla,
+      filter: (s) => !s.isFalla && !s.isRobo,
     });
     return computeProjection(series, { farHorizonDays: homeFarHorizonDays });
   }, [sales, homeFarHorizonDays]);
@@ -3283,7 +3324,7 @@ export default function App() {
   const homeAllTimeTotals = useMemo(() => {
     let revenue = 0, units = 0, profit = 0;
     sales.forEach((s) => {
-      if (s.isFalla) return;
+      if (s.isFalla || s.isRobo) return;
       const rev = s.totalSaleRaw || 0;
       const qty = s.quantity || 0;
       const shippingProfit = s.shippingProfit != null ? s.shippingProfit : ((s.clientShippingCharge || 0) - (s.shippingCostArs || 0));
@@ -3298,6 +3339,14 @@ export default function App() {
     const series = buildDailySeries(sales, {
       valueOf: (s) => s.failedValue ?? ((s.costArsAtSale || 0) * (s.quantity || 0)),
       filter: (s) => !!s.isFalla,
+    });
+    return computeProjection(series);
+  }, [sales]);
+
+  const homeStolenProductsProjection = useMemo(() => {
+    const series = buildDailySeries(sales, {
+      valueOf: (s) => s.stolenValue ?? ((s.costArsAtSale || 0) * (s.quantity || 0)),
+      filter: (s) => !!s.isRobo,
     });
     return computeProjection(series);
   }, [sales]);
@@ -3321,7 +3370,7 @@ export default function App() {
   const metaAdsRevenueProjection = useMemo(() => {
     const series = buildDailySeries(sales, {
       valueOf: (s) => s.totalSaleRaw || 0,
-      filter: (s) => !s.isFalla && (s.isNewClient === 'Nuevo - Publicidad' || s.isNewClient === 'Clientes - Publicidad'),
+      filter: (s) => !s.isFalla && !s.isRobo && (s.isNewClient === 'Nuevo - Publicidad' || s.isNewClient === 'Clientes - Publicidad'),
     });
     return computeProjection(series);
   }, [sales]);
@@ -3338,26 +3387,6 @@ export default function App() {
     const cpaSeries = buildRatioSeries(spendSeries, newClientsSeries);
     return computeProjection(cpaSeries);
   }, [metaAdsDailySinceCutoff, sales]);
-
-  // ROAS proyectado = facturación de ads proyectada / spend proyectado (no es su propia regresión:
-  // dividir dos series ruidosas día a día sería estadísticamente débil).
-  const metaAdsRoasStats = useMemo(() => {
-    if (metaAdsSpendProjection.insufficientData || metaAdsRevenueProjection.insufficientData) return null;
-    const sumForecast = (arr) => arr.reduce((a, f) => a + f.forecast, 0);
-    const spendStats = metaAdsSpendProjection.stats;
-    const revenueStats = metaAdsRevenueProjection.stats;
-    const current = spendStats.avgDaily > 0 ? revenueStats.avgDaily / spendStats.avgDaily : null;
-
-    const nearSpend = sumForecast(metaAdsSpendProjection.forecastNear);
-    const nearRevenue = sumForecast(metaAdsRevenueProjection.forecastNear);
-    const near = nearSpend > 0 ? nearRevenue / nearSpend : null;
-
-    const farSpend = nearSpend + sumForecast(metaAdsSpendProjection.forecastFar);
-    const farRevenue = nearRevenue + sumForecast(metaAdsRevenueProjection.forecastFar);
-    const far = farSpend > 0 ? farRevenue / farSpend : null;
-
-    return { current, near, far };
-  }, [metaAdsSpendProjection, metaAdsRevenueProjection]);
 
   const fetchAllMetaPages = async (url) => {
     const allData = [];
@@ -3822,6 +3851,8 @@ export default function App() {
           neutralReason: s.neutralReason || '',
           isFalla: false,
           failedValue: 0,
+          isRobo: false,
+          stolenValue: 0,
           items: [],
           originalSales: []
         };
@@ -3830,6 +3861,10 @@ export default function App() {
       if (s.isFalla) {
         map[key].isFalla = true;
         map[key].failedValue += (s.failedValue || 0);
+      }
+      if (s.isRobo) {
+        map[key].isRobo = true;
+        map[key].stolenValue += (s.stolenValue || 0);
       }
       if (s.isNeutral || s.accountingType === 'neutral') {
         map[key].isNeutral = true;
@@ -4922,24 +4957,29 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
     let totalCashIn = 0;
     let totalFailedValue = 0;
+    let totalStolenValue = 0;
     const batchUpdates = {};
 
     try {
         for (let i = 0; i < saleItems.length; i++) {
             const si = saleItems[i];
-            const isFirstItem = i === 0; 
+            const isFirstItem = i === 0;
             const qty = parseInt(si.quantity) || 1;
-            const isFalla = String(si.unitPrice).trim().toLowerCase() === 'falla';
-            const uPrice = isFalla ? 0 : (parseFloat(si.unitPrice) || 0);
+            const unitPriceNorm = String(si.unitPrice).trim().toLowerCase();
+            const isFalla = unitPriceNorm === 'falla';
+            const isRobo = unitPriceNorm === 'robo';
+            const uPrice = (isFalla || isRobo) ? 0 : (parseFloat(si.unitPrice) || 0);
 
             const batch = batches.find(b => b.id === si.batchId);
             const item = batch.items.find(it => it.id === si.itemId);
 
-            const itemShippingProfit = (!isNeutralSale && isFirstItem && !isFalla) ? shippingProfit : 0;
-            const itemTotalRaw = isFalla ? 0 : (uPrice * qty) + itemShippingProfit;
+            const itemShippingProfit = (!isNeutralSale && isFirstItem && !isFalla && !isRobo) ? shippingProfit : 0;
+            const itemTotalRaw = (isFalla || isRobo) ? 0 : (uPrice * qty) + itemShippingProfit;
             const itemFailedValue = isFalla ? (item.costArs || 0) * qty : 0;
+            const itemStolenValue = isRobo ? (item.costArs || 0) * qty : 0;
             totalCashIn += itemTotalRaw;
             totalFailedValue += itemFailedValue;
+            totalStolenValue += itemStolenValue;
 
             const saleData = {
                 ticketId,
@@ -4956,6 +4996,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                 costArsAtSale: item.costArs,
                 isFalla,
                 failedValue: itemFailedValue,
+                isRobo,
+                stolenValue: itemStolenValue,
                 shippingCostArs: isFirstItem ? parseFloat(saleGeneral.shippingCost || 0) : 0,
                 shippingProfit: itemShippingProfit,
                 source: saleGeneral.source,
@@ -5010,7 +5052,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
         }
 
         const failaMsg = totalFailedValue > 0 ? ` · ${formatMoney(totalFailedValue)} perdidos por falla` : '';
-        showToast(isNeutralSale ? `Stock neutro registrado. Ganancia global estimada: ${formatMoney(totalCashIn)}` : `Pedido registrado. Ingreso total: ${formatMoney(totalCashIn)}${failaMsg}`, 'success');
+        const roboMsg = totalStolenValue > 0 ? ` · ${formatMoney(totalStolenValue)} perdidos por robo` : '';
+        showToast(isNeutralSale ? `Stock neutro registrado. Ganancia global estimada: ${formatMoney(totalCashIn)}` : `Pedido registrado. Ingreso total: ${formatMoney(totalCashIn)}${failaMsg}${roboMsg}`, 'success');
         
         setSaleGeneral({ ...saleGeneral, shippingCost: '', shippingPrice: '', wholesaleClient: '', adCampaign: '' });
         setSaleItems([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
@@ -6022,10 +6065,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                     gananciaNeta:      <PremiumMetricCard key="gananciaNeta" darkMode={darkMode} title="Ganancia Neta" value={formatMoney(netProfitWithAds)} subtitle={`${formatPercent(netMarginWithAds)} neto${homeAdSpend > 0 ? ' · incl. ads' : ''}`} change={pct(cur.netProfit, prev?.netProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Ganancia neta descontando el gasto en Meta Ads del período (${formatMoney(homeAdSpend)}). Gastos fijos: ${formatMoney(cur.totalGlobalExpenses)}.` : undefined} />,
                                     gananciaEnvio:     <PremiumMetricCard key="gananciaEnvio" darkMode={darkMode} title="Ganancia Envío" value={formatMoney(cur.totalShippingProfit)} subtitle="Cobrado menos costo" change={pct(cur.totalShippingProfit, prev?.totalShippingProfit)} sparkline={null} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Diferencia entre lo que cobraste al cliente por envío y lo que te costó a vos el envío." />,
                                     gastosTotales:     <PremiumMetricCard key="gastosTotales" darkMode={darkMode} title="Gastos Totales" value={formatMoney(totalExpWithAds)} subtitle={homeAdSpend > 0 ? `incl. ${formatMoney(homeAdSpend)} en ads` : 'Logística y operativos'} change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Gastos fijos (${formatMoney(cur.totalGlobalExpenses)}) + Meta Ads del período (${formatMoney(homeAdSpend)}).` : undefined} />,
-                                    gastosEmpresa:     <PremiumMetricCard key="gastosEmpresa" darkMode={darkMode} title="Gastos Empresa" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Gastos anotados" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gastos operativos, logística y fijos registrados en el sistema para el período" />,
+                                    gastosEmpresa:     <PremiumMetricCard key="gastosEmpresa" darkMode={darkMode} title="Gastos Empresa" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Gastos anotados" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gastos operativos, logística y fijos registrados en el sistema para el período, incluyendo pagos y retiros del flujo de caja" />,
                                     gastoMetaAds:      <PremiumMetricCard key="gastoMetaAds" darkMode={darkMode} title="Gasto Meta Ads" value={homeAdSpend > 0 ? formatMoney(homeAdSpend) : '—'} subtitle="Inversión publicitaria" change={null} sparkline={null} tooltip="Gasto total en publicidad de Meta Ads durante el período seleccionado" />,
                                     inversion:         <PremiumMetricCard key="inversion" darkMode={darkMode} title="Inversión" value={formatMoney(cur.totalInvestment)} subtitle="Capital apostado" change={null} sparkline={sparklineData7d.investment} sparklineLabels={L} sparklineFormatter={fMoney} />,
                                     productosFallados: <PremiumMetricCard key="productosFallados" darkMode={darkMode} title="Productos Fallados" value={formatMoney(analysisData.failedValue)} subtitle={`${analysisData.failedUnits} unidad${analysisData.failedUnits !== 1 ? 'es' : ''} perdida${analysisData.failedUnits !== 1 ? 's' : ''}`} change={null} sparkline={null} tooltip="Productos marcados como 'falla' al cargar la venta: se descontaron del stock pero no se cuentan como venta real (no suman a facturación, ganancia ni productos vendidos)." />,
+                                    productosRobados: <PremiumMetricCard key="productosRobados" darkMode={darkMode} title="Productos Robados" value={formatMoney(analysisData.stolenValue)} subtitle={`${analysisData.stolenUnits} unidad${analysisData.stolenUnits !== 1 ? 'es' : ''} robada${analysisData.stolenUnits !== 1 ? 's' : ''}`} change={null} sparkline={null} tooltip="Productos marcados como 'robo' al cargar la venta: se descontaron del stock pero no se cuentan como venta real (no suman a facturación, ganancia ni productos vendidos)." />,
                                     promedioVentas:    <PremiumMetricCard key="promedioVentas" darkMode={darkMode} title="Promedio de Ventas" value={cur.dailyAvgItems.toFixed(1)} subtitle="uds por día" change={pct(cur.dailyAvgItems, prev?.dailyAvgItems)} sparkline={sparklineData7d.units} sparklineLabels={L} sparklineFormatter={fUds}
                                                         extra={cur.currentStreak > 0 && (
                                                             <div className="flex items-center gap-1.5 mt-1.5">
@@ -6086,9 +6130,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                       cumulativeMaxDate={PROJECTION_YEAR_END_DATE}
                                       cumulativeDefaultDate={PROJECTION_YEAR_END_DATE}
                                     />
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                       <ProjectionChart darkMode={darkMode} compact title="Productos Fallados"
                                         projection={homeFailedProductsProjection} valueFormatter={formatMoney} axisFormatter={formatCompact} />
+                                      <ProjectionChart darkMode={darkMode} compact title="Productos Robados"
+                                        projection={homeStolenProductsProjection} valueFormatter={formatMoney} axisFormatter={formatCompact} />
                                       <ProjectionChart darkMode={darkMode} compact title="Clientes Fijos por Ads"
                                         projection={homeFixedAdsClientsProjection} valueFormatter={(v) => `${v} cliente${v !== 1 ? 's' : ''}`} />
                                     </div>
@@ -6491,6 +6537,66 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         );
                     })()}
 
+                    {/* TOP PRODUCTOS ROBADOS */}
+                    {topStolenProducts.length > 0 && (() => {
+                        const activeStolenList = topStolenBySeñaView ? topStolenProductsBySeña : topStolenProducts;
+                        return (
+                        <div className={`rounded-2xl border p-5 ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
+                            <div className="flex items-center justify-between mb-4">
+                                <div>
+                                    <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Productos con más robos</h3>
+                                    <p className="text-[10px] text-zinc-600 mt-0.5">{topStolenBySeñaView ? 'por seña de lote · período seleccionado' : 'por unidades robadas · período seleccionado'}</p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => setTopStolenBySeñaView(v => !v)}
+                                        aria-label={topStolenBySeñaView ? 'Ver por producto' : 'Ver por categoría'}
+                                        className={`flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-colors ${
+                                            topStolenBySeñaView
+                                                ? 'border-orange-400 text-orange-400 bg-orange-500/10'
+                                                : (darkMode ? 'border-orange-500/40 text-orange-400 hover:border-orange-400 hover:bg-orange-500/10' : 'border-orange-300 text-orange-500 hover:border-orange-400 hover:bg-orange-50')
+                                        }`}>
+                                        <BarChart3 size={11} />
+                                        {topStolenBySeñaView ? 'Ver por producto' : 'Ver por categoría'}
+                                    </button>
+                                    {!topStolenBySeñaView && topStolenProducts.length > 5 && (
+                                        <button onClick={() => setShowAllTopStolen(v => !v)}
+                                            className={`text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-all ${darkMode ? 'text-zinc-400 hover:text-zinc-200 bg-white/[0.04]' : 'text-zinc-500 hover:text-zinc-700 bg-zinc-100'}`}>
+                                            {showAllTopStolen ? 'Ver menos' : `Ver más (${topStolenProducts.length - 5} más)`}
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="space-y-2">
+                                {(topStolenBySeñaView ? activeStolenList : (showAllTopStolen ? activeStolenList : activeStolenList.slice(0, 5))).map((p, i) => {
+                                    const maxUnits = activeStolenList[0].units;
+                                    const pct = maxUnits > 0 ? (p.units / maxUnits) * 100 : 0;
+                                    return (
+                                        <div key={p.name} className="flex items-center gap-3">
+                                            <div className={`w-5 text-[10px] font-black text-right shrink-0 ${i === 0 ? 'text-orange-400' : darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                                                {i + 1}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center justify-between mb-1">
+                                                    <span className={`text-xs font-semibold truncate ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{p.name}</span>
+                                                    <div className="flex items-center gap-3 shrink-0 ml-2">
+                                                        <span className={`text-[10px] font-bold ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{p.units} uds</span>
+                                                        <span className={`text-[10px] font-medium text-orange-400`}>-{formatMoney(p.revenue)}</span>
+                                                    </div>
+                                                </div>
+                                                <div className={`h-1 rounded-full overflow-hidden ${darkMode ? 'bg-white/[0.06]' : 'bg-zinc-100'}`}>
+                                                    <div className="h-full rounded-full transition-all duration-500"
+                                                        style={{ width: `${pct}%`, background: i === 0 ? '#fb923c' : darkMode ? 'rgba(251,146,60,0.3)' : '#fdba74' }}/>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                        );
+                    })()}
+
                 </div>
             )}
 
@@ -6609,7 +6715,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
                                                 <div className="grid grid-cols-2 gap-3">
                                                     <Input darkMode={darkMode} label="Cantidad" type="number" value={item.quantity} onChange={e => updateSaleItem(item.id, 'quantity', e.target.value)} />
-                                                    <Input darkMode={darkMode} label="Precio Un." type="text" inputMode="decimal" placeholder="$ o 'falla'" symbol="$" value={item.unitPrice} onChange={e => updateSaleItem(item.id, 'unitPrice', e.target.value)} />
+                                                    <Input darkMode={darkMode} label="Precio Un." type="text" inputMode="decimal" placeholder="$, 'falla' o 'robo'" symbol="$" value={item.unitPrice} onChange={e => updateSaleItem(item.id, 'unitPrice', e.target.value)} />
                                                 </div>
                                             </div>
                                         </div>
@@ -6734,6 +6840,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                           <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-zinc-800 text-zinc-300' : 'bg-zinc-200 text-zinc-700'}`}>👤 {group.seller}</span>
                                           {group.isNeutral && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-100 text-indigo-700'}`}>Neutro</span>}
                                           {group.isFalla && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-red-500/10 text-red-400' : 'bg-red-100 text-red-700'}`} title={`${formatMoney(group.failedValue)} perdidos`}>⚠ Falla</span>}
+                                          {group.isRobo && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-orange-500/10 text-orange-400' : 'bg-orange-100 text-orange-700'}`} title={`${formatMoney(group.stolenValue)} perdidos`}>🚨 Robo</span>}
                                           {(isNewClientStatus(group.isNewClient) || group.isNewClient === 'Revendedor' || group.isNewClient === 'Clientes - Publicidad') && (
                                             <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
                                               group.isNewClient === 'Revendedor'
@@ -8996,44 +9103,46 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
                   return (
                     <>
-                      {/* Métricas principales */}
-                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                        <PremiumMetricCard darkMode={darkMode} title="Gasto en Ads" value={fARS(adSpend)} subtitle={null} sparkline={null} lineSparkline={dailySpend.length >= 2 ? dailySpend : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Plata total que gastaste en publicidad en Meta durante el período" />
-                        <PremiumMetricCard darkMode={darkMode} title="ROAS" value={`${roas.toFixed(2)}×`} subtitle={null} sparkline={null} lineSparkline={dailyRoas.length >= 2 ? dailyRoas : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v.toFixed(2)}×`} tooltip="Por cada peso que invertís en ads, cuántos pesos en ventas generás. Arriba de 3x es bueno, arriba de 5x es excelente" />
-                        <PremiumMetricCard darkMode={darkMode} title="ROAS (Ganancia)" value={`${roasProfit.toFixed(2)}×`} subtitle={null} sparkline={null} lineSparkline={dailyRoasP.length >= 2 ? dailyRoasP : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v.toFixed(2)}×`} tooltip="Por cada peso invertido en ads, cuánto ganás neto descontando el costo del producto. Arriba de 1x significa que los ads son rentables" />
-                        <PremiumMetricCard darkMode={darkMode} title="MER" value={`${mer.toFixed(2)}×`} subtitle={null} sparkline={null} lineSparkline={dailyMer.length >= 2 ? dailyMer : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v.toFixed(2)}×`} tooltip="Cuánto factura el negocio en total por cada peso que gastás en publicidad. Mide el impacto general de los ads" />
-                        <PremiumMetricCard darkMode={darkMode} title="CPA" value={cpa > 0 ? fARS(cpa) : '—'} subtitle={`${purchases} conversión${purchases !== 1 ? 'es' : ''}`} sparkline={null} lineSparkline={dailyCpa.length >= 2 ? dailyCpa : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Cuánto te cuesta conseguir un cliente según el píxel de Meta. Mientras más bajo mejor, ideal que sea menor al margen de ganancia del producto" />
-                        <PremiumMetricCard darkMode={darkMode} title="CAC — Cliente Nuevo" value={newAdsCount > 0 ? fARS(cacNuevo) : '—'} subtitle={`${newAdsCount} cliente${newAdsCount !== 1 ? 's' : ''} nuevo${newAdsCount !== 1 ? 's' : ''} por ads · evolución mensual`} sparkline={null} lineSparkline={monthlyCacNuevo.filter(v => v > 0).length >= 2 ? monthlyCacNuevo : null} lineSparklineLabels={monthlyLabels} lineSparklineFormatter={fARS} tooltip="Gasto en Meta Ads del período ÷ cantidad de clientes en su PRIMERA compra marcados como 'Nuevo - Publicidad'. Solo primera compra, no cuenta recompras. El gráfico muestra la evolución mes a mes." />
-                        <PremiumMetricCard darkMode={darkMode} title="Costo por Venta — Origen Ads" value={salesCount > 0 ? fARS(cpvAds) : '—'} subtitle={`${salesCount} pedido${salesCount !== 1 ? 's' : ''} (nuevos + recompras) · evolución mensual`} sparkline={null} lineSparkline={monthlyCpvAds.filter(v => v > 0).length >= 2 ? monthlyCpvAds : null} lineSparklineLabels={monthlyLabels} lineSparklineFormatter={fARS} tooltip="Gasto en Meta Ads del período ÷ TOTAL de pedidos de clientes de origen ads (primera compra 'Nuevo - Publicidad' + recompras 'Clientes - Publicidad'). No es lo mismo que el CAC de cliente nuevo — este incluye recompras. El gráfico muestra la evolución mes a mes." />
-                        <PremiumMetricCard darkMode={darkMode} title="CTR" value={`${ctr.toFixed(2)}%`} subtitle={`${clicks.toLocaleString('es-AR')} clics · ${impressions.toLocaleString('es-AR')} impr.`} sparkline={null} lineSparkline={dailyCtr.length >= 2 ? dailyCtr : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v.toFixed(2)}%`} tooltip="De cada 100 personas que vieron tu anuncio, cuántas hicieron click. Arriba de 1% es aceptable, arriba de 2% es bueno" />
-                        <PremiumMetricCard darkMode={darkMode} title="CPM" value={fARS(cpm)} subtitle={null} sparkline={null} lineSparkline={dailyCpm.length >= 2 ? dailyCpm : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Cuánto pagás para que 1000 personas vean tu anuncio. Mientras más bajo, más barato es llegar a la gente" />
-                        <PremiumMetricCard darkMode={darkMode} title="Alcance" value={reach.toLocaleString('es-AR')} subtitle={`${impressions.toLocaleString('es-AR')} impr.`} sparkline={null} lineSparkline={dailyReach.length >= 2 ? dailyReach : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => v.toLocaleString('es-AR')} tooltip="Cantidad de personas distintas que vieron tu anuncio al menos una vez" />
-                        <PremiumMetricCard darkMode={darkMode} title="Frecuencia" value={frequency.toFixed(2)} subtitle={`${reach.toLocaleString('es-AR')} personas`} sparkline={null} lineSparkline={dailyFrequency.length >= 2 ? dailyFrequency : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => v.toFixed(2)} tooltip="Cuántas veces en promedio vio tu anuncio cada persona. Entre 1.5 y 3 es ideal, más de 3 puede cansar a la audiencia" />
-                        <PremiumMetricCard darkMode={darkMode} title="Ventas por Ads" value={salesCount} subtitle="pedidos atribuidos a publicidad" sparkline={null} lineSparkline={dailySalesCount.length >= 2 ? dailySalesCount : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v} pedido${v !== 1 ? 's' : ''}`} tooltip="Total de ventas registradas como provenientes de publicidad en el período seleccionado" />
-                        <PremiumMetricCard darkMode={darkMode} title="Ticket Promedio Ads" value={salesCount > 0 ? fARS(revenue / salesCount) : '—'} subtitle="por pedido de publicidad" sparkline={null} lineSparkline={dailyTicketAvg.length >= 2 ? dailyTicketAvg : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Valor promedio de cada venta atribuida a ads. Cuanto más alto, más eficiente es la inversión publicitaria" />
-                      </div>
-
-                      {/* Proyección de Meta Ads */}
+                      {/* Tarjetas + Proyección de Meta Ads (slider horizontal, drag, igual que en Inicio) */}
                       <div className="space-y-4">
-                        <ProjectionChart darkMode={darkMode} title="Gasto en Ads Proyectado"
-                          subtitle="Desde el 1 de junio de 2026" projection={metaAdsSpendProjection}
-                          valueFormatter={fARS} axisFormatter={formatCompact} />
-                        <ProjectionChart darkMode={darkMode} title="Facturación por Ads Proyectada"
-                          subtitle="Ventas atribuidas a publicidad, desde el 1 de junio de 2026" projection={metaAdsRevenueProjection}
-                          valueFormatter={fARS} axisFormatter={formatCompact} />
-                        <ProjectionChart darkMode={darkMode} title="CPA — Tendencia Proyectada"
-                          subtitle="Gasto ÷ clientes nuevos por ads, desde el 1 de junio de 2026" projection={metaAdsCpaProjection}
-                          valueFormatter={fARS} axisFormatter={fARS} />
-                        {metaAdsRoasStats && (
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                            <ProjectionStatCard darkMode={darkMode} label="ROAS actual (7d)"
-                              value={metaAdsRoasStats.current != null ? `${metaAdsRoasStats.current.toFixed(2)}×` : '—'} />
-                            <ProjectionStatCard darkMode={darkMode} label="ROAS proyectado (14d)"
-                              value={metaAdsRoasStats.near != null ? `${metaAdsRoasStats.near.toFixed(2)}×` : '—'} badge="estimate" />
-                            <ProjectionStatCard darkMode={darkMode} label="ROAS proyectado (45-60d)"
-                              value={metaAdsRoasStats.far != null ? `${metaAdsRoasStats.far.toFixed(2)}×` : '—'} badge="estimate" />
-                          </div>
-                        )}
+                        <MetricSlider
+                          darkMode={darkMode}
+                          ariaLabel="métricas y proyecciones de Meta Ads"
+                          pages={[
+                            { id: 'metrics', content: (
+                              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                                <PremiumMetricCard darkMode={darkMode} title="Gasto en Ads" value={fARS(adSpend)} subtitle={null} sparkline={null} lineSparkline={dailySpend.length >= 2 ? dailySpend : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Plata total que gastaste en publicidad en Meta durante el período" />
+                                <PremiumMetricCard darkMode={darkMode} title="ROAS" value={`${roas.toFixed(2)}×`} subtitle={null} sparkline={null} lineSparkline={dailyRoas.length >= 2 ? dailyRoas : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v.toFixed(2)}×`} tooltip="Por cada peso que invertís en ads, cuántos pesos en ventas generás. Arriba de 3x es bueno, arriba de 5x es excelente" />
+                                <PremiumMetricCard darkMode={darkMode} title="ROAS (Ganancia)" value={`${roasProfit.toFixed(2)}×`} subtitle={null} sparkline={null} lineSparkline={dailyRoasP.length >= 2 ? dailyRoasP : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v.toFixed(2)}×`} tooltip="Por cada peso invertido en ads, cuánto ganás neto descontando el costo del producto. Arriba de 1x significa que los ads son rentables" />
+                                <PremiumMetricCard darkMode={darkMode} title="MER" value={`${mer.toFixed(2)}×`} subtitle={null} sparkline={null} lineSparkline={dailyMer.length >= 2 ? dailyMer : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v.toFixed(2)}×`} tooltip="Cuánto factura el negocio en total por cada peso que gastás en publicidad. Mide el impacto general de los ads" />
+                                <PremiumMetricCard darkMode={darkMode} title="CPA" value={cpa > 0 ? fARS(cpa) : '—'} subtitle={`${purchases} conversión${purchases !== 1 ? 'es' : ''}`} sparkline={null} lineSparkline={dailyCpa.length >= 2 ? dailyCpa : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Cuánto te cuesta conseguir un cliente según el píxel de Meta. Mientras más bajo mejor, ideal que sea menor al margen de ganancia del producto" />
+                                <PremiumMetricCard darkMode={darkMode} title="CAC — Cliente Nuevo" value={newAdsCount > 0 ? fARS(cacNuevo) : '—'} subtitle={`${newAdsCount} cliente${newAdsCount !== 1 ? 's' : ''} nuevo${newAdsCount !== 1 ? 's' : ''} por ads · evolución mensual`} sparkline={null} lineSparkline={monthlyCacNuevo.filter(v => v > 0).length >= 2 ? monthlyCacNuevo : null} lineSparklineLabels={monthlyLabels} lineSparklineFormatter={fARS} tooltip="Gasto en Meta Ads del período ÷ cantidad de clientes en su PRIMERA compra marcados como 'Nuevo - Publicidad'. Solo primera compra, no cuenta recompras. El gráfico muestra la evolución mes a mes." />
+                                <PremiumMetricCard darkMode={darkMode} title="Costo por Venta — Origen Ads" value={salesCount > 0 ? fARS(cpvAds) : '—'} subtitle={`${salesCount} pedido${salesCount !== 1 ? 's' : ''} (nuevos + recompras) · evolución mensual`} sparkline={null} lineSparkline={monthlyCpvAds.filter(v => v > 0).length >= 2 ? monthlyCpvAds : null} lineSparklineLabels={monthlyLabels} lineSparklineFormatter={fARS} tooltip="Gasto en Meta Ads del período ÷ TOTAL de pedidos de clientes de origen ads (primera compra 'Nuevo - Publicidad' + recompras 'Clientes - Publicidad'). No es lo mismo que el CAC de cliente nuevo — este incluye recompras. El gráfico muestra la evolución mes a mes." />
+                                <PremiumMetricCard darkMode={darkMode} title="CTR" value={`${ctr.toFixed(2)}%`} subtitle={`${clicks.toLocaleString('es-AR')} clics · ${impressions.toLocaleString('es-AR')} impr.`} sparkline={null} lineSparkline={dailyCtr.length >= 2 ? dailyCtr : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v.toFixed(2)}%`} tooltip="De cada 100 personas que vieron tu anuncio, cuántas hicieron click. Arriba de 1% es aceptable, arriba de 2% es bueno" />
+                                <PremiumMetricCard darkMode={darkMode} title="CPM" value={fARS(cpm)} subtitle={null} sparkline={null} lineSparkline={dailyCpm.length >= 2 ? dailyCpm : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Cuánto pagás para que 1000 personas vean tu anuncio. Mientras más bajo, más barato es llegar a la gente" />
+                                <PremiumMetricCard darkMode={darkMode} title="Alcance" value={reach.toLocaleString('es-AR')} subtitle={`${impressions.toLocaleString('es-AR')} impr.`} sparkline={null} lineSparkline={dailyReach.length >= 2 ? dailyReach : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => v.toLocaleString('es-AR')} tooltip="Cantidad de personas distintas que vieron tu anuncio al menos una vez" />
+                                <PremiumMetricCard darkMode={darkMode} title="Frecuencia" value={frequency.toFixed(2)} subtitle={`${reach.toLocaleString('es-AR')} personas`} sparkline={null} lineSparkline={dailyFrequency.length >= 2 ? dailyFrequency : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => v.toFixed(2)} tooltip="Cuántas veces en promedio vio tu anuncio cada persona. Entre 1.5 y 3 es ideal, más de 3 puede cansar a la audiencia" />
+                                <PremiumMetricCard darkMode={darkMode} title="Ventas por Ads" value={salesCount} subtitle="pedidos atribuidos a publicidad" sparkline={null} lineSparkline={dailySalesCount.length >= 2 ? dailySalesCount : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v} pedido${v !== 1 ? 's' : ''}`} tooltip="Total de ventas registradas como provenientes de publicidad en el período seleccionado" />
+                                <PremiumMetricCard darkMode={darkMode} title="Ticket Promedio Ads" value={salesCount > 0 ? fARS(revenue / salesCount) : '—'} subtitle="por pedido de publicidad" sparkline={null} lineSparkline={dailyTicketAvg.length >= 2 ? dailyTicketAvg : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Valor promedio de cada venta atribuida a ads. Cuanto más alto, más eficiente es la inversión publicitaria" />
+                              </div>
+                            ) },
+                            { id: 'gasto', content: (
+                              <ProjectionChart darkMode={darkMode} title="Gasto en Ads Proyectado"
+                                subtitle="Desde el 1 de junio de 2026" projection={metaAdsSpendProjection}
+                                valueFormatter={fARS} axisFormatter={formatCompact} />
+                            ) },
+                            { id: 'facturacion', content: (
+                              <ProjectionChart darkMode={darkMode} title="Facturación por Ads Proyectada"
+                                subtitle="Ventas atribuidas a publicidad, desde el 1 de junio de 2026" projection={metaAdsRevenueProjection}
+                                valueFormatter={fARS} axisFormatter={formatCompact} />
+                            ) },
+                            { id: 'cpa', content: (
+                              <ProjectionChart darkMode={darkMode} title="CPA — Tendencia Proyectada"
+                                subtitle="Gasto ÷ clientes nuevos por ads, desde el 1 de junio de 2026" projection={metaAdsCpaProjection}
+                                valueFormatter={fARS} axisFormatter={fARS} />
+                            ) },
+                          ]}
+                        />
                       </div>
 
                       {/* Rentabilidad real */}
