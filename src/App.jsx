@@ -306,6 +306,7 @@ const Button = ({ onClick, children, variant = 'primary', className = '', disabl
     primary: "bg-[#6366f1] text-white hover:bg-[#2563eb] font-bold",
     danger: darkMode ? "bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20" : "bg-red-50 text-red-600 hover:bg-red-100 border border-red-200",
     success: "bg-emerald-500 text-white hover:bg-emerald-400 font-bold",
+    stock: "bg-fuchsia-600 text-white hover:bg-fuchsia-500 font-bold",
     outline: darkMode ? "border border-white/[0.08] text-zinc-300 bg-transparent hover:bg-white/[0.04] hover:border-white/[0.14]" : "border border-zinc-200 text-zinc-700 bg-transparent hover:bg-zinc-50"
   };
   return <button onClick={onClick} disabled={disabled} className={`${baseStyle} ${variants[variant]} ${className}`}>{children}</button>;
@@ -5302,9 +5303,37 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     showToast(`Transferencia registrada: ${accountLabel(fromAcc)} → ${accountLabel(toAcc)}`, 'success');
   };
 
+  // Compra de stock que quedó sin asentar: cuando cargás un lote y te olvidás de asignarle cuenta
+  // (o marcaste "no generar gasto"), la compra no queda registrada en ningún lado. Esto la asienta
+  // a posteriori como "Compra Stock" del lote elegido, en vez de terminar cargada como Gasto suelto.
+  const handleAddStockMovement = async () => {
+    if (!newCashMovement.amount || !newCashMovement.date) return showToast('Completá el importe y la fecha', 'error');
+    if (!newCashMovement.batchId) return showToast('Elegí a qué lote pertenece esta compra de stock', 'error');
+    const batch = batches.find(b => b.id === newCashMovement.batchId);
+    if (!batch) return showToast('No se encontró el lote seleccionado', 'error');
+    const [y, m, d] = newCashMovement.date.split('-');
+    const amount = parseFloat(newCashMovement.amount);
+    const account = newCashMovement.account || 'LEMON';
+    await addDoc(collection(db, 'cashFlow'), {
+      type: 'stock',
+      account,
+      date: new Date(Number(y), Number(m) - 1, Number(d), 12, 0, 0).toISOString(),
+      description: newCashMovement.description.trim() || `Compra stock: ${batch.name}`,
+      amount,
+      batchId: batch.id,
+      batchName: batch.name,
+    });
+    const updatedW = { ...wallets, [account]: (wallets[account] || 0) - amount };
+    setWallets(updatedW);
+    await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+    setNewCashMovement(prev => ({ ...prev, description: '', amount: '', batchId: '' }));
+    showToast(`Compra de stock asentada en "${batch.name}"`, 'success');
+  };
+
   const handleAddCashMovement = async () => {
     if (newCashMovement.type === 'gasto') return handleAddExpense();
     if (newCashMovement.type === 'transferencia') return handleAddTransfer();
+    if (newCashMovement.type === 'stock') return handleAddStockMovement();
     if (!newCashMovement.description.trim() || !newCashMovement.amount || !newCashMovement.date) return showToast('Completá todos los campos', 'error');
     const [y, m, d] = newCashMovement.date.split('-');
     const amount = parseFloat(newCashMovement.amount);
@@ -8816,12 +8845,13 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                               <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${darkMode ? 'bg-white/10 text-zinc-300' : 'bg-zinc-200 text-zinc-600'}`}>1</span>
                               Tipo de movimiento
                             </p>
-                            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
                               {[
                                 { type: 'ingreso', label: 'Ingreso', icon: ArrowDownLeft, active: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
                                 { type: 'retiro',  label: 'Retiro',  icon: ArrowUpRight,  active: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
                                 { type: 'pago',    label: 'Pago',    icon: CreditCard,    active: 'bg-blue-500/15 text-blue-400 border-blue-500/30' },
                                 { type: 'gasto',   label: 'Gasto',   icon: Wallet,        active: 'bg-rose-500/15 text-rose-400 border-rose-500/30' },
+                                { type: 'stock',   label: 'Compra Stock', icon: FolderOpen, active: 'bg-fuchsia-500/15 text-fuchsia-400 border-fuchsia-500/30' },
                                 { type: 'transferencia', label: 'Transferencia', icon: ArrowLeftRight, active: 'bg-sky-500/15 text-sky-400 border-sky-500/30' },
                               ].map(({ type, label, icon: Icon, active }) => (
                                 <button key={type} onClick={() => setNewCashMovement(p => ({ ...p, type }))}
@@ -8893,12 +8923,12 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             </p>
                             <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
                               <div className="sm:col-span-3"><Input darkMode={darkMode} type="date" label="Fecha" value={newCashMovement.date} onChange={e => setNewCashMovement(p => ({ ...p, date: e.target.value }))} /></div>
-                              <div className="sm:col-span-6"><Input darkMode={darkMode} label="Descripción" placeholder={newCashMovement.type === 'ingreso' ? 'Ej: Transferencia cliente, Venta efectivo...' : newCashMovement.type === 'pago' ? 'Ej: Pago proveedor, Servicio...' : newCashMovement.type === 'gasto' ? 'Ej: Publicidad Ads, Envío Extra...' : newCashMovement.type === 'transferencia' ? 'Opcional: motivo de la transferencia...' : 'Ej: Retiro personal...'} value={newCashMovement.description} onChange={e => setNewCashMovement(p => ({ ...p, description: e.target.value }))} /></div>
+                              <div className="sm:col-span-6"><Input darkMode={darkMode} label="Descripción" placeholder={newCashMovement.type === 'ingreso' ? 'Ej: Transferencia cliente, Venta efectivo...' : newCashMovement.type === 'pago' ? 'Ej: Pago proveedor, Servicio...' : newCashMovement.type === 'gasto' ? 'Ej: Publicidad Ads, Envío Extra...' : newCashMovement.type === 'stock' ? 'Opcional: se completa con el nombre del lote...' : newCashMovement.type === 'transferencia' ? 'Opcional: motivo de la transferencia...' : 'Ej: Retiro personal...'} value={newCashMovement.description} onChange={e => setNewCashMovement(p => ({ ...p, description: e.target.value }))} /></div>
                               <div className="sm:col-span-3"><Input darkMode={darkMode} label={newCashMovement.type === 'transferencia' && isForeignAcc(newCashMovement.account) ? 'Importe (US$)' : 'Importe'} type="number" symbol={newCashMovement.type === 'transferencia' && isForeignAcc(newCashMovement.account) ? 'US$' : '$'} value={newCashMovement.amount} onChange={e => setNewCashMovement(p => ({ ...p, amount: e.target.value }))} /></div>
                             </div>
                           </div>
 
-                          {/* Asignación contable (solo gasto) + confirmación */}
+                          {/* Asignación contable (gasto / compra stock) + confirmación */}
                           {newCashMovement.type === 'gasto' ? (
                             <div className={`rounded-2xl p-4 border ${darkMode ? 'border-rose-500/20 bg-rose-500/[0.04]' : 'border-rose-200 bg-rose-50/60'}`}>
                               <p className={`text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-1.5 ${darkMode ? 'text-rose-400/80' : 'text-rose-500'}`}>
@@ -8912,6 +8942,23 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 </div>
                                 <Button darkMode={darkMode} onClick={handleAddCashMovement} variant="danger" className="w-full sm:w-56 flex-shrink-0">
                                   <Wallet size={15}/> Registrar Gasto
+                                </Button>
+                              </div>
+                            </div>
+                          ) : newCashMovement.type === 'stock' ? (
+                            <div className={`rounded-2xl p-4 border ${darkMode ? 'border-fuchsia-500/20 bg-fuchsia-500/[0.04]' : 'border-fuchsia-200 bg-fuchsia-50/60'}`}>
+                              <p className={`text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-1.5 ${darkMode ? 'text-fuchsia-400/80' : 'text-fuchsia-600'}`}>
+                                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${darkMode ? 'bg-fuchsia-500/20 text-fuchsia-300' : 'bg-fuchsia-200 text-fuchsia-700'}`}>4</span>
+                                ¿De qué lote es esta compra? (obligatorio)
+                              </p>
+                              <p className="text-[11px] text-zinc-500 mb-3 -mt-1.5">Para asentar una compra de stock que quedó sin cuenta asignada al cargar el lote.</p>
+                              <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
+                                <div className="flex-1 w-full">
+                                  <Select darkMode={darkMode} value={newCashMovement.batchId} onChange={e => setNewCashMovement(p => ({ ...p, batchId: e.target.value }))}
+                                      options={[{ value: '', label: '-- Elegí un lote --' }, ...batches.map(b => ({ value: b.id, label: b.name || 'Sin nombre' }))]} />
+                                </div>
+                                <Button darkMode={darkMode} onClick={handleAddCashMovement} variant="stock" className="w-full sm:w-56 flex-shrink-0">
+                                  <FolderOpen size={15}/> Registrar Compra Stock
                                 </Button>
                               </div>
                             </div>
