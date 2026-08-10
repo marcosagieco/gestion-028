@@ -54,8 +54,11 @@ export default function MetricSlider({ darkMode, pages, initialIndex = 0, onInde
 
   const handlePointerDown = (e) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    dragState.current = { startX: e.clientX, startY: e.clientY, intent: null };
-    e.currentTarget.setPointerCapture?.(e.pointerId);
+    dragState.current = { startX: e.clientX, startY: e.clientY, intent: null, pointerId: e.pointerId };
+    // OJO: la captura del puntero NO se pide acá. Pedirla en todo pointerdown redirige el click
+    // resultante de un simple tap al wrapper (en vez de a la tarjeta tocada), rompiendo cualquier
+    // onClick de los hijos (ej. las tarjetas de Inicio). Se pide recién en handlePointerMove, una
+    // vez confirmado que el gesto es efectivamente un arrastre horizontal.
   };
 
   const handlePointerMove = (e) => {
@@ -67,7 +70,10 @@ export default function MetricSlider({ darkMode, pages, initialIndex = 0, onInde
     if (state.intent === null) {
       if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
       state.intent = Math.abs(dx) > Math.abs(dy) ? 'horizontal' : 'vertical';
-      if (state.intent === 'horizontal') setIsDragging(true);
+      if (state.intent === 'horizontal') {
+        setIsDragging(true);
+        e.currentTarget.setPointerCapture?.(state.pointerId);
+      }
     }
     if (state.intent !== 'horizontal') return;
 

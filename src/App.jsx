@@ -51,6 +51,11 @@ const accountLabel = (acc) => {
   if (acc === 'MERCADO_PAGO') return 'Mercado Pago';
   return acc;
 };
+// Cuentas en dólares (vs. el resto, que son en pesos). Se usa para detectar transferencias
+// que en realidad son una compra/venta de dólares y requieren cotización.
+const FOREIGN_ACCOUNTS = ['USD', 'USDT'];
+const isForeignAcc = (acc) => FOREIGN_ACCOUNTS.includes(acc);
+const formatByAcc = (acc, val) => isForeignAcc(acc) ? formatUsd(val) : formatMoney(val);
 const BATCH_CATEGORIES = ['THC', 'APPLE', 'PERFUMES', 'NICOTINA'];
 
 // --- Proyección del Negocio (Inicio): horizonte hasta fin de año, elegible por el usuario en la tarjeta acumulada ---
@@ -650,7 +655,7 @@ const MiniLineChart = ({ data, labels, formatter }) => {
 };
 
 // --- PREMIUM METRIC CARD ---
-const PremiumMetricCard = ({ title, value, subtitle, change, sparkline, sparklineLabels, sparklineFormatter, darkMode, extra, tooltip, lineSparkline, lineSparklineLabels, lineSparklineFormatter }) => {
+const PremiumMetricCard = ({ title, value, subtitle, change, sparkline, sparklineLabels, sparklineFormatter, darkMode, extra, tooltip, lineSparkline, lineSparklineLabels, lineSparklineFormatter, onClick }) => {
   const isPositive = change === null || change === undefined || change >= 0;
   const [tipOpen, setTipOpen] = useState(false);
   const tipRef = useRef(null);
@@ -669,7 +674,7 @@ const PremiumMetricCard = ({ title, value, subtitle, change, sparkline, sparklin
   }, [tipOpen]);
 
   return (
-    <div className={`rounded-2xl border p-3 sm:p-4 flex flex-col transition-all duration-200 min-w-0 ${
+    <div onClick={onClick} className={`rounded-2xl border p-3 sm:p-4 flex flex-col transition-all duration-200 min-w-0 ${onClick ? 'cursor-pointer active:scale-[0.98]' : ''} ${
       darkMode ? 'bg-[#101010] border-white/[0.06] hover:border-white/[0.12]' : 'bg-white border-zinc-200 hover:border-zinc-300'
     }`}>
       <div className="flex items-start justify-between gap-2 mb-2 sm:mb-3">
@@ -709,6 +714,72 @@ const PremiumMetricCard = ({ title, value, subtitle, change, sparkline, sparklin
       {extra}
       {lineSparkline && <MiniLineChart data={lineSparkline} labels={lineSparklineLabels} formatter={lineSparklineFormatter} />}
       {sparkline && <div className="mt-auto pt-3"><MiniBarChart data={sparkline} labels={sparklineLabels} formatter={sparklineFormatter} /></div>}
+    </div>
+  );
+};
+
+// --- MODAL: de dónde viene cada gasto (Gastos Totales / Gastos Empresa en Inicio) ---
+const GASTO_BREAKDOWN_META = {
+  gasto:  { label: 'Gastos',    desc: 'Cargados como Gasto en la sección Gastos', color: '#f43f5e', icon: Wallet },
+  pago:   { label: 'Pagos',     desc: 'Movimientos de tipo Pago en el flujo de caja', color: '#3b82f6', icon: CreditCard },
+  retiro: { label: 'Retiros',   desc: 'Movimientos de tipo Retiro en el flujo de caja', color: '#f59e0b', icon: ArrowUpRight },
+  ads:    { label: 'Meta Ads',  desc: 'Inversión publicitaria del período', color: '#6366f1', icon: Target },
+};
+const GastosBreakdownModal = ({ darkMode, data, onClose }) => {
+  if (!data) return null;
+  const rows = ['gasto', 'pago', 'retiro', 'ads']
+    .filter(key => data[key] !== undefined)
+    .map(key => ({ key, amount: data[key] || 0, ...GASTO_BREAKDOWN_META[key] }));
+  const total = rows.reduce((s, r) => s + r.amount, 0);
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 animate-in fade-in duration-200"
+      style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(2px)' }}
+      onClick={onClose}>
+      <div onClick={e => e.stopPropagation()}
+        className={`w-full max-w-md rounded-3xl border overflow-hidden animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-200 ${darkMode ? 'border-white/[0.08]' : 'bg-white border-zinc-200'}`}
+        style={darkMode ? { background: 'linear-gradient(150deg,#111,#1a1a1a)', boxShadow: '0 24px 70px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05)' } : { boxShadow: '0 24px 70px rgba(0,0,0,0.15)' }}>
+        <div className={`p-5 border-b flex items-start justify-between gap-3 ${darkMode ? 'border-white/[0.06]' : 'border-zinc-100'}`}>
+          <div>
+            <h3 className={`font-bold text-sm ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{data.title}</h3>
+            <p className="text-[11px] text-zinc-500 mt-0.5">De dónde viene cada peso de este total</p>
+          </div>
+          <button onClick={onClose} className={`p-1.5 rounded-lg transition-all flex-shrink-0 ${darkMode ? 'text-zinc-500 hover:text-zinc-200 hover:bg-white/10' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}>
+            <XCircle size={18}/>
+          </button>
+        </div>
+        <div className="p-5 space-y-3">
+          {rows.map((r, i) => {
+            const pct = total > 0 ? (r.amount / total) * 100 : 0;
+            const Icon = r.icon;
+            return (
+              <div key={r.key} className="animate-in fade-in slide-in-from-left-2 duration-300" style={{ animationDelay: `${i * 60}ms`, animationFillMode: 'backwards' }}>
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg flex-shrink-0" style={{ background: `${r.color}1A` }}>
+                      <Icon size={13} style={{ color: r.color }}/>
+                    </div>
+                    <div>
+                      <div className={`text-xs font-bold ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{r.label}</div>
+                      <div className="text-[10px] text-zinc-500">{r.desc}</div>
+                    </div>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <div className={`text-sm font-black tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{formatMoney(r.amount)}</div>
+                    <div className="text-[10px] text-zinc-500">{pct.toFixed(0)}%</div>
+                  </div>
+                </div>
+                <div className={`h-1.5 rounded-full overflow-hidden ${darkMode ? 'bg-white/[0.06]' : 'bg-zinc-100'}`}>
+                  <div className="h-full rounded-full transition-all duration-700 ease-out" style={{ width: `${pct}%`, background: r.color }}/>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className={`px-5 py-4 flex items-center justify-between border-t ${darkMode ? 'border-white/[0.06] bg-white/[0.02]' : 'border-zinc-100 bg-zinc-50'}`}>
+          <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Total</span>
+          <span className={`text-lg font-black tracking-tight ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`}>{formatMoney(total)}</span>
+        </div>
+      </div>
     </div>
   );
 };
@@ -2350,7 +2421,8 @@ export default function App() {
   const walletsScrollRef = useRef(null);
   const [editingWallet, setEditingWallet] = useState(null);
   const [editingWalletValue, setEditingWalletValue] = useState('');
-  const [newCashMovement, setNewCashMovement] = useState({ type: 'ingreso', account: 'LEMON', accountTo: '', date: getTodayDate(), description: '', amount: '', batchId: '' });
+  const [newCashMovement, setNewCashMovement] = useState({ type: 'ingreso', account: 'LEMON', accountTo: '', date: getTodayDate(), description: '', amount: '', batchId: '', exchangeRate: '' });
+  const [gastosBreakdownModal, setGastosBreakdownModal] = useState(null); // datos de la tarjeta clickeada en Inicio (Gastos Totales / Gastos Empresa)
   const [cashFlowFilter, setCashFlowFilter] = useState('TODAS');
   const [showAjustesHistory, setShowAjustesHistory] = useState(false);
   const [showStockHistory, setShowStockHistory] = useState(false);
@@ -2870,9 +2942,18 @@ export default function App() {
 
           const fSales = sales.filter(s => inRange(s.date) && !s.isFalla && !s.isRobo);
           // "Pago" y "Retiro" del flujo de caja también se cuentan como gasto de la empresa.
-          const fCashExp = cashFlow.filter(m => (m.type === 'pago' || m.type === 'retiro') && inRange(m.date));
-          const fExp = [...expenses.filter(e => inRange(e.date)), ...fCashExp];
+          const fPagos = cashFlow.filter(m => m.type === 'pago' && inRange(m.date));
+          const fRetiros = cashFlow.filter(m => m.type === 'retiro' && inRange(m.date));
+          const fGastos = expenses.filter(e => inRange(e.date));
+          const fCashExp = [...fPagos, ...fRetiros];
+          const fExp = [...fGastos, ...fCashExp];
           const fBatches = batches.filter(b => inRange(b.createdAt));
+          // Desglose de "de dónde viene" cada gasto, para el detalle en las tarjetas de Inicio.
+          const expenseBreakdown = {
+            gasto: fGastos.reduce((acc, e) => acc + (e.amount || 0), 0),
+            pago: fPagos.reduce((acc, m) => acc + (m.amount || 0), 0),
+            retiro: fRetiros.reduce((acc, m) => acc + (m.amount || 0), 0),
+          };
 
           // Stock neutro: no entra por día/mes. Solo suma en Histórico Completo.
           const fNeutral = isAll ? neutralStockEntries : [];
@@ -2948,7 +3029,7 @@ export default function App() {
           }
 
           return {
-              totalRevenue, neutralRevenue, neutralCost, neutralProfit, totalInvestment, totalGlobalExpenses, grossProfit, grossMargin,
+              totalRevenue, neutralRevenue, neutralCost, neutralProfit, totalInvestment, totalGlobalExpenses, expenseBreakdown, grossProfit, grossMargin,
               totalShippingProfit, netProfit, netMargin, cashBalance, currentStockValue, currentStockUnits,
               itemsSold, salesCount: new Set(fSales.map(s => s.ticketId || s.id)).size, sourceCounts, typeCounts, dailyAvgItems,
               daysActive, currentStreak, filteredSales: fSales, pieSourceData, pieTypeData
@@ -5191,6 +5272,19 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     if (fromAcc === toAcc) return showToast('La cuenta de origen y destino no pueden ser la misma', 'error');
     const [y, m, d] = newCashMovement.date.split('-');
     const amount = parseFloat(newCashMovement.amount);
+
+    // Si la transferencia cruza pesos <-> dólares (USD/USDT), es en realidad una compra/venta
+    // de dólares y necesita la cotización usada para calcular cuánto entra en la cuenta destino.
+    const isConversion = isForeignAcc(fromAcc) !== isForeignAcc(toAcc);
+    let exchangeRate = null;
+    let amountTo = amount;
+    if (isConversion) {
+      exchangeRate = parseFloat(newCashMovement.exchangeRate);
+      if (!exchangeRate || exchangeRate <= 0) return showToast('Ingresá la cotización del dólar usada en el cambio', 'error');
+      // amount siempre está en la moneda de la cuenta ORIGEN.
+      amountTo = isForeignAcc(fromAcc) ? amount * exchangeRate : amount / exchangeRate;
+    }
+
     await addDoc(collection(db, 'cashFlow'), {
       type: 'transferencia',
       account: fromAcc,
@@ -5198,11 +5292,13 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       date: new Date(Number(y), Number(m) - 1, Number(d), 12, 0, 0).toISOString(),
       description: newCashMovement.description.trim() || `Transferencia ${accountLabel(fromAcc)} → ${accountLabel(toAcc)}`,
       amount,
+      amountTo,
+      exchangeRate,
     });
-    const updatedW = { ...wallets, [fromAcc]: (wallets[fromAcc] || 0) - amount, [toAcc]: (wallets[toAcc] || 0) + amount };
+    const updatedW = { ...wallets, [fromAcc]: (wallets[fromAcc] || 0) - amount, [toAcc]: (wallets[toAcc] || 0) + amountTo };
     setWallets(updatedW);
     await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
-    setNewCashMovement(prev => ({ ...prev, description: '', amount: '' }));
+    setNewCashMovement(prev => ({ ...prev, description: '', amount: '', exchangeRate: '' }));
     showToast(`Transferencia registrada: ${accountLabel(fromAcc)} → ${accountLabel(toAcc)}`, 'success');
   };
 
@@ -5233,7 +5329,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     const mov = cashFlow.find(m => m.id === id);
     await deleteDoc(doc(db, 'cashFlow', id));
     if (mov?.type === 'transferencia' && mov.account && mov.accountTo && mov.amount) {
-      const updatedW = { ...wallets, [mov.account]: (wallets[mov.account] || 0) + mov.amount, [mov.accountTo]: (wallets[mov.accountTo] || 0) - mov.amount };
+      const updatedW = { ...wallets, [mov.account]: (wallets[mov.account] || 0) + mov.amount, [mov.accountTo]: (wallets[mov.accountTo] || 0) - (mov.amountTo ?? mov.amount) };
       setWallets(updatedW);
       await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
     } else if (mov?.account && mov?.amount && mov.type !== 'ajuste') {
@@ -5822,6 +5918,10 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
           </div>
       )}
 
+      {gastosBreakdownModal && (
+        <GastosBreakdownModal darkMode={darkMode} data={gastosBreakdownModal} onClose={() => setGastosBreakdownModal(null)} />
+      )}
+
       <datalist id="products-list">{uniqueProducts.map(p => <option key={p} value={p} />)}</datalist>
       <datalist id="variants-list">{uniqueVariants.map(v => <option key={v} value={v} />)}</datalist>
 
@@ -6064,8 +6164,10 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                     gananciaBruta:     <PremiumMetricCard key="gananciaBruta" darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(cur.grossProfit)} subtitle={`${formatPercent(cur.grossMargin)} margen`} change={pct(cur.grossProfit, prev?.grossProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} />,
                                     gananciaNeta:      <PremiumMetricCard key="gananciaNeta" darkMode={darkMode} title="Ganancia Neta" value={formatMoney(netProfitWithAds)} subtitle={`${formatPercent(netMarginWithAds)} neto${homeAdSpend > 0 ? ' · incl. ads' : ''}`} change={pct(cur.netProfit, prev?.netProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Ganancia neta descontando el gasto en Meta Ads del período (${formatMoney(homeAdSpend)}). Gastos fijos: ${formatMoney(cur.totalGlobalExpenses)}.` : undefined} />,
                                     gananciaEnvio:     <PremiumMetricCard key="gananciaEnvio" darkMode={darkMode} title="Ganancia Envío" value={formatMoney(cur.totalShippingProfit)} subtitle="Cobrado menos costo" change={pct(cur.totalShippingProfit, prev?.totalShippingProfit)} sparkline={null} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Diferencia entre lo que cobraste al cliente por envío y lo que te costó a vos el envío." />,
-                                    gastosTotales:     <PremiumMetricCard key="gastosTotales" darkMode={darkMode} title="Gastos Totales" value={formatMoney(totalExpWithAds)} subtitle={homeAdSpend > 0 ? `incl. ${formatMoney(homeAdSpend)} en ads` : 'Logística y operativos'} change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Gastos fijos (${formatMoney(cur.totalGlobalExpenses)}) + Meta Ads del período (${formatMoney(homeAdSpend)}).` : undefined} />,
-                                    gastosEmpresa:     <PremiumMetricCard key="gastosEmpresa" darkMode={darkMode} title="Gastos Empresa" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Gastos anotados" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gastos operativos, logística y fijos registrados en el sistema para el período, incluyendo pagos y retiros del flujo de caja" />,
+                                    gastosTotales:     <PremiumMetricCard key="gastosTotales" darkMode={darkMode} title="Gastos Totales" value={formatMoney(totalExpWithAds)} subtitle={(homeAdSpend > 0 ? `incl. ${formatMoney(homeAdSpend)} en ads` : 'Logística y operativos') + ' · tocá para ver detalle'} change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Gastos fijos (${formatMoney(cur.totalGlobalExpenses)}) + Meta Ads del período (${formatMoney(homeAdSpend)}).` : undefined}
+                                      onClick={() => setGastosBreakdownModal({ title: 'Gastos Totales', gasto: cur.expenseBreakdown.gasto, pago: cur.expenseBreakdown.pago, retiro: cur.expenseBreakdown.retiro, ...(homeAdSpend > 0 ? { ads: homeAdSpend } : {}) })} />,
+                                    gastosEmpresa:     <PremiumMetricCard key="gastosEmpresa" darkMode={darkMode} title="Gastos Empresa" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Gastos anotados · tocá para ver detalle" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gastos operativos, logística y fijos registrados en el sistema para el período, incluyendo pagos y retiros del flujo de caja"
+                                      onClick={() => setGastosBreakdownModal({ title: 'Gastos Empresa', gasto: cur.expenseBreakdown.gasto, pago: cur.expenseBreakdown.pago, retiro: cur.expenseBreakdown.retiro })} />,
                                     gastoMetaAds:      <PremiumMetricCard key="gastoMetaAds" darkMode={darkMode} title="Gasto Meta Ads" value={homeAdSpend > 0 ? formatMoney(homeAdSpend) : '—'} subtitle="Inversión publicitaria" change={null} sparkline={null} tooltip="Gasto total en publicidad de Meta Ads durante el período seleccionado" />,
                                     inversion:         <PremiumMetricCard key="inversion" darkMode={darkMode} title="Inversión" value={formatMoney(cur.totalInvestment)} subtitle="Capital apostado" change={null} sparkline={sparklineData7d.investment} sparklineLabels={L} sparklineFormatter={fMoney} />,
                                     productosFallados: <PremiumMetricCard key="productosFallados" darkMode={darkMode} title="Productos Fallados" value={formatMoney(analysisData.failedValue)} subtitle={`${analysisData.failedUnits} unidad${analysisData.failedUnits !== 1 ? 'es' : ''} perdida${analysisData.failedUnits !== 1 ? 's' : ''}`} change={null} sparkline={null} tooltip="Productos marcados como 'falla' al cargar la venta: se descontaron del stock pero no se cuentan como venta real (no suman a facturación, ganancia ni productos vendidos)." />,
@@ -8556,6 +8658,15 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
             {activeTab === 'expenses' && (() => {
                   const totalWallets = ['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'EFECTIVO', 'SIN_CUENTA'].reduce((s, acc) => s + (wallets[acc] || 0), 0);
                   const totalWalletsUsd = ['USDT', 'USD'].reduce((s, acc) => s + (wallets[acc] || 0), 0);
+                  // Transferencia entre una cuenta en pesos y una en dólares (USD/USDT): es una compra/venta
+                  // de dólares, requiere cotización para saber cuánto entra del otro lado.
+                  const isTransferConversion = newCashMovement.type === 'transferencia' && newCashMovement.accountTo &&
+                    isForeignAcc(newCashMovement.account) !== isForeignAcc(newCashMovement.accountTo);
+                  const transferRateNum = parseFloat(newCashMovement.exchangeRate) || 0;
+                  const transferAmountNum = parseFloat(newCashMovement.amount) || 0;
+                  const transferAmountTo = isTransferConversion && transferRateNum > 0
+                    ? (isForeignAcc(newCashMovement.account) ? transferAmountNum * transferRateNum : transferAmountNum / transferRateNum)
+                    : transferAmountNum;
                   const feed = [
                     ...cashFlow.map(m => ({ ...m, kind: 'movimiento' })),
                     ...expenses.map(e => ({ ...e, kind: 'gasto' })),
@@ -8675,13 +8786,13 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                               ) : (
                                 <>
                                   <div className={`text-lg font-black tracking-tight ${saldo >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                    {saldo < 0 ? '-' : ''}{formatMoney(Math.abs(saldo))}
+                                    {saldo < 0 ? '-' : ''}{formatByAcc(acc, Math.abs(saldo))}
                                   </div>
                                   <div className={`text-[10px] mt-1 ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
                                     {(() => {
                                       const ing = cashFlow.filter(m => m.account === acc && m.type === 'ingreso').reduce((s, m) => s + (m.amount || 0), 0);
                                       const ret = cashFlow.filter(m => m.account === acc && m.type === 'retiro').reduce((s, m) => s + (m.amount || 0), 0);
-                                      return `+${formatMoney(ing)} / -${formatMoney(ret)}`;
+                                      return `+${formatByAcc(acc, ing)} / -${formatByAcc(acc, ret)}`;
                                     })()}
                                   </div>
                                 </>
@@ -8748,6 +8859,28 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                     </button>
                                   ))}
                                 </div>
+
+                                {isTransferConversion && (
+                                  <div className={`mt-4 rounded-xl p-3 border ${darkMode ? 'border-emerald-500/20 bg-emerald-500/[0.04]' : 'border-emerald-200 bg-emerald-50/60'}`}>
+                                    <div className="flex items-center gap-2 mb-2.5">
+                                      <ArrowLeftRight size={12} className="text-emerald-400"/>
+                                      <p className={`text-xs font-bold uppercase tracking-widest ${darkMode ? 'text-emerald-400/80' : 'text-emerald-600'}`}>
+                                        {isForeignAcc(newCashMovement.account) ? 'Venta de dólares — cotización usada' : 'Compra de dólares — cotización usada'}
+                                      </p>
+                                    </div>
+                                    <Input darkMode={darkMode} label={`Cotización (pesos por 1 ${isForeignAcc(newCashMovement.account) ? newCashMovement.account : newCashMovement.accountTo})`}
+                                      type="number" symbol="$" placeholder="Ej: 1550"
+                                      value={newCashMovement.exchangeRate}
+                                      onChange={e => setNewCashMovement(p => ({ ...p, exchangeRate: e.target.value }))} />
+                                    {transferAmountNum > 0 && (
+                                      <div className={`text-xs mt-2.5 ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                                        {formatByAcc(newCashMovement.account, transferAmountNum)} → {transferRateNum > 0
+                                          ? <span className="font-bold text-emerald-400">{formatByAcc(newCashMovement.accountTo, transferAmountTo)}</span>
+                                          : <span className="italic opacity-60">ingresá la cotización</span>}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                               </>
                             )}
                           </div>
@@ -8761,7 +8894,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
                               <div className="sm:col-span-3"><Input darkMode={darkMode} type="date" label="Fecha" value={newCashMovement.date} onChange={e => setNewCashMovement(p => ({ ...p, date: e.target.value }))} /></div>
                               <div className="sm:col-span-6"><Input darkMode={darkMode} label="Descripción" placeholder={newCashMovement.type === 'ingreso' ? 'Ej: Transferencia cliente, Venta efectivo...' : newCashMovement.type === 'pago' ? 'Ej: Pago proveedor, Servicio...' : newCashMovement.type === 'gasto' ? 'Ej: Publicidad Ads, Envío Extra...' : newCashMovement.type === 'transferencia' ? 'Opcional: motivo de la transferencia...' : 'Ej: Retiro personal...'} value={newCashMovement.description} onChange={e => setNewCashMovement(p => ({ ...p, description: e.target.value }))} /></div>
-                              <div className="sm:col-span-3"><Input darkMode={darkMode} label="Importe" type="number" symbol="$" value={newCashMovement.amount} onChange={e => setNewCashMovement(p => ({ ...p, amount: e.target.value }))} /></div>
+                              <div className="sm:col-span-3"><Input darkMode={darkMode} label={newCashMovement.type === 'transferencia' && isForeignAcc(newCashMovement.account) ? 'Importe (US$)' : 'Importe'} type="number" symbol={newCashMovement.type === 'transferencia' && isForeignAcc(newCashMovement.account) ? 'US$' : '$'} value={newCashMovement.amount} onChange={e => setNewCashMovement(p => ({ ...p, amount: e.target.value }))} /></div>
                             </div>
                           </div>
 
@@ -8939,7 +9072,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             const colorBadge = isAjuste ? (darkMode ? 'border-violet-500/30 text-violet-400' : 'border-violet-200 text-violet-600') : isIngreso ? (darkMode ? 'border-emerald-500/30 text-emerald-400' : 'border-emerald-200 text-emerald-600') : isPago ? (darkMode ? 'border-blue-500/30 text-blue-400' : 'border-blue-200 text-blue-600') : isStock ? (darkMode ? 'border-fuchsia-500/30 text-fuchsia-400' : 'border-fuchsia-200 text-fuchsia-600') : isTransferencia ? (darkMode ? 'border-sky-500/30 text-sky-400' : 'border-sky-200 text-sky-600') : (darkMode ? 'border-amber-500/30 text-amber-400' : 'border-amber-200 text-amber-600');
                             const colorAmt  = isAjuste ? (darkMode ? 'text-violet-400' : 'text-violet-600') : isIngreso ? 'text-emerald-400' : isPago ? (darkMode ? 'text-blue-400' : 'text-blue-600') : isStock ? (darkMode ? 'text-fuchsia-400' : 'text-fuchsia-600') : isTransferencia ? (darkMode ? 'text-sky-400' : 'text-sky-600') : 'text-amber-400';
                             const badgeLabel = isAjuste ? 'Ajuste' : isIngreso ? 'Ingreso' : isPago ? 'Pago' : isStock ? 'Compra Stock' : isTransferencia ? 'Transferencia' : 'Retiro';
-                            const amtLabel   = isAjuste ? formatMoney(m.amount) : isIngreso ? '+' + formatMoney(m.amount) : isTransferencia ? formatMoney(m.amount) : '-' + formatMoney(m.amount);
+                            const isConversion = isTransferencia && !!m.exchangeRate;
+                            const amtLabel   = isAjuste ? formatMoney(m.amount) : isIngreso ? '+' + formatMoney(m.amount) : isTransferencia ? formatByAcc(m.account, m.amount) : '-' + formatMoney(m.amount);
                             return (
                               <div key={`mov-${m.id}`} className={`flex justify-between items-center p-4 md:p-5 transition-colors group ${darkMode ? 'hover:bg-zinc-900/50 bg-[#101010]' : 'hover:bg-zinc-50 bg-white'}`}>
                                 <div className="flex items-center gap-4">
@@ -8951,9 +9085,16 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                       <span className="text-zinc-300 dark:text-zinc-700">•</span>
                                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${colorBadge}`}>{badgeLabel}</span>
                                       {isTransferencia ? (
-                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
-                                          {accountLabel(m.account)} → {accountLabel(m.accountTo)}
-                                        </span>
+                                        <>
+                                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
+                                            {accountLabel(m.account)} → {accountLabel(m.accountTo)}
+                                          </span>
+                                          {isConversion && (
+                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-emerald-500/30 text-emerald-400' : 'border-emerald-200 text-emerald-600'}`}>
+                                              Cotización {formatMoney(m.exchangeRate)}
+                                            </span>
+                                          )}
+                                        </>
                                       ) : m.account && (
                                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
                                           {accountLabel(m.account)}
@@ -8963,7 +9104,13 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-6">
-                                  <span className={`font-bold tracking-tight text-lg ${colorAmt}`}>{amtLabel}</span>
+                                  {isConversion ? (
+                                    <div className="text-right">
+                                      <div className={`font-bold tracking-tight text-base ${colorAmt}`}>{formatByAcc(m.account, m.amount)} → {formatByAcc(m.accountTo, m.amountTo)}</div>
+                                    </div>
+                                  ) : (
+                                    <span className={`font-bold tracking-tight text-lg ${colorAmt}`}>{amtLabel}</span>
+                                  )}
                                   {!isAjuste && <button onClick={() => handleDeleteCashMovement(m.id)} className={`p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}><Trash2 size={18}/></button>}
                                 </div>
                               </div>
