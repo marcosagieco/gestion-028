@@ -719,15 +719,16 @@ const PremiumMetricCard = ({ title, value, subtitle, change, sparkline, sparklin
 };
 
 // --- MODAL: de dónde viene cada gasto (Gastos Totales / Gastos Empresa en Inicio) ---
+// Nota: "Retiro" no forma parte de este desglose a propósito — un retiro es plata que ya era
+// ganancia y el dueño saca de la caja, no un gasto/costo del negocio, así que no cuenta como gasto.
 const GASTO_BREAKDOWN_META = {
   gasto:  { label: 'Gastos',    desc: 'Cargados como Gasto en la sección Gastos', color: '#f43f5e', icon: Wallet },
   pago:   { label: 'Pagos',     desc: 'Movimientos de tipo Pago en el flujo de caja', color: '#3b82f6', icon: CreditCard },
-  retiro: { label: 'Retiros',   desc: 'Movimientos de tipo Retiro en el flujo de caja', color: '#f59e0b', icon: ArrowUpRight },
   ads:    { label: 'Meta Ads',  desc: 'Inversión publicitaria del período', color: '#6366f1', icon: Target },
 };
 const GastosBreakdownModal = ({ darkMode, data, onClose }) => {
   if (!data) return null;
-  const rows = ['gasto', 'pago', 'retiro', 'ads']
+  const rows = ['gasto', 'pago', 'ads']
     .filter(key => data[key] !== undefined)
     .map(key => ({ key, amount: data[key] || 0, ...GASTO_BREAKDOWN_META[key] }));
   const total = rows.reduce((s, r) => s + r.amount, 0);
@@ -2941,18 +2942,17 @@ export default function App() {
           };
 
           const fSales = sales.filter(s => inRange(s.date) && !s.isFalla && !s.isRobo);
-          // "Pago" y "Retiro" del flujo de caja también se cuentan como gasto de la empresa.
+          // "Pago" del flujo de caja también se cuenta como gasto de la empresa.
+          // "Retiro" NO cuenta como gasto: es plata que ya era ganancia y el dueño retira, no un costo del negocio.
           const fPagos = cashFlow.filter(m => m.type === 'pago' && inRange(m.date));
-          const fRetiros = cashFlow.filter(m => m.type === 'retiro' && inRange(m.date));
           const fGastos = expenses.filter(e => inRange(e.date));
-          const fCashExp = [...fPagos, ...fRetiros];
+          const fCashExp = [...fPagos];
           const fExp = [...fGastos, ...fCashExp];
           const fBatches = batches.filter(b => inRange(b.createdAt));
           // Desglose de "de dónde viene" cada gasto, para el detalle en las tarjetas de Inicio.
           const expenseBreakdown = {
             gasto: fGastos.reduce((acc, e) => acc + (e.amount || 0), 0),
             pago: fPagos.reduce((acc, m) => acc + (m.amount || 0), 0),
-            retiro: fRetiros.reduce((acc, m) => acc + (m.amount || 0), 0),
           };
 
           // Stock neutro: no entra por día/mes. Solo suma en Histórico Completo.
@@ -6165,9 +6165,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                     gananciaNeta:      <PremiumMetricCard key="gananciaNeta" darkMode={darkMode} title="Ganancia Neta" value={formatMoney(netProfitWithAds)} subtitle={`${formatPercent(netMarginWithAds)} neto${homeAdSpend > 0 ? ' · incl. ads' : ''}`} change={pct(cur.netProfit, prev?.netProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Ganancia neta descontando el gasto en Meta Ads del período (${formatMoney(homeAdSpend)}). Gastos fijos: ${formatMoney(cur.totalGlobalExpenses)}.` : undefined} />,
                                     gananciaEnvio:     <PremiumMetricCard key="gananciaEnvio" darkMode={darkMode} title="Ganancia Envío" value={formatMoney(cur.totalShippingProfit)} subtitle="Cobrado menos costo" change={pct(cur.totalShippingProfit, prev?.totalShippingProfit)} sparkline={null} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Diferencia entre lo que cobraste al cliente por envío y lo que te costó a vos el envío." />,
                                     gastosTotales:     <PremiumMetricCard key="gastosTotales" darkMode={darkMode} title="Gastos Totales" value={formatMoney(totalExpWithAds)} subtitle={(homeAdSpend > 0 ? `incl. ${formatMoney(homeAdSpend)} en ads` : 'Logística y operativos') + ' · tocá para ver detalle'} change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Gastos fijos (${formatMoney(cur.totalGlobalExpenses)}) + Meta Ads del período (${formatMoney(homeAdSpend)}).` : undefined}
-                                      onClick={() => setGastosBreakdownModal({ title: 'Gastos Totales', gasto: cur.expenseBreakdown.gasto, pago: cur.expenseBreakdown.pago, retiro: cur.expenseBreakdown.retiro, ...(homeAdSpend > 0 ? { ads: homeAdSpend } : {}) })} />,
-                                    gastosEmpresa:     <PremiumMetricCard key="gastosEmpresa" darkMode={darkMode} title="Gastos Empresa" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Gastos anotados · tocá para ver detalle" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gastos operativos, logística y fijos registrados en el sistema para el período, incluyendo pagos y retiros del flujo de caja"
-                                      onClick={() => setGastosBreakdownModal({ title: 'Gastos Empresa', gasto: cur.expenseBreakdown.gasto, pago: cur.expenseBreakdown.pago, retiro: cur.expenseBreakdown.retiro })} />,
+                                      onClick={() => setGastosBreakdownModal({ title: 'Gastos Totales', gasto: cur.expenseBreakdown.gasto, pago: cur.expenseBreakdown.pago, ...(homeAdSpend > 0 ? { ads: homeAdSpend } : {}) })} />,
+                                    gastosEmpresa:     <PremiumMetricCard key="gastosEmpresa" darkMode={darkMode} title="Gastos Empresa" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Gastos anotados · tocá para ver detalle" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gastos operativos, logística y fijos registrados en el sistema para el período, incluyendo pagos del flujo de caja. Los retiros no cuentan como gasto."
+                                      onClick={() => setGastosBreakdownModal({ title: 'Gastos Empresa', gasto: cur.expenseBreakdown.gasto, pago: cur.expenseBreakdown.pago })} />,
                                     gastoMetaAds:      <PremiumMetricCard key="gastoMetaAds" darkMode={darkMode} title="Gasto Meta Ads" value={homeAdSpend > 0 ? formatMoney(homeAdSpend) : '—'} subtitle="Inversión publicitaria" change={null} sparkline={null} tooltip="Gasto total en publicidad de Meta Ads durante el período seleccionado" />,
                                     inversion:         <PremiumMetricCard key="inversion" darkMode={darkMode} title="Inversión" value={formatMoney(cur.totalInvestment)} subtitle="Capital apostado" change={null} sparkline={sparklineData7d.investment} sparklineLabels={L} sparklineFormatter={fMoney} />,
                                     productosFallados: <PremiumMetricCard key="productosFallados" darkMode={darkMode} title="Productos Fallados" value={formatMoney(analysisData.failedValue)} subtitle={`${analysisData.failedUnits} unidad${analysisData.failedUnits !== 1 ? 'es' : ''} perdida${analysisData.failedUnits !== 1 ? 's' : ''}`} change={null} sparkline={null} tooltip="Productos marcados como 'falla' al cargar la venta: se descontaron del stock pero no se cuentan como venta real (no suman a facturación, ganancia ni productos vendidos)." />,
