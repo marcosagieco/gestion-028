@@ -440,6 +440,15 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
     };
 
     if (mode === 'today') { generateDays(1); }
+    else if (mode === 'yesterday') {
+      const d = new Date();
+      d.setDate(d.getDate() - 1);
+      const yStr = d.getFullYear();
+      const mStr = String(d.getMonth() + 1).padStart(2, '0');
+      const dayStr = String(d.getDate()).padStart(2, '0');
+      const key = `${yStr}-${mStr}-${dayStr}`;
+      map[key] = { key, name: `${dayStr}/${mStr}`, fullLabel: `${dayStr} de ${monthNames[d.getMonth()]}`, Ingresos: 0, Unidades: 0, Ganancia: 0, 'Ganancia Envío': 0 };
+    }
     else if (mode === 'week') { generateDays(7); }
     else if (mode === '15days') { generateDays(15); }
     else if (mode === '30days') { generateDays(30); }
@@ -2412,6 +2421,10 @@ export default function App() {
 
   const [customDateRange, setCustomDateRange] = useState({ start: getTodayDate(), end: getTodayDate() });
   const [compareDateRange, setCompareDateRange] = useState({ start: getPreviousDayStr(getTodayDate()), end: getPreviousDayStr(getTodayDate()) });
+  // Qué lado del slider "Comparar Fechas" está a la vista (0 = Base, 1 = Vs). Las secciones de abajo
+  // (Rendimiento del Equipo, Nuevos Clientes, Top Productos) usan este índice para mostrar los datos
+  // del período que se está mirando en vez de quedar siempre pegadas al período Base.
+  const [compareViewIndex, setCompareViewIndex] = useState(0);
 
   const [newBatchName, setNewBatchName] = useState('');
   const [newBatchAccount, setNewBatchAccount] = useState('LEMON');
@@ -2914,6 +2927,7 @@ export default function App() {
     
     return [
       { value: 'today', label: 'Diario (Hoy)' },
+      { value: 'yesterday', label: 'Ayer' },
       { value: 'week', label: 'Últimos 7 días' },
       { value: '15days', label: 'Últimos 15 días' },
       { value: '30days', label: 'Últimos 30 días' },
@@ -3029,17 +3043,30 @@ export default function App() {
               }
           }
 
+          // Fallas y robos del mismo rango (para que cada columna de la comparación tenga su propio dato, no solo la base).
+          const rFailedSales = sales.filter(s => s.isFalla && inRange(s.date));
+          const rFailedUnits = rFailedSales.reduce((a, s) => a + (s.quantity || 0), 0);
+          const rFailedValue = rFailedSales.reduce((a, s) => a + (s.failedValue ?? ((s.costArsAtSale || 0) * (s.quantity || 0))), 0);
+          const rStolenSales = sales.filter(s => s.isRobo && inRange(s.date));
+          const rStolenUnits = rStolenSales.reduce((a, s) => a + (s.quantity || 0), 0);
+          const rStolenValue = rStolenSales.reduce((a, s) => a + (s.stolenValue ?? ((s.costArsAtSale || 0) * (s.quantity || 0))), 0);
+
           return {
               totalRevenue, neutralRevenue, neutralCost, neutralProfit, totalInvestment, totalGlobalExpenses, expenseBreakdown, grossProfit, grossMargin,
               totalShippingProfit, netProfit, netMargin, cashBalance, currentStockValue, currentStockUnits,
               itemsSold, salesCount: new Set(fSales.map(s => s.ticketId || s.id)).size, sourceCounts, typeCounts, dailyAvgItems,
-              daysActive, currentStreak, filteredSales: fSales, pieSourceData, pieTypeData
+              daysActive, currentStreak, filteredSales: fSales, pieSourceData, pieTypeData,
+              failedSales: rFailedSales, failedUnits: rFailedUnits, failedValue: rFailedValue,
+              stolenSales: rStolenSales, stolenUnits: rStolenUnits, stolenValue: rStolenValue,
           };
       };
 
       let bStart, bEnd, isAll = false;
       if (globalMonth === 'today') {
           bStart = todayStart; bEnd = new Date(todayStart); bEnd.setHours(23,59,59,999);
+      } else if (globalMonth === 'yesterday') {
+          bStart = new Date(todayStart); bStart.setDate(bStart.getDate() - 1);
+          bEnd = new Date(bStart); bEnd.setHours(23,59,59,999);
       } else if (globalMonth === 'week') {
           bStart = new Date(todayStart); bStart.setDate(bStart.getDate() - 6);
           bEnd = new Date(todayStart); bEnd.setHours(23,59,59,999);
@@ -3066,13 +3093,14 @@ export default function App() {
 
       let prevBaseStats = null;
       let compareStats = null;
+      let compareRangeStart = null, compareRangeEnd = null;
 
       if (globalMonth === 'compare') {
            const [csy, csm, csd] = compareDateRange.start.split('-').map(Number);
            const [cey, cem, ced] = compareDateRange.end.split('-').map(Number);
-           const cStart = new Date(csy, csm - 1, csd, 0, 0, 0);
-           const cEnd = new Date(cey, cem - 1, ced, 23, 59, 59, 999);
-           compareStats = calculateForRange(cStart, cEnd, false);
+           compareRangeStart = new Date(csy, csm - 1, csd, 0, 0, 0);
+           compareRangeEnd = new Date(cey, cem - 1, ced, 23, 59, 59, 999);
+           compareStats = calculateForRange(compareRangeStart, compareRangeEnd, false);
       } else if (globalMonth !== 'all' && globalMonth !== 'custom') {
            const diffTime = bEnd.getTime() - bStart.getTime();
            const pEnd = new Date(bStart.getTime() - 1);
@@ -3093,12 +3121,25 @@ export default function App() {
       const stolenUnits = stolenSales.reduce((a, s) => a + (s.quantity || 0), 0);
       const stolenValue = stolenSales.reduce((a, s) => a + (s.stolenValue ?? ((s.costArsAtSale || 0) * (s.quantity || 0))), 0);
 
-      return { baseStats, compareStats, prevBaseStats, rangeStart: bStart, rangeEnd: bEnd, failedSales, failedUnits, failedValue, stolenSales, stolenUnits, stolenValue };
+      return { baseStats, compareStats, prevBaseStats, rangeStart: bStart, rangeEnd: bEnd, compareRangeStart, compareRangeEnd, failedSales, failedUnits, failedValue, stolenSales, stolenUnits, stolenValue };
   }, [sales, batches, expenses, cashFlow, neutralStockEntries, globalMonth, customDateRange, compareDateRange]);
+
+  // Reset del lado visto del slider de comparación al salir del modo "Comparar Fechas", para no
+  // arrancar la próxima comparación mostrando el lado "Vs" por accidente.
+  useEffect(() => {
+      if (globalMonth !== 'compare') setCompareViewIndex(0);
+  }, [globalMonth]);
+
+  // Sales del período que se está viendo actualmente: en modo "compare" sigue el lado del slider
+  // (0 = Base, 1 = Vs); si no, el período base normal. Alimenta Equipo, Nuevos Clientes y Top
+  // Productos para que esos bloques "se muevan" junto con el slider en vez de quedar fijos en Base.
+  const activeViewSales = (globalMonth === 'compare' && compareViewIndex === 1)
+      ? analysisData.compareStats.filteredSales
+      : analysisData.baseStats.filteredSales;
 
   const teamStats = useMemo(() => {
       const stats = {};
-      const fs = analysisData.baseStats.filteredSales;
+      const fs = activeViewSales;
       fs.forEach(s => {
           const seller = normalizeSellerName(s.seller);
           if (!stats[seller]) stats[seller] = { tickets: new Set(), revenue: 0, cost: 0, items: 0 };
@@ -3119,18 +3160,18 @@ export default function App() {
           share:       totalRevenue > 0 ? (d.revenue / totalRevenue) * 100 : 0,
           commission:  name === 'Buono' ? d.revenue * 0.03 : name === 'Delfina' ? d.revenue * 0.06 : (name === 'Jeronimo' || name === 'Bautista') ? d.revenue * 0.05 : null,
       })).sort((a, b) => b.revenue - a.revenue);
-  }, [analysisData.baseStats.filteredSales]);
+  }, [activeViewSales]);
 
   const newClientsList = useMemo(() => {
-      return analysisData.baseStats.filteredSales
+      return activeViewSales
           .filter(s => isNewClientStatus(s.isNewClient))
           .map(s => ({...s, seller: normalizeSellerName(s.seller)}))
           .sort((a,b) => new Date(b.date) - new Date(a.date));
-  }, [analysisData.baseStats.filteredSales]);
+  }, [activeViewSales]);
 
   const topProducts = useMemo(() => {
     const map = {};
-    analysisData.baseStats.filteredSales.forEach(s => {
+    activeViewSales.forEach(s => {
       const name = normalizeProductName(s.productName);
       if (!name) return;
       if (!map[name]) map[name] = { name, units: 0, revenue: 0, cost: 0 };
@@ -3139,11 +3180,11 @@ export default function App() {
       map[name].cost    += (s.costArsAtSale || 0) * (s.quantity || 0);
     });
     return Object.values(map).map(p => ({ ...p, profit: p.revenue - p.cost })).sort((a, b) => b.units - a.units);
-  }, [analysisData.baseStats.filteredSales]);
+  }, [activeViewSales]);
 
   const topProductsBySeña = useMemo(() => {
     const map = {};
-    analysisData.baseStats.filteredSales.forEach(s => {
+    activeViewSales.forEach(s => {
       const raw = String(s.batchName || '').trim();
       const prefix = (raw.includes('|') ? raw.split('|')[0] : raw).toUpperCase();
       const name = ['THC', 'NIC', 'APPLE', 'PERFUMES'].find(cat => prefix.includes(cat)) || 'Otros';
@@ -3153,7 +3194,7 @@ export default function App() {
       map[name].cost    += (s.costArsAtSale || 0) * (s.quantity || 0);
     });
     return Object.values(map).map(p => ({ ...p, profit: p.revenue - p.cost })).sort((a, b) => b.units - a.units);
-  }, [analysisData.baseStats.filteredSales]);
+  }, [activeViewSales]);
 
   const topProductsByProfit = useMemo(() => [...topProducts].sort((a, b) => b.profit - a.profit), [topProducts]);
   const topProductsByProfitBySeña = useMemo(() => [...topProductsBySeña].sort((a, b) => b.profit - a.profit), [topProductsBySeña]);
@@ -5925,8 +5966,112 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     </div>
   );
 
+  // Construye el set completo de tarjetas de "Inicio" (las mismas de siempre) para un
+  // rango de estadísticas dado. Se usa tanto para la vista normal como para cada columna
+  // de la comparación mano a mano, así ninguna de las dos muestra datos recortados.
+  const buildHomeCardNodes = (cur, comparisonStats, { rangeStart, rangeEnd, sparklines = null } = {}) => {
+      const prev = comparisonStats;
+      const pct = (c, p) => (p !== null && p !== undefined && p !== 0) ? ((c - p) / Math.abs(p)) * 100 : null;
+      const curFilteredSales = cur.filteredSales || [];
+      const newClientsListFor = curFilteredSales
+          .filter(s => isNewClientStatus(s.isNewClient))
+          .map(s => ({ ...s, seller: normalizeSellerName(s.seller) }));
+      const newClientsOrganic = newClientsListFor.filter(s => s.isNewClient === 'Nuevo - Organico' || s.isNewClient === true).length;
+      const newClientsAds = newClientsListFor.filter(s => s.isNewClient === 'Nuevo - Publicidad').length;
+      const fixedAdsList = curFilteredSales.filter(s => s.isNewClient === 'Clientes - Publicidad');
+      const fixedAdsCount = fixedAdsList.length;
+      const fixedAdsRevenue = fixedAdsList.reduce((a, s) => a + (s.totalSaleRaw || 0), 0);
+      const revendedoresList = curFilteredSales.filter(s => s.isNewClient === 'Revendedor');
+      const revendedoresCount = revendedoresList.length;
+      const revendedoresRevenue = revendedoresList.reduce((a, s) => a + (s.totalSaleRaw || 0), 0);
+      const byMP = mp => curFilteredSales.filter(s => s.medioPago === mp).reduce((a, s) => a + (s.totalSaleRaw || 0), 0);
+      const ingAlias1 = byMP('alias1');
+      const ingAlias2 = byMP('alias2');
+      const ingAlias3 = byMP('alias3');
+      const ingEfectivo = byMP('efectivo');
+      const avgTicket = cur.itemsSold > 0 ? cur.totalRevenue / cur.itemsSold : 0;
+      const prevAvgTicket = prev && prev.itemsSold > 0 ? prev.totalRevenue / prev.itemsSold : null;
+      const L = sparklines?.labels;
+      const fMoney = v => formatMoney(v);
+      const fUds = v => `${v} uds`;
+      const fClientes = v => `${v} cliente${v !== 1 ? 's' : ''}`;
+      const homeAdSpend = (rangeStart && rangeEnd) ? homeMetaDailyData.reduce((sum, day) => {
+          if (!day.date_start) return sum;
+          const [y, m, d] = day.date_start.split('-').map(Number);
+          const dayDate = new Date(y, m - 1, d, 12, 0, 0);
+          return dayDate >= rangeStart && dayDate <= rangeEnd
+              ? sum + parseFloat(day.spend || 0)
+              : sum;
+      }, 0) : 0;
+      const totalExpWithAds = cur.totalGlobalExpenses + homeAdSpend;
+      const netProfitWithAds = cur.netProfit - homeAdSpend;
+      const netMarginWithAds = cur.totalRevenue > 0 ? (netProfitWithAds / cur.totalRevenue) * 100 : 0;
+      return {
+          facturacion:       <PremiumMetricCard key="facturacion" darkMode={darkMode} title="Facturación" value={formatMoney(cur.totalRevenue)} subtitle="Bruto facturado" change={pct(cur.totalRevenue, prev?.totalRevenue)} sparkline={sparklines?.revenue} sparklineLabels={L} sparklineFormatter={fMoney} />,
+          gananciaBruta:     <PremiumMetricCard key="gananciaBruta" darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(cur.grossProfit)} subtitle={`${formatPercent(cur.grossMargin)} margen`} change={pct(cur.grossProfit, prev?.grossProfit)} sparkline={sparklines?.profit} sparklineLabels={L} sparklineFormatter={fMoney} />,
+          gananciaNeta:      <PremiumMetricCard key="gananciaNeta" darkMode={darkMode} title="Ganancia Neta" value={formatMoney(netProfitWithAds)} subtitle={`${formatPercent(netMarginWithAds)} neto${homeAdSpend > 0 ? ' · incl. ads' : ''}`} change={pct(cur.netProfit, prev?.netProfit)} sparkline={sparklines?.profit} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Ganancia neta descontando el gasto en Meta Ads del período (${formatMoney(homeAdSpend)}). Gastos fijos: ${formatMoney(cur.totalGlobalExpenses)}.` : undefined} />,
+          gananciaEnvio:     <PremiumMetricCard key="gananciaEnvio" darkMode={darkMode} title="Ganancia Envío" value={formatMoney(cur.totalShippingProfit)} subtitle="Cobrado menos costo" change={pct(cur.totalShippingProfit, prev?.totalShippingProfit)} sparkline={null} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Diferencia entre lo que cobraste al cliente por envío y lo que te costó a vos el envío." />,
+          gastosTotales:     <PremiumMetricCard key="gastosTotales" darkMode={darkMode} title="Gastos Totales" value={formatMoney(totalExpWithAds)} subtitle={(homeAdSpend > 0 ? `incl. ${formatMoney(homeAdSpend)} en ads` : 'Logística y operativos') + ' · tocá para ver detalle'} change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklines?.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Gastos fijos (${formatMoney(cur.totalGlobalExpenses)}) + Meta Ads del período (${formatMoney(homeAdSpend)}).` : undefined}
+            onClick={() => setGastosBreakdownModal({ title: 'Gastos Totales', gasto: cur.expenseBreakdown.gasto, pago: cur.expenseBreakdown.pago, ...(homeAdSpend > 0 ? { ads: homeAdSpend } : {}) })} />,
+          gastosEmpresa:     <PremiumMetricCard key="gastosEmpresa" darkMode={darkMode} title="Gastos Empresa" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Gastos anotados · tocá para ver detalle" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklines?.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gastos operativos, logística y fijos registrados en el sistema para el período, incluyendo pagos del flujo de caja. Los retiros no cuentan como gasto."
+            onClick={() => setGastosBreakdownModal({ title: 'Gastos Empresa', gasto: cur.expenseBreakdown.gasto, pago: cur.expenseBreakdown.pago })} />,
+          gastoMetaAds:      <PremiumMetricCard key="gastoMetaAds" darkMode={darkMode} title="Gasto Meta Ads" value={homeAdSpend > 0 ? formatMoney(homeAdSpend) : '—'} subtitle="Inversión publicitaria" change={null} sparkline={null} tooltip="Gasto total en publicidad de Meta Ads durante el período seleccionado" />,
+          inversion:         <PremiumMetricCard key="inversion" darkMode={darkMode} title="Inversión" value={formatMoney(cur.totalInvestment)} subtitle="Capital apostado" change={null} sparkline={sparklines?.investment} sparklineLabels={L} sparklineFormatter={fMoney} />,
+          productosFallados: <PremiumMetricCard key="productosFallados" darkMode={darkMode} title="Productos Fallados" value={formatMoney(cur.failedValue ?? 0)} subtitle={`${cur.failedUnits ?? 0} unidad${(cur.failedUnits ?? 0) !== 1 ? 'es' : ''} perdida${(cur.failedUnits ?? 0) !== 1 ? 's' : ''}`} change={null} sparkline={null} tooltip="Productos marcados como 'falla' al cargar la venta: se descontaron del stock pero no se cuentan como venta real (no suman a facturación, ganancia ni productos vendidos)." />,
+          productosRobados:  <PremiumMetricCard key="productosRobados" darkMode={darkMode} title="Productos Robados" value={formatMoney(cur.stolenValue ?? 0)} subtitle={`${cur.stolenUnits ?? 0} unidad${(cur.stolenUnits ?? 0) !== 1 ? 'es' : ''} robada${(cur.stolenUnits ?? 0) !== 1 ? 's' : ''}`} change={null} sparkline={null} tooltip="Productos marcados como 'robo' al cargar la venta: se descontaron del stock pero no se cuentan como venta real (no suman a facturación, ganancia ni productos vendidos)." />,
+          promedioVentas:    <PremiumMetricCard key="promedioVentas" darkMode={darkMode} title="Promedio de Ventas" value={cur.dailyAvgItems.toFixed(1)} subtitle="uds por día" change={pct(cur.dailyAvgItems, prev?.dailyAvgItems)} sparkline={sparklines?.units} sparklineLabels={L} sparklineFormatter={fUds}
+                              extra={cur.currentStreak > 0 && (
+                                  <div className="flex items-center gap-1.5 mt-1.5">
+                                      <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md" style={{background:'rgba(168,85,247,0.15)', border:'1px solid rgba(168,85,247,0.25)'}}>
+                                          <Flame size={11} style={{color:'#a855f7'}}/>
+                                          <span className="text-[11px] font-bold" style={{color:'#a855f7'}}>{cur.currentStreak}</span>
+                                      </div>
+                                  </div>
+                              )}
+                          />,
+          productosVendidos: <PremiumMetricCard key="productosVendidos" darkMode={darkMode} title="Productos Vendidos" value={cur.itemsSold} subtitle={`${cur.salesCount} pedidos`} change={pct(cur.itemsSold, prev?.itemsSold)} sparkline={sparklines?.units} sparklineLabels={L} sparklineFormatter={fUds} />,
+          ticketPromedio:    <PremiumMetricCard key="ticketPromedio" darkMode={darkMode} title="Ticket Promedio" value={formatMoney(avgTicket)} subtitle="por producto" change={pct(avgTicket, prevAvgTicket)} sparkline={sparklines?.avgTicket} sparklineLabels={L} sparklineFormatter={fMoney} />,
+          clientesNuevos:    <PremiumMetricCard key="clientesNuevos" darkMode={darkMode} title="Clientes Nuevos" value={newClientsListFor.length} subtitle="Total del período" change={null} sparkline={sparklines?.clients} sparklineLabels={L} sparklineFormatter={fClientes} />,
+          clientesOrganicos: <PremiumMetricCard key="clientesOrganicos" darkMode={darkMode} title="Clientes Orgánicos" value={newClientsOrganic} subtitle="Sin inversión en ads" change={null} sparkline={sparklines?.organicClients} sparklineLabels={L} sparklineFormatter={fClientes} />,
+          clientesPorAds:    <PremiumMetricCard key="clientesPorAds" darkMode={darkMode} title="Clientes por Ads" value={newClientsAds} subtitle="Captados por publicidad" change={null} sparkline={sparklines?.adsClients} sparklineLabels={L} sparklineFormatter={fClientes} />,
+          clientesFijosAds:  <PremiumMetricCard key="clientesFijosAds" darkMode={darkMode} title="Clientes Fijos Ads" value={fixedAdsCount} subtitle={fixedAdsCount > 0 ? formatMoney(fixedAdsRevenue) : 'Sin ventas'} change={null} sparkline={sparklines?.fixedAdsClients} sparklineLabels={L} sparklineFormatter={fClientes} tooltip="Clientes que originalmente llegaron por publicidad y ya son clientes fijos/recurrentes" />,
+          ventasRevendedor:  <PremiumMetricCard key="ventasRevendedor" darkMode={darkMode} title="Ventas Revendedor" value={revendedoresCount} subtitle={revendedoresCount > 0 ? formatMoney(revendedoresRevenue) : 'Sin ventas'} change={null} sparkline={sparklines?.resellerClients} sparklineLabels={L} sparklineFormatter={fClientes} />,
+          alias1:            <PremiumMetricCard key="alias1" darkMode={darkMode} title="Alias 1" value={formatMoney(ingAlias1)} subtitle="Ingresos" change={null} sparkline={null} color="blue" />,
+          alias2:            <PremiumMetricCard key="alias2" darkMode={darkMode} title="Alias 2" value={formatMoney(ingAlias2)} subtitle="Ingresos" change={null} sparkline={null} color="violet" />,
+          alias3:            <PremiumMetricCard key="alias3" darkMode={darkMode} title="Alias 3" value={formatMoney(ingAlias3)} subtitle="Ingresos" change={null} sparkline={null} color="amber" />,
+          efectivo:          <PremiumMetricCard key="efectivo" darkMode={darkMode} title="Efectivo" value={formatMoney(ingEfectivo)} subtitle="Ingresos" change={null} sparkline={null} color="emerald" />,
+          inversionActiva:   <PremiumMetricCard key="inversionActiva" darkMode={darkMode} title="Inversión Activa" value={formatMoney(cur.currentStockValue)} subtitle={`Stock a costo actual · ${cur.currentStockUnits.toLocaleString('es-AR')} uds`} change={null} sparkline={null} />,
+      };
+  };
+
+  const renderHomeCardSectors = (cur, comparisonStats, opts) => {
+      const cardNodes = buildHomeCardNodes(cur, comparisonStats, opts);
+      return (
+          <div className="space-y-5">
+              {/* Sector 1: Plata */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+                  {homeCardOrder.sector1.map(id => cardNodes[id]).filter(Boolean)}
+              </div>
+
+              <div className={`h-px w-full ${darkMode ? 'bg-white/[0.07]' : 'bg-zinc-200'}`} />
+
+              {/* Sector 2: Clientes y ventas */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+                  {homeCardOrder.sector2.map(id => cardNodes[id]).filter(Boolean)}
+              </div>
+
+              <div className={`h-px w-full ${darkMode ? 'bg-white/[0.07]' : 'bg-zinc-200'}`} />
+
+              {/* Sector 3: Cuentas */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+                  {homeCardOrder.sector3.map(id => cardNodes[id]).filter(Boolean)}
+              </div>
+          </div>
+      );
+  };
+
   const TABS = [
-      { id: 'home', icon: Activity, label: 'Inicio' }, 
+      { id: 'home', icon: Activity, label: 'Inicio' },
       { id: 'sales', icon: ShoppingCart, label: 'Ventas' }, 
       { id: 'wholesale', icon: UserCircle, label: 'Mayorista' }, 
       { id: 'batches', icon: FolderOpen, label: 'Lotes' }, 
@@ -6106,46 +6251,50 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
                     {/* COMPARE / NORMAL */}
                     {globalMonth === 'compare' ? (
-                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-                            {/* COLUMNA BASE */}
-                            <div className="space-y-5 border-b xl:border-b-0 xl:border-r border-[#1F1F1F]/60 pb-8 xl:pb-0 xl:pr-8">
-                                <h3 className="text-base font-black flex items-center gap-2" style={{color:'#6366f1'}}>
-                                    <Calendar size={16}/> Período Base
-                                </h3>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <PremiumMetricCard darkMode={darkMode} title="Ingresos" value={formatCompact(analysisData.baseStats.totalRevenue)} subtitle={formatMoney(analysisData.baseStats.totalRevenue)} change={null} />
-                                    <PremiumMetricCard darkMode={darkMode} title="Ganancia Bruta" value={formatCompact(analysisData.baseStats.grossProfit)} subtitle={`${formatPercent(analysisData.baseStats.grossMargin)} margen`} change={null} />
-                                    <PremiumMetricCard darkMode={darkMode} title="Gastos" value={formatCompact(analysisData.baseStats.totalGlobalExpenses)} subtitle="Fijos y logística" change={null} />
-                                    <PremiumMetricCard darkMode={darkMode} title="Beneficio Neto" value={formatCompact(analysisData.baseStats.netProfit)} subtitle={`${formatPercent(analysisData.baseStats.netMargin)} neto`} change={null} />
-                                </div>
-                                <div className={`rounded-2xl border p-4 ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
-                                    <div className="flex items-center gap-2 mb-3">
-                                        <TrendingUp size={13} className="text-zinc-500"/>
-                                        <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Ingresos (Base)</span>
+                        <MetricSlider
+                          darkMode={darkMode}
+                          ariaLabel="períodos a comparar"
+                          initialIndex={compareViewIndex}
+                          onIndexChange={setCompareViewIndex}
+                          pages={[
+                            { id: 'base', content: (
+                                <div className="space-y-5 pr-1">
+                                    <div className="flex items-center justify-between flex-wrap gap-2">
+                                        <h3 className="text-base font-black flex items-center gap-2" style={{color:'#6366f1'}}>
+                                            <Calendar size={16}/> Período Base
+                                        </h3>
+                                        <span className="text-[11px] font-semibold text-zinc-500">{customDateRange.start} — {customDateRange.end}</span>
                                     </div>
-                                    <SalesAreaChart sales={analysisData.baseStats.filteredSales} mode="custom" customRange={customDateRange} darkMode={darkMode} isCompareMode={false} />
-                                </div>
-                            </div>
-                            {/* COLUMNA VS */}
-                            <div className="space-y-5">
-                                <h3 className="text-base font-black text-rose-500 flex items-center gap-2">
-                                    <ArrowUpDown size={16}/> Período a Comparar
-                                </h3>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <PremiumMetricCard darkMode={darkMode} title="Ingresos" value={formatCompact(analysisData.compareStats?.totalRevenue || 0)} subtitle={formatMoney(analysisData.compareStats?.totalRevenue || 0)} change={analysisData.baseStats.totalRevenue > 0 ? ((analysisData.compareStats?.totalRevenue||0) - analysisData.baseStats.totalRevenue) / Math.abs(analysisData.baseStats.totalRevenue) * 100 : null} />
-                                    <PremiumMetricCard darkMode={darkMode} title="Ganancia Bruta" value={formatCompact(analysisData.compareStats?.grossProfit || 0)} subtitle={`${formatPercent(analysisData.compareStats?.grossMargin || 0)} margen`} change={analysisData.baseStats.grossProfit !== 0 ? ((analysisData.compareStats?.grossProfit||0) - analysisData.baseStats.grossProfit) / Math.abs(analysisData.baseStats.grossProfit) * 100 : null} />
-                                    <PremiumMetricCard darkMode={darkMode} title="Gastos" value={formatCompact(analysisData.compareStats?.totalGlobalExpenses || 0)} subtitle="Fijos y logística" change={null} />
-                                    <PremiumMetricCard darkMode={darkMode} title="Beneficio Neto" value={formatCompact(analysisData.compareStats?.netProfit || 0)} subtitle={`${formatPercent(analysisData.compareStats?.netMargin || 0)} neto`} change={analysisData.baseStats.netProfit !== 0 ? ((analysisData.compareStats?.netProfit||0) - analysisData.baseStats.netProfit) / Math.abs(analysisData.baseStats.netProfit) * 100 : null} />
-                                </div>
-                                <div className={`rounded-2xl border p-4 ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
-                                    <div className="flex items-center gap-2 mb-3">
-                                        <TrendingUp size={13} className="text-rose-500"/>
-                                        <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Ingresos (Vs)</span>
+                                    {renderHomeCardSectors(analysisData.baseStats, analysisData.compareStats, { rangeStart: analysisData.rangeStart, rangeEnd: analysisData.rangeEnd })}
+                                    <div className={`rounded-2xl border p-5 ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <TrendingUp size={13} className="text-zinc-500"/>
+                                            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Ingresos (Base)</span>
+                                        </div>
+                                        <SalesAreaChart sales={analysisData.baseStats.filteredSales} mode="custom" customRange={customDateRange} darkMode={darkMode} isCompareMode={false} />
                                     </div>
-                                    <SalesAreaChart sales={analysisData.compareStats?.filteredSales || []} mode="custom" customRange={compareDateRange} darkMode={darkMode} isCompareMode={true} />
                                 </div>
-                            </div>
-                        </div>
+                            ) },
+                            { id: 'vs', content: (
+                                <div className="space-y-5 pl-1">
+                                    <div className="flex items-center justify-between flex-wrap gap-2">
+                                        <h3 className="text-base font-black text-rose-500 flex items-center gap-2">
+                                            <ArrowUpDown size={16}/> Período a Comparar
+                                        </h3>
+                                        <span className="text-[11px] font-semibold text-zinc-500">{compareDateRange.start} — {compareDateRange.end}</span>
+                                    </div>
+                                    {renderHomeCardSectors(analysisData.compareStats, analysisData.baseStats, { rangeStart: analysisData.compareRangeStart, rangeEnd: analysisData.compareRangeEnd })}
+                                    <div className={`rounded-2xl border p-5 ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <TrendingUp size={13} className="text-rose-500"/>
+                                            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Ingresos (Vs)</span>
+                                        </div>
+                                        <SalesAreaChart sales={analysisData.compareStats.filteredSales} mode="custom" customRange={compareDateRange} darkMode={darkMode} isCompareMode={true} />
+                                    </div>
+                                </div>
+                            ) },
+                          ]}
+                        />
                     ) : (
                         /* VISTA NORMAL */
                         <>
@@ -6154,99 +6303,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                               darkMode={darkMode}
                               ariaLabel="vistas de inicio"
                               pages={[
-                                { id: 'metrics', content: (() => {
-                                const prev = analysisData.prevBaseStats;
-                                const cur = analysisData.baseStats;
-                                const pct = (c, p) => (p && p !== 0) ? ((c - p) / Math.abs(p)) * 100 : null;
-                                const newClientsOrganic = newClientsList.filter(s => s.isNewClient === 'Nuevo - Organico' || s.isNewClient === true).length;
-                                const newClientsAds = newClientsList.filter(s => s.isNewClient === 'Nuevo - Publicidad').length;
-                                const fixedAdsList = analysisData.baseStats.filteredSales.filter(s => s.isNewClient === 'Clientes - Publicidad');
-                                const fixedAdsCount = fixedAdsList.length;
-                                const fixedAdsRevenue = fixedAdsList.reduce((a, s) => a + (s.totalSaleRaw || 0), 0);
-                                const revendedoresList = analysisData.baseStats.filteredSales.filter(s => s.isNewClient === 'Revendedor');
-                                const revendedoresCount = revendedoresList.length;
-                                const revendedoresRevenue = revendedoresList.reduce((a, s) => a + (s.totalSaleRaw || 0), 0);
-                                const byMP = mp => analysisData.baseStats.filteredSales.filter(s => s.medioPago === mp).reduce((a, s) => a + (s.totalSaleRaw || 0), 0);
-                                const ingAlias1 = byMP('alias1');
-                                const ingAlias2 = byMP('alias2');
-                                const ingAlias3 = byMP('alias3');
-                                const ingEfectivo = byMP('efectivo');
-                                const avgTicket = cur.itemsSold > 0 ? cur.totalRevenue / cur.itemsSold : 0;
-                                const prevAvgTicket = prev && prev.itemsSold > 0 ? prev.totalRevenue / prev.itemsSold : null;
-                                const L = sparklineData7d.labels;
-                                const fMoney = v => formatMoney(v);
-                                const fUds = v => `${v} uds`;
-                                const fClientes = v => `${v} cliente${v !== 1 ? 's' : ''}`;
-                                const homeAdSpend = homeMetaDailyData.reduce((sum, day) => {
-                                    if (!day.date_start) return sum;
-                                    const [y, m, d] = day.date_start.split('-').map(Number);
-                                    const dayDate = new Date(y, m - 1, d, 12, 0, 0);
-                                    return dayDate >= analysisData.rangeStart && dayDate <= analysisData.rangeEnd
-                                        ? sum + parseFloat(day.spend || 0)
-                                        : sum;
-                                }, 0);
-                                const totalExpWithAds = cur.totalGlobalExpenses + homeAdSpend;
-                                const netProfitWithAds = cur.netProfit - homeAdSpend;
-                                const netMarginWithAds = cur.totalRevenue > 0 ? (netProfitWithAds / cur.totalRevenue) * 100 : 0;
-                                const cardNodes = {
-                                    facturacion:       <PremiumMetricCard key="facturacion" darkMode={darkMode} title="Facturación" value={formatMoney(cur.totalRevenue)} subtitle="Bruto facturado" change={pct(cur.totalRevenue, prev?.totalRevenue)} sparkline={sparklineData7d.revenue} sparklineLabels={L} sparklineFormatter={fMoney} />,
-                                    gananciaBruta:     <PremiumMetricCard key="gananciaBruta" darkMode={darkMode} title="Ganancia Bruta" value={formatMoney(cur.grossProfit)} subtitle={`${formatPercent(cur.grossMargin)} margen`} change={pct(cur.grossProfit, prev?.grossProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} />,
-                                    gananciaNeta:      <PremiumMetricCard key="gananciaNeta" darkMode={darkMode} title="Ganancia Neta" value={formatMoney(netProfitWithAds)} subtitle={`${formatPercent(netMarginWithAds)} neto${homeAdSpend > 0 ? ' · incl. ads' : ''}`} change={pct(cur.netProfit, prev?.netProfit)} sparkline={sparklineData7d.profit} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Ganancia neta descontando el gasto en Meta Ads del período (${formatMoney(homeAdSpend)}). Gastos fijos: ${formatMoney(cur.totalGlobalExpenses)}.` : undefined} />,
-                                    gananciaEnvio:     <PremiumMetricCard key="gananciaEnvio" darkMode={darkMode} title="Ganancia Envío" value={formatMoney(cur.totalShippingProfit)} subtitle="Cobrado menos costo" change={pct(cur.totalShippingProfit, prev?.totalShippingProfit)} sparkline={null} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Diferencia entre lo que cobraste al cliente por envío y lo que te costó a vos el envío." />,
-                                    gastosTotales:     <PremiumMetricCard key="gastosTotales" darkMode={darkMode} title="Gastos Totales" value={formatMoney(totalExpWithAds)} subtitle={(homeAdSpend > 0 ? `incl. ${formatMoney(homeAdSpend)} en ads` : 'Logística y operativos') + ' · tocá para ver detalle'} change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Gastos fijos (${formatMoney(cur.totalGlobalExpenses)}) + Meta Ads del período (${formatMoney(homeAdSpend)}).` : undefined}
-                                      onClick={() => setGastosBreakdownModal({ title: 'Gastos Totales', gasto: cur.expenseBreakdown.gasto, pago: cur.expenseBreakdown.pago, ...(homeAdSpend > 0 ? { ads: homeAdSpend } : {}) })} />,
-                                    gastosEmpresa:     <PremiumMetricCard key="gastosEmpresa" darkMode={darkMode} title="Gastos Empresa" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Gastos anotados · tocá para ver detalle" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklineData7d.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gastos operativos, logística y fijos registrados en el sistema para el período, incluyendo pagos del flujo de caja. Los retiros no cuentan como gasto."
-                                      onClick={() => setGastosBreakdownModal({ title: 'Gastos Empresa', gasto: cur.expenseBreakdown.gasto, pago: cur.expenseBreakdown.pago })} />,
-                                    gastoMetaAds:      <PremiumMetricCard key="gastoMetaAds" darkMode={darkMode} title="Gasto Meta Ads" value={homeAdSpend > 0 ? formatMoney(homeAdSpend) : '—'} subtitle="Inversión publicitaria" change={null} sparkline={null} tooltip="Gasto total en publicidad de Meta Ads durante el período seleccionado" />,
-                                    inversion:         <PremiumMetricCard key="inversion" darkMode={darkMode} title="Inversión" value={formatMoney(cur.totalInvestment)} subtitle="Capital apostado" change={null} sparkline={sparklineData7d.investment} sparklineLabels={L} sparklineFormatter={fMoney} />,
-                                    productosFallados: <PremiumMetricCard key="productosFallados" darkMode={darkMode} title="Productos Fallados" value={formatMoney(analysisData.failedValue)} subtitle={`${analysisData.failedUnits} unidad${analysisData.failedUnits !== 1 ? 'es' : ''} perdida${analysisData.failedUnits !== 1 ? 's' : ''}`} change={null} sparkline={null} tooltip="Productos marcados como 'falla' al cargar la venta: se descontaron del stock pero no se cuentan como venta real (no suman a facturación, ganancia ni productos vendidos)." />,
-                                    productosRobados: <PremiumMetricCard key="productosRobados" darkMode={darkMode} title="Productos Robados" value={formatMoney(analysisData.stolenValue)} subtitle={`${analysisData.stolenUnits} unidad${analysisData.stolenUnits !== 1 ? 'es' : ''} robada${analysisData.stolenUnits !== 1 ? 's' : ''}`} change={null} sparkline={null} tooltip="Productos marcados como 'robo' al cargar la venta: se descontaron del stock pero no se cuentan como venta real (no suman a facturación, ganancia ni productos vendidos)." />,
-                                    promedioVentas:    <PremiumMetricCard key="promedioVentas" darkMode={darkMode} title="Promedio de Ventas" value={cur.dailyAvgItems.toFixed(1)} subtitle="uds por día" change={pct(cur.dailyAvgItems, prev?.dailyAvgItems)} sparkline={sparklineData7d.units} sparklineLabels={L} sparklineFormatter={fUds}
-                                                        extra={cur.currentStreak > 0 && (
-                                                            <div className="flex items-center gap-1.5 mt-1.5">
-                                                                <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md" style={{background:'rgba(168,85,247,0.15)', border:'1px solid rgba(168,85,247,0.25)'}}>
-                                                                    <Flame size={11} style={{color:'#a855f7'}}/>
-                                                                    <span className="text-[11px] font-bold" style={{color:'#a855f7'}}>{cur.currentStreak}</span>
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                    />,
-                                    productosVendidos: <PremiumMetricCard key="productosVendidos" darkMode={darkMode} title="Productos Vendidos" value={cur.itemsSold} subtitle={`${cur.salesCount} pedidos`} change={pct(cur.itemsSold, prev?.itemsSold)} sparkline={sparklineData7d.units} sparklineLabels={L} sparklineFormatter={fUds} />,
-                                    ticketPromedio:    <PremiumMetricCard key="ticketPromedio" darkMode={darkMode} title="Ticket Promedio" value={formatMoney(avgTicket)} subtitle="por producto" change={pct(avgTicket, prevAvgTicket)} sparkline={sparklineData7d.avgTicket} sparklineLabels={L} sparklineFormatter={fMoney} />,
-                                    clientesNuevos:    <PremiumMetricCard key="clientesNuevos" darkMode={darkMode} title="Clientes Nuevos" value={newClientsList.length} subtitle="Total del período" change={null} sparkline={sparklineData7d.clients} sparklineLabels={L} sparklineFormatter={fClientes} />,
-                                    clientesOrganicos: <PremiumMetricCard key="clientesOrganicos" darkMode={darkMode} title="Clientes Orgánicos" value={newClientsOrganic} subtitle="Sin inversión en ads" change={null} sparkline={sparklineData7d.organicClients} sparklineLabels={L} sparklineFormatter={fClientes} />,
-                                    clientesPorAds:    <PremiumMetricCard key="clientesPorAds" darkMode={darkMode} title="Clientes por Ads" value={newClientsAds} subtitle="Captados por publicidad" change={null} sparkline={sparklineData7d.adsClients} sparklineLabels={L} sparklineFormatter={fClientes} />,
-                                    clientesFijosAds:  <PremiumMetricCard key="clientesFijosAds" darkMode={darkMode} title="Clientes Fijos Ads" value={fixedAdsCount} subtitle={fixedAdsCount > 0 ? formatMoney(fixedAdsRevenue) : 'Sin ventas'} change={null} sparkline={sparklineData7d.fixedAdsClients} sparklineLabels={L} sparklineFormatter={fClientes} tooltip="Clientes que originalmente llegaron por publicidad y ya son clientes fijos/recurrentes" />,
-                                    ventasRevendedor:  <PremiumMetricCard key="ventasRevendedor" darkMode={darkMode} title="Ventas Revendedor" value={revendedoresCount} subtitle={revendedoresCount > 0 ? formatMoney(revendedoresRevenue) : 'Sin ventas'} change={null} sparkline={sparklineData7d.resellerClients} sparklineLabels={L} sparklineFormatter={fClientes} />,
-                                    alias1:            <PremiumMetricCard key="alias1" darkMode={darkMode} title="Alias 1" value={formatMoney(ingAlias1)} subtitle="Ingresos" change={null} sparkline={null} color="blue" />,
-                                    alias2:            <PremiumMetricCard key="alias2" darkMode={darkMode} title="Alias 2" value={formatMoney(ingAlias2)} subtitle="Ingresos" change={null} sparkline={null} color="violet" />,
-                                    alias3:            <PremiumMetricCard key="alias3" darkMode={darkMode} title="Alias 3" value={formatMoney(ingAlias3)} subtitle="Ingresos" change={null} sparkline={null} color="amber" />,
-                                    efectivo:          <PremiumMetricCard key="efectivo" darkMode={darkMode} title="Efectivo" value={formatMoney(ingEfectivo)} subtitle="Ingresos" change={null} sparkline={null} color="emerald" />,
-                                    inversionActiva:   <PremiumMetricCard key="inversionActiva" darkMode={darkMode} title="Inversión Activa" value={formatMoney(cur.currentStockValue)} subtitle={`Stock a costo actual · ${cur.currentStockUnits.toLocaleString('es-AR')} uds`} change={null} sparkline={null} />,
-                                };
-                                return (
-                                    <div className="space-y-5">
-                                        {/* Sector 1: Plata */}
-                                        <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
-                                            {homeCardOrder.sector1.map(id => cardNodes[id]).filter(Boolean)}
-                                        </div>
-
-                                        <div className={`h-px w-full ${darkMode ? 'bg-white/[0.07]' : 'bg-zinc-200'}`} />
-
-                                        {/* Sector 2: Clientes y ventas */}
-                                        <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
-                                            {homeCardOrder.sector2.map(id => cardNodes[id]).filter(Boolean)}
-                                        </div>
-
-                                        <div className={`h-px w-full ${darkMode ? 'bg-white/[0.07]' : 'bg-zinc-200'}`} />
-
-                                        {/* Sector 3: Cuentas */}
-                                        <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
-                                            {homeCardOrder.sector3.map(id => cardNodes[id]).filter(Boolean)}
-                                        </div>
-                                    </div>
-                                );
-                                })() },
+                                { id: 'metrics', content: renderHomeCardSectors(analysisData.baseStats, analysisData.prevBaseStats, { rangeStart: analysisData.rangeStart, rangeEnd: analysisData.rangeEnd, sparklines: sparklineData7d }) },
                                 { id: 'projection', content: (
                                   <div className="space-y-4">
                                     <ProjectionChart
@@ -6316,7 +6373,14 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         {/* EQUIPO */}
                         <div className={`rounded-2xl border p-5 ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
                             <div className="flex items-center justify-between mb-4">
-                                <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Rendimiento del Equipo</h3>
+                                <div className="flex items-center gap-2">
+                                    <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Rendimiento del Equipo</h3>
+                                    {globalMonth === 'compare' && (
+                                        <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${compareViewIndex === 1 ? 'bg-rose-500/10 text-rose-400' : 'bg-indigo-500/10 text-indigo-400'}`}>
+                                            {compareViewIndex === 1 ? 'VS' : 'BASE'}
+                                        </span>
+                                    )}
+                                </div>
                                 <button onClick={() => setShowBuono(v => !v)}
                                     className={`text-[10px] font-semibold px-2 py-1 rounded-lg transition-all ${darkMode ? 'text-zinc-500 hover:text-zinc-300 bg-white/[0.04]' : 'text-zinc-400 hover:text-zinc-600 bg-zinc-100'}`}>
                                     {showBuono ? 'Ocultar Buono' : 'Ver Buono'}
@@ -6379,7 +6443,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         {/* NUEVOS CLIENTES */}
                         <div className={`rounded-2xl border p-5 flex flex-col ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
                             {(() => {
-                                const revendedoresList = analysisData.baseStats.filteredSales.filter(s => s.isNewClient === 'Revendedor');
+                                const revendedoresList = activeViewSales.filter(s => s.isNewClient === 'Revendedor');
                                 const revendedoresCount = revendedoresList.length;
                                 const org = newClientsList.filter(s => s.isNewClient === 'Nuevo - Organico' || s.isNewClient === true).length;
                                 const ads = newClientsList.filter(s => s.isNewClient === 'Nuevo - Publicidad').length;
@@ -6409,7 +6473,14 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 ];
                                 return (<>
                                     <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-                                        <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Nuevos Clientes</h3>
+                                        <div className="flex items-center gap-2">
+                                            <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Nuevos Clientes</h3>
+                                            {globalMonth === 'compare' && (
+                                                <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${compareViewIndex === 1 ? 'bg-rose-500/10 text-rose-400' : 'bg-indigo-500/10 text-indigo-400'}`}>
+                                                    {compareViewIndex === 1 ? 'VS' : 'BASE'}
+                                                </span>
+                                            )}
+                                        </div>
                                         <div className={`flex items-center gap-0.5 p-0.5 rounded-lg ${darkMode ? 'bg-zinc-900/60' : 'bg-zinc-100'}`}>
                                             {sortOptions.map(o => (
                                                 <button key={o.key} onClick={() => setNewClientsSort(o.key)}
@@ -6479,7 +6550,14 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 <div className="w-full shrink-0 p-5">
                                     <div className="flex items-center justify-between mb-4">
                                         <div>
-                                            <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Productos más vendidos</h3>
+                                            <div className="flex items-center gap-2">
+                                                <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Productos más vendidos</h3>
+                                                {globalMonth === 'compare' && (
+                                                    <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${compareViewIndex === 1 ? 'bg-rose-500/10 text-rose-400' : 'bg-indigo-500/10 text-indigo-400'}`}>
+                                                        {compareViewIndex === 1 ? 'VS' : 'BASE'}
+                                                    </span>
+                                                )}
+                                            </div>
                                             <p className="text-[10px] text-zinc-600 mt-0.5">{topProductsBySeñaView ? 'por seña de lote · período seleccionado' : 'por unidades · período seleccionado'}</p>
                                         </div>
                                         <div className="flex items-center gap-2">
@@ -6539,7 +6617,14 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 <div className="w-full shrink-0 p-5">
                                     <div className="flex items-center justify-between mb-4">
                                         <div>
-                                            <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Rentabilidad de productos</h3>
+                                            <div className="flex items-center gap-2">
+                                                <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Rentabilidad de productos</h3>
+                                                {globalMonth === 'compare' && (
+                                                    <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${compareViewIndex === 1 ? 'bg-rose-500/10 text-rose-400' : 'bg-indigo-500/10 text-indigo-400'}`}>
+                                                        {compareViewIndex === 1 ? 'VS' : 'BASE'}
+                                                    </span>
+                                                )}
+                                            </div>
                                             <p className="text-[10px] text-zinc-600 mt-0.5">{topProfitBySeñaView ? 'por seña de lote · ganancia · período seleccionado' : 'por ganancia · período seleccionado'}</p>
                                         </div>
                                         <div className="flex items-center gap-2">
