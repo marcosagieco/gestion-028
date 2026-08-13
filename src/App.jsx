@@ -5198,11 +5198,15 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       acc.linesCount += group.originalSales.length;
       acc.productsCount += group.originalSales.reduce((sum, sale) => sum + (Number(sale.quantity) || 0), 0);
       acc.revenue += group.totalSaleRaw || 0;
+      acc.consignmentUnits += group.originalSales.reduce((sum, sale) => sum + (sale.consignmentId ? (Number(sale.quantity) || 0) : 0), 0);
       return acc;
-    }, { salesCount: 0, linesCount: 0, productsCount: 0, revenue: 0 });
+    }, { salesCount: 0, linesCount: 0, productsCount: 0, revenue: 0, consignmentUnits: 0 });
 
     if (askConfirm) {
-      const msg = `¿Borrar ${summary.salesCount} registro(s) seleccionado(s)?\n\nProductos/unidades: ${summary.productsCount}\nLíneas internas: ${summary.linesCount}\nTotal facturado: ${formatMoney(summary.revenue)}\n\nSe eliminarán del historial y se devolverá el stock a sus lotes cuando corresponda.`;
+      const consignmentNote = summary.consignmentUnits > 0
+        ? `\n\nOjo: ${summary.consignmentUnits} unidad(es) son pagos de consignación — al borrar, vuelven a quedar pendientes en la consignación (no se pierde el registro de a quién se le entregó).`
+        : '';
+      const msg = `¿Borrar ${summary.salesCount} registro(s) seleccionado(s)?\n\nProductos/unidades: ${summary.productsCount}\nLíneas internas: ${summary.linesCount}\nTotal facturado: ${formatMoney(summary.revenue)}\n\nSe eliminarán del historial y se devolverá el stock a sus lotes cuando corresponda.${consignmentNote}`;
       if (!window.confirm(msg)) return;
     }
 
@@ -5244,13 +5248,33 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
         }
       }
 
+      // Las ventas que vienen de un pago de consignación (sale.consignmentId) marcaron esas unidades
+      // como "pagadas" en la consignación cuando se registró el pago. Si esa venta se borra (típicamente
+      // porque el pago se anotó mal), esas unidades vuelven a quedar pendientes en la consignación en
+      // vez de perderse del registro.
+      const consignmentDeltas = {};
+      salesToDelete.forEach(sale => {
+        if (!sale.consignmentId) return;
+        consignmentDeltas[sale.consignmentId] = (consignmentDeltas[sale.consignmentId] || 0) + (Number(sale.quantity) || 0);
+      });
+      for (const consignmentId of Object.keys(consignmentDeltas)) {
+        const qty = consignmentDeltas[consignmentId];
+        const entry = consignments.find(c => c.id === consignmentId);
+        if (!entry) continue; // la consignación ya no existe (se borró aparte), no hay a dónde devolver
+        await updateConsignmentStatus(entry, {
+          quantityPending: (Number(entry.quantityPending) || 0) + qty,
+          quantityPaid: Math.max(0, (Number(entry.quantityPaid) || 0) - qty),
+        });
+      }
+
       setSelectedSaleTickets(prev => {
         const next = { ...prev };
         validGroups.forEach(group => delete next[group.ticketId]);
         return next;
       });
 
-      showToast(`${summary.salesCount} registro(s) borrado(s). Se devolvieron ${summary.productsCount} producto(s) al stock.`, 'success');
+      const consignmentMsg = summary.consignmentUnits > 0 ? ` ${summary.consignmentUnits} unidad(es) volvieron a quedar pendientes en consignación.` : '';
+      showToast(`${summary.salesCount} registro(s) borrado(s). Se devolvieron ${summary.productsCount} producto(s) al stock.${consignmentMsg}`, 'success');
     } catch (e) {
       showToast('Error al borrar ventas: ' + e.message, 'error');
     }
