@@ -2542,9 +2542,12 @@ export default function App() {
   const [consignmentClientDraft, setConsignmentClientDraft] = useState({ clientName: '', clientPhone: '', clientDni: '', clientType: '' });
   const [editingConsignmentEntryId, setEditingConsignmentEntryId] = useState(null);
   const [consignmentEntryDraft, setConsignmentEntryDraft] = useState({ unitPrice: '', dueDate: '', note: '' });
+  const [addProductOrderId, setAddProductOrderId] = useState(null); // id de la entrega (ticketId) a la que se le está agregando un producto
+  const [addProductDraft, setAddProductDraft] = useState({ batchId: '', itemId: '', quantity: 1, unitPrice: '' });
   const [salesSort, setSalesSort] = useState({ key: 'createdAt', direction: 'desc' });
   const [selectedSaleTickets, setSelectedSaleTickets] = useState({});
   const [salesDisplayLimit, setSalesDisplayLimit] = useState(120);
+  const [expandedSaleTicket, setExpandedSaleTicket] = useState(null);
 
   const [saleGeneral, setSaleGeneral] = useState({ saleDate: getTodayDate(), accountingType: 'Normal', shippingCost: '', shippingPrice: '', source: 'Instagram', isReseller: 'No', isNewClient: 'Frecuente', wholesaleClient: '', adCampaign: '' });
   const [saleItems, setSaleItems] = useState([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
@@ -4288,6 +4291,64 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     }
   };
 
+  // Suma un producto más a una entrega/consignación que ya existe (mismo consignmentTicketId y mismos
+  // datos del cliente), sin tener que cargar una entrega nueva desde cero.
+  const handleAddProductToConsignmentOrder = async (order) => {
+    const { batchId, itemId, quantity: qtyRaw, unitPrice: priceRaw } = addProductDraft;
+    if (!batchId || !itemId) return showToast('Elegí lote y producto.', 'error');
+
+    const batch = batches.find(b => b.id === batchId);
+    if (!batch) return showToast('El lote seleccionado no existe.', 'error');
+    const item = (batch.items || []).find(i => i.id === itemId);
+    if (!item) return showToast('El producto seleccionado no existe en su lote.', 'error');
+
+    const quantity = parseInt(qtyRaw) || 0;
+    if (quantity <= 0) return showToast('La cantidad tiene que ser mayor a 0.', 'error');
+    const currentStock = Number(item.currentStock) || 0;
+    if (quantity > currentStock) return showToast(`Stock insuficiente para ${item.product || 'producto'} / ${item.variant || 'Único'}. Disponible: ${currentStock}.`, 'error');
+
+    const unitPrice = parseFloat(priceRaw || 0);
+    if (unitPrice <= 0 || Number.isNaN(unitPrice)) return showToast('Cargá el precio acordado por unidad.', 'error');
+
+    if (!window.confirm(`¿Agregar ${quantity} unidad(es) de ${item.product || 'producto'} / ${item.variant || 'Único'} a la entrega de ${order.clientName}?\n\nEsto descuenta stock del lote, pero NO crea venta todavía.`)) return;
+
+    try {
+      const newItems = (batch.items || []).map(i => i.id === itemId ? { ...i, currentStock: Math.max(0, currentStock - quantity) } : i);
+      await updateDoc(doc(db, 'batches', batchId), { items: newItems });
+
+      await addDoc(collection(db, 'consignments'), {
+        consignmentTicketId: order.id,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        status: 'active',
+        clientName: order.clientName,
+        clientPhone: order.clientPhone || '',
+        clientDni: order.clientDni || '',
+        clientType: order.clientType || '',
+        batchId,
+        batchName: batch.name || 'Sin lote',
+        itemId,
+        productName: item.product || 'Sin producto',
+        variant: item.variant || 'Único',
+        quantityDelivered: quantity,
+        quantityPending: quantity,
+        quantityPaid: 0,
+        quantityReturned: 0,
+        quantityLost: 0,
+        unitCost: Number(item.costArs) || 0,
+        unitPrice,
+        dueDate: order.dueDate || '',
+        note: ''
+      });
+
+      setAddProductDraft({ batchId: '', itemId: '', quantity: 1, unitPrice: '' });
+      setAddProductOrderId(null);
+      showToast('Producto agregado a la entrega.', 'success');
+    } catch (e) {
+      showToast('Error al agregar producto: ' + e.message, 'error');
+    }
+  };
+
   const updateConsignmentStatus = async (entry, patch = {}) => {
     const nextPending = Number(patch.quantityPending ?? entry.quantityPending) || 0;
     const nextStatus = nextPending <= 0 ? 'closed' : 'active';
@@ -5186,6 +5247,39 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
     } catch (e) {
         showToast('Error al guardar: ' + e.message, 'error');
+    }
+  };
+
+  // Ganancia por envío de una venta agrupada (Libro de Ventas): cobrado, costo y ganancia, sumando las
+  // líneas internas de la venta (solo la primera línea del ticket suele llevar el envío cargado).
+  const getGroupShipping = (group) => {
+    const shipCost = group.originalSales.reduce((s, os) => s + (os.shippingCostArs || os.shippingCost || 0), 0);
+    const shipProfit = group.originalSales.reduce((s, os) => s + (os.shippingProfit != null ? (os.shippingProfit || 0) : ((os.clientShippingCharge || 0) - (os.shippingCostArs || 0))), 0);
+    return { shipCost, shipProfit, shipCharge: shipCost + shipProfit };
+  };
+
+  // Borra únicamente la ganancia por envío de una venta (la deja en $0), sin tocar el producto vendido:
+  // ni cantidad, ni precio unitario, ni el resto de la venta. Si el envío estaba sumado al total
+  // facturado (como en las ventas cargadas a mano en Ventas), se lo resta para que el total no quede
+  // inflado; si no estaba sumado (como en las ventas cargadas por el asistente de IA), el total no se toca.
+  const handleRemoveShippingProfit = async (group) => {
+    const shippingSales = group.originalSales.filter(s => (s.shippingProfit || 0) !== 0 || (s.shippingCostArs || s.shippingCost || 0) !== 0);
+    if (!shippingSales.length) return;
+    const { shipProfit } = getGroupShipping(group);
+    if (!window.confirm(`¿Borrar la ganancia por envío de esta venta (${formatMoney(shipProfit)})? El producto vendido no se toca, solo se quita el envío.`)) return;
+    try {
+      await Promise.all(shippingSales.map(s => {
+        const bakedIn = Math.abs((s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0)) - (s.shippingProfit || 0)) < 0.01;
+        const newTotal = bakedIn ? Math.max(0, (s.totalSaleRaw || 0) - (s.shippingProfit || 0)) : (s.totalSaleRaw || 0);
+        const patch = { totalSaleRaw: newTotal, shippingProfit: 0, shippingCostArs: 0 };
+        if (s.shippingCost !== undefined) patch.shippingCost = 0;
+        if (s.shippingPrice !== undefined) patch.shippingPrice = 0;
+        if (s.clientShippingCharge !== undefined) patch.clientShippingCharge = 0;
+        return updateDoc(doc(db, 'sales', s.id), patch);
+      }));
+      showToast('Ganancia por envío borrada de la venta.', 'success');
+    } catch (e) {
+      showToast('Error al borrar la ganancia por envío: ' + e.message, 'error');
     }
   };
 
@@ -7085,8 +7179,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                           </thead>
                           <tbody className={`divide-y ${darkMode ? 'divide-zinc-800/80' : 'divide-zinc-100'}`}>
                             {groupedSales.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-sm font-medium opacity-50 italic">No se encontraron ventas con esos filtros.</td></tr>}
-                            {visibleGroupedSales.map(group => (
-                                <tr key={group.ticketId} className={`transition-colors group ${selectedSaleTickets[group.ticketId] ? (darkMode ? 'bg-indigo-500/10 hover:bg-indigo-500/15' : 'bg-indigo-50 hover:bg-indigo-100/70') : (darkMode ? 'hover:bg-[#181818]' : 'hover:bg-zinc-50')}`}>
+                            {visibleGroupedSales.map(group => {
+                              const { shipCost, shipProfit, shipCharge } = getGroupShipping(group);
+                              return (
+                              <React.Fragment key={group.ticketId}>
+                                <tr className={`transition-colors group ${selectedSaleTickets[group.ticketId] ? (darkMode ? 'bg-indigo-500/10 hover:bg-indigo-500/15' : 'bg-indigo-50 hover:bg-indigo-100/70') : (darkMode ? 'hover:bg-[#181818]' : 'hover:bg-zinc-50')}`}>
                                   <td className="px-4 py-3 align-top pt-4">
                                     <input
                                       type="checkbox"
@@ -7104,6 +7201,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                           {group.isNeutral && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-100 text-indigo-700'}`}>Neutro</span>}
                                           {group.isFalla && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-red-500/10 text-red-400' : 'bg-red-100 text-red-700'}`} title={`${formatMoney(group.failedValue)} perdidos`}>⚠ Falla</span>}
                                           {group.isRobo && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-orange-500/10 text-orange-400' : 'bg-orange-100 text-orange-700'}`} title={`${formatMoney(group.stolenValue)} perdidos`}>🚨 Robo</span>}
+                                          {shipProfit !== 0 && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-sky-500/10 text-sky-400' : 'bg-sky-100 text-sky-700'}`} title={`Ganancia por envío: ${formatMoney(shipProfit)}`}>🚚 Envío</span>}
                                           {(isNewClientStatus(group.isNewClient) || group.isNewClient === 'Revendedor' || group.isNewClient === 'Clientes - Publicidad') && (
                                             <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
                                               group.isNewClient === 'Revendedor'
@@ -7132,10 +7230,58 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                   <td className="px-4 py-3 font-medium text-emerald-500 text-sm align-top pt-4">{formatMoney(group.totalProfit)}</td>
                                   <td className="px-4 py-3 font-bold font-mono tracking-tight align-top pt-4">{formatMoney(group.totalSaleRaw)}</td>
                                   <td className="px-4 py-3 text-right align-top pt-3">
-                                      <button onClick={() => handleDeleteTicket(group)} className={`p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:bg-red-500/10 hover:text-red-400' : 'text-zinc-400 hover:bg-red-50 hover:text-red-600'}`}><Trash2 size={16} /></button>
+                                      <div className="flex items-center justify-end gap-1">
+                                        <button onClick={() => setExpandedSaleTicket(expandedSaleTicket === group.ticketId ? null : group.ticketId)}
+                                          className={`flex items-center gap-1 text-[10px] font-bold px-2 py-1.5 rounded-lg transition-all ${darkMode ? 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.06]' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}>
+                                          {expandedSaleTicket === group.ticketId ? 'Ver menos' : 'Ver más'}
+                                          {expandedSaleTicket === group.ticketId ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}
+                                        </button>
+                                        <button onClick={() => handleDeleteTicket(group)} className={`p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:bg-red-500/10 hover:text-red-400' : 'text-zinc-400 hover:bg-red-50 hover:text-red-600'}`}><Trash2 size={16} /></button>
+                                      </div>
                                   </td>
                                 </tr>
-                            ))}
+                                {expandedSaleTicket === group.ticketId && (
+                                    <tr className={darkMode ? 'bg-black/20' : 'bg-zinc-50'}>
+                                      <td></td>
+                                      <td colSpan={5} className="px-4 pb-4 pt-1">
+                                        <div className={`rounded-xl border divide-y ${darkMode ? 'border-white/[0.07] divide-zinc-800' : 'border-zinc-200 divide-zinc-100'}`}>
+                                          {group.items.map((item, idx) => (
+                                            <div key={idx} className="flex justify-between items-center p-3">
+                                              <div>
+                                                <div className="text-sm font-semibold">{item.productName}{item.variant ? ` · ${item.variant}` : ''}</div>
+                                                <div className={`text-xs ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{item.quantity || 0} un. · {formatMoney(item.unitPrice)} c/u · Lote {item.batchName || 'S/N'}</div>
+                                              </div>
+                                              <div className="text-sm font-bold">{formatMoney((item.unitPrice || 0) * (item.quantity || 0))}</div>
+                                            </div>
+                                          ))}
+                                          {shipProfit !== 0 || shipCost !== 0 ? (
+                                            <div className={`flex justify-between items-center p-3 ${darkMode ? 'bg-sky-500/[0.05]' : 'bg-sky-50/60'}`}>
+                                              <div className="flex items-center gap-2">
+                                                <Truck size={14} className="text-sky-400"/>
+                                                <div>
+                                                  <div className="text-xs font-bold uppercase tracking-widest text-sky-400">Ganancia por envío</div>
+                                                  <div className={`text-[11px] ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Cobrado {formatMoney(shipCharge)} · Costo {formatMoney(shipCost)}</div>
+                                                </div>
+                                              </div>
+                                              <div className="flex items-center gap-3">
+                                                <span className="text-sm font-black text-sky-400">+{formatMoney(shipProfit)}</span>
+                                                <button onClick={() => handleRemoveShippingProfit(group)}
+                                                  title="Borrar solo la ganancia por envío (no borra el producto vendido)"
+                                                  className={`flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border transition-all ${darkMode ? 'border-red-500/30 text-red-400 hover:bg-red-500/10' : 'border-red-200 text-red-600 hover:bg-red-50'}`}>
+                                                  <Trash2 size={12}/> Quitar envío
+                                                </button>
+                                              </div>
+                                            </div>
+                                          ) : (
+                                            <div className="p-3 text-xs text-center opacity-50">Esta venta no tiene envío cargado.</div>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                )}
+                              </React.Fragment>
+                              );
+                            })}
                           </tbody>
                       </table>
 
@@ -8282,6 +8428,81 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                         </div>
                                       );
                                     })}
+
+                                    <div className={`p-5 ${darkMode ? 'bg-black/10' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+                                      {addProductOrderId === order.id ? (
+                                        <div className={`rounded-[1.5rem] overflow-hidden ring-1 ${darkMode ? 'bg-black/12 ring-white/[0.06]' : 'bg-zinc-50 ring-zinc-200'}`}>
+                                          <div className="p-4 space-y-3">
+                                            <div className="grid grid-cols-2 gap-3">
+                                              <Select
+                                                darkMode={darkMode}
+                                                label="Lote"
+                                                value={addProductDraft.batchId}
+                                                onChange={e => setAddProductDraft(d => ({ ...d, batchId: e.target.value, itemId: '' }))}
+                                                options={[
+                                                  { value: '', label: '-- Lote --' },
+                                                  ...batches.filter(b => !b.finalizedAt).map(b => ({ value: b.id, label: b.name || 'Sin nombre' }))
+                                                ]}
+                                              />
+                                              <Select
+                                                darkMode={darkMode}
+                                                label="Producto"
+                                                value={addProductDraft.itemId}
+                                                onChange={e => setAddProductDraft(d => ({ ...d, itemId: e.target.value }))}
+                                                options={[
+                                                  { value: '', label: addProductDraft.batchId ? '-- Producto --' : 'Primero lote' },
+                                                  ...getConsignmentAvailableItems(addProductDraft.batchId).map(item => ({
+                                                    value: item.id,
+                                                    label: `${item.product || 'Sin producto'} / ${item.variant || 'Único'} · stock ${item.currentStock || 0}`
+                                                  }))
+                                                ]}
+                                              />
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-3">
+                                              <Input
+                                                darkMode={darkMode}
+                                                label="Cantidad"
+                                                type="number"
+                                                value={addProductDraft.quantity}
+                                                onChange={e => setAddProductDraft(d => ({ ...d, quantity: e.target.value }))}
+                                              />
+                                              <Input
+                                                darkMode={darkMode}
+                                                label="Precio unitario"
+                                                type="number"
+                                                symbol="$"
+                                                value={addProductDraft.unitPrice}
+                                                onChange={e => setAddProductDraft(d => ({ ...d, unitPrice: e.target.value }))}
+                                              />
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2 pt-1">
+                                              <button
+                                                type="button"
+                                                onClick={() => { setAddProductOrderId(null); setAddProductDraft({ batchId: '', itemId: '', quantity: 1, unitPrice: '' }); }}
+                                                className={`h-9 rounded-full text-xs font-black transition-all ${darkMode ? 'bg-white/5 text-zinc-300 hover:bg-white/[0.08]' : 'bg-white text-zinc-700 hover:bg-zinc-100 ring-1 ring-zinc-200'}`}
+                                              >
+                                                Cancelar
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={() => handleAddProductToConsignmentOrder(order)}
+                                                className={`h-9 rounded-full text-xs font-black transition-all ${darkMode ? 'bg-white text-black hover:bg-zinc-200' : 'bg-black text-white hover:bg-zinc-800'}`}
+                                              >
+                                                Agregar producto
+                                              </button>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={() => { setAddProductOrderId(order.id); setAddProductDraft({ batchId: '', itemId: '', quantity: 1, unitPrice: '' }); }}
+                                          className={`w-full h-10 rounded-full text-xs font-black transition-all ${darkMode ? 'bg-white/[0.035] text-zinc-300 hover:bg-white/[0.07]' : 'bg-white text-zinc-700 hover:bg-zinc-100 ring-1 ring-zinc-200'}`}
+                                        >
+                                          + Agregar producto a esta entrega
+                                        </button>
+                                      )}
+                                    </div>
                                   </div>
                                 )}
                               </div>
