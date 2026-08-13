@@ -2441,7 +2441,10 @@ export default function App() {
   const [cashFlowFilter, setCashFlowFilter] = useState('TODAS');
   const [showAjustesHistory, setShowAjustesHistory] = useState(false);
   const [showStockHistory, setShowStockHistory] = useState(false);
+  const [showIncomeHistory, setShowIncomeHistory] = useState(false);
+  const [incomeAccountFilter, setIncomeAccountFilter] = useState('TODAS');
   const [expandedStockGroup, setExpandedStockGroup] = useState(null);
+  const [expandedIncomeSale, setExpandedIncomeSale] = useState(null);
   const [showBuonoCommission, setShowBuonoCommission] = useState(false);
   const [showBuono, setShowBuono] = useState(false);
   const [showAllTopProducts, setShowAllTopProducts] = useState(false);
@@ -5426,6 +5429,26 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
     }
     showToast('Registro de stock eliminado', 'success');
+  };
+
+  // Desvincula una venta de la cuenta/billetera a la que quedó asociada por su medio de pago (medioPago):
+  // no borra la venta, pero le resta al saldo de esa cuenta lo que esa venta había aportado (total +
+  // ganancia de envío), para que el saldo quede consistente con lo que se ve en Historial de Ingresos.
+  const handleUnlinkSaleAccount = async (group) => {
+    const amount = (group.totalSaleRaw || 0) + (group.shipProfit || 0);
+    if (!window.confirm(`¿Quitar esta venta de "${accountLabel(group.account)}"? La venta no se borra, pero se va a restar ${formatMoney(amount)} del saldo de esa cuenta.`)) return;
+    try {
+      const targets = group.originalSales.filter(s => s.medioPago && s.id);
+      await Promise.all(targets.map(s => updateDoc(doc(db, 'sales', s.id), { medioPago: deleteField() })));
+      if (group.account && group.account !== 'SIN_CUENTA' && amount) {
+        const updatedW = { ...wallets, [group.account]: (wallets[group.account] || 0) - amount };
+        setWallets(updatedW);
+        await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+      }
+      showToast(`Venta desvinculada · -${formatMoney(amount)} del saldo de ${accountLabel(group.account)}`, 'success');
+    } catch (e) {
+      showToast('Error al desvincular: ' + e.message, 'error');
+    }
   };
 
   const handleSincronizarBilleteras = async () => {
@@ -8793,6 +8816,25 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                     if (cashFlowFilter === 'GASTOS') return item.kind === 'gasto';
                     return item.account === cashFlowFilter || item.accountTo === cashFlowFilter;
                   });
+                  // Historial de Ingresos: ingresos manuales (cashFlow tipo "ingreso") + ventas reales (agrupadas
+                  // por ticket, sin las "Neutro" que no son plata real). Cada venta expone por separado lo
+                  // cobrado/costo/ganancia de envío para poder verlo al abrir la flechita, y a qué cuenta
+                  // entró la plata (según el medio de pago cargado; si no tiene, va a "Sin cuenta").
+                  const medioPagoAccountMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', efectivo: 'EFECTIVO' };
+                  const incomeFeed = showIncomeHistory ? [
+                    ...cashFlow.filter(m => m.type === 'ingreso').map(m => ({ ...m, kind: 'movimiento', account: m.account || 'SIN_CUENTA' })),
+                    ...groupedSales
+                      .filter(g => !g.isNeutral && (g.totalSaleRaw || 0) > 0)
+                      .map(g => {
+                        // shippingCostArs: campo del formulario manual. shippingCost: campo que usa el asistente de IA. Cubrimos ambos.
+                        const shipCost = g.originalSales.reduce((s, os) => s + (os.shippingCostArs || os.shippingCost || 0), 0);
+                        const shipProfit = g.originalSales.reduce((s, os) => s + (os.shippingProfit != null ? (os.shippingProfit || 0) : ((os.clientShippingCharge || 0) - (os.shippingCostArs || 0))), 0);
+                        const medioPago = g.originalSales[0]?.medioPago;
+                        const account = medioPagoAccountMap[medioPago] || 'SIN_CUENTA';
+                        return { ...g, kind: 'venta', shipCost, shipProfit, shipCharge: shipCost + shipProfit, account };
+                      }),
+                  ].sort((a, b) => new Date(b.date) - new Date(a.date)) : [];
+                  const filteredIncomeFeed = incomeAccountFilter === 'TODAS' ? incomeFeed : incomeFeed.filter(item => item.account === incomeAccountFilter);
                   const stockGroups = showStockHistory ? Object.values(
                     filteredFeed.reduce((acc, item) => {
                       const key = item.batchId || item.id;
@@ -9064,16 +9106,29 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         <div className={`p-4 md:p-5 border-b flex flex-wrap items-center justify-between gap-3 ${darkMode ? 'bg-[#181818] border-[#1F1F1F]' : 'bg-white border-zinc-200'}`}>
                           <div className="flex items-center gap-3 flex-wrap">
                             <h3 className="font-bold text-base tracking-tight">Historial (Movimientos y Gastos)</h3>
-                            <button onClick={() => { setShowAjustesHistory(v => !v); setShowStockHistory(false); }}
+                            <button onClick={() => { setShowAjustesHistory(v => !v); setShowStockHistory(false); setShowIncomeHistory(false); }}
                               className={`text-[10px] font-bold px-2 py-0.5 rounded-md border transition-all ${showAjustesHistory ? (darkMode ? 'bg-violet-500/20 text-violet-400 border-violet-500/40' : 'bg-violet-50 text-violet-600 border-violet-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-600'}`}>
                               Historial de saldos
                             </button>
-                            <button onClick={() => { setShowStockHistory(v => !v); setShowAjustesHistory(false); }}
+                            <button onClick={() => { setShowStockHistory(v => !v); setShowAjustesHistory(false); setShowIncomeHistory(false); }}
                               className={`text-[10px] font-bold px-2 py-0.5 rounded-md border transition-all ${showStockHistory ? (darkMode ? 'bg-fuchsia-500/20 text-fuchsia-400 border-fuchsia-500/40' : 'bg-fuchsia-50 text-fuchsia-600 border-fuchsia-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-600'}`}>
                               Historial de Stock
                             </button>
+                            <button onClick={() => { setShowIncomeHistory(v => !v); setShowAjustesHistory(false); setShowStockHistory(false); }}
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-md border transition-all ${showIncomeHistory ? (darkMode ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-emerald-50 text-emerald-600 border-emerald-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-600'}`}>
+                              Historial de Ingresos
+                            </button>
                           </div>
-                          {!showAjustesHistory && !showStockHistory && <div className="flex gap-1.5 flex-wrap">
+                          {showIncomeHistory ? (
+                            <div className="flex gap-1.5 flex-wrap">
+                              {['TODAS', 'LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(f => (
+                                <button key={f} onClick={() => setIncomeAccountFilter(f)}
+                                  className={`px-3 py-1 rounded-lg text-[11px] font-bold border transition-all ${incomeAccountFilter === f ? (darkMode ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-emerald-50 text-emerald-700 border-emerald-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-600'}`}>
+                                  {f === 'TODAS' ? 'Todas' : accountLabel(f)}
+                                </button>
+                              ))}
+                            </div>
+                          ) : !showAjustesHistory && !showStockHistory && <div className="flex gap-1.5 flex-wrap">
                             {['TODAS', 'GASTOS', 'LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(f => (
                               <button key={f} onClick={() => setCashFlowFilter(f)}
                                 className={`px-3 py-1 rounded-lg text-[11px] font-bold border transition-all ${cashFlowFilter === f ? (darkMode ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40' : 'bg-indigo-50 text-indigo-700 border-indigo-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-600'}`}>
@@ -9083,7 +9138,120 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                           </div>}
                         </div>
                         <div className={`divide-y ${darkMode ? 'divide-zinc-800' : 'divide-zinc-100'}`}>
-                          {showStockHistory ? (
+                          {showIncomeHistory ? (
+                            <>
+                              {filteredIncomeFeed.length === 0 && (
+                                <div className="p-12 text-center text-sm font-medium opacity-50">No hay ingresos registrados{incomeAccountFilter !== 'TODAS' ? ' en esta cuenta' : ''}.</div>
+                              )}
+                              {filteredIncomeFeed.map(item => {
+                                if (item.kind === 'movimiento') {
+                                  return (
+                                    <div key={`ing-${item.id}`} className={`flex justify-between items-center p-4 md:p-5 transition-colors group ${darkMode ? 'hover:bg-zinc-900/50 bg-[#101010]' : 'hover:bg-zinc-50 bg-white'}`}>
+                                      <div className="flex items-center gap-4">
+                                        <div className={`p-2.5 rounded-lg ${darkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-600'}`}><ArrowDownLeft size={20}/></div>
+                                        <div>
+                                          <div className="font-semibold text-sm">{item.description || 'Sin descripción'}</div>
+                                          <div className="flex items-center gap-2 mt-1">
+                                            <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{safeDateStr(item.date, {month:'long', day:'numeric'})}</span>
+                                            <span className="text-zinc-300 dark:text-zinc-700">•</span>
+                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-emerald-500/30 text-emerald-400' : 'border-emerald-200 text-emerald-600'}`}>Ingreso</span>
+                                            {item.account && (
+                                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
+                                                {accountLabel(item.account)}
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-6">
+                                        <span className="font-bold tracking-tight text-emerald-400 text-lg">+{formatMoney(item.amount)}</span>
+                                        <button onClick={() => handleDeleteCashMovement(item.id)} className={`p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}><Trash2 size={18}/></button>
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                // Venta agrupada por ticket
+                                const group = item;
+                                const isExpanded = expandedIncomeSale === group.ticketId;
+                                const mainProduct = group.items[0]?.productName || 'Venta';
+                                const extraItems = group.items.length - 1;
+                                return (
+                                  <div key={`venta-${group.ticketId}`} className={darkMode ? 'bg-[#101010]' : 'bg-white'}>
+                                    <div className="flex flex-wrap justify-between items-center gap-3 p-4 md:p-5 transition-colors group">
+                                      <div className="flex items-center gap-4">
+                                        <div className={`p-2.5 rounded-lg ${darkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-600'}`}><ShoppingCart size={20}/></div>
+                                        <div>
+                                          <div className="font-semibold text-sm">{mainProduct}{extraItems > 0 ? ` +${extraItems} más` : ''}</div>
+                                          <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                            <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{safeDateStr(group.date, {month:'long', day:'numeric'})}</span>
+                                            <span className="text-zinc-300 dark:text-zinc-700">•</span>
+                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-emerald-500/30 text-emerald-400' : 'border-emerald-200 text-emerald-600'}`}>Venta</span>
+                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
+                                              {accountLabel(group.account)}
+                                            </span>
+                                            {group.seller && (
+                                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-zinc-700 text-zinc-400' : 'border-zinc-200 text-zinc-500'}`}>{group.seller}</span>
+                                            )}
+                                            {group.shipProfit !== 0 && (
+                                              <span className={`flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-sky-500/30 text-sky-400' : 'border-sky-200 text-sky-600'}`}>
+                                                <Truck size={10}/> Envío
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-3">
+                                        <span className="font-bold tracking-tight text-emerald-400 text-lg">+{formatMoney(group.totalSaleRaw)}</span>
+                                        <button onClick={() => setExpandedIncomeSale(isExpanded ? null : group.ticketId)}
+                                          className={`flex items-center gap-1 text-[11px] font-bold px-3 py-1.5 rounded-lg border transition-all ${darkMode ? 'border-white/[0.08] text-zinc-400 hover:text-zinc-200' : 'border-zinc-200 text-zinc-500 hover:text-zinc-800'}`}>
+                                          {isExpanded ? 'Ver menos' : 'Ver más'}
+                                          {isExpanded ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}
+                                        </button>
+                                        {group.account !== 'SIN_CUENTA' && (
+                                          <button onClick={() => handleUnlinkSaleAccount(group)}
+                                            title={`Quitar de ${accountLabel(group.account)} (no borra la venta)`}
+                                            className={`p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-amber-400 hover:bg-amber-500/10' : 'text-zinc-400 hover:text-amber-600 hover:bg-amber-50'}`}>
+                                            <XCircle size={18}/>
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {isExpanded && (
+                                      <div className="px-4 md:px-5 pb-5">
+                                        <div className={`rounded-xl border divide-y ${darkMode ? 'border-white/[0.07] divide-zinc-800' : 'border-zinc-200 divide-zinc-100'}`}>
+                                          {group.items.map((it, i) => (
+                                            <div key={i} className="flex justify-between items-center p-3">
+                                              <div>
+                                                <div className="text-sm font-semibold">{it.productName}</div>
+                                                <div className={`text-xs ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{it.variant || 'Único'} · {it.quantity} un. · {formatMoney(it.unitPrice)} c/u</div>
+                                              </div>
+                                              <div className="text-sm font-bold">{formatMoney((it.unitPrice || 0) * (it.quantity || 0))}</div>
+                                            </div>
+                                          ))}
+                                          {group.shipProfit !== 0 && (
+                                            <div className={`flex justify-between items-center p-3 ${darkMode ? 'bg-sky-500/[0.05]' : 'bg-sky-50/60'}`}>
+                                              <div className="flex items-center gap-2">
+                                                <Truck size={14} className="text-sky-400"/>
+                                                <div>
+                                                  <div className="text-xs font-bold uppercase tracking-widest text-sky-400">Ganancia por envío</div>
+                                                  <div className={`text-[11px] ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>Cobrado {formatMoney(group.shipCharge)} · Costo {formatMoney(group.shipCost)}</div>
+                                                </div>
+                                              </div>
+                                              <div className="text-sm font-black text-sky-400">+{formatMoney(group.shipProfit)}</div>
+                                            </div>
+                                          )}
+                                          <div className={`flex justify-between items-center p-3 ${darkMode ? 'bg-white/[0.03]' : 'bg-zinc-50'}`}>
+                                            <div className="text-xs font-bold uppercase tracking-widest opacity-60">Total venta</div>
+                                            <div className="text-sm font-black text-emerald-400">{formatMoney(group.totalSaleRaw)}</div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </>
+                          ) : showStockHistory ? (
                             <>
                               {stockGroups.length === 0 && (
                                 <div className="p-12 text-center text-sm font-medium opacity-50">No hay compras de stock registradas.</div>
