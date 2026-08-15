@@ -118,6 +118,22 @@ const safeDateTime = (dateStr) => {
   return isNaN(d.getTime()) ? 0 : d.getTime();
 };
 
+const safeTimeStr = (dateStr) => {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+};
+
+const PAYMENT_METHOD_LABELS = { alias1: 'Alias 1', alias2: 'Alias 2', alias3: 'Alias 3', efectivo: 'Efectivo' };
+const PAYMENT_METHOD_OPTIONS = [
+  { value: '', label: 'Sin especificar' },
+  { value: 'alias1', label: 'Alias 1' },
+  { value: 'alias2', label: 'Alias 2' },
+  { value: 'alias3', label: 'Alias 3' },
+  { value: 'efectivo', label: 'Efectivo' },
+];
+
 const normalizeConsignmentDateInput = (dateStr) => {
   const raw = String(dateStr || '').trim();
   if (!raw) return '';
@@ -2549,7 +2565,7 @@ export default function App() {
   const [salesDisplayLimit, setSalesDisplayLimit] = useState(120);
   const [expandedSaleTicket, setExpandedSaleTicket] = useState(null);
 
-  const [saleGeneral, setSaleGeneral] = useState({ saleDate: getTodayDate(), accountingType: 'Normal', shippingCost: '', shippingPrice: '', source: 'Instagram', isReseller: 'No', isNewClient: 'Frecuente', wholesaleClient: '', adCampaign: '' });
+  const [saleGeneral, setSaleGeneral] = useState({ saleDate: getTodayDate(), accountingType: 'Normal', shippingCost: '', shippingPrice: '', source: 'Instagram', isReseller: 'No', isNewClient: 'Frecuente', wholesaleClient: '', adCampaign: '', medioPago: '' });
   const [saleItems, setSaleItems] = useState([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
 
   const updateSaleItem = (id, field, value) => {
@@ -3978,6 +3994,7 @@ export default function App() {
           seller: normalizeSellerName(s.seller),
           isNeutral: !!s.isNeutral || s.accountingType === 'neutral',
           neutralReason: s.neutralReason || '',
+          medioPago: s.medioPago || '',
           isFalla: false,
           failedValue: 0,
           isRobo: false,
@@ -4075,11 +4092,12 @@ export default function App() {
   };
   
   const handleExportSales = () => {
-      const headers = ['Fecha', 'Lote', 'Producto', 'Variante', 'Cantidad', 'Precio Unitario', 'Total Venta', 'Costo Unitario', 'Ganancia Envio', 'Origen', 'Revendedor', 'Cliente', 'Vendedor'];
+      const headers = ['Fecha', 'Hora', 'Lote', 'Producto', 'Variante', 'Cantidad', 'Precio Unitario', 'Total Venta', 'Costo Unitario', 'Ganancia Envio', 'Origen', 'Revendedor', 'Cliente', 'Vendedor', 'Forma de Pago'];
       const rows = processedSales.map(s => [
-          safeDateStr(s.date), s.batchName || '', s.productName || '', s.variant || '', 
-          s.quantity || 0, s.unitPrice || 0, s.totalSaleRaw || 0, s.costArsAtSale || 0, 
-          ((s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0))), s.source || '', s.isReseller ? 'Si' : 'No', getClientStatusLabel(s.isNewClient), normalizeSellerName(s.seller)
+          safeDateStr(s.date), safeTimeStr(s.createdAt || s.date), s.batchName || '', s.productName || '', s.variant || '',
+          s.quantity || 0, s.unitPrice || 0, s.totalSaleRaw || 0, s.costArsAtSale || 0,
+          ((s.totalSaleRaw || 0) - ((s.unitPrice || 0) * (s.quantity || 0))), s.source || '', s.isReseller ? 'Si' : 'No', getClientStatusLabel(s.isNewClient), normalizeSellerName(s.seller),
+          PAYMENT_METHOD_LABELS[s.medioPago] || 'Sin especificar'
       ]);
       exportToCSV('historial_ventas.csv', [headers, ...rows]);
       showToast('Historial descargado con éxito', 'success');
@@ -5193,7 +5211,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                 adCampaign: (saleGeneral.isNewClient === 'Nuevo - Publicidad' || saleGeneral.isNewClient === 'Clientes - Publicidad') ? String(saleGeneral.adCampaign || '').trim() : '',
                 clientName: saleGeneral.isReseller === 'Si' ? String(saleGeneral.wholesaleClient || '').trim() : '',
                 operationType: saleGeneral.isReseller === 'Si' ? 'MAYORISTA' : 'VENTA',
-                seller: '028 Import' 
+                medioPago: saleGeneral.medioPago || '',
+                seller: '028 Import'
             };
 
             if (isNeutralSale) {
@@ -6969,11 +6988,12 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             
                             <div className="space-y-4">
                                 <Input darkMode={darkMode} label="Fecha de Operación" type="date" value={saleGeneral.saleDate} onChange={e => setSaleGeneral({...saleGeneral, saleDate: e.target.value})} />
-                                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                                <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
                                     <Select darkMode={darkMode} label="Registro" value={saleGeneral.accountingType || 'Normal'} onChange={e => setSaleGeneral({...saleGeneral, accountingType: e.target.value})} options={[{value:'Normal', label:'Venta normal'}, {value:'Neutro', label:'Neutro / Global'}]} />
                                     <Select darkMode={darkMode} label="Canal" value={saleGeneral.source} onChange={e => setSaleGeneral({...saleGeneral, source: e.target.value})} options={[{value:'Instagram', label:'Instagram'}, {value:'Whatsapp', label:'Whatsapp'}, {value:'Personal', label:'Personal'}, {value:'Web', label:'Web'}]} />
                                     <Select darkMode={darkMode} label="Tipo" value={saleGeneral.isReseller} onChange={e => setSaleGeneral({...saleGeneral, isReseller: e.target.value})} options={[{value:'No', label:'Consumidor'}, {value:'Si', label:'Revendedor'}]} />
                                     <Select darkMode={darkMode} label="Cliente" value={saleGeneral.isNewClient} onChange={e => setSaleGeneral({...saleGeneral, isNewClient: e.target.value})} options={[{value:'Frecuente', label:'Frecuente'}, {value:'Nuevo - Organico', label:'Nuevo - Orgánico'}, {value:'Nuevo - Publicidad', label:'Nuevo - Publicidad'}, {value:'Clientes - Publicidad', label:'Clientes - Publicidad'}, {value:'Revendedor', label:'Revendedor'}]} />
+                                    <Select darkMode={darkMode} label="Forma de pago" value={saleGeneral.medioPago || ''} onChange={e => setSaleGeneral({...saleGeneral, medioPago: e.target.value})} options={PAYMENT_METHOD_OPTIONS} />
                                 </div>
 
                                 {saleGeneral.isReseller === 'Si' && (
@@ -7195,9 +7215,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                   </td>
                                   <td className={`px-4 py-3 text-xs font-medium whitespace-nowrap align-top pt-4 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
                                       {safeDateStr(group.date, {month:'short', day:'numeric'})}
+                                      {safeTimeStr(group.createdAt) && <span className="opacity-60"> · {safeTimeStr(group.createdAt)}</span>}
                                       {/* ETIQUETAS VISUALES */}
                                       <div className="flex flex-col gap-1 mt-1.5 items-start">
                                           <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-zinc-800 text-zinc-300' : 'bg-zinc-200 text-zinc-700'}`}>👤 {group.seller}</span>
+                                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-100 text-emerald-700'}`}>💳 {PAYMENT_METHOD_LABELS[group.medioPago] || 'Sin especificar'}</span>
                                           {group.isNeutral && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-indigo-500/10 text-indigo-400' : 'bg-indigo-100 text-indigo-700'}`}>Neutro</span>}
                                           {group.isFalla && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-red-500/10 text-red-400' : 'bg-red-100 text-red-700'}`} title={`${formatMoney(group.failedValue)} perdidos`}>⚠ Falla</span>}
                                           {group.isRobo && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-orange-500/10 text-orange-400' : 'bg-orange-100 text-orange-700'}`} title={`${formatMoney(group.stolenValue)} perdidos`}>🚨 Robo</span>}
