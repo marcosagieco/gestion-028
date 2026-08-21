@@ -49,6 +49,7 @@ const accountLabel = (acc) => {
   if (acc === 'SIN_CUENTA') return 'Sin cuenta';
   if (acc === 'GALICIA_GIECO') return 'Galicia Gieco';
   if (acc === 'MERCADO_PAGO') return 'Mercado Pago';
+  if (acc === 'CUENTA_RECAUDADORA') return 'Cuenta Recaudadora';
   return acc;
 };
 // Cuentas en dólares (vs. el resto, que son en pesos). Se usa para detectar transferencias
@@ -60,6 +61,11 @@ const BATCH_CATEGORIES = ['THC', 'APPLE', 'PERFUMES', 'NICOTINA'];
 
 // --- Proyección del Negocio (Inicio): horizonte hasta fin de año, elegible por el usuario en la tarjeta acumulada ---
 const PROJECTION_YEAR_END_DATE = '2026-12-31';
+
+// Fecha desde la que el gasto diario de Meta Ads se descuenta automáticamente de la billetera LEMON
+// como un Gasto más (ver sync de Meta Ads → Gastos). No es retroactivo a propósito: el historial y
+// el saldo de Lemon anteriores a esta fecha no se tocan.
+const META_ADS_AUTO_EXPENSE_CUTOFF_DATE = '2026-08-19';
 const toDateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const daysUntilDate = (targetDateStr) => {
   const [y, m, d] = targetDateStr.split('-').map(Number);
@@ -93,6 +99,7 @@ const HOME_CARD_META = {
   alias1:             { title: 'Alias 1',               sector: 'sector3' },
   alias2:             { title: 'Alias 2',               sector: 'sector3' },
   alias3:             { title: 'Alias 3',               sector: 'sector3' },
+  alias4:             { title: 'Alias 4',               sector: 'sector3' },
   efectivo:           { title: 'Efectivo',              sector: 'sector3' },
   inversionActiva:    { title: 'Inversión Activa',      sector: 'sector3' },
 };
@@ -100,7 +107,7 @@ const HOME_CARD_META = {
 const DEFAULT_HOME_CARD_ORDER = {
   sector1: ['facturacion','gananciaBruta','gananciaNeta','gananciaEnvio','gastosTotales','gastosEmpresa','gastoMetaAds','inversion','productosFallados','productosRobados','promedioVentas','productosVendidos','ticketPromedio'],
   sector2: ['clientesNuevos','clientesOrganicos','clientesPorAds','clientesFijosAds','ventasRevendedor'],
-  sector3: ['alias1','alias2','alias3','efectivo','inversionActiva'],
+  sector3: ['alias1','alias2','alias3','alias4','efectivo','inversionActiva'],
 };
 
 const HOME_SECTOR_LABELS = { sector1: 'Plata', sector2: 'Clientes', sector3: 'Cuentas' };
@@ -125,12 +132,13 @@ const safeTimeStr = (dateStr) => {
   return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 };
 
-const PAYMENT_METHOD_LABELS = { alias1: 'Alias 1', alias2: 'Alias 2', alias3: 'Alias 3', efectivo: 'Efectivo' };
+const PAYMENT_METHOD_LABELS = { alias1: 'Alias 1', alias2: 'Alias 2', alias3: 'Alias 3', alias4: 'Alias 4', efectivo: 'Efectivo' };
 const PAYMENT_METHOD_OPTIONS = [
   { value: '', label: 'Sin especificar' },
   { value: 'alias1', label: 'Alias 1' },
   { value: 'alias2', label: 'Alias 2' },
   { value: 'alias3', label: 'Alias 3' },
+  { value: 'alias4', label: 'Alias 4' },
   { value: 'efectivo', label: 'Efectivo' },
 ];
 
@@ -1038,7 +1046,7 @@ const AIChat = ({ darkMode, db }) => {
           seller: { type: 'string' },
           shippingPrice: { type: 'number', description: 'Total de envío cobrado al cliente (lo que pagó el cliente por el envío).' },
           shippingCost: { type: 'number', description: 'Costo real del envío (lo que le costó al negocio mandar el pedido).' },
-          medioPago: { type: 'string', description: 'Medio de pago: alias1 (Galicia), alias2 (Galicia Gieco), alias3 (Mercado Pago), efectivo. Si el usuario lo menciona, siempre incluirlo.' },
+          medioPago: { type: 'string', description: 'Medio de pago: alias1 (Galicia), alias2 (Galicia Gieco), alias3 (Mercado Pago), alias4 (Cuenta Recaudadora), efectivo. Si el usuario lo menciona, siempre incluirlo.' },
           adCampaign: { type: 'string', description: 'Nombre de la campaña de Meta Ads de la que vino el cliente. Solo completar si isNewClient es "Nuevo - Publicidad" o "Clientes - Publicidad" y el usuario menciona de qué campaña vino.' }
         },
         required: ['date', 'batchId', 'batchName', 'itemId', 'productName', 'quantity', 'unitPrice']
@@ -1307,7 +1315,7 @@ const AIChat = ({ darkMode, db }) => {
         await updateDoc(doc(db, 'batches', batchId), { items: updItems });
         pushAction(chatId, { type: 'venta', saleId: saleRef.id, batchId, itemId, quantity: Number(quantity), previousStock: prevStock });
       }
-      const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO' };
+      const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', alias4: 'CUENTA_RECAUDADORA' };
       const mp = toolInput.medioPago;
       if (mp && aliasWalletMap[mp]) {
         const wName = aliasWalletMap[mp];
@@ -2448,7 +2456,7 @@ export default function App() {
   const [newBatchSkipExpense, setNewBatchSkipExpense] = useState(false);
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '', repeatCount: '1' });
   const [cashFlow, setCashFlow] = useState([]);
-  const [wallets, setWallets] = useState({ LEMON: 0, AHORROS: 0, GALICIA: 0, GALICIA_GIECO: 0, MERCADO_PAGO: 0, EFECTIVO: 0, USDT: 0, USD: 0, SIN_CUENTA: 0 });
+  const [wallets, setWallets] = useState({ LEMON: 0, AHORROS: 0, GALICIA: 0, GALICIA_GIECO: 0, MERCADO_PAGO: 0, CUENTA_RECAUDADORA: 0, EFECTIVO: 0, USDT: 0, USD: 0, SIN_CUENTA: 0 });
   const walletsScrollRef = useRef(null);
   const [editingWallet, setEditingWallet] = useState(null);
   const [editingWalletValue, setEditingWalletValue] = useState('');
@@ -2643,7 +2651,7 @@ export default function App() {
         }, (error) => console.error("Error settings:", error));
 
         const unsubWallets = onSnapshot(doc(db, 'settings', 'wallets'), (docSnap) => {
-            if (docSnap.exists()) setWallets({ LEMON: 0, AHORROS: 0, GALICIA: 0, GALICIA_GIECO: 0, MERCADO_PAGO: 0, EFECTIVO: 0, USDT: 0, USD: 0, ...docSnap.data() });
+            if (docSnap.exists()) setWallets({ LEMON: 0, AHORROS: 0, GALICIA: 0, GALICIA_GIECO: 0, MERCADO_PAGO: 0, CUENTA_RECAUDADORA: 0, EFECTIVO: 0, USDT: 0, USD: 0, ...docSnap.data() });
         }, () => {});
 
         setLoading(false);
@@ -3647,6 +3655,60 @@ export default function App() {
     };
     fetchProjectionMetaDaily();
   }, []);
+
+  // Ref con el saldo de billeteras más reciente, para poder leerlo desde el sync de Meta Ads sin
+  // que "wallets" sea dependencia del efecto (eso re-dispararía el sync en bucle con cada escritura).
+  const walletsRef = useRef(wallets);
+  useEffect(() => { walletsRef.current = wallets; }, [wallets]);
+  const metaAdsSyncingRef = useRef(false);
+
+  // Sync automático: cada gasto diario de Meta Ads (día ya cerrado, desde META_ADS_AUTO_EXPENSE_CUTOFF_DATE)
+  // se carga solo como un "Gasto" más con cuenta LEMON, y se descuenta del saldo de esa billetera.
+  // Corre en silencio cada vez que se abre la app (sin pedir confirmación). Usa un id determinístico
+  // por fecha (metaads_YYYY-MM-DD) para no duplicar el gasto si corre en más de una pestaña/dispositivo.
+  useEffect(() => {
+    const syncMetaAdsExpenses = async () => {
+      if (metaAdsSyncingRef.current) return;
+      if (!homeMetaDailyData.length) return;
+      const today = getTodayDate();
+      const alreadyRecorded = new Set(
+        expenses.filter(e => e.source === 'meta_ads_auto' && e.metaDate).map(e => e.metaDate)
+      );
+      const pending = homeMetaDailyData
+        .filter(d => d.date_start && d.date_start >= META_ADS_AUTO_EXPENSE_CUTOFF_DATE && d.date_start < today)
+        .filter(d => !alreadyRecorded.has(d.date_start))
+        .map(d => ({ date: d.date_start, amount: parseFloat(d.spend || 0) }))
+        .filter(d => d.amount > 0);
+      if (!pending.length) return;
+      metaAdsSyncingRef.current = true;
+      try {
+        let lemonDelta = 0;
+        for (const p of pending) {
+          const [y, m, d] = p.date.split('-');
+          await setDoc(doc(db, 'expenses', `metaads_${p.date}`), {
+            date: new Date(Number(y), Number(m) - 1, Number(d), 12, 0, 0).toISOString(),
+            description: `Meta Ads · ${p.date}`,
+            amount: p.amount,
+            batchId: null,
+            batchName: 'Meta Ads',
+            account: 'LEMON',
+            source: 'meta_ads_auto',
+            metaDate: p.date,
+          });
+          lemonDelta += p.amount;
+        }
+        const updatedW = { ...walletsRef.current, LEMON: (walletsRef.current.LEMON || 0) - lemonDelta };
+        walletsRef.current = updatedW;
+        setWallets(updatedW);
+        await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+      } catch (e) {
+        console.error('Error sincronizando gasto de Meta Ads con Lemon:', e);
+      } finally {
+        metaAdsSyncingRef.current = false;
+      }
+    };
+    syncMetaAdsExpenses();
+  }, [homeMetaDailyData, expenses]);
 
   // Carga silenciosa de nombres de campañas (todas, activas o no) para sugerir al cargar una venta
   useEffect(() => {
@@ -6148,6 +6210,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       const ingAlias1 = byMP('alias1');
       const ingAlias2 = byMP('alias2');
       const ingAlias3 = byMP('alias3');
+      const ingAlias4 = byMP('alias4');
       const ingEfectivo = byMP('efectivo');
       const avgTicket = cur.itemsSold > 0 ? cur.totalRevenue / cur.itemsSold : 0;
       const prevAvgTicket = prev && prev.itemsSold > 0 ? prev.totalRevenue / prev.itemsSold : null;
@@ -6199,6 +6262,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
           alias1:            <PremiumMetricCard key="alias1" darkMode={darkMode} title="Alias 1" value={formatMoney(ingAlias1)} subtitle="Ingresos" change={null} sparkline={null} color="blue" />,
           alias2:            <PremiumMetricCard key="alias2" darkMode={darkMode} title="Alias 2" value={formatMoney(ingAlias2)} subtitle="Ingresos" change={null} sparkline={null} color="violet" />,
           alias3:            <PremiumMetricCard key="alias3" darkMode={darkMode} title="Alias 3" value={formatMoney(ingAlias3)} subtitle="Ingresos" change={null} sparkline={null} color="amber" />,
+          alias4:            <PremiumMetricCard key="alias4" darkMode={darkMode} title="Alias 4" value={formatMoney(ingAlias4)} subtitle="Ingresos" change={null} sparkline={null} color="rose" />,
           efectivo:          <PremiumMetricCard key="efectivo" darkMode={darkMode} title="Efectivo" value={formatMoney(ingEfectivo)} subtitle="Ingresos" change={null} sparkline={null} color="emerald" />,
           inversionActiva:   <PremiumMetricCard key="inversionActiva" darkMode={darkMode} title="Inversión Activa" value={formatMoney(cur.currentStockValue)} subtitle={`Stock a costo actual · ${cur.currentStockUnits.toLocaleString('es-AR')} uds`} change={null} sparkline={null} />,
       };
@@ -6504,6 +6568,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                             { key: 'alias1',   label: 'Alias 1' },
                                             { key: 'alias2',   label: 'Alias 2' },
                                             { key: 'alias3',   label: 'Alias 3' },
+                                            { key: 'alias4',   label: 'Alias 4' },
                                             { key: 'efectivo', label: 'Efectivo' },
                                         ].map(({ key, label }) => (
                                             <button key={key} onClick={() => setChartMedioPago(key)}
@@ -7486,7 +7551,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         <div className="flex-1 md:w-56"><Input darkMode={darkMode} placeholder="Nombre del nuevo lote..." value={newBatchName} onChange={e => setNewBatchName(e.target.value)} /></div>
                         <div className="w-full sm:w-40">
                           <Select darkMode={darkMode} label="Cuenta de compra" value={newBatchAccount} onChange={e => setNewBatchAccount(e.target.value)}
-                            options={['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(acc => ({ value: acc, label: accountLabel(acc) }))} />
+                            options={['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'CUENTA_RECAUDADORA', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(acc => ({ value: acc, label: accountLabel(acc) }))} />
                         </div>
                         <div className="w-full sm:w-40">
                           <Select darkMode={darkMode} label="Categoría" value={newBatchCategory} onChange={e => setNewBatchCategory(e.target.value)}
@@ -7535,7 +7600,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                             onChange={(e) => setEditingBatchAccount(e.target.value)}
                                             className={`px-2 py-1 text-sm border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0D0D0D] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`}
                                         >
-                                            {['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(acc => (
+                                            {['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'CUENTA_RECAUDADORA', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(acc => (
                                                 <option key={acc} value={acc}>{accountLabel(acc)}</option>
                                             ))}
                                         </select>
@@ -9060,7 +9125,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
             {/* --- PESTAÑA GASTOS (Gastos + Movimientos unificados) --- */}
             {activeTab === 'expenses' && (() => {
-                  const totalWallets = ['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'EFECTIVO', 'SIN_CUENTA'].reduce((s, acc) => s + (wallets[acc] || 0), 0);
+                  const totalWallets = ['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'CUENTA_RECAUDADORA', 'EFECTIVO', 'SIN_CUENTA'].reduce((s, acc) => s + (wallets[acc] || 0), 0);
                   const totalWalletsUsd = ['USDT', 'USD'].reduce((s, acc) => s + (wallets[acc] || 0), 0);
                   // Transferencia entre una cuenta en pesos y una en dólares (USD/USDT): es una compra/venta
                   // de dólares, requiere cotización para saber cuánto entra del otro lado.
@@ -9087,7 +9152,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                   // por ticket, sin las "Neutro" que no son plata real). Cada venta expone por separado lo
                   // cobrado/costo/ganancia de envío para poder verlo al abrir la flechita, y a qué cuenta
                   // entró la plata (según el medio de pago cargado; si no tiene, va a "Sin cuenta").
-                  const medioPagoAccountMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', efectivo: 'EFECTIVO' };
+                  const medioPagoAccountMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', alias4: 'CUENTA_RECAUDADORA', efectivo: 'EFECTIVO' };
                   const incomeFeed = showIncomeHistory ? [
                     ...cashFlow.filter(m => m.type === 'ingreso').map(m => ({ ...m, kind: 'movimiento', account: m.account || 'SIN_CUENTA' })),
                     ...groupedSales
@@ -9163,7 +9228,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         </button>
                         <div ref={walletsScrollRef} className="overflow-x-auto scrollbar-none -mx-1 px-1 pb-1" style={{ scrollSnapType: 'x mandatory' }}>
                         <div className="flex gap-3">
-                        {['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'EFECTIVO', 'USDT', 'USD'].map(acc => {
+                        {['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'CUENTA_RECAUDADORA', 'EFECTIVO', 'USDT', 'USD'].map(acc => {
                           const saldo = wallets[acc] || 0;
                           const isEditing = editingWallet === acc;
                           return (
@@ -9263,7 +9328,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                               {newCashMovement.type === 'transferencia' ? 'Cuenta origen' : 'Cuenta / Wallet'}
                             </p>
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                              {['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'EFECTIVO', 'USDT', 'USD'].map(acc => (
+                              {['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'CUENTA_RECAUDADORA', 'EFECTIVO', 'USDT', 'USD'].map(acc => (
                                 <button key={acc} onClick={() => setNewCashMovement(p => ({ ...p, account: acc, accountTo: p.accountTo === acc ? '' : p.accountTo }))}
                                   className={`px-3 py-2.5 rounded-xl border text-sm font-bold transition-all ${newCashMovement.account === acc ? (darkMode ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40' : 'bg-indigo-50 text-indigo-700 border-indigo-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
                                   {accountLabel(acc)}
@@ -9276,7 +9341,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                   <ArrowLeftRight size={12}/> Cuenta destino
                                 </p>
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                                  {['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'EFECTIVO', 'USDT', 'USD'].filter(acc => acc !== newCashMovement.account).map(acc => (
+                                  {['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'CUENTA_RECAUDADORA', 'EFECTIVO', 'USDT', 'USD'].filter(acc => acc !== newCashMovement.account).map(acc => (
                                     <button key={acc} onClick={() => setNewCashMovement(p => ({ ...p, accountTo: acc }))}
                                       className={`px-3 py-2.5 rounded-xl border text-sm font-bold transition-all ${newCashMovement.accountTo === acc ? (darkMode ? 'bg-sky-500/20 text-sky-400 border-sky-500/40' : 'bg-sky-50 text-sky-700 border-sky-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
                                       {accountLabel(acc)}
@@ -9388,7 +9453,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                           </div>
                           {showIncomeHistory ? (
                             <div className="flex gap-1.5 flex-wrap">
-                              {['TODAS', 'LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(f => (
+                              {['TODAS', 'LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'CUENTA_RECAUDADORA', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(f => (
                                 <button key={f} onClick={() => setIncomeAccountFilter(f)}
                                   className={`px-3 py-1 rounded-lg text-[11px] font-bold border transition-all ${incomeAccountFilter === f ? (darkMode ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-emerald-50 text-emerald-700 border-emerald-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-600'}`}>
                                   {f === 'TODAS' ? 'Todas' : accountLabel(f)}
@@ -9396,7 +9461,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                               ))}
                             </div>
                           ) : !showAjustesHistory && !showStockHistory && <div className="flex gap-1.5 flex-wrap">
-                            {['TODAS', 'GASTOS', 'LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(f => (
+                            {['TODAS', 'GASTOS', 'LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'CUENTA_RECAUDADORA', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'].map(f => (
                               <button key={f} onClick={() => setCashFlowFilter(f)}
                                 className={`px-3 py-1 rounded-lg text-[11px] font-bold border transition-all ${cashFlowFilter === f ? (darkMode ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40' : 'bg-indigo-50 text-indigo-700 border-indigo-300') : darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-600'}`}>
                                 {accountLabel(f)}

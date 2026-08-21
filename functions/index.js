@@ -220,6 +220,7 @@ const normalizarMedioPago = (v) => {
     if (['alias1', 'a1', 'alias 1', '1'].includes(n)) return 'alias1';
     if (['alias2', 'a2', 'alias 2', '2'].includes(n)) return 'alias2';
     if (['alias3', 'a3', 'alias 3', '3'].includes(n)) return 'alias3';
+    if (['alias4', 'a4', 'alias 4', '4'].includes(n)) return 'alias4';
     if (['efe', 'efectivo', 'cash', 'efectico'].includes(n)) return 'efectivo';
     return n || null;
 };
@@ -711,6 +712,9 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                             }
                             else if (["ALIAS3","A3"].includes(datoUpper)) {
                                 medioPagoViejo = 'alias3';
+                            }
+                            else if (["ALIAS4","A4"].includes(datoUpper)) {
+                                medioPagoViejo = 'alias4';
                             }
                             else if (["EFE","EFECTIVO","CASH"].includes(datoUpper)) {
                                 medioPagoViejo = 'efectivo';
@@ -1521,7 +1525,7 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
             seller: vendedor
         });
 
-        const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO' };
+        const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', alias4: 'CUENTA_RECAUDADORA' };
         if (medioPago && aliasWalletMap[medioPago]) {
             const wName = aliasWalletMap[medioPago];
             const wAmount = totalVentaCalculado + Math.max(0, shippingProfitCalculado);
