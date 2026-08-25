@@ -5336,7 +5336,12 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
   const getGroupShipping = (group) => {
     const shipCost = group.originalSales.reduce((s, os) => s + (os.shippingCostArs || os.shippingCost || 0), 0);
     const shipProfit = group.originalSales.reduce((s, os) => s + (os.shippingProfit != null ? (os.shippingProfit || 0) : ((os.clientShippingCharge || 0) - (os.shippingCostArs || 0))), 0);
-    return { shipCost, shipProfit, shipCharge: shipCost + shipProfit };
+    const shipCharge = shipCost + shipProfit; // total cobrado al cliente por envío (costo + ganancia)
+    // Plata cobrada solo por producto, sin importar si el envío ya venía sumado al total facturado
+    // (ventas cargadas a mano) o no (ventas del chatbot de WhatsApp) — así no se duplica ni se pierde nada.
+    const productRevenue = group.originalSales.reduce((s, os) => s + (os.unitPrice || 0) * (os.quantity || 0), 0);
+    const cashIn = productRevenue + shipCharge; // plata que entró en total: producto + envío cobrado
+    return { shipCost, shipProfit, shipCharge, productRevenue, cashIn };
   };
 
   // Borra únicamente la ganancia por envío de una venta (la deja en $0), sin tocar el producto vendido:
@@ -6207,11 +6212,17 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       const revendedoresCount = revendedoresList.length;
       const revendedoresRevenue = revendedoresList.reduce((a, s) => a + (s.totalSaleRaw || 0), 0);
       const byMP = mp => curFilteredSales.filter(s => s.medioPago === mp).reduce((a, s) => a + (s.totalSaleRaw || 0), 0);
+      const countMP = mp => curFilteredSales.filter(s => s.medioPago === mp).length;
       const ingAlias1 = byMP('alias1');
       const ingAlias2 = byMP('alias2');
       const ingAlias3 = byMP('alias3');
       const ingAlias4 = byMP('alias4');
       const ingEfectivo = byMP('efectivo');
+      const cntAlias1 = countMP('alias1');
+      const cntAlias2 = countMP('alias2');
+      const cntAlias3 = countMP('alias3');
+      const cntAlias4 = countMP('alias4');
+      const fVentas = v => `${v} venta${v !== 1 ? 's' : ''}`;
       const avgTicket = cur.itemsSold > 0 ? cur.totalRevenue / cur.itemsSold : 0;
       const prevAvgTicket = prev && prev.itemsSold > 0 ? prev.totalRevenue / prev.itemsSold : null;
       const L = sparklines?.labels;
@@ -6259,10 +6270,10 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
           clientesPorAds:    <PremiumMetricCard key="clientesPorAds" darkMode={darkMode} title="Clientes por Ads" value={newClientsAds} subtitle="Captados por publicidad" change={null} sparkline={sparklines?.adsClients} sparklineLabels={L} sparklineFormatter={fClientes} />,
           clientesFijosAds:  <PremiumMetricCard key="clientesFijosAds" darkMode={darkMode} title="Clientes Fijos Ads" value={fixedAdsCount} subtitle={fixedAdsCount > 0 ? formatMoney(fixedAdsRevenue) : 'Sin ventas'} change={null} sparkline={sparklines?.fixedAdsClients} sparklineLabels={L} sparklineFormatter={fClientes} tooltip="Clientes que originalmente llegaron por publicidad y ya son clientes fijos/recurrentes" />,
           ventasRevendedor:  <PremiumMetricCard key="ventasRevendedor" darkMode={darkMode} title="Ventas Revendedor" value={revendedoresCount} subtitle={revendedoresCount > 0 ? formatMoney(revendedoresRevenue) : 'Sin ventas'} change={null} sparkline={sparklines?.resellerClients} sparklineLabels={L} sparklineFormatter={fClientes} />,
-          alias1:            <PremiumMetricCard key="alias1" darkMode={darkMode} title="Alias 1" value={formatMoney(ingAlias1)} subtitle="Ingresos" change={null} sparkline={null} color="blue" />,
-          alias2:            <PremiumMetricCard key="alias2" darkMode={darkMode} title="Alias 2" value={formatMoney(ingAlias2)} subtitle="Ingresos" change={null} sparkline={null} color="violet" />,
-          alias3:            <PremiumMetricCard key="alias3" darkMode={darkMode} title="Alias 3" value={formatMoney(ingAlias3)} subtitle="Ingresos" change={null} sparkline={null} color="amber" />,
-          alias4:            <PremiumMetricCard key="alias4" darkMode={darkMode} title="Alias 4" value={formatMoney(ingAlias4)} subtitle="Ingresos" change={null} sparkline={null} color="rose" />,
+          alias1:            <PremiumMetricCard key="alias1" darkMode={darkMode} title="Alias 1" value={formatMoney(ingAlias1)} subtitle={`Ingresos · ${fVentas(cntAlias1)}`} change={null} sparkline={null} color="blue" />,
+          alias2:            <PremiumMetricCard key="alias2" darkMode={darkMode} title="Alias 2" value={formatMoney(ingAlias2)} subtitle={`Ingresos · ${fVentas(cntAlias2)}`} change={null} sparkline={null} color="violet" />,
+          alias3:            <PremiumMetricCard key="alias3" darkMode={darkMode} title="Alias 3" value={formatMoney(ingAlias3)} subtitle={`Ingresos · ${fVentas(cntAlias3)}`} change={null} sparkline={null} color="amber" />,
+          alias4:            <PremiumMetricCard key="alias4" darkMode={darkMode} title="Alias 4" value={formatMoney(ingAlias4)} subtitle={`Ingresos · ${fVentas(cntAlias4)}`} change={null} sparkline={null} color="rose" />,
           efectivo:          <PremiumMetricCard key="efectivo" darkMode={darkMode} title="Efectivo" value={formatMoney(ingEfectivo)} subtitle="Ingresos" change={null} sparkline={null} color="emerald" />,
           inversionActiva:   <PremiumMetricCard key="inversionActiva" darkMode={darkMode} title="Inversión Activa" value={formatMoney(cur.currentStockValue)} subtitle={`Stock a costo actual · ${cur.currentStockUnits.toLocaleString('es-AR')} uds`} change={null} sparkline={null} />,
       };
@@ -7259,13 +7270,16 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors" onClick={() => toggleSort('totalSaleRaw')}>
                                   <div className="flex items-center gap-1">Total Fac. <span className="opacity-50">{salesSort.key === 'totalSaleRaw' ? (salesSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></div>
                                 </th>
+                                <th className="px-4 py-3 text-sky-500" title="Plata que entró en total: producto cobrado + envío cobrado al cliente">
+                                  <div className="flex items-center gap-1">Ingresado</div>
+                                </th>
                                 <th className="px-4 py-3"></th>
                               </tr>
                           </thead>
                           <tbody className={`divide-y ${darkMode ? 'divide-zinc-800/80' : 'divide-zinc-100'}`}>
-                            {groupedSales.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-sm font-medium opacity-50 italic">No se encontraron ventas con esos filtros.</td></tr>}
+                            {groupedSales.length === 0 && <tr><td colSpan="7" className="p-8 text-center text-sm font-medium opacity-50 italic">No se encontraron ventas con esos filtros.</td></tr>}
                             {visibleGroupedSales.map(group => {
-                              const { shipCost, shipProfit, shipCharge } = getGroupShipping(group);
+                              const { shipCost, shipProfit, shipCharge, productRevenue, cashIn } = getGroupShipping(group);
                               return (
                               <React.Fragment key={group.ticketId}>
                                 <tr className={`transition-colors group ${selectedSaleTickets[group.ticketId] ? (darkMode ? 'bg-indigo-500/10 hover:bg-indigo-500/15' : 'bg-indigo-50 hover:bg-indigo-100/70') : (darkMode ? 'hover:bg-[#181818]' : 'hover:bg-zinc-50')}`}>
@@ -7316,6 +7330,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                   </td>
                                   <td className="px-4 py-3 font-medium text-emerald-500 text-sm align-top pt-4">{formatMoney(group.totalProfit)}</td>
                                   <td className="px-4 py-3 font-bold font-mono tracking-tight align-top pt-4">{formatMoney(group.totalSaleRaw)}</td>
+                                  <td className="px-4 py-3 font-bold font-mono tracking-tight align-top pt-4 text-sky-500" title={shipCharge !== 0 ? `Producto: ${formatMoney(productRevenue)} · Envío cobrado: ${formatMoney(shipCharge)}` : 'Sin envío cobrado'}>{formatMoney(cashIn)}</td>
                                   <td className="px-4 py-3 text-right align-top pt-3">
                                       <div className="flex items-center justify-end gap-1">
                                         <button onClick={() => setExpandedSaleTicket(expandedSaleTicket === group.ticketId ? null : group.ticketId)}
@@ -7330,7 +7345,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 {expandedSaleTicket === group.ticketId && (
                                     <tr className={darkMode ? 'bg-black/20' : 'bg-zinc-50'}>
                                       <td></td>
-                                      <td colSpan={5} className="px-4 pb-4 pt-1">
+                                      <td colSpan={6} className="px-4 pb-4 pt-1">
                                         <div className={`rounded-xl border divide-y ${darkMode ? 'border-white/[0.07] divide-zinc-800' : 'border-zinc-200 divide-zinc-100'}`}>
                                           {group.items.map((item, idx) => (
                                             <div key={idx} className="flex justify-between items-center p-3">
