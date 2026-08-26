@@ -1528,7 +1528,9 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
         const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', alias4: 'CUENTA_RECAUDADORA' };
         if (medioPago && aliasWalletMap[medioPago]) {
             const wName = aliasWalletMap[medioPago];
-            const wAmount = totalVentaCalculado + Math.max(0, shippingProfitCalculado);
+            // alias4 (Cuenta Recaudadora) no paga el envío — el envío se paga con Galicia Gieco (alias2),
+            // así que a esa billetera solo le entra el producto, nunca la ganancia del envío.
+            const wAmount = totalVentaCalculado + (medioPago === 'alias4' ? 0 : Math.max(0, shippingProfitCalculado));
             const walletsRef = db.collection('settings').doc('wallets');
             await db.runTransaction(async t => {
                 const walletsDoc = await t.get(walletsRef);

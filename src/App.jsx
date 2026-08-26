@@ -1319,7 +1319,9 @@ const AIChat = ({ darkMode, db }) => {
       const mp = toolInput.medioPago;
       if (mp && aliasWalletMap[mp]) {
         const wName = aliasWalletMap[mp];
-        const wAmount = totalSaleRaw + shippingProfit;
+        // alias4 (Cuenta Recaudadora) no paga el envío — el envío se paga con Galicia Gieco (alias2),
+        // así que a esa billetera solo le entra el producto, nunca la ganancia del envío.
+        const wAmount = totalSaleRaw + (mp === 'alias4' ? 0 : shippingProfit);
         const updatedW = { ...wallets, [wName]: (wallets[wName] || 0) + wAmount };
         setWallets(updatedW);
         await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
@@ -6212,7 +6214,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       const revendedoresCount = revendedoresList.length;
       const revendedoresRevenue = revendedoresList.reduce((a, s) => a + (s.totalSaleRaw || 0), 0);
       const byMP = mp => curFilteredSales.filter(s => s.medioPago === mp).reduce((a, s) => a + (s.totalSaleRaw || 0), 0);
-      const countMP = mp => curFilteredSales.filter(s => s.medioPago === mp).length;
+      // Cuenta pedidos (tickets) distintos, no líneas de producto: una venta puede tener varios
+      // productos y son el mismo pedido, así que se agrupa por ticketId (o id si no tiene ticketId).
+      const countMP = mp => new Set(curFilteredSales.filter(s => s.medioPago === mp).map(s => s.ticketId || s.id)).size;
       const ingAlias1 = byMP('alias1');
       const ingAlias2 = byMP('alias2');
       const ingAlias3 = byMP('alias3');
@@ -6222,7 +6226,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       const cntAlias2 = countMP('alias2');
       const cntAlias3 = countMP('alias3');
       const cntAlias4 = countMP('alias4');
-      const fVentas = v => `${v} venta${v !== 1 ? 's' : ''}`;
+      const fVentas = v => `${v} pedido${v !== 1 ? 's' : ''}`;
       const avgTicket = cur.itemsSold > 0 ? cur.totalRevenue / cur.itemsSold : 0;
       const prevAvgTicket = prev && prev.itemsSold > 0 ? prev.totalRevenue / prev.itemsSold : null;
       const L = sparklines?.labels;
