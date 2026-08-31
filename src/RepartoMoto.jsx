@@ -1,0 +1,513 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import {
+  initializeFirestore, getFirestore, collection, query, orderBy, onSnapshot,
+  doc, setDoc, updateDoc, writeBatch,
+} from 'firebase/firestore';
+import {
+  Bike, Moon, Sun, LogOut, ChevronDown, ChevronRight, Navigation, CheckCircle2,
+  Lock, XCircle, PartyPopper, Loader2,
+} from 'lucide-react';
+import { loadGoogleMaps, MAP_DARK_STYLE } from './reparto/googleMapsLoader';
+import { ZONAS_POR_ID, DEPOSITO_ORIGEN } from './reparto/zonas';
+import { computeRecorrido, ordenAPersistir } from './reparto/recorridoEngine';
+
+// --- Firebase: mismo patrón self-contenido que PedidosPage.jsx ---
+const firebaseConfig = {
+  apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId:             import.meta.env.VITE_FIREBASE_APP_ID,
+};
+const fbApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
+let db;
+try { db = initializeFirestore(fbApp, { experimentalForceLongPolling: true }); }
+catch { db = getFirestore(fbApp); }
+if (!db) db = getFirestore(fbApp);
+
+const AUTH_KEY = '028_user';
+const AUTH_PWD = '1717';
+
+function LoginMoto({ dm, onAuth }) {
+  const [pwd, setPwd] = useState('');
+  const [err, setErr] = useState(false);
+  const submit = e => {
+    e.preventDefault();
+    if (pwd === AUTH_PWD) { localStorage.setItem(AUTH_KEY, 'Admin'); onAuth(); }
+    else { setErr(true); setPwd(''); }
+  };
+  return (
+    <div className={`min-h-screen flex items-center justify-center px-4 ${dm ? 'bg-[#050505]' : 'bg-slate-50'}`} style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <div className={`w-full max-w-sm rounded-2xl border p-8 shadow-xl ${dm ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
+        <div className="flex items-center gap-3 mb-7">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#6366f1' }}><Bike size={17} className="text-white" /></div>
+          <div>
+            <p className={`text-xs font-bold uppercase tracking-widest ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>028 Import</p>
+            <h1 className={`text-sm font-black leading-tight ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>Mi Recorrido</h1>
+          </div>
+        </div>
+        <form onSubmit={submit} className="space-y-4">
+          <div>
+            <label className={`block text-xs font-semibold mb-1.5 ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>Clave de seguridad</label>
+            <input type="password" value={pwd} autoFocus onChange={e => { setPwd(e.target.value); setErr(false); }} placeholder="••••••••••••"
+              className={`w-full px-3 py-3 text-base rounded-xl border outline-none transition-all focus:ring-2 focus:ring-indigo-500/30 ${err ? 'border-red-500/60 bg-red-500/5' : dm ? 'bg-[#1a1a1a] border-white/[0.08] text-zinc-100 placeholder-zinc-600' : 'bg-white border-zinc-200 text-zinc-900 placeholder-zinc-400'}`} />
+            {err && <p className="text-xs text-red-400 mt-1.5 font-medium">Clave incorrecta</p>}
+          </div>
+          <button type="submit" className="w-full h-14 rounded-xl text-base font-bold text-white transition-all hover:opacity-90 active:scale-[0.98]" style={{ background: '#6366f1' }}>Ingresar</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+const comoLlegarUrl = (destino) => `https://www.google.com/maps/dir/?api=1&destination=${destino.lat},${destino.lng}&travelmode=driving`;
+
+// Cartel de confirmación centrado, reutilizado para "¿ya terminaste el día?" y "¿ya lo entregaste?"
+// — pensado para dedo/pulgar en la calle, botones grandes.
+function ConfirmModal({ dm, title, text, confirmLabel = 'Aceptar', onConfirm, onCancel }) {
+  return (
+    <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 animate-in fade-in duration-150"
+      style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)' }}
+      onClick={onCancel}>
+      <div onClick={e => e.stopPropagation()}
+        className={`w-full max-w-xs rounded-3xl border p-5 shadow-2xl animate-in zoom-in-95 duration-150 ${dm ? 'bg-[#161616] border-white/[0.1]' : 'bg-white border-zinc-200'}`}>
+        {title && <p className={`text-lg font-black text-center mb-1.5 ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{title}</p>}
+        {text && <p className={`text-sm text-center leading-snug mb-4 ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>{text}</p>}
+        <div className="flex flex-col gap-2 mt-1">
+          <button onClick={onConfirm}
+            className="w-full h-14 rounded-2xl font-black text-base text-white transition-all active:scale-[0.97] bg-emerald-500 hover:bg-emerald-400 flex items-center justify-center gap-2">
+            <CheckCircle2 size={18}/> {confirmLabel}
+          </button>
+          <button onClick={onCancel}
+            className={`w-full h-11 rounded-xl font-bold text-sm transition-all ${dm ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>
+            Todavía no
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function RepartoMoto() {
+  const [dm] = useState(() => localStorage.getItem('028_dark_mode') === 'true');
+  const [auth, setAuth] = useState(() => !!localStorage.getItem(AUTH_KEY));
+  const [pedidos, setPedidos] = useState([]);
+  const [recorrido, setRecorrido] = useState(null);
+  const [userPos, setUserPos] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
+  const [salioLoading, setSalioLoading] = useState(false);
+  const [entregandoId, setEntregandoId] = useState(null);
+  const [toast, setToast] = useState(null);
+  // Norman se marca "inactivo" a mano cuando termina su turno/no está disponible — documento aparte
+  // de recorridos/activo a propósito, para no interferir con esa lógica (parada congelada, etc.) ni
+  // depender de tocarla en cada setDoc que ya existe ahí.
+  const [repartidorActivo, setRepartidorActivo] = useState(true);
+  const [togglingActivo, setTogglingActivo] = useState(false);
+  const [showEndDayConfirm, setShowEndDayConfirm] = useState(false);
+  const [confirmEntregaPedido, setConfirmEntregaPedido] = useState(null);
+
+  const mapDivRef = useRef(null);
+  const mapRef = useRef(null);
+  const markersRef = useRef([]);
+  const userMarkerRef = useRef(null);
+  const computedOnceRef = useRef(false);
+
+  const showToast = (message, type = 'success') => { setToast({ message, type }); setTimeout(() => setToast(null), 3000); };
+
+  useEffect(() => {
+    const q = query(collection(db, 'pedidos'), orderBy('createdAt', 'desc'));
+    return onSnapshot(q, snap => setPedidos(snap.docs.map(d => ({ id: d.id, ...d.data() }))), err => console.error('pedidos:', err));
+  }, []);
+
+  useEffect(() => {
+    return onSnapshot(doc(db, 'recorridos', 'activo'), snap => {
+      setRecorrido(snap.exists() ? snap.data() : { estado: 'en_deposito', salidaEn: null, paradaCongelada: null });
+    }, err => console.error('recorrido:', err));
+  }, []);
+
+  useEffect(() => {
+    return onSnapshot(doc(db, 'recorridos', 'repartidor'), snap => {
+      setRepartidorActivo(snap.exists() ? snap.data().activo !== false : true);
+    }, err => console.error('repartidor:', err));
+  }, []);
+
+  // El botón de arriba solo sirve para pasar de Activo a Inactivo — la única forma de volver a
+  // Activo es tocando "Salí a repartir" (ver handleSalir), nunca tocando este botón de nuevo. Si
+  // ya está inactivo, tocarlo no hace nada.
+  const handleToggleActivo = () => {
+    if (togglingActivo || !repartidorActivo) return;
+    if (stopsOrdenadas.length === 0) {
+      setShowEndDayConfirm(true);
+      return;
+    }
+    aplicarToggleActivo(false);
+  };
+
+  const aplicarToggleActivo = async (nuevoActivo) => {
+    setTogglingActivo(true);
+    try {
+      await setDoc(doc(db, 'recorridos', 'repartidor'), { activo: nuevoActivo, updatedAt: new Date().toISOString() });
+      // Al terminar el día (pasa a inactivo) el recorrido queda reseteado, para que la próxima vez
+      // que tenga pedidos vuelva a arrancar de cero mostrando "Salí a repartir".
+      if (!nuevoActivo) {
+        await setDoc(doc(db, 'recorridos', 'activo'), { estado: 'en_deposito', salidaEn: null, paradaCongelada: null });
+      }
+    } catch (e) {
+      showToast('Error al cambiar el estado: ' + e.message, 'error');
+    } finally {
+      setTogglingActivo(false);
+    }
+  };
+
+  const handleConfirmEndDay = () => {
+    setShowEndDayConfirm(false);
+    aplicarToggleActivo(false);
+  };
+
+  // Ubicación en vivo — solo para centrar el mapa y mostrar el punto azul. Nunca dispara un
+  // recálculo de recorrido ni se escribe en Firestore por cada tick (eso sería carísimo); la
+  // única vez que la posición se guarda es al marcar una entrega (ubicacionEntrega).
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    const watchId = navigator.geolocation.watchPosition(
+      pos => setUserPos({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      err => console.warn('GPS:', err.message),
+      { enableHighAccuracy: true, maximumAge: 10000 }
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, []);
+
+  const stopsRaw = useMemo(() =>
+    pedidos.filter(p => p.tipoEnvio === 'moto' && p.estado === 'armado' && p.direccion),
+    [pedidos]);
+  const stopsOrdenadas = useMemo(() =>
+    [...stopsRaw].sort((a, b) => (a.ordenRecorrido ?? 999) - (b.ordenRecorrido ?? 999)),
+    [stopsRaw]);
+
+  const enCalle = recorrido?.estado === 'en_calle';
+
+  // Único trigger de cálculo que le corresponde a esta pantalla: si hay paradas que TODAVÍA nunca
+  // se ordenaron (nadie abrió el panel del depósito antes), se calculan acá para no dejar a Norman
+  // con una lista sin ningún orden. Si ya venían calculadas (caso normal), no se vuelve a llamar a
+  // Routes API por el simple hecho de abrir esta pantalla — esa llamada ya la hizo el depósito.
+  useEffect(() => {
+    if (computedOnceRef.current || stopsRaw.length === 0) return;
+    const hayNuncaCalculada = stopsRaw.some(p => p.ordenRecorrido == null);
+    if (!hayNuncaCalculada) { computedOnceRef.current = true; return; }
+    computedOnceRef.current = true;
+    (async () => {
+      try {
+        const paradaCongeladaId = enCalle ? recorrido?.paradaCongelada : null;
+        const ordenado = await computeRecorrido({ pedidos: stopsRaw, paradaCongeladaId });
+        const batch = writeBatch(db);
+        ordenado.forEach((p, i) => { if (p.id !== paradaCongeladaId) batch.update(doc(db, 'pedidos', p.id), { ordenRecorrido: i + 1 }); });
+        await batch.commit();
+      } catch (e) { console.error('Error calculando recorrido inicial:', e); }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stopsRaw.length]);
+
+  // --- Mapa ---
+  useEffect(() => {
+    let cancelled = false;
+    loadGoogleMaps().then(maps => {
+      if (cancelled || !mapDivRef.current || mapRef.current) return;
+      mapRef.current = new maps.Map(mapDivRef.current, {
+        center: { lat: DEPOSITO_ORIGEN.lat, lng: DEPOSITO_ORIGEN.lng },
+        zoom: 13,
+        styles: MAP_DARK_STYLE,
+        disableDefaultUI: true,
+        zoomControl: true,
+        gestureHandling: 'greedy',
+      });
+    }).catch(err => console.error('Google Maps no cargó:', err));
+    return () => { cancelled = true; };
+  }, []);
+
+  // Redibuja los marcadores numerados cada vez que cambia el orden de paradas. Los marcadores
+  // viejos se sacan del mapa antes de poner los nuevos — es la única forma simple y confiable de
+  // no acumular marcadores fantasma con la librería clásica de Marker.
+  useEffect(() => {
+    if (!mapRef.current || typeof window === 'undefined' || !window.google) return;
+    const maps = window.google.maps;
+    markersRef.current.forEach(m => m.setMap(null));
+    markersRef.current = stopsOrdenadas.map((p, i) => {
+      const caliente = ZONAS_POR_ID[p.direccion?.zona]?.temperatura === 'caliente';
+      return new maps.Marker({
+        map: mapRef.current,
+        position: { lat: p.direccion.lat, lng: p.direccion.lng },
+        label: { text: String(i + 1), color: '#fff', fontWeight: '700', fontSize: '12px' },
+        icon: {
+          path: maps.SymbolPath.CIRCLE,
+          scale: 15,
+          fillColor: i === 0 ? '#6366f1' : (caliente ? '#f87171' : '#38bdf8'),
+          fillOpacity: 1,
+          strokeColor: '#fff',
+          strokeWeight: 2,
+        },
+      });
+    });
+
+    if (stopsOrdenadas.length > 0) {
+      const bounds = new maps.LatLngBounds();
+      stopsOrdenadas.forEach(p => bounds.extend({ lat: p.direccion.lat, lng: p.direccion.lng }));
+      if (userPos) bounds.extend(userPos);
+      mapRef.current.fitBounds(bounds, 60);
+    }
+  }, [stopsOrdenadas, userPos]);
+
+  // Punto azul de "dónde estoy" — se actualiza en su propio marcador aparte de los numerados.
+  useEffect(() => {
+    if (!mapRef.current || !userPos || typeof window === 'undefined' || !window.google) return;
+    const maps = window.google.maps;
+    if (!userMarkerRef.current) {
+      userMarkerRef.current = new maps.Marker({
+        map: mapRef.current,
+        icon: { path: maps.SymbolPath.CIRCLE, scale: 8, fillColor: '#3b82f6', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
+        zIndex: 999,
+      });
+    }
+    userMarkerRef.current.setPosition(userPos);
+  }, [userPos]);
+
+  const handleSalir = async () => {
+    if (stopsOrdenadas.length === 0 || salioLoading) return;
+    setSalioLoading(true);
+    try {
+      await setDoc(doc(db, 'recorridos', 'activo'), {
+        estado: 'en_calle',
+        salidaEn: new Date().toISOString(),
+        paradaCongelada: stopsOrdenadas[0].id,
+      });
+      // Salir a repartir implica estar activo — si venía marcado inactivo (ej. de un turno
+      // anterior que no reactivó a mano), esto lo pone en Activo solo, sin que haga falta tocar
+      // el botón de arriba a la derecha aparte.
+      if (!repartidorActivo) {
+        await setDoc(doc(db, 'recorridos', 'repartidor'), { activo: true, updatedAt: new Date().toISOString() });
+      }
+    } catch (e) {
+      showToast('Error al salir a repartir: ' + e.message, 'error');
+    } finally {
+      setSalioLoading(false);
+    }
+  };
+
+  const getPosicionActual = () => new Promise(resolve => {
+    if (!navigator.geolocation) { resolve(userPos); return; }
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => resolve(userPos),
+      { enableHighAccuracy: true, timeout: 5000 }
+    );
+  });
+
+  // Marca la entrega, cierra la parada, y recalcula el resto del recorrido saliendo desde donde
+  // se acaba de entregar — este es el único disparador de Routes API que le toca a esta pantalla
+  // además del cálculo inicial de arriba (que casi nunca se llega a usar).
+  const handleEntregado = async (pedido) => {
+    if (entregandoId) return;
+    setEntregandoId(pedido.id);
+    try {
+      const posEntrega = await getPosicionActual();
+      const nowIso = new Date().toISOString();
+      await updateDoc(doc(db, 'pedidos', pedido.id), {
+        estado: 'entregado',
+        entregadoEn: nowIso,
+        ubicacionEntrega: posEntrega ? { lat: posEntrega.lat, lng: posEntrega.lng } : null,
+      });
+
+      const restantes = stopsRaw.filter(p => p.id !== pedido.id);
+      if (restantes.length === 0) {
+        await setDoc(doc(db, 'recorridos', 'activo'), { estado: 'en_deposito', salidaEn: null, paradaCongelada: null });
+      } else {
+        const origin = posEntrega || { lat: pedido.direccion.lat, lng: pedido.direccion.lng };
+        const ordenado = await computeRecorrido({ pedidos: restantes, paradaCongeladaId: null, origin });
+        const batch = writeBatch(db);
+        ordenado.forEach((p, i) => batch.update(doc(db, 'pedidos', p.id), { ordenRecorrido: i + 1 }));
+        await batch.commit();
+        await setDoc(doc(db, 'recorridos', 'activo'), { estado: 'en_calle', salidaEn: recorrido?.salidaEn || nowIso, paradaCongelada: ordenado[0].id });
+      }
+      showToast('Entrega registrada');
+    } catch (e) {
+      showToast('Error al marcar la entrega: ' + e.message, 'error');
+    } finally {
+      setEntregandoId(null);
+    }
+  };
+
+  // Sin clave — esta pantalla (y /pedidos y /pedidos/reparto) queda sin login a propósito, la
+  // usan Norman/depósito directo desde el celular. El resto del sistema sigue pidiendo clave.
+  const proxima = stopsOrdenadas[0];
+  const resto = stopsOrdenadas.slice(1);
+
+  return (
+    <div className={`min-h-screen ${dm ? 'bg-[#050505] text-zinc-100' : 'bg-slate-50 text-zinc-900'}`} style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <div className={`sticky top-0 z-20 border-b backdrop-blur-xl ${dm ? 'bg-[#101010]/90 border-white/[0.06]' : 'bg-white/90 border-zinc-200'}`} style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+        <div className="px-4 h-14 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#6366f1' }}><Bike size={16} className="text-white" /></div>
+            <p className="font-black text-base tracking-tight truncate">Mi Recorrido</p>
+          </div>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {/* Norman se marca activo/inactivo acá — no bloquea nada del flujo, es solo para que
+                depósito sepa si está disponible (se ve reflejado en /pedidos/reparto). */}
+            {/* Inactivo: no reacciona al toque — la única forma de volver a Activo es "Salí a
+                repartir", nunca tocando este botón de nuevo. */}
+            <button onClick={handleToggleActivo} disabled={togglingActivo || !repartidorActivo}
+              className={`flex items-center gap-1.5 h-8 pl-2 pr-3 rounded-full text-xs font-bold transition-all active:scale-[0.97] disabled:opacity-60 ${
+                repartidorActivo
+                  ? (dm ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-100 text-emerald-700')
+                  : (dm ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-200 text-zinc-600')
+              }`}>
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${repartidorActivo ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'}`}/>
+              {togglingActivo ? '...' : (repartidorActivo ? 'Activo' : 'Inactivo')}
+            </button>
+            <button onClick={() => { localStorage.removeItem(AUTH_KEY); setAuth(false); }} className={`p-2.5 rounded-lg transition-colors ${dm ? 'text-zinc-600 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-500 hover:bg-red-50'}`}><LogOut size={19}/></button>
+          </div>
+        </div>
+      </div>
+
+      {/* Mapa */}
+      <div ref={mapDivRef} className="w-full h-[38vh] bg-zinc-900" />
+
+      <div className="px-4 py-4 space-y-3" style={{ paddingBottom: 'calc(2rem + env(safe-area-inset-bottom))' }}>
+
+        {stopsOrdenadas.length === 0 ? (
+          <div className={`rounded-3xl border-2 border-dashed p-10 flex flex-col items-center justify-center gap-3 text-center ${dm ? 'border-white/[0.08] bg-white/[0.02]' : 'border-zinc-200 bg-zinc-50'}`}>
+            <PartyPopper size={36} className={dm ? 'text-zinc-600' : 'text-zinc-300'} />
+            <p className={`text-base font-bold ${dm ? 'text-zinc-300' : 'text-zinc-600'}`}>No hay paradas para repartir ahora.</p>
+          </div>
+        ) : !enCalle ? (
+          <>
+            <button onClick={handleSalir} disabled={salioLoading}
+              className="w-full h-20 rounded-3xl font-black text-2xl text-white transition-all active:scale-[0.97] bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 flex items-center justify-center gap-3">
+              {salioLoading ? <Loader2 size={26} className="animate-spin"/> : <Bike size={28}/>}
+              Salí a repartir
+            </button>
+            {/* Antes de salir, solo vista previa del recorrido — sin "Cómo llegar" ni "Entregado":
+                esas acciones aparecen recién cuando el recorrido pasa a estar activo. */}
+            <div className="space-y-2 mt-3">
+              <span className={`text-[11px] font-black uppercase tracking-widest px-1 ${dm ? 'text-zinc-600' : 'text-zinc-400'}`}>Recorrido de hoy ({stopsOrdenadas.length})</span>
+              {stopsOrdenadas.map((p, i) => {
+                const zona = ZONAS_POR_ID[p.direccion?.zona];
+                const caliente = zona?.temperatura === 'caliente';
+                return (
+                  <div key={p.id} className={`rounded-xl border p-3 flex items-center gap-3 ${dm ? 'bg-[#141414] border-white/[0.07]' : 'bg-white border-zinc-200'}`}>
+                    <span className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm font-black flex-shrink-0 ${dm ? 'bg-white/[0.08] text-zinc-300' : 'bg-zinc-100 text-zinc-600'}`}>{i + 1}</span>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-sm font-bold truncate ${dm ? 'text-zinc-200' : 'text-zinc-800'}`}>{p.direccion?.texto}</p>
+                      {zona && <span className={`text-[10px] font-bold ${caliente ? 'text-red-400' : 'text-sky-400'}`}>{zona.nombre.replace(/^Zona \S+ — /, '')}</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        ) : null}
+
+        {/* Próxima parada: bien grande, arriba de todo, imposible de confundir — recién visible
+            una vez que el recorrido está activo (tocó "Salí a repartir"). */}
+        {enCalle && proxima && (
+          <div className={`rounded-3xl border-2 p-5 ${dm ? 'bg-indigo-500/[0.08] border-indigo-500/40' : 'bg-indigo-50 border-indigo-300'}`}>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="w-9 h-9 rounded-xl bg-[#6366f1] text-white flex items-center justify-center font-black text-lg flex-shrink-0">1</span>
+              <span className={`text-xs font-black uppercase tracking-widest ${dm ? 'text-indigo-300' : 'text-indigo-600'}`}>Próxima parada</span>
+              {enCalle && <Lock size={14} className="text-indigo-400 ml-auto"/>}
+            </div>
+            <p className={`text-2xl font-black leading-snug ${dm ? 'text-zinc-50' : 'text-zinc-900'}`}>{proxima.direccion.texto}</p>
+            {proxima.direccion.referencias && <p className={`text-base mt-1 ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>{proxima.direccion.referencias}</p>}
+            <p className={`text-sm font-bold mt-1 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>{ZONAS_POR_ID[proxima.direccion.zona]?.nombre.replace(/^Zona \S+ — /, '')}</p>
+
+            <button onClick={() => setExpandedId(cur => cur === proxima.id ? null : proxima.id)}
+              className={`flex items-center gap-1 text-sm font-bold mt-3 ${dm ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-700'}`}>
+              {expandedId === proxima.id ? 'Ocultar mensaje' : 'Ver mensaje original'} {expandedId === proxima.id ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
+            </button>
+            {expandedId === proxima.id && (
+              <p className={`text-sm mt-2 whitespace-pre-wrap rounded-xl p-3 ${dm ? 'bg-white/[0.04] text-zinc-300' : 'bg-white text-zinc-600'}`}>{proxima.mensaje}</p>
+            )}
+
+            <div className="flex flex-col gap-2.5 mt-4">
+              <a href={comoLlegarUrl(proxima.direccion)} target="_blank" rel="noopener noreferrer"
+                className="w-full h-16 rounded-2xl font-black text-lg text-white transition-all active:scale-[0.97] bg-[#6366f1] hover:bg-[#4f46e5] flex items-center justify-center gap-2">
+                <Navigation size={22}/> Cómo llegar
+              </a>
+              <button onClick={() => setConfirmEntregaPedido(proxima)} disabled={entregandoId === proxima.id}
+                className="w-full h-16 rounded-2xl font-black text-lg text-white transition-all active:scale-[0.97] bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 flex items-center justify-center gap-2">
+                {entregandoId === proxima.id ? <Loader2 size={22} className="animate-spin"/> : <CheckCircle2 size={22}/>}
+                {entregandoId === proxima.id ? 'Guardando...' : 'Entregado'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Resto de las paradas: mismo patrón, más chico */}
+        {enCalle && resto.length > 0 && (
+          <div className="space-y-2.5">
+            <span className={`text-[11px] font-black uppercase tracking-widest px-1 ${dm ? 'text-zinc-600' : 'text-zinc-400'}`}>Después ({resto.length})</span>
+            {resto.map((p, i) => {
+              const zona = ZONAS_POR_ID[p.direccion?.zona];
+              const caliente = zona?.temperatura === 'caliente';
+              return (
+                <div key={p.id} className={`rounded-2xl border p-4 ${dm ? 'bg-[#141414] border-white/[0.07]' : 'bg-white border-zinc-200'}`}>
+                  <div className="flex items-start gap-3">
+                    <span className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm font-black flex-shrink-0 ${dm ? 'bg-white/[0.08] text-zinc-300' : 'bg-zinc-100 text-zinc-600'}`}>{i + 2}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        {zona && (
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-1 ${caliente ? 'bg-red-500/10 text-red-400' : 'bg-sky-500/10 text-sky-400'}`}>
+                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: caliente ? '#f87171' : '#38bdf8' }}/>
+                            {zona.nombre.replace(/^Zona \S+ — /, '')}
+                          </span>
+                        )}
+                      </div>
+                      <p className={`text-base font-bold leading-snug ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{p.direccion.texto}</p>
+                      {p.direccion.referencias && <p className={`text-sm mt-0.5 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>{p.direccion.referencias}</p>}
+                      <button onClick={() => setExpandedId(cur => cur === p.id ? null : p.id)}
+                        className={`flex items-center gap-1 text-xs font-bold mt-2 ${dm ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-700'}`}>
+                        {expandedId === p.id ? 'Ocultar mensaje' : 'Ver mensaje'} {expandedId === p.id ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}
+                      </button>
+                      {expandedId === p.id && (
+                        <p className={`text-xs mt-2 whitespace-pre-wrap rounded-lg p-2.5 ${dm ? 'bg-white/[0.03] text-zinc-400' : 'bg-zinc-50 text-zinc-600'}`}>{p.mensaje}</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex gap-2 mt-3">
+                    <a href={comoLlegarUrl(p.direccion)} target="_blank" rel="noopener noreferrer"
+                      className={`flex-1 h-11 rounded-xl font-bold text-sm transition-all active:scale-[0.97] flex items-center justify-center gap-1.5 ${dm ? 'bg-white/[0.06] text-zinc-200 hover:bg-white/10' : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'}`}>
+                      <Navigation size={15}/> Cómo llegar
+                    </a>
+                    <button onClick={() => setConfirmEntregaPedido(p)} disabled={!!entregandoId}
+                      className="flex-1 h-11 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.97] bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 flex items-center justify-center gap-1.5">
+                      <CheckCircle2 size={15}/> Entregado
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {toast && (
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2.5 z-50 border max-w-[90vw] ${toast.type === 'error' ? 'bg-red-600/95 border-red-500 text-white' : 'bg-zinc-900/95 border-white/10 text-white'}`}>
+          {toast.type === 'error' ? <XCircle size={16}/> : <CheckCircle2 size={16} className="text-emerald-400"/>}
+          <span className="text-sm font-medium">{toast.message}</span>
+        </div>
+      )}
+
+      {confirmEntregaPedido && (
+        <ConfirmModal dm={dm} title="¿Ya lo entregaste?" text={confirmEntregaPedido.direccion?.texto}
+          confirmLabel="Sí, entregado"
+          onConfirm={() => { const p = confirmEntregaPedido; setConfirmEntregaPedido(null); handleEntregado(p); }}
+          onCancel={() => setConfirmEntregaPedido(null)} />
+      )}
+
+      {showEndDayConfirm && (
+        <ConfirmModal dm={dm} title="¿Ya terminaste el día?" text="No te quedan más paradas pendientes — vas a pasar a Inactivo."
+          onConfirm={handleConfirmEndDay} onCancel={() => setShowEndDayConfirm(false)} />
+      )}
+    </div>
+  );
+}

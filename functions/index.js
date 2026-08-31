@@ -10,6 +10,7 @@ const { emitirFacturaC } = require('./facturacion');
 const { generarFacturaPDFBuffer } = require('./generar-factura-pdf');
 const { EMISORES, cuitNum } = require('./emisores');
 const crypto = require('crypto');
+const axios = require('axios');
 
 const STORAGE_BUCKET  = 'gestion-028.firebasestorage.app';
 const SERVE_PDF_BASE  = 'https://us-central1-gestion-028.cloudfunctions.net/servePdf';
@@ -594,6 +595,64 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                     if (texto) await enviarMensajeWhatsApp(numeroMeta(numeroRemitente), texto);
                     if (solo) return res.sendStatus(200);
                     // solo=false → respuesta no reconocida o expirada → procesar como mensaje nuevo
+                }
+                // ──────────────────────────────────────────────────────────
+
+                // ── Pedido de reparto (moto/uber/retiro) por WhatsApp ──────
+                // Soporta dos formas de mandarlo:
+                //   1) Un solo mensaje: primera línea "MOTOMENSAJERIA"/"UBER"/"RETIRO", el resto
+                //      (después de esa línea) es el pedido completo tal cual.
+                //   2) Dos mensajes separados: primero solo la palabra clave (queda pendiente en
+                //      Firestore), y el pedido llega en el próximo mensaje de ese mismo número.
+                // En ambos casos el pedido se crea igual que si alguien lo tipeara a mano en /pedidos
+                // (misma colección, mismos campos), pero con tipoEnvio ya asignado — nunca se infiere
+                // del texto del pedido en sí, que acá nunca arranca con "moto"/"uber"/"retiro".
+                const ETIQUETA_TIPO_ENVIO = { moto: 'MOTOMENSAJERÍA', uber: 'UBER', retiro: 'RETIRO' };
+
+                const pendingPedidoSnap = await db.collection('pending_pedido').doc(numeroRemitente).get();
+                if (pendingPedidoSnap.exists) {
+                    const { tipoEnvio: tipoEnvioPendiente, createdAt: pendienteCreatedAt } = pendingPedidoSnap.data();
+                    await pendingPedidoSnap.ref.delete();
+                    // Si pasaron más de 10 minutos entre la palabra clave y este mensaje, se descarta
+                    // la clasificación (probablemente quedó vieja/olvidada) y sigue el camino normal.
+                    const pendienteVencido = Date.now() - new Date(pendienteCreatedAt).getTime() > 10 * 60 * 1000;
+                    if (!pendienteVencido) {
+                        await db.collection('pedidos').add({
+                            mensaje: textoOriginal,
+                            estado: 'pendiente',
+                            tipoEnvio: tipoEnvioPendiente,
+                            createdAt: new Date().toISOString(),
+                        });
+                        await enviarMensajeWhatsApp(numeroMeta(numeroRemitente), `✅ Pedido de *${ETIQUETA_TIPO_ENVIO[tipoEnvioPendiente] || tipoEnvioPendiente}* anotado.`);
+                        return res.sendStatus(200);
+                    }
+                }
+
+                const textoTrim = String(textoOriginal || "").trim();
+                const lineasPedido = textoTrim.split(/\r?\n/);
+                const primeraLineaPedido = (lineasPedido[0] || "").trim().toUpperCase();
+                const restoTrasPrimeraLinea = lineasPedido.slice(1).join('\n').trim();
+                const tipoEnvioComando =
+                    primeraLineaPedido === "MOTOMENSAJERIA" ? "moto" :
+                    primeraLineaPedido === "UBER" ? "uber" :
+                    primeraLineaPedido === "RETIRO" ? "retiro" : null;
+
+                if (tipoEnvioComando) {
+                    if (restoTrasPrimeraLinea) {
+                        // Vino todo junto: la primera línea clasifica, el resto es el pedido.
+                        await db.collection('pedidos').add({
+                            mensaje: restoTrasPrimeraLinea,
+                            estado: 'pendiente',
+                            tipoEnvio: tipoEnvioComando,
+                            createdAt: new Date().toISOString(),
+                        });
+                        await enviarMensajeWhatsApp(numeroMeta(numeroRemitente), `✅ Pedido de *${ETIQUETA_TIPO_ENVIO[tipoEnvioComando]}* anotado.`);
+                    } else {
+                        // Solo llegó la palabra clave: espera el pedido completo en el próximo mensaje.
+                        await db.collection('pending_pedido').doc(numeroRemitente).set({ tipoEnvio: tipoEnvioComando, createdAt: new Date().toISOString() });
+                        await enviarMensajeWhatsApp(numeroMeta(numeroRemitente), `📦 Anotado como *${ETIQUETA_TIPO_ENVIO[tipoEnvioComando]}*. Mandame el pedido completo en el próximo mensaje.`);
+                    }
+                    return res.sendStatus(200);
                 }
                 // ──────────────────────────────────────────────────────────
 
@@ -1293,6 +1352,69 @@ exports.resumenSemanal = onSchedule({
 });
 
 // ==========================================
+// COTIZACIONES DEL DÓLAR (DolarApi.com)
+// ==========================================
+// Corre cada 5 minutos, consulta https://dolarapi.com/v1/dolares (sin API key) y guarda el
+// resultado en cotizaciones/actual. Solo escribe en Firestore si compra/venta de alguna casa
+// cambió respecto a lo que ya había guardado — evita escrituras al pedo si la cotización no se
+// movió entre una corrida y la siguiente. Cada cambio real también se apila en
+// cotizaciones_historico para tener un histórico. Si la API falla o responde algo inválido, no se
+// toca Firestore: el front se queda mostrando el último valor bueno tal cual estaba.
+const COTIZACIONES_CASAS = ['oficial', 'blue', 'bolsa', 'contadoconliqui', 'tarjeta', 'mayorista', 'cripto'];
+
+exports.actualizarCotizacionesDolar = onSchedule({
+    schedule: "every 5 minutes",
+    timeZone: "America/Argentina/Buenos_Aires",
+}, async (event) => {
+    let data;
+    try {
+        const resp = await axios.get('https://dolarapi.com/v1/dolares', { timeout: 8000 });
+        data = resp.data;
+        if (!Array.isArray(data) || data.length === 0) throw new Error('Respuesta vacía o con formato inesperado');
+    } catch (err) {
+        console.error('⚠️ DolarApi no respondió bien, se mantiene la última cotización guardada:', err.message);
+        return;
+    }
+
+    // Se queda solo con los campos que nos interesan, indexados por casa (oficial/blue/cripto/etc.).
+    const cotizaciones = {};
+    data.forEach(item => {
+        if (!item || !item.casa) return;
+        cotizaciones[item.casa] = {
+            casa: item.casa,
+            nombre: item.nombre,
+            moneda: item.moneda,
+            compra: item.compra,
+            venta: item.venta,
+            fechaActualizacion: item.fechaActualizacion,
+        };
+    });
+
+    const docRef = db.collection('cotizaciones').doc('actual');
+    const prevSnap = await docRef.get();
+    const prev = prevSnap.exists ? prevSnap.data() : null;
+
+    // "Cambió" se mide por compra/venta, no por fechaActualizacion de la API — así, si DolarApi
+    // toca ese timestamp sin que el número en sí se mueva, no lo tomamos como un cambio real.
+    const changed = !prev || COTIZACIONES_CASAS.some(casa => {
+        const a = prev.cotizaciones?.[casa];
+        const b = cotizaciones[casa];
+        if (!a || !b) return !!a !== !!b;
+        return a.compra !== b.compra || a.venta !== b.venta;
+    });
+
+    if (!changed) {
+        console.log('Cotizaciones sin cambios respecto a la última vez, no se escribe en Firestore.');
+        return;
+    }
+
+    const updatedAt = new Date().toISOString();
+    await docRef.set({ cotizaciones, updatedAt });
+    await db.collection('cotizaciones_historico').add({ cotizaciones, updatedAt });
+    console.log('✓ Cotizaciones del dólar actualizadas:', updatedAt);
+});
+
+// ==========================================
 // FUNCIÓN PROCESAR STOCK NEUTRO
 // ==========================================
 async function procesarStockNeutro(userProducto, userVariante, cantARestar, precioUnitario, motivoNeutro, notaNeutra, vendedor) {
@@ -1528,9 +1650,10 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
         const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', alias4: 'CUENTA_RECAUDADORA' };
         if (medioPago && aliasWalletMap[medioPago]) {
             const wName = aliasWalletMap[medioPago];
-            // alias4 (Cuenta Recaudadora) no paga el envío — el envío se paga con Galicia Gieco (alias2),
-            // así que a esa billetera solo le entra el producto, nunca la ganancia del envío.
-            const wAmount = totalVentaCalculado + (medioPago === 'alias4' ? 0 : Math.max(0, shippingProfitCalculado));
+            // Cuenta Recaudadora es la única billetera a la que nunca se le resta nada: entra la
+            // plata de la venta tal cual, más lo que se cobró de envío COMPLETO (no la ganancia neta
+            // del envío como en las demás billeteras) — nunca se le descuenta el costo del envío acá.
+            const wAmount = totalVentaCalculado + (medioPago === 'alias4' ? (precioEnvioCliente || 0) : Math.max(0, shippingProfitCalculado));
             const walletsRef = db.collection('settings').doc('wallets');
             await db.runTransaction(async t => {
                 const walletsDoc = await t.get(walletsRef);

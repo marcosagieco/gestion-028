@@ -72,6 +72,85 @@ function CumulativeProjectionCard({ darkMode, label, allTimeTotal, projection, v
   );
 }
 
+const MONTH_SHORT = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+
+// Mini gráfico de barras con el índice de estacionalidad mensual real (calculado de TODO el
+// historial, ver projectionEngine.computeMonthlySeasonality) — cuánto vende cada mes en promedio
+// respecto al resto del año. Los meses sin suficientes datos reales quedan como barra apagada, en
+// vez de inventarles un valor.
+function MonthlySeasonalityMini({ darkMode, monthlySeasonality }) {
+  if (!monthlySeasonality) return null;
+  const withData = monthlySeasonality.filter((m) => m.hasData);
+  if (withData.length < 4) return null;
+  const maxIdx = Math.max(...withData.map((m) => m.index), 1);
+  return (
+    <div className={`rounded-xl border p-3 ${darkMode ? 'bg-[#0D0D0D] border-[#1F1F1F]' : 'bg-white border-zinc-200'}`}>
+      <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-2.5">Estacionalidad mensual (histórico real)</p>
+      <div className="flex items-end gap-1 h-16">
+        {monthlySeasonality.map((m) => {
+          const h = m.hasData ? Math.max(6, (m.index / maxIdx) * 56) : 4;
+          const strong = m.hasData && m.index >= 1.1;
+          const weak = m.hasData && m.index <= 0.9;
+          const barColor = !m.hasData
+            ? (darkMode ? '#27272a' : '#e4e4e7')
+            : strong ? '#6366f1'
+            : weak ? (darkMode ? '#3f3f46' : '#d4d4d8')
+            : (darkMode ? '#71717a' : '#a1a1aa');
+          return (
+            <div key={m.month} className="flex-1 flex flex-col items-center gap-1"
+              title={m.hasData ? `${m.label}: ${(m.index * 100).toFixed(0)}% del promedio anual` : `${m.label}: sin suficientes datos todavía`}>
+              <div className="w-full rounded-t transition-all" style={{ height: `${h}px`, background: barColor }} />
+              <span className="text-[8px] text-zinc-500">{MONTH_SHORT[m.month]}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Ventanas del calendario comercial argentino que caen dentro del horizonte proyectado — el
+// pronóstico ya las tiene incorporadas (ver projectionEngine.getSeasonalEvents/applyKnownSeasonality),
+// esto solo lo hace visible para que no parezca un número sacado de la galera.
+function UpcomingEventsRow({ darkMode, upcomingEvents }) {
+  if (!upcomingEvents || upcomingEvents.length === 0) return null;
+  return (
+    <div className={`rounded-xl border p-3 ${darkMode ? 'bg-[#0D0D0D] border-[#1F1F1F]' : 'bg-white border-zinc-200'}`}>
+      <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-2.5">Este pronóstico ya tiene en cuenta</p>
+      <div className="flex flex-wrap gap-1.5">
+        {upcomingEvents.map((e, i) => (
+          <span key={i} className={`text-[10px] font-bold px-2 py-1 rounded-lg flex items-center gap-1.5 ${darkMode ? 'bg-indigo-500/10 text-indigo-300' : 'bg-indigo-50 text-indigo-700'}`}>
+            <span>{e.emoji}</span> {e.name}
+            <span className="opacity-60 font-medium">+{Math.round((e.multiplier - 1) * 100)}%</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Aviso de patrón cíclico detectado (ej. "repunta cada ~5 semanas tras una baja") — solo
+// informativo, nunca se usa para ajustar los números del pronóstico (ver
+// projectionEngine.detectCyclicPattern). Si no hay un patrón lo bastante regular, no se muestra nada.
+function CyclePatternCallout({ darkMode, cyclePattern }) {
+  if (!cyclePattern || !cyclePattern.detected) return null;
+  const weeks = cyclePattern.avgGapWeeks.toFixed(1);
+  return (
+    <div className={`rounded-xl border p-3 flex items-start gap-2.5 ${darkMode ? 'bg-amber-500/[0.06] border-amber-500/20' : 'bg-amber-50 border-amber-200'}`}>
+      <span className="text-base leading-none flex-shrink-0">🔁</span>
+      <div className="min-w-0">
+        <p className={`text-xs font-bold ${darkMode ? 'text-amber-300' : 'text-amber-800'}`}>Patrón detectado en el historial</p>
+        <p className="text-[11px] text-zinc-500 mt-0.5">
+          Las ventas repuntan cada ~{weeks} semanas después de una baja ({cyclePattern.spikesFound} repuntes detectados, con un espaciado bastante regular).
+          {cyclePattern.weeksUntilNextExpected === 0
+            ? ' Según ese patrón, ya estaríamos en la ventana en la que suele darse el repunte.'
+            : ` Según ese patrón, el próximo repunte rondaría la semana del ${cyclePattern.nextExpectedDate.slice(8, 10)}/${cyclePattern.nextExpectedDate.slice(5, 7)}.`}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // Aplana history + forecastNear + forecastFar en filas de un solo ComposedChart, duplicando el
 // punto límite de cada tramo (último real / último forecast cercano) para que las líneas se
 // toquen en el empalme sin depender de connectNulls.
@@ -283,6 +362,13 @@ export default function ProjectionChart({
           </div>
         )}
       </div>
+      {(effProjection.upcomingEvents?.length > 0 || effProjection.monthlySeasonality || effProjection.cyclePattern?.detected) && (
+        <div className={`mt-4 pt-4 border-t space-y-2.5 ${darkMode ? 'border-white/[0.08]' : 'border-zinc-200'}`}>
+          <UpcomingEventsRow darkMode={darkMode} upcomingEvents={effProjection.upcomingEvents} />
+          <MonthlySeasonalityMini darkMode={darkMode} monthlySeasonality={effProjection.monthlySeasonality} />
+          <CyclePatternCallout darkMode={darkMode} cyclePattern={effProjection.cyclePattern} />
+        </div>
+      )}
       {isMultiView && activeView.allTimeTotal != null && (
         <div className={`mt-4 pt-4 border-t border-dashed ${darkMode ? 'border-white/[0.08]' : 'border-zinc-200'}`}>
           <CumulativeProjectionCard
