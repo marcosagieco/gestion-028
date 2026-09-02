@@ -360,6 +360,7 @@ const getClientStatusLabel = (value) => {
   if (normalized === 'clientes - publicidad') return 'Clientes - Publicidad';
   if (normalized === 'nuevo - organico' || normalized === 'nuevo - orgánico' || normalized == 'nuevo') return 'Nuevo - Orgánico';
   if (normalized === 'revendedor') return 'Revendedor';
+  if (normalized === 'dropdeal') return 'Dropdeal';
   return 'Frecuente';
 };
 
@@ -369,6 +370,7 @@ const getClientSearchLabel = (value) => {
   if (label === 'Clientes - Publicidad') return 'cliente fijo publicidad recurrente ads anuncios';
   if (label === 'Nuevo - Orgánico') return 'cliente nuevo organico orgánico primera compra';
   if (label === 'Revendedor') return 'cliente revendedor distribuidor mayorista reventa';
+  if (label === 'Dropdeal') return 'cliente dropdeal marketplace';
   return 'cliente frecuente recurrente';
 };
 
@@ -8693,7 +8695,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                     <Select darkMode={darkMode} label="Registro" value={saleGeneral.accountingType || 'Normal'} onChange={e => setSaleGeneral({...saleGeneral, accountingType: e.target.value})} options={[{value:'Normal', label:'Venta normal'}, {value:'Neutro', label:'Neutro / Global'}]} />
                                     <Select darkMode={darkMode} label="Canal" value={saleGeneral.source} onChange={e => setSaleGeneral({...saleGeneral, source: e.target.value})} options={[{value:'Instagram', label:'Instagram'}, {value:'Whatsapp', label:'Whatsapp'}, {value:'Personal', label:'Personal'}, {value:'Web', label:'Web'}]} />
                                     <Select darkMode={darkMode} label="Tipo" value={saleGeneral.isReseller} onChange={e => setSaleGeneral({...saleGeneral, isReseller: e.target.value})} options={[{value:'No', label:'Consumidor'}, {value:'Si', label:'Revendedor'}]} />
-                                    <Select darkMode={darkMode} label="Cliente" value={saleGeneral.isNewClient} onChange={e => setSaleGeneral({...saleGeneral, isNewClient: e.target.value})} options={[{value:'Frecuente', label:'Frecuente'}, {value:'Nuevo - Organico', label:'Nuevo - Orgánico'}, {value:'Nuevo - Publicidad', label:'Nuevo - Publicidad'}, {value:'Clientes - Publicidad', label:'Clientes - Publicidad'}, {value:'Revendedor', label:'Revendedor'}]} />
+                                    <Select darkMode={darkMode} label="Cliente" value={saleGeneral.isNewClient} onChange={e => setSaleGeneral({...saleGeneral, isNewClient: e.target.value})} options={[{value:'Frecuente', label:'Frecuente'}, {value:'Nuevo - Organico', label:'Nuevo - Orgánico'}, {value:'Nuevo - Publicidad', label:'Nuevo - Publicidad'}, {value:'Clientes - Publicidad', label:'Clientes - Publicidad'}, {value:'Revendedor', label:'Revendedor'}, {value:'Dropdeal', label:'Dropdeal'}]} />
                                     <Select darkMode={darkMode} label="Forma de pago" value={saleGeneral.medioPago || ''} onChange={e => setSaleGeneral({...saleGeneral, medioPago: e.target.value})} options={PAYMENT_METHOD_OPTIONS} />
                                 </div>
 
@@ -8951,12 +8953,14 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                           {group.isFalla && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-red-500/10 text-red-400' : 'bg-red-100 text-red-700'}`} title={`${formatMoney(group.failedValue)} perdidos`}>⚠ Falla</span>}
                                           {group.isRobo && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-orange-500/10 text-orange-400' : 'bg-orange-100 text-orange-700'}`} title={`${formatMoney(group.stolenValue)} perdidos`}>🚨 Robo</span>}
                                           {shipProfit !== 0 && <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${darkMode ? 'bg-sky-500/10 text-sky-400' : 'bg-sky-100 text-sky-700'}`} title={`Ganancia por envío: ${formatMoney(shipProfit)}`}>🚚 Envío</span>}
-                                          {(isNewClientStatus(group.isNewClient) || group.isNewClient === 'Revendedor' || group.isNewClient === 'Clientes - Publicidad') && (
+                                          {(isNewClientStatus(group.isNewClient) || group.isNewClient === 'Revendedor' || group.isNewClient === 'Clientes - Publicidad' || group.isNewClient === 'Dropdeal') && (
                                             <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
                                               group.isNewClient === 'Revendedor'
                                                 ? (darkMode ? 'bg-violet-500/10 text-violet-400' : 'bg-violet-100 text-violet-700')
                                                 : group.isNewClient === 'Clientes - Publicidad'
                                                 ? (darkMode ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-100 text-blue-700')
+                                                : group.isNewClient === 'Dropdeal'
+                                                ? (darkMode ? 'bg-fuchsia-500/10 text-fuchsia-400' : 'bg-fuchsia-100 text-fuchsia-700')
                                                 : (darkMode ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-100 text-amber-600')
                                             }`}>{getClientStatusLabel(group.isNewClient)}</span>
                                           )}

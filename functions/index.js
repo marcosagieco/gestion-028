@@ -250,6 +250,7 @@ const normalizarTipoCliente = (value) => {
     if (["organico", "orgánico", "org", "ig", "instagram", "instagram organico", "instagram orgánico", "nuevo organico", "nuevo orgánico"].includes(v)) return "Nuevo - Organico";
     if (["si", "sí", "true", "nuevo", "yes", "1"].includes(v)) return "Nuevo - Organico";
     if (["revendedor", "revend", "rev", "distribuidor", "mayoreo", "reventa"].includes(v)) return "Revendedor";
+    if (["dropdeal", "drop deal", "drop", "dd"].includes(v)) return "Dropdeal";
     return "Frecuente";
 };
 

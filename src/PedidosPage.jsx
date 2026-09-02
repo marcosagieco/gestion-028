@@ -34,6 +34,11 @@ if (!db) db = getFirestore(fbApp);
 // --- Utilidades (copiadas de App.jsx: esta página no importa nada de ahí a propósito) ---
 const formatMoney = n => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n || 0);
 
+const getTodayDate = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+};
+
 const safeDateStr = (dateStr, options) => {
   if (!dateStr) return 'Sin fecha';
   const d = new Date(dateStr);
@@ -88,6 +93,7 @@ const PEDIDO_TIPO_CLIENTE_OPTIONS = [
   { value: 'Nuevo - Publicidad', label: 'Nuevo - Publicidad' },
   { value: 'Clientes - Publicidad', label: 'Clientes - Publicidad' },
   { value: 'Revendedor', label: 'Revendedor' },
+  { value: 'Dropdeal', label: 'Dropdeal' },
 ];
 const PEDIDO_TIPO_CLIENTE_LABELS = Object.fromEntries(PEDIDO_TIPO_CLIENTE_OPTIONS.map(o => [o.value, o.label]));
 const PEDIDO_MEDIO_PAGO_OPTIONS = [
@@ -691,7 +697,7 @@ export default function PedidosPage() {
   const [cancelTarget, setCancelTarget] = useState(null);
   const [cancelMotivo, setCancelMotivo] = useState('');
   const [finalizarTarget, setFinalizarTarget] = useState(null);
-  const [finalizarForm, setFinalizarForm] = useState({ tipoCliente: '', medioPago: '', vendedor: '', envioCliente: '', costoEnvio: '' });
+  const [finalizarForm, setFinalizarForm] = useState({ tipoCliente: '', medioPago: '', vendedor: '', envioCliente: '', costoEnvio: '', fecha: getTodayDate() });
   // Líneas de producto de la venta que se está por cerrar — arranca con una sola, pero se puede
   // sumar más (a veces se vende más de una marca/producto en el mismo pedido). Cada línea tiene su
   // propio autocompletar de stock, cantidad y precio, independiente de las demás.
@@ -927,7 +933,7 @@ export default function PedidosPage() {
   };
 
   const handleAbrirFinalizar = (pedido) => {
-    setFinalizarForm({ tipoCliente: '', medioPago: '', vendedor: '', envioCliente: '', costoEnvio: '' });
+    setFinalizarForm({ tipoCliente: '', medioPago: '', vendedor: '', envioCliente: '', costoEnvio: '', fecha: getTodayDate() });
     setFinalizarItems([nuevaLineaProducto()]);
     setFinalizarTarget(pedido);
   };
@@ -955,7 +961,7 @@ export default function PedidosPage() {
     return (finalizarQtyPorItemId[it.selectedProductItem.itemId] || 0) <= it.selectedProductItem.currentStock;
   };
   const finalizarTotalGeneral = finalizarItems.reduce((sum, it) => sum + (parseFloat(it.precio) || 0) * (parseInt(it.unidades) || 0), 0);
-  const finalizarValido = finalizarForm.tipoCliente && finalizarForm.medioPago && finalizarForm.vendedor &&
+  const finalizarValido = finalizarForm.tipoCliente && finalizarForm.medioPago && finalizarForm.vendedor && finalizarForm.fecha &&
     finalizarItems.length > 0 && finalizarItems.every(finalizarItemEsValido);
 
   // Al finalizar no solo se cierra el pedido: se anota como venta real (mismo efecto que cargarla
@@ -973,6 +979,11 @@ export default function PedidosPage() {
       const shippingProfit = (clientShippingCharge && shippingCostArs) ? (clientShippingCharge - shippingCostArs) : 0;
       const isReseller = finalizarForm.tipoCliente === 'Revendedor';
       const nowIso = new Date().toISOString();
+      // Fecha de la venta (para los reportes): la que se eligió en el formulario, no necesariamente
+      // hoy. Se guarda con la hora actual para no romper el orden dentro del día — mismo criterio
+      // que usa Gestión al cargar una venta a mano.
+      const [fechaY, fechaM, fechaD] = (finalizarForm.fecha || getTodayDate()).split('-').map(Number);
+      const dateStr = new Date(fechaY, fechaM - 1, fechaD, new Date().getHours(), new Date().getMinutes()).toISOString();
       const ticketId = `PED-${Date.now()}`;
 
       let totalSaleRawGeneral = 0;
@@ -1012,7 +1023,7 @@ export default function PedidosPage() {
           stolenValue: 0,
           seller: finalizarForm.vendedor,
           createdAt: nowIso,
-          date: nowIso,
+          date: dateStr,
         });
 
         // 2) Descuento de stock, acumulado en la copia local del lote (todavía no se escribe)
@@ -1514,6 +1525,13 @@ export default function PedidosPage() {
               </div>
 
               <div className="flex flex-col gap-1.5">
+                <label className={`text-xs font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>Fecha de la venta</label>
+                <input type="date" value={finalizarForm.fecha} onChange={e => setFinalizarForm({ ...finalizarForm, fecha: e.target.value })}
+                  className={`h-12 border rounded-xl px-3.5 w-full text-base outline-none transition-all ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100 focus:border-[#6366f1]/50 focus:ring-1 focus:ring-[#6366f1]/10' : 'bg-white border-zinc-200 text-zinc-900 focus:border-blue-400 focus:ring-1 focus:ring-blue-100'}`} />
+                <p className={`text-[11px] ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>Por defecto es hoy — cambiala solo si la venta es de otro día.</p>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
                 <label className={`text-xs font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>Tipo de cliente</label>
                 <div className="relative">
                   <select value={finalizarForm.tipoCliente} onChange={e => setFinalizarForm({ ...finalizarForm, tipoCliente: e.target.value })}
@@ -1590,6 +1608,7 @@ export default function PedidosPage() {
                         <div className="flex flex-col gap-1.5">
                           <label className={`text-xs font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>Unidades</label>
                           <input type="number" inputMode="numeric" min="1" value={it.unidades} onChange={e => actualizarFinalizarItem(it.uid, { unidades: e.target.value })}
+                            onWheel={e => e.target.blur()}
                             className={`h-12 border rounded-xl px-3.5 w-full text-base outline-none transition-all ${
                               excedeStock ? 'border-red-500/60' : (dm ? 'border-white/[0.07]' : 'border-zinc-200')
                             } ${dm ? 'bg-[#101010] text-zinc-100 focus:ring-1 focus:ring-[#6366f1]/10' : 'bg-white text-zinc-900 focus:ring-1 focus:ring-blue-100'}`}
@@ -1600,6 +1619,7 @@ export default function PedidosPage() {
                           <div className="relative">
                             <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none"><span className={`text-base font-medium ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>$</span></div>
                             <input type="number" inputMode="decimal" value={it.precio} onChange={e => actualizarFinalizarItem(it.uid, { precio: e.target.value })}
+                              onWheel={e => e.target.blur()}
                               className={`h-12 border rounded-xl pl-8 pr-3.5 w-full text-base outline-none transition-all ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100 focus:border-[#6366f1]/50 focus:ring-1 focus:ring-[#6366f1]/10' : 'bg-white border-zinc-200 text-zinc-900 focus:border-blue-400 focus:ring-1 focus:ring-blue-100'}`}
                             />
                           </div>
@@ -1634,6 +1654,7 @@ export default function PedidosPage() {
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none"><span className={`text-base font-medium ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>$</span></div>
                     <input type="number" inputMode="decimal" value={finalizarForm.envioCliente} onChange={e => setFinalizarForm({ ...finalizarForm, envioCliente: e.target.value })}
+                      onWheel={e => e.target.blur()}
                       className={`h-12 border rounded-xl pl-8 pr-3.5 w-full text-base outline-none transition-all ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100 focus:border-[#6366f1]/50 focus:ring-1 focus:ring-[#6366f1]/10' : 'bg-white border-zinc-200 text-zinc-900 focus:border-blue-400 focus:ring-1 focus:ring-blue-100'}`}
                     />
                   </div>
@@ -1643,6 +1664,7 @@ export default function PedidosPage() {
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none"><span className={`text-base font-medium ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>$</span></div>
                     <input type="number" inputMode="decimal" value={finalizarForm.costoEnvio} onChange={e => setFinalizarForm({ ...finalizarForm, costoEnvio: e.target.value })}
+                      onWheel={e => e.target.blur()}
                       className={`h-12 border rounded-xl pl-8 pr-3.5 w-full text-base outline-none transition-all ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100 focus:border-[#6366f1]/50 focus:ring-1 focus:ring-[#6366f1]/10' : 'bg-white border-zinc-200 text-zinc-900 focus:border-blue-400 focus:ring-1 focus:ring-blue-100'}`}
                     />
                   </div>
