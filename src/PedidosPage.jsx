@@ -110,6 +110,13 @@ const PEDIDO_VENDEDOR_OPTIONS = [
 const PEDIDO_ALERTA_MIN = 15;
 const PEDIDO_URGENTE_MIN = 30;
 
+// Endpoint que factura desde la web — mismo camino y mismo resultado que factura por WhatsApp
+// (functions/index.js → emitirFacturaWeb, que llama al mismo núcleo que usa el bot). La clave tiene
+// que ser IDÉNTICA a FACTURA_WEB_KEY del lado del servidor; no es seguridad real (corre en el
+// navegador), solo evita que la URL quede abierta a cualquiera que la encuentre.
+const FACTURA_ENDPOINT = 'https://us-central1-gestion-028.cloudfunctions.net/emitirFacturaWeb';
+const FACTURA_WEB_KEY = '028_Pedidos_Factura_2026';
+
 // Reutiliza el mismo login que Gestión (028_user / clave 1717): si ya iniciaste sesión en el
 // dashboard desde este teléfono, Pedidos abre directo sin pedir nada de nuevo.
 const AUTH_KEY = '028_user';
@@ -257,6 +264,96 @@ function ConfirmMiniModal({ dm, text, confirmLabel = 'Sí, ya lo empaqueté', on
             Todavía no
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Cartel de facturación al finalizar un pedido con Alias 1 / Alias 2 — mismo criterio que WhatsApp
+// (solo esos dos medios de pago tienen emisor dado de alta en ARCA). Tiene DOBLE confirmación a
+// propósito antes de emitir de verdad: "¿facturás?" y, recién si dice que sí, un segundo cartel que
+// explica que no se puede deshacer — para no emitir una factura real por un toque de más.
+function FacturaModal({ dm, prompt, step, resultado, onNo, onSiPrimero, onVolver, onConfirmarEmision, onCerrar }) {
+  if (!prompt) return null;
+  return (
+    <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 animate-in fade-in duration-150"
+      style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)' }}>
+      <div className={`w-full max-w-sm rounded-2xl border p-5 shadow-2xl animate-in zoom-in-95 duration-150 ${dm ? 'bg-[#161616] border-white/[0.1]' : 'bg-white border-zinc-200'}`}>
+
+        {step === 'preguntar' && (
+          <>
+            <p className={`text-base font-bold text-center leading-snug mb-1.5 ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>
+              🧾 ¿Emitís Factura C por {formatMoney(prompt.monto)} a Consumidor Final?
+            </p>
+            <p className={`text-xs text-center mb-4 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>El pedido ya quedó finalizado — esto es aparte.</p>
+            <div className="flex flex-col gap-2">
+              <button onClick={onSiPrimero}
+                className="w-full h-12 rounded-xl font-black text-sm text-white transition-all active:scale-[0.97] bg-[#6366f1] hover:bg-[#4f46e5]">
+                Sí, facturar
+              </button>
+              <button onClick={onNo}
+                className={`w-full h-10 rounded-xl font-bold text-sm transition-all ${dm ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>
+                No, sin factura
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === 'confirmar' && (
+          <>
+            <p className={`text-base font-bold text-center leading-snug mb-1.5 ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>
+              Vas a emitir una Factura C por {formatMoney(prompt.monto)}
+            </p>
+            <p className="text-xs text-center text-red-400 font-semibold mb-4">Una vez emitida no se puede anular ni editar desde acá. ¿Confirmás?</p>
+            <div className="flex flex-col gap-2">
+              <button onClick={onConfirmarEmision}
+                className="w-full h-12 rounded-xl font-black text-sm text-white transition-all active:scale-[0.97] bg-emerald-500 hover:bg-emerald-400">
+                Sí, emitir factura
+              </button>
+              <button onClick={onVolver}
+                className={`w-full h-10 rounded-xl font-bold text-sm transition-all ${dm ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>
+                Volver
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === 'cargando' && (
+          <div className="py-6 flex flex-col items-center gap-3">
+            <div className="w-8 h-8 rounded-full animate-spin" style={{ border: '2.5px solid #6366f1', borderTopColor: 'transparent' }} />
+            <p className={`text-sm font-semibold ${dm ? 'text-zinc-300' : 'text-zinc-600'}`}>Emitiendo factura con ARCA...</p>
+          </div>
+        )}
+
+        {step === 'resultado' && resultado && (resultado.ok ? (
+          <>
+            <p className="text-base font-black text-center text-emerald-500 mb-3">🧾 Factura C emitida</p>
+            <div className={`text-xs rounded-xl border p-3 space-y-1.5 mb-4 ${dm ? 'border-white/[0.07] bg-white/[0.02] text-zinc-300' : 'border-zinc-200 bg-zinc-50 text-zinc-700'}`}>
+              <div className="flex justify-between gap-3"><span className="opacity-60">Número</span><span className="font-bold">{resultado.nroComprobante}</span></div>
+              <div className="flex justify-between gap-3"><span className="opacity-60">CAE</span><span className="font-bold">{resultado.cae}</span></div>
+              <div className="flex justify-between gap-3"><span className="opacity-60">Vence</span><span className="font-bold">{resultado.vencimientoCAE}</span></div>
+            </div>
+            <button onClick={onCerrar}
+              className="w-full h-12 rounded-xl font-black text-sm text-white transition-all active:scale-[0.97] bg-emerald-500 hover:bg-emerald-400">
+              Listo
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="text-sm font-bold text-center text-red-400 mb-1">No se pudo emitir la factura</p>
+            <p className={`text-xs text-center mb-4 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>{resultado.error || 'Error desconocido.'}</p>
+            <div className="flex flex-col gap-2">
+              <button onClick={onConfirmarEmision}
+                className="w-full h-12 rounded-xl font-black text-sm text-white transition-all active:scale-[0.97] bg-[#6366f1] hover:bg-[#4f46e5]">
+                Reintentar
+              </button>
+              <button onClick={onCerrar}
+                className={`w-full h-10 rounded-xl font-bold text-sm transition-all ${dm ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>
+                Cerrar (la venta ya quedó registrada)
+              </button>
+            </div>
+          </>
+        ))}
       </div>
     </div>
   );
@@ -607,6 +704,12 @@ export default function PedidosPage() {
   const [borrarEntregadoTarget, setBorrarEntregadoTarget] = useState(null);
   const [borrarEntregadoMotivo, setBorrarEntregadoMotivo] = useState('');
   const [savingBorrarEntregado, setSavingBorrarEntregado] = useState(false);
+  // Facturación al finalizar (solo Alias 1 / Alias 2, igual que WhatsApp) — prompt guarda los datos
+  // de la venta recién cerrada; step recorre 'preguntar' → 'confirmar' (doble confirmación antes de
+  // emitir de verdad) → 'cargando' → 'resultado'.
+  const [facturaPrompt, setFacturaPrompt] = useState(null); // { pedidoId, saleIds, monto, emisorId }
+  const [facturaStep, setFacturaStep] = useState('preguntar');
+  const [facturaResultado, setFacturaResultado] = useState(null);
   const [, setTick] = useState(0);
   const [toast, setToast] = useState(null);
 
@@ -948,7 +1051,8 @@ export default function PedidosPage() {
       }
 
       // 4) Cierre del pedido, con referencia a las ventas recién creadas
-      await updateDoc(doc(db, 'pedidos', finalizarTarget.id), {
+      const pedidoIdCerrado = finalizarTarget.id;
+      await updateDoc(doc(db, 'pedidos', pedidoIdCerrado), {
         estado: 'finalizado',
         finalizadoAt: nowIso,
         venta: {
@@ -964,12 +1068,73 @@ export default function PedidosPage() {
       setFinalizarTarget(null);
       setFinalizarItems([nuevaLineaProducto()]);
       setFocusArmadoId(null);
-      showToast('Pedido finalizado y venta registrada');
+
+      // Igual que por WhatsApp: con Alias 1 o Alias 2 (los únicos con emisor dado de alta en ARCA)
+      // se pregunta si se factura la venta. Con cualquier otro medio de pago no se pregunta nada.
+      if (finalizarForm.medioPago === 'alias1' || finalizarForm.medioPago === 'alias2') {
+        setFacturaStep('preguntar');
+        setFacturaResultado(null);
+        setFacturaPrompt({
+          pedidoId: pedidoIdCerrado,
+          saleIds: ventaItems.map(it => it.saleId),
+          monto: totalSaleRawGeneral + clientShippingCharge,
+          emisorId: finalizarForm.medioPago,
+        });
+      } else {
+        showToast('Pedido finalizado y venta registrada');
+      }
     } catch (e) {
       showToast('Error al finalizar: ' + e.message, 'error');
     } finally {
       setSavingFinalizar(false);
     }
+  };
+
+  // El pedido ya quedó finalizado antes de llegar a este cartel — declinar factura solo deja
+  // asentado en cada venta que se decidió no facturarla, mismo campo que usa el flujo de WhatsApp.
+  const handleFacturaNo = async () => {
+    const p = facturaPrompt;
+    if (!p) return;
+    try {
+      await Promise.all(p.saleIds.map(id => updateDoc(doc(db, 'sales', id), { invoiceStatus: 'sin_factura' })));
+    } catch { /* no bloquea el cierre: la venta ya está registrada igual */ }
+    setFacturaPrompt(null);
+    showToast('Pedido finalizado y venta registrada');
+  };
+
+  const handleFacturaSiPrimero = () => setFacturaStep('confirmar');
+  const handleFacturaVolver = () => setFacturaStep('preguntar');
+
+  // Recién acá se llama de verdad a ARCA — después de las dos confirmaciones.
+  const handleFacturaConfirmarEmision = async () => {
+    const p = facturaPrompt;
+    if (!p) return;
+    setFacturaStep('cargando');
+    try {
+      const res = await fetch(FACTURA_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Factura-Key': FACTURA_WEB_KEY },
+        body: JSON.stringify({ saleIds: p.saleIds, monto: p.monto, emisorId: p.emisorId }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        await updateDoc(doc(db, 'pedidos', p.pedidoId), {
+          'venta.factura': { cae: data.cae, nroComprobante: data.nroComprobante, vencimientoCAE: data.vencimientoCAE },
+        }).catch(() => {});
+      }
+      setFacturaResultado(data);
+    } catch (e) {
+      setFacturaResultado({ ok: false, error: 'No se pudo conectar con el servidor: ' + e.message });
+    } finally {
+      setFacturaStep('resultado');
+    }
+  };
+
+  const handleFacturaCerrar = () => {
+    setFacturaPrompt(null);
+    setFacturaStep('preguntar');
+    setFacturaResultado(null);
+    showToast('Pedido finalizado y venta registrada');
   };
 
   // En celular, hoja que sube desde abajo (patrón táctil de siempre). En PC (lg+) esa misma hoja
@@ -1568,6 +1733,10 @@ export default function PedidosPage() {
           </div>
         </div>
       )}
+
+      <FacturaModal dm={dm} prompt={facturaPrompt} step={facturaStep} resultado={facturaResultado}
+        onNo={handleFacturaNo} onSiPrimero={handleFacturaSiPrimero} onVolver={handleFacturaVolver}
+        onConfirmarEmision={handleFacturaConfirmarEmision} onCerrar={handleFacturaCerrar} />
     </div>
   );
 }

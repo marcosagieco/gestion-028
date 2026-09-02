@@ -83,6 +83,12 @@ async function guardarFacturaConPDF({ emisor, ventaId, ptoVta, numero, fecha, fe
 
 const VERIFY_TOKEN = "028_Import_Master_2026";
 
+// Clave del endpoint de facturación desde la web (ver exports.emitirFacturaWeb más abajo). No es
+// seguridad real — este código corre en el navegador, cualquiera que abra devtools la ve — es solo
+// para que la URL de la función no quede abierta a cualquier bot que la encuentre, mismo criterio
+// que VERIFY_TOKEN de acá arriba. Tiene que ser IDÉNTICA a FACTURA_WEB_KEY en src/PedidosPage.jsx.
+const FACTURA_WEB_KEY = "028_Pedidos_Factura_2026";
+
 // 👇 TUS DATOS REALES DE META 👇
 const META_TOKEN = "EAANhs8CZCMhUBRfllbvBZCzHH83H31sZCZC6ISpFo1ylsq3XOTEQXZCd1dIyUPXVHNjCfNDmG4Jnrnk4G7U9kBTsFdhkOs7WUiVrchrLLomAZAy4ydcSrNhlbzPTbVlMDpxZAVfKBj4uePi2xFjYuPW1hLAKcAlr98EHPkKWDS2TaFlb1TKVxmFDCvmkzNqZCmCZC1wZDZD";
 const PHONE_ID = "984636221409591";
@@ -933,23 +939,47 @@ async function resolverPendingFactura(pendingSnap, textoRespuesta) {
         return { texto: '✅ Venta registrada sin factura.', solo: true };
     }
 
-    // Afirmativo → marcar 'procesando' de forma atómica ANTES de llamar a ARCA
-    const marcado = await marcarProcesandoTransaccional(saleIds);
-    if (!marcado.ok) {
-        const d = marcado.detalle || {};
+    // Afirmativo → mismo núcleo de emisión que usa el endpoint de la web (emitirYGuardarFactura).
+    const resultado = await emitirYGuardarFactura({ saleIds, monto, emisorId: emisor.id });
+    if (!resultado.ok) {
+        if (resultado.motivo === 'ya_procesada') {
+            const d = resultado.detalle || {};
+            return {
+                texto: `⚠️ La factura ya fue emitida o está en proceso (CAE: ${d.invoiceCAE || d.facturaId || '—'}, Nro: ${d.invoiceNumber || '—'}).`,
+                solo: true,
+            };
+        }
         return {
-            texto: `⚠️ La factura ya fue emitida o está en proceso (CAE: ${d.invoiceCAE || d.facturaId || '—'}, Nro: ${d.invoiceNumber || '—'}).`,
+            texto: '⚠️ ARCA no respondió. La factura quedó como *pendiente* y se reintentará.',
             solo: true,
         };
     }
+    return {
+        texto: `🧾 *Factura C emitida*\n• Nro: ${resultado.nroComprobante}\n• CAE: ${resultado.cae}\n• Vence: ${resultado.vencimientoCAE}`,
+        solo: true,
+    };
+}
+
+// ─── Núcleo de la emisión: llama a ARCA, actualiza las ventas y guarda el PDF/registro de la
+// factura. Lo usan tanto el flujo de WhatsApp (resolverPendingFactura, arriba) como el endpoint
+// de la web (exports.emitirFacturaWeb, más abajo) — mismo código, mismo resultado en los dos
+// canales. Nunca duplica una factura: marcarProcesandoTransaccional corta la carrera si dos
+// intentos concurrentes (reintento de webhook, doble click en la web) apuntan a las mismas ventas.
+async function emitirYGuardarFactura({ saleIds, monto, emisorId }) {
+    const emisor = EMISORES[emisorId] || EMISORES.alias1;
+
+    const marcado = await marcarProcesandoTransaccional(saleIds);
+    if (!marcado.ok) {
+        return { ok: false, motivo: 'ya_procesada', detalle: marcado.detalle || {} };
+    }
 
     try {
-        const resultado = await emitirFacturaC(monto, emisor);
+        const resultadoArca   = await emitirFacturaC(monto, emisor);
         const hoy             = new Date().toISOString().slice(0, 10);
         const [yy, mm, dd]    = hoy.split('-');
         const fechaDisplay    = `${dd}/${mm}/${yy}`;
         const ptoVta          = emisor.ptoVta;
-        const vencParts       = (resultado.vencimientoCAE || '').split('-');
+        const vencParts       = (resultadoArca.vencimientoCAE || '').split('-');
         const vencCAEDisp     = vencParts.length === 3
             ? `${vencParts[2]}/${vencParts[1]}/${vencParts[0]}` : '';
 
@@ -957,43 +987,68 @@ async function resolverPendingFactura(pendingSnap, textoRespuesta) {
         for (const id of saleIds) {
             await db.collection('sales').doc(id).update({
                 invoiceStatus:  'emitida',
-                invoiceCAE:     resultado.CAE,
-                invoiceNumber:  resultado.nroComprobante,
+                invoiceCAE:     resultadoArca.CAE,
+                invoiceNumber:  resultadoArca.nroComprobante,
                 invoiceDate:    hoy,
-                facturaId:      resultado.CAE,
+                facturaId:      resultadoArca.CAE,
                 emisorId:       emisor.id,
             });
         }
 
-        // PDF + Storage + Firestore facturas (no bloquea la respuesta WhatsApp)
+        // PDF + Storage + Firestore facturas (no bloquea la respuesta al canal que llamó)
         guardarFacturaConPDF({
             emisor,
             ventaId:       saleIds[0] || '',
             ptoVta,
-            numero:        resultado.nroComprobante,
+            numero:        resultadoArca.nroComprobante,
             fecha:         hoy,
             fechaDisplay,
-            cae:           resultado.CAE,
-            vencimientoCAE: resultado.vencimientoCAE,
+            cae:           resultadoArca.CAE,
+            vencimientoCAE: resultadoArca.vencimientoCAE,
             vencCAEDisp,
             monto,
         }).catch(e => console.error('❌ Error guardando PDF/factura (CAE ya emitido):', e.message));
 
-        return {
-            texto: `🧾 *Factura C emitida*\n• Nro: ${resultado.nroComprobante}\n• CAE: ${resultado.CAE}\n• Vence: ${resultado.vencimientoCAE}`,
-            solo: true,
-        };
+        return { ok: true, cae: resultadoArca.CAE, nroComprobante: resultadoArca.nroComprobante, vencimientoCAE: resultadoArca.vencimientoCAE };
     } catch (e) {
         console.error('❌ Error ARCA al emitir factura:', e.message);
         for (const id of saleIds) {
             await db.collection('sales').doc(id).update({ invoiceStatus: 'pendiente' }).catch(() => {});
         }
-        return {
-            texto: '⚠️ ARCA no respondió. La factura quedó como *pendiente* y se reintentará.',
-            solo: true,
-        };
+        return { ok: false, motivo: 'arca_error', detalle: e.message };
     }
 }
+
+// ─── Endpoint HTTP que llama la web (Pedidos → Finalizar) para facturar una venta ya registrada,
+// con el mismo criterio que WhatsApp: solo Alias 1 / Alias 2 tienen emisor dado de alta en ARCA.
+exports.emitirFacturaWeb = functions.https.onRequest(async (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, X-Factura-Key');
+    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    if (req.method === 'OPTIONS') return res.status(204).send('');
+    if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Método no permitido' });
+    if (req.headers['x-factura-key'] !== FACTURA_WEB_KEY) return res.status(403).json({ ok: false, error: 'No autorizado' });
+
+    const { saleIds, monto, emisorId } = req.body || {};
+    if (!Array.isArray(saleIds) || saleIds.length === 0) return res.status(400).json({ ok: false, error: 'Faltan las ventas a facturar.' });
+    if (!(monto > 0)) return res.status(400).json({ ok: false, error: 'Monto inválido.' });
+    if (emisorId !== 'alias1' && emisorId !== 'alias2') return res.status(400).json({ ok: false, error: 'Solo se puede facturar con Alias 1 o Alias 2.' });
+
+    try {
+        const resultado = await emitirYGuardarFactura({ saleIds, monto, emisorId });
+        if (!resultado.ok) {
+            if (resultado.motivo === 'ya_procesada') {
+                const d = resultado.detalle || {};
+                return res.status(409).json({ ok: false, error: 'La factura ya fue emitida o está en proceso.', cae: d.invoiceCAE || null, nroComprobante: d.invoiceNumber || null });
+            }
+            return res.status(502).json({ ok: false, error: 'ARCA no respondió. Podés reintentar en un momento.' });
+        }
+        return res.status(200).json({ ok: true, cae: resultado.cae, nroComprobante: resultado.nroComprobante, vencimientoCAE: resultado.vencimientoCAE });
+    } catch (e) {
+        console.error('❌ Error en emitirFacturaWeb:', e);
+        return res.status(500).json({ ok: false, error: 'Error interno al facturar: ' + e.message });
+    }
+});
 
 // ==========================================
 // PROCESADOR DEL FORMATO NUEVO
