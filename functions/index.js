@@ -605,15 +605,51 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                 }
                 // ──────────────────────────────────────────────────────────
 
+                // ── Cancelar el último pedido mandado por WhatsApp ─────────
+                // "cancelado"/"cancelar" solo (nada más en el mensaje) cancela el último pedido que
+                // ese número mandó por acá — el mismo estado que deja el botón "Cancelar pedido" de
+                // /pedidos (no se borra el registro, pasa a Cancelado y queda en ese historial). Se
+                // apoya en ultimo_pedido_whatsapp, que se actualiza cada vez que se crea un pedido más
+                // abajo. Solo cancela si todavía está Pendiente o Armado — no toca uno ya Entregado,
+                // Finalizado o ya Cancelado, mismo límite que tiene el botón de la web.
+                const textoCancelNorm = normalizarParaComparar(textoOriginal);
+                if (["cancelado", "cancelar"].includes(textoCancelNorm)) {
+                    await db.collection('pending_pedido').doc(numeroRemitente).delete().catch(() => {});
+                    const ultimoSnap = await db.collection('ultimo_pedido_whatsapp').doc(numeroRemitente).get();
+                    const pedidoId = ultimoSnap.exists ? ultimoSnap.data().pedidoId : null;
+                    const pedidoSnap = pedidoId ? await db.collection('pedidos').doc(pedidoId).get() : null;
+
+                    if (!pedidoSnap || !pedidoSnap.exists) {
+                        await enviarMensajeWhatsApp(numeroMeta(numeroRemitente), '⚠️ No tengo ningún pedido reciente tuyo para cancelar.');
+                        return res.sendStatus(200);
+                    }
+                    const estadoActual = pedidoSnap.data().estado;
+                    if (estadoActual !== 'pendiente' && estadoActual !== 'armado') {
+                        const ESTADO_LABEL = { cancelado: 'ya estaba cancelado', entregado: 'ya se entregó', finalizado: 'ya se cerró como venta' };
+                        await enviarMensajeWhatsApp(numeroMeta(numeroRemitente), `⚠️ Ese pedido ${ESTADO_LABEL[estadoActual] || 'no se puede cancelar'}.`);
+                        return res.sendStatus(200);
+                    }
+                    await pedidoSnap.ref.update({
+                        estado: 'cancelado',
+                        motivoCancelacion: 'Cancelado por WhatsApp',
+                        canceladoAt: new Date().toISOString(),
+                    });
+                    await db.collection('ultimo_pedido_whatsapp').doc(numeroRemitente).delete().catch(() => {});
+                    await enviarMensajeWhatsApp(numeroMeta(numeroRemitente), '🗑️ Pedido cancelado.');
+                    return res.sendStatus(200);
+                }
+                // ──────────────────────────────────────────────────────────
+
                 // ── Pedido de reparto (moto/uber/retiro) por WhatsApp ──────
                 // Soporta dos formas de mandarlo:
-                //   1) Un solo mensaje: primera línea "MOTOMENSAJERIA"/"UBER"/"RETIRO", el resto
-                //      (después de esa línea) es el pedido completo tal cual.
+                //   1) Un solo mensaje: primera línea con la palabra clave (ver variantes aceptadas en
+                //      PALABRAS_TIPO_ENVIO, más abajo), el resto (después de esa línea) es el pedido
+                //      completo tal cual.
                 //   2) Dos mensajes separados: primero solo la palabra clave (queda pendiente en
                 //      Firestore), y el pedido llega en el próximo mensaje de ese mismo número.
                 // En ambos casos el pedido se crea igual que si alguien lo tipeara a mano en /pedidos
                 // (misma colección, mismos campos), pero con tipoEnvio ya asignado — nunca se infiere
-                // del texto del pedido en sí, que acá nunca arranca con "moto"/"uber"/"retiro".
+                // del texto del pedido en sí, que acá nunca arranca con ninguna de esas palabras clave.
                 const ETIQUETA_TIPO_ENVIO = { moto: 'MOTOMENSAJERÍA', uber: 'UBER', retiro: 'RETIRO' };
 
                 const pendingPedidoSnap = await db.collection('pending_pedido').doc(numeroRemitente).get();
@@ -624,12 +660,13 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                     // la clasificación (probablemente quedó vieja/olvidada) y sigue el camino normal.
                     const pendienteVencido = Date.now() - new Date(pendienteCreatedAt).getTime() > 10 * 60 * 1000;
                     if (!pendienteVencido) {
-                        await db.collection('pedidos').add({
+                        const pedidoRef = await db.collection('pedidos').add({
                             mensaje: textoOriginal,
                             estado: 'pendiente',
                             tipoEnvio: tipoEnvioPendiente,
                             createdAt: new Date().toISOString(),
                         });
+                        await db.collection('ultimo_pedido_whatsapp').doc(numeroRemitente).set({ pedidoId: pedidoRef.id, createdAt: new Date().toISOString() });
                         await enviarMensajeWhatsApp(numeroMeta(numeroRemitente), `✅ Pedido de *${ETIQUETA_TIPO_ENVIO[tipoEnvioPendiente] || tipoEnvioPendiente}* anotado.`);
                         return res.sendStatus(200);
                     }
@@ -637,22 +674,29 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
 
                 const textoTrim = String(textoOriginal || "").trim();
                 const lineasPedido = textoTrim.split(/\r?\n/);
-                const primeraLineaPedido = (lineasPedido[0] || "").trim().toUpperCase();
                 const restoTrasPrimeraLinea = lineasPedido.slice(1).join('\n').trim();
-                const tipoEnvioComando =
-                    primeraLineaPedido === "MOTOMENSAJERIA" ? "moto" :
-                    primeraLineaPedido === "UBER" ? "uber" :
-                    primeraLineaPedido === "RETIRO" ? "retiro" : null;
+                // Variantes aceptadas por tipo — normalizarParaComparar ya saca tildes/mayúsculas, así
+                // que "Retiró" y "RETIRO" quedan iguales solas; acá solo hace falta listar las palabras
+                // realmente distintas (singular/plural, con o sin "moto" pegado, etc.).
+                const PALABRAS_TIPO_ENVIO = {
+                    moto:   ["motomensajeria", "motomensajerias", "motomensajero", "motomensajeros", "moto mensajeria", "moto"],
+                    uber:   ["uber"],
+                    retiro: ["retiro", "retiros", "retira"],
+                };
+                const primeraLineaNorm = normalizarParaComparar(lineasPedido[0] || "");
+                const tipoEnvioComando = Object.keys(PALABRAS_TIPO_ENVIO)
+                    .find(tipo => PALABRAS_TIPO_ENVIO[tipo].includes(primeraLineaNorm)) || null;
 
                 if (tipoEnvioComando) {
                     if (restoTrasPrimeraLinea) {
                         // Vino todo junto: la primera línea clasifica, el resto es el pedido.
-                        await db.collection('pedidos').add({
+                        const pedidoRef = await db.collection('pedidos').add({
                             mensaje: restoTrasPrimeraLinea,
                             estado: 'pendiente',
                             tipoEnvio: tipoEnvioComando,
                             createdAt: new Date().toISOString(),
                         });
+                        await db.collection('ultimo_pedido_whatsapp').doc(numeroRemitente).set({ pedidoId: pedidoRef.id, createdAt: new Date().toISOString() });
                         await enviarMensajeWhatsApp(numeroMeta(numeroRemitente), `✅ Pedido de *${ETIQUETA_TIPO_ENVIO[tipoEnvioComando]}* anotado.`);
                     } else {
                         // Solo llegó la palabra clave: espera el pedido completo en el próximo mensaje.
