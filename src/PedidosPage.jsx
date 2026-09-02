@@ -114,7 +114,7 @@ const PEDIDO_VENDEDOR_OPTIONS = [
 ];
 // Umbrales (minutos) para resaltar un pedido pendiente/armado que lleva mucho tiempo sin moverse.
 const PEDIDO_ALERTA_MIN = 15;
-const PEDIDO_URGENTE_MIN = 30;
+const PEDIDO_URGENTE_MIN = 90;
 
 // Endpoint que factura desde la web — mismo camino y mismo resultado que factura por WhatsApp
 // (functions/index.js → emitirFacturaWeb, que llama al mismo núcleo que usa el bot). La clave tiene
