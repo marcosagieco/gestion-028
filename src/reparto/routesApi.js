@@ -2,7 +2,9 @@
 // Matrix. Cada llamada de acá factura, así que quien importa este módulo es responsable de no
 // llamarlo más que en los momentos puntuales que definimos (ver recorridoEngine.js): abrir el
 // panel de reparto, marcar una entrega, entrar un pedido nuevo al recorrido, o reordenar a mano.
-// Nunca en cada render ni por cada tick de GPS.
+// Nunca en cada render ni por cada tick de GPS. Mismo criterio para getDrivingDistanceKm de acá
+// abajo — se llama UNA vez por envío al marcar "Entregado" (ver reparto/motomensajeria.js), nunca
+// en cada render del historial.
 
 const ROUTES_ENDPOINT = 'https://routes.googleapis.com/directions/v2:computeRoutes';
 
@@ -62,4 +64,39 @@ export async function optimizeStopOrder(origin, stops) {
 
   const orderedIntermediates = order.map(i => intermediates[i]);
   return [...orderedIntermediates, destination];
+}
+
+// Distancia real por calle entre dos puntos — la usa la plata de la motomensajería (ver
+// reparto/motomensajeria.js), que necesita los km que realmente se manejan, no la línea recta.
+// A propósito en modo DRIVE (auto), no TWO_WHEELER (moto): Google Maps no ofrece un modo "moto" en
+// la app común en Argentina, así que el dueño del negocio solo puede chequear a mano en modo auto
+// — para que el número de acá coincida con lo que él ve, se pide lo mismo que él puede verificar.
+// Pide solo distanceMeters, el field mask más chico posible. Devuelve null (no tira error) si
+// Google no devolvió una ruta válida, para que quien llama pueda caer a un estimado.
+export async function getDrivingDistanceKm(origin, destino) {
+  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+  if (!apiKey) throw new Error('Falta VITE_GOOGLE_MAPS_API_KEY en el entorno');
+
+  const resp = await fetch(ROUTES_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': apiKey,
+      'X-Goog-FieldMask': 'routes.distanceMeters',
+    },
+    body: JSON.stringify({
+      origin: toWaypoint(origin),
+      destination: toWaypoint(destino),
+      travelMode: 'DRIVE',
+    }),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    throw new Error(`Routes API respondió ${resp.status}: ${errText.slice(0, 300)}`);
+  }
+
+  const data = await resp.json();
+  const meters = data.routes?.[0]?.distanceMeters;
+  return typeof meters === 'number' ? meters / 1000 : null;
 }

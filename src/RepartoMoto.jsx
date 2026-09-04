@@ -6,11 +6,12 @@ import {
 } from 'firebase/firestore';
 import {
   Bike, Moon, Sun, LogOut, ChevronDown, ChevronRight, Navigation, CheckCircle2,
-  Lock, XCircle, PartyPopper, Loader2,
+  Lock, XCircle, PartyPopper, Loader2, History, X, Clock,
 } from 'lucide-react';
 import { loadGoogleMaps, MAP_DARK_STYLE } from './reparto/googleMapsLoader';
 import { ZONAS_POR_ID, DEPOSITO_ORIGEN } from './reparto/zonas';
 import { computeRecorrido, ordenAPersistir } from './reparto/recorridoEngine';
+import { costoMotomensajeriaDe, medirCostoMotomensajeriaReal } from './reparto/motomensajeria';
 
 // --- Firebase: mismo patrón self-contenido que PedidosPage.jsx ---
 const firebaseConfig = {
@@ -64,6 +65,29 @@ function LoginMoto({ dm, onAuth }) {
 
 const comoLlegarUrl = (destino) => `https://www.google.com/maps/dir/?api=1&destination=${destino.lat},${destino.lng}&travelmode=driving`;
 
+// Helpers de fecha/moneda para el historial de entregas — mismo criterio que RepartoDeposito
+// (formatHora) y PedidosPage (formatMoney), reescritos acá para no importar entre pantallas.
+const safeTime = (dateStr) => { const t = new Date(dateStr).getTime(); return isNaN(t) ? 0 : t; };
+const formatHora = (dateStr) => {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  return isNaN(d.getTime()) ? '' : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+};
+const formatMoney = (val) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(val || 0);
+// Encabezado de grupo del historial: "Hoy" / "Ayer" / fecha corta — comparando solo el día, no la hora.
+const formatDiaLabel = (dateStr) => {
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return 'Sin fecha';
+  const hoy = new Date(); const ayer = new Date(); ayer.setDate(hoy.getDate() - 1);
+  const mismoDia = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (mismoDia(d, hoy)) return 'Hoy';
+  if (mismoDia(d, ayer)) return 'Ayer';
+  return d.toLocaleDateString(undefined, { day: '2-digit', month: 'long', year: hoy.getFullYear() !== d.getFullYear() ? 'numeric' : undefined });
+};
+// Monto de la venta ya cerrada por depósito (venta.items) — mientras Norman no la finaliza en
+// /pedidos todavía no hay precio cargado, así que puede no existir.
+const montoVenta = (pedido) => pedido.venta?.items?.reduce((s, it) => s + (it.precio || 0) * (it.unidades || 0), 0) ?? null;
+
 // Cartel de confirmación centrado, reutilizado para "¿ya terminaste el día?" y "¿ya lo entregaste?"
 // — pensado para dedo/pulgar en la calle, botones grandes.
 function ConfirmModal({ dm, title, text, confirmLabel = 'Aceptar', onConfirm, onCancel }) {
@@ -107,6 +131,10 @@ export default function RepartoMoto() {
   const [togglingActivo, setTogglingActivo] = useState(false);
   const [showEndDayConfirm, setShowEndDayConfirm] = useState(false);
   const [confirmEntregaPedido, setConfirmEntregaPedido] = useState(null);
+  const [showHistorial, setShowHistorial] = useState(false);
+  // 'todos' muestra todo agrupado por día (como antes); un label puntual (ver historialGrupos)
+  // filtra a solo ese día — así se puede mirar la plata de una fecha en particular sin desplazarse.
+  const [filtroDiaHistorial, setFiltroDiaHistorial] = useState('todos');
 
   const mapDivRef = useRef(null);
   const mapRef = useRef(null);
@@ -185,6 +213,46 @@ export default function RepartoMoto() {
   const stopsOrdenadas = useMemo(() =>
     [...stopsRaw].sort((a, b) => (a.ordenRecorrido ?? 999) - (b.ordenRecorrido ?? 999)),
     [stopsRaw]);
+
+  // Historial de entregas de Norman: todo lo que ya salió de "armado" hacia adelante (entregado en
+  // la calle, y finalizado una vez que depósito le carga el precio en /pedidos), más reciente
+  // primero, agrupado por día para que sea fácil de recorrer con el dedo.
+  const historialGrupos = useMemo(() => {
+    const entregas = pedidos
+      .filter(p => p.tipoEnvio === 'moto' && (p.estado === 'entregado' || p.estado === 'finalizado') && p.direccion)
+      .sort((a, b) => safeTime(b.entregadoEn || b.finalizadoAt) - safeTime(a.entregadoEn || a.finalizadoAt));
+    const grupos = [];
+    for (const p of entregas) {
+      const fechaRef = p.entregadoEn || p.finalizadoAt;
+      const label = formatDiaLabel(fechaRef);
+      let grupo = grupos.find(g => g.label === label);
+      if (!grupo) { grupo = { label, items: [], totalMotomensajeria: 0 }; grupos.push(grupo); }
+      grupo.items.push(p);
+      grupo.totalMotomensajeria += costoMotomensajeriaDe(p)?.monto || 0;
+    }
+    return grupos;
+  }, [pedidos]);
+
+  // Total general de plata de motomensajería en TODO el historial cargado (todos los días juntos)
+  // — lo que se muestra arriba de todo cuando el filtro está en "Todos".
+  const historialTotalGeneral = useMemo(() =>
+    historialGrupos.reduce((s, g) => s + g.totalMotomensajeria, 0),
+    [historialGrupos]);
+
+  // Si el día elegido en el filtro ya no existe (ej. se filtró "Hoy" y cambió la fecha), se vuelve
+  // solo a "Todos" en vez de quedar mostrando una lista vacía sin explicación.
+  useEffect(() => {
+    if (filtroDiaHistorial !== 'todos' && !historialGrupos.some(g => g.label === filtroDiaHistorial)) {
+      setFiltroDiaHistorial('todos');
+    }
+  }, [historialGrupos, filtroDiaHistorial]);
+
+  const gruposVisibles = filtroDiaHistorial === 'todos'
+    ? historialGrupos
+    : historialGrupos.filter(g => g.label === filtroDiaHistorial);
+  const totalVisible = filtroDiaHistorial === 'todos'
+    ? historialTotalGeneral
+    : (gruposVisibles[0]?.totalMotomensajeria || 0);
 
   const enCalle = recorrido?.estado === 'en_calle';
 
@@ -318,6 +386,14 @@ export default function RepartoMoto() {
         ubicacionEntrega: posEntrega ? { lat: posEntrega.lat, lng: posEntrega.lng } : null,
       });
 
+      // Plata de la motomensajería: se mide la distancia REAL por calle acá, una sola vez, y se
+      // guarda en el pedido para que el historial no tenga que volver a llamar a Google nunca más.
+      // Corre aparte, sin bloquear el resto del flujo (el repartidor no tiene por qué esperarla) —
+      // si falla o Google no responde, el historial cae solo al estimado en línea recta.
+      medirCostoMotomensajeriaReal(pedido.direccion)
+        .then(costo => { if (costo) return updateDoc(doc(db, 'pedidos', pedido.id), { motomensajeria: costo }); })
+        .catch(err => console.error('motomensajería real:', err));
+
       const restantes = stopsRaw.filter(p => p.id !== pedido.id);
       if (restantes.length === 0) {
         await setDoc(doc(db, 'recorridos', 'activo'), { estado: 'en_deposito', salidaEn: null, paradaCongelada: null });
@@ -364,6 +440,8 @@ export default function RepartoMoto() {
               <span className={`w-2 h-2 rounded-full flex-shrink-0 ${repartidorActivo ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'}`}/>
               {togglingActivo ? '...' : (repartidorActivo ? 'Activo' : 'Inactivo')}
             </button>
+            <button onClick={() => setShowHistorial(true)} title="Historial de entregas"
+              className={`p-2.5 rounded-lg transition-colors ${dm ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.06]' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}><History size={19}/></button>
             <button onClick={() => { localStorage.removeItem(AUTH_KEY); setAuth(false); }} className={`p-2.5 rounded-lg transition-colors ${dm ? 'text-zinc-600 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-500 hover:bg-red-50'}`}><LogOut size={19}/></button>
           </div>
         </div>
@@ -421,11 +499,11 @@ export default function RepartoMoto() {
             <p className={`text-sm font-bold mt-1 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>{ZONAS_POR_ID[proxima.direccion.zona]?.nombre.replace(/^Zona \S+ — /, '')}</p>
 
             <button onClick={() => setExpandedId(cur => cur === proxima.id ? null : proxima.id)}
-              className={`flex items-center gap-1 text-sm font-bold mt-3 ${dm ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-700'}`}>
-              {expandedId === proxima.id ? 'Ocultar mensaje' : 'Ver mensaje original'} {expandedId === proxima.id ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
+              className={`flex items-center gap-1.5 text-lg font-bold mt-3 ${dm ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-800'}`}>
+              {expandedId === proxima.id ? 'Ocultar mensaje' : 'Ver mensaje original'} {expandedId === proxima.id ? <ChevronDown size={18}/> : <ChevronRight size={18}/>}
             </button>
             {expandedId === proxima.id && (
-              <p className={`text-sm mt-2 whitespace-pre-wrap rounded-xl p-3 ${dm ? 'bg-white/[0.04] text-zinc-300' : 'bg-white text-zinc-600'}`}>{proxima.mensaje}</p>
+              <p className={`text-lg mt-2 whitespace-pre-wrap rounded-xl p-3 ${dm ? 'bg-white/[0.04] text-zinc-300' : 'bg-white text-zinc-600'}`}>{proxima.mensaje}</p>
             )}
 
             <div className="flex flex-col gap-2.5 mt-4">
@@ -465,11 +543,11 @@ export default function RepartoMoto() {
                       <p className={`text-base font-bold leading-snug ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{p.direccion.texto}</p>
                       {p.direccion.referencias && <p className={`text-sm mt-0.5 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>{p.direccion.referencias}</p>}
                       <button onClick={() => setExpandedId(cur => cur === p.id ? null : p.id)}
-                        className={`flex items-center gap-1 text-xs font-bold mt-2 ${dm ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-700'}`}>
-                        {expandedId === p.id ? 'Ocultar mensaje' : 'Ver mensaje'} {expandedId === p.id ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}
+                        className={`flex items-center gap-1.5 text-base font-bold mt-2 ${dm ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-800'}`}>
+                        {expandedId === p.id ? 'Ocultar mensaje' : 'Ver mensaje'} {expandedId === p.id ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
                       </button>
                       {expandedId === p.id && (
-                        <p className={`text-xs mt-2 whitespace-pre-wrap rounded-lg p-2.5 ${dm ? 'bg-white/[0.03] text-zinc-400' : 'bg-zinc-50 text-zinc-600'}`}>{p.mensaje}</p>
+                        <p className={`text-base mt-2 whitespace-pre-wrap rounded-lg p-2.5 ${dm ? 'bg-white/[0.03] text-zinc-400' : 'bg-zinc-50 text-zinc-600'}`}>{p.mensaje}</p>
                       )}
                     </div>
                   </div>
@@ -507,6 +585,110 @@ export default function RepartoMoto() {
       {showEndDayConfirm && (
         <ConfirmModal dm={dm} title="¿Ya terminaste el día?" text="No te quedan más paradas pendientes — vas a pasar a Inactivo."
           onConfirm={handleConfirmEndDay} onCancel={() => setShowEndDayConfirm(false)} />
+      )}
+
+      {showHistorial && (
+        <div className={`fixed inset-0 z-[200] flex flex-col ${dm ? 'bg-[#050505] text-zinc-100' : 'bg-slate-50 text-zinc-900'}`} style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+          <div className={`sticky top-0 z-10 border-b flex items-center gap-3 px-4 h-14 flex-shrink-0 ${dm ? 'bg-[#101010]/90 border-white/[0.06] backdrop-blur-xl' : 'bg-white/90 border-zinc-200 backdrop-blur-xl'}`} style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+            <button onClick={() => setShowHistorial(false)} className={`p-2 -ml-2 rounded-lg transition-colors ${dm ? 'text-zinc-400 hover:bg-white/[0.06]' : 'text-zinc-500 hover:bg-zinc-100'}`}><X size={22}/></button>
+            <p className="font-black text-lg tracking-tight">Historial de entregas</p>
+          </div>
+
+          {historialGrupos.length > 0 && (
+            <div className={`flex-shrink-0 px-4 pt-4 pb-2 space-y-3 border-b ${dm ? 'border-white/[0.06]' : 'border-zinc-200'}`}>
+              {/* Total grande, siempre visible arriba de todo — cambia según el día elegido abajo. */}
+              <div className={`rounded-3xl border-2 p-5 text-center ${dm ? 'bg-indigo-500/[0.08] border-indigo-500/40' : 'bg-indigo-50 border-indigo-300'}`}>
+                <p className={`text-xs font-black uppercase tracking-widest ${dm ? 'text-indigo-300' : 'text-indigo-600'}`}>
+                  {filtroDiaHistorial === 'todos' ? 'Total de todo el historial' : `Total · ${filtroDiaHistorial}`}
+                </p>
+                <p className={`text-4xl font-black mt-1 ${dm ? 'text-zinc-50' : 'text-zinc-900'}`}>{formatMoney(totalVisible)}</p>
+              </div>
+
+              {/* Chips para elegir qué día mirar — "Todos" vuelve a la vista agrupada de siempre. */}
+              <div className="flex gap-2 overflow-x-auto -mx-4 px-4 pb-1">
+                <button onClick={() => setFiltroDiaHistorial('todos')}
+                  className={`flex-shrink-0 h-9 px-4 rounded-full text-sm font-bold transition-all ${filtroDiaHistorial === 'todos' ? 'bg-indigo-500 text-white' : (dm ? 'bg-white/[0.06] text-zinc-300' : 'bg-zinc-100 text-zinc-600')}`}>
+                  Todos
+                </button>
+                {historialGrupos.map(g => (
+                  <button key={g.label} onClick={() => setFiltroDiaHistorial(g.label)}
+                    className={`flex-shrink-0 h-9 px-4 rounded-full text-sm font-bold transition-all ${filtroDiaHistorial === g.label ? 'bg-indigo-500 text-white' : (dm ? 'bg-white/[0.06] text-zinc-300' : 'bg-zinc-100 text-zinc-600')}`}>
+                    {g.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5" style={{ paddingBottom: 'calc(2rem + env(safe-area-inset-bottom))' }}>
+            {historialGrupos.length === 0 ? (
+              <div className={`rounded-3xl border-2 border-dashed p-10 flex flex-col items-center justify-center gap-3 text-center mt-4 ${dm ? 'border-white/[0.08] bg-white/[0.02]' : 'border-zinc-200 bg-zinc-50'}`}>
+                <History size={36} className={dm ? 'text-zinc-600' : 'text-zinc-300'} />
+                <p className={`text-base font-bold ${dm ? 'text-zinc-300' : 'text-zinc-600'}`}>Todavía no hay entregas registradas.</p>
+              </div>
+            ) : gruposVisibles.map(grupo => (
+              <div key={grupo.label} className="space-y-2.5">
+                {/* Con un día puntual elegido en los chips de arriba, este encabezado es redundante
+                    con el total grande (que ya dice el mismo día) — solo se muestra en "Todos". */}
+                {filtroDiaHistorial === 'todos' && (
+                  <div className="flex items-center justify-between gap-2 px-1">
+                    <span className={`text-sm font-black uppercase tracking-widest ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>{grupo.label} ({grupo.items.length})</span>
+                    <span className={`flex items-center gap-1.5 text-sm font-black px-2.5 py-1 rounded-full ${dm ? 'bg-indigo-500/10 text-indigo-300' : 'bg-indigo-50 text-indigo-600'}`}>
+                      <Bike size={13}/> {formatMoney(grupo.totalMotomensajeria)}
+                    </span>
+                  </div>
+                )}
+                {grupo.items.map(p => {
+                  const monto = montoVenta(p);
+                  const moto = costoMotomensajeriaDe(p);
+                  return (
+                    <div key={p.id} className={`rounded-2xl border p-4 ${dm ? 'bg-[#141414] border-white/[0.07]' : 'bg-white border-zinc-200'}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className={`text-lg font-bold leading-snug ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{p.direccion?.texto}</p>
+                          <p className={`flex items-center gap-1 text-sm font-bold mt-1 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                            <Clock size={13}/> {formatHora(p.entregadoEn || p.finalizadoAt)}
+                          </p>
+                          <button onClick={() => setExpandedId(cur => cur === p.id ? null : p.id)}
+                            className={`flex items-center gap-1.5 text-base font-bold mt-2 ${dm ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-700'}`}>
+                            {expandedId === p.id ? 'Ocultar mensaje' : 'Ver mensaje original'} {expandedId === p.id ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
+                          </button>
+                          {expandedId === p.id && (
+                            <p className={`text-base mt-2 whitespace-pre-wrap rounded-xl p-3 ${dm ? 'bg-white/[0.04] text-zinc-300' : 'bg-zinc-50 text-zinc-600'}`}>{p.mensaje}</p>
+                          )}
+                        </div>
+                        <div className="flex-shrink-0 text-right">
+                          {monto !== null ? (
+                            <span className="text-lg font-black text-emerald-500">{formatMoney(monto)}</span>
+                          ) : (
+                            <span className={`text-xs font-bold px-2 py-1 rounded-full ${dm ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-50 text-amber-600'}`}>Sin cerrar</span>
+                          )}
+                        </div>
+                      </div>
+                      {/* Plata de la motomensajería por este envío: $1000/km real manejado desde el
+                          depósito, mínimo $3000 — ver reparto/motomensajeria.js. Si todavía no hay
+                          medición real guardada (pedidos viejos, o falló la llamada a Google en su
+                          momento), se avisa "aprox." y se usa línea recta como respaldo. */}
+                      {moto && (
+                        <div className={`flex items-center justify-between gap-2 mt-3 pt-3 border-t ${dm ? 'border-white/[0.06]' : 'border-zinc-100'}`}>
+                          <span className={`flex items-center gap-1.5 text-sm font-bold ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                            <Bike size={14}/> {moto.km.toFixed(1)} km
+                            {moto.exacto ? (
+                              <span className={`text-[10px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-full ${dm ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-600'}`}>Exacto</span>
+                            ) : (
+                              <span className={`text-[10px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-full ${dm ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-50 text-amber-600'}`}>Aprox.</span>
+                            )}
+                          </span>
+                          <span className={`text-base font-black ${dm ? 'text-indigo-300' : 'text-indigo-600'}`}>{formatMoney(moto.monto)}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );

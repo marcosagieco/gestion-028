@@ -106,11 +106,13 @@ export const sugerirZonaPorComponentesDireccion = (addressComponents) => {
   return null;
 };
 
-// Punto de partida del recorrido (depósito).
+// Punto de partida del recorrido (depósito). Coordenadas confirmadas por el dueño desde el mapa
+// embebido de Google para esta dirección — reemplazan un punto anterior que estaba ~350m corrido
+// (afectaba tanto el orden del recorrido como la plata de motomensajería, ver reparto/motomensajeria.js).
 export const DEPOSITO_ORIGEN = {
   texto: 'Av. del Libertador 6299, Belgrano, CABA',
-  lat: -34.5556,
-  lng: -58.4553,
+  lat: -34.55359497285959,
+  lng: -58.4523699884262,
 };
 
 // Sesgo del autocompletado de direcciones: un círculo amplio que cubre CABA + GBA norte, centrado

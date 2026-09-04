@@ -682,6 +682,82 @@ function PendienteGrupo({ titulo, icon: Icon, list, dm, focusId, onFocus, onList
   );
 }
 
+// Una tarjeta de Finalizado — extraída de adentro del .map para poder reusarla en cada grupo de
+// FinalizadoGrupo (antes vivía inline, duplicada por canal habría sido un embole de mantener).
+function FinalizadoCard({ p, dm, isExpanded, onToggleExpand, onEliminar }) {
+  return (
+    <div className={`rounded-2xl border p-4 transition-colors ${dm ? 'bg-[#141414] border-white/[0.07] lg:hover:border-white/[0.14]' : 'bg-white border-zinc-200 lg:hover:border-zinc-300'}`}>
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <div className={`text-xs font-bold flex items-center gap-1.5 ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>
+          <Clock size={12}/>{timeAgoStr(p.createdAt)}
+        </div>
+        <button onClick={() => onEliminar(p)} title="Borrar para siempre"
+          className={`p-1.5 rounded-lg transition-colors active:scale-90 ${dm ? 'text-zinc-600 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-500 hover:bg-red-50'}`}>
+          <Trash2 size={14}/>
+        </button>
+      </div>
+      <p className={`text-base leading-snug whitespace-pre-wrap font-semibold ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{p.mensaje}</p>
+      <button onClick={() => onToggleExpand(p.id)}
+        className={`flex items-center gap-1 text-xs font-bold mt-2 py-1 ${dm ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-700'}`}>
+        {isExpanded ? 'Ver menos' : 'Ver datos de la venta'} {isExpanded ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}
+      </button>
+      {isExpanded && p.venta && (
+        <div className={`mt-2 rounded-xl border p-3.5 text-sm space-y-2 ${dm ? 'border-white/[0.07] bg-white/[0.02]' : 'border-zinc-200 bg-zinc-50'}`}>
+          <div className="flex justify-between gap-3"><span className="opacity-60">Tipo de cliente</span><span className="font-bold text-right">{PEDIDO_TIPO_CLIENTE_LABELS[p.venta.tipoCliente] || p.venta.tipoCliente}</span></div>
+          {/* venta.items = varios productos (formato nuevo); si no está, es un pedido
+              viejo con un solo producto guardado directo en venta.producto/unidades/precio. */}
+          {(p.venta.items || [{ producto: p.venta.producto, unidades: p.venta.unidades, precio: p.venta.precio }]).map((it, idx) => (
+            <div key={idx} className={idx > 0 ? `pt-2 mt-1 border-t space-y-2 ${dm ? 'border-white/[0.06]' : 'border-zinc-200'}` : 'space-y-2'}>
+              <div className="flex justify-between gap-3"><span className="opacity-60">Producto</span><span className="font-bold text-right">{it.producto}</span></div>
+              {it.unidades != null && <div className="flex justify-between gap-3"><span className="opacity-60">Unidades</span><span className="font-bold">{it.unidades}</span></div>}
+              <div className="flex justify-between gap-3"><span className="opacity-60">{it.unidades != null ? 'Precio unitario' : 'Precio'}</span><span className="font-bold">{formatMoney(it.precio)}</span></div>
+              {it.unidades != null && <div className="flex justify-between gap-3"><span className="opacity-60">Total</span><span className="font-bold">{formatMoney(it.precio * it.unidades)}</span></div>}
+            </div>
+          ))}
+          {p.venta.items && p.venta.items.length > 1 && (
+            <div className={`flex justify-between gap-3 pt-2 mt-1 border-t ${dm ? 'border-white/[0.06]' : 'border-zinc-200'}`}>
+              <span className="opacity-60">Total general</span>
+              <span className="font-bold">{formatMoney(p.venta.items.reduce((s, it) => s + (it.precio || 0) * (it.unidades || 1), 0))}</span>
+            </div>
+          )}
+          <div className="flex justify-between gap-3"><span className="opacity-60">Medio de pago</span><span className="font-bold">{PAYMENT_METHOD_LABELS[p.venta.medioPago] || p.venta.medioPago}</span></div>
+          {p.venta.vendedor && <div className="flex justify-between gap-3"><span className="opacity-60">Vendedor</span><span className="font-bold">{p.venta.vendedor}</span></div>}
+          {p.venta.envioCliente != null && <div className="flex justify-between gap-3"><span className="opacity-60">Envío cobrado</span><span className="font-bold">{formatMoney(p.venta.envioCliente)}</span></div>}
+          {p.venta.costoEnvio != null && <div className="flex justify-between gap-3"><span className="opacity-60">Costo envío</span><span className="font-bold">{formatMoney(p.venta.costoEnvio)}</span></div>}
+          <div className={`flex justify-between gap-3 pt-2 mt-1 border-t ${dm ? 'border-white/[0.06]' : 'border-zinc-200'}`}><span className="opacity-60">Finalizado</span><span className="font-bold">{safeDateStr(p.finalizadoAt, { day: '2-digit', month: 'short' })} · {safeTimeStr(p.finalizadoAt)}</span></div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Un grupo de Finalizado por canal (Moto/Uber/Retiro) — mismo criterio visual que PendienteGrupo:
+// encabezado con ícono + nombre + cantidad, para poder mirar cada canal por separado.
+function FinalizadoGrupo({ titulo, icon: Icon, list, dm, expandedId, onToggleExpand, onEliminar }) {
+  if (list.length === 0) {
+    return (
+      <div className="space-y-3">
+        <span className={`text-[11px] font-black uppercase tracking-widest px-1 flex items-center gap-1.5 ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>
+          <Icon size={13}/> {titulo} (0)
+        </span>
+        <EmptyState dm={dm} icon={Icon} text={`Sin pedidos de ${titulo} finalizados.`} />
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      <span className={`text-[11px] font-black uppercase tracking-widest px-1 flex items-center gap-1.5 ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>
+        <Icon size={13}/> {titulo} ({list.length})
+      </span>
+      <div className="space-y-3">
+        {list.map(p => (
+          <FinalizadoCard key={p.id} p={p} dm={dm} isExpanded={expandedId === p.id} onToggleExpand={onToggleExpand} onEliminar={onEliminar} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function PedidosPage() {
   const [dm, setDm] = useState(() => localStorage.getItem('028_dark_mode') === 'true');
   const [auth, setAuth] = useState(() => !!localStorage.getItem(AUTH_KEY));
@@ -811,6 +887,13 @@ export default function PedidosPage() {
   const finalizados = useMemo(() =>
     pedidos.filter(p => p.estado === 'finalizado').sort((a, b) => safeDateTime(b.finalizadoAt || b.createdAt) - safeDateTime(a.finalizadoAt || a.createdAt)),
     [pedidos]);
+  // Mismo criterio que pendientesMoto/Uber/Retiro: separados por tipo de envío, para que Finalizado
+  // se pueda mirar por canal igual que Pendiente. "Sin tipo" son pedidos viejos de antes de que
+  // existiera tipoEnvio — se muestra solo si hay alguno, no es un canal real.
+  const finalizadosMoto = useMemo(() => finalizados.filter(p => p.tipoEnvio === 'moto'), [finalizados]);
+  const finalizadosUber = useMemo(() => finalizados.filter(p => p.tipoEnvio === 'uber'), [finalizados]);
+  const finalizadosRetiro = useMemo(() => finalizados.filter(p => p.tipoEnvio === 'retiro'), [finalizados]);
+  const finalizadosSinTipo = useMemo(() => finalizados.filter(p => p.tipoEnvio == null), [finalizados]);
   const cancelados = useMemo(() =>
     pedidos.filter(p => p.estado === 'cancelado').sort((a, b) => safeDateTime(b.canceladoAt || b.createdAt) - safeDateTime(a.canceladoAt || a.createdAt)),
     [pedidos]);
@@ -1318,60 +1401,45 @@ export default function PedidosPage() {
               })()
         )}
 
-        {/* FINALIZADO: sin acciones, lista compacta con detalle plegable */}
+        {/* FINALIZADO: sin acciones, separado por canal igual que Pendiente (Moto/Uber/Retiro en
+            columnas propias en PC) — así se puede repasar cada canal por separado. */}
         {section === 'finalizado' && (
           finalizados.length === 0
             ? <EmptyState dm={dm} icon={ClipboardList} text="Todavía no finalizaste ningún pedido." />
             : (
-              <div className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 xl:grid-cols-3 lg:gap-3 lg:items-start">
-                {finalizados.map(p => {
-                  const isExpanded = expandedFinalizadoId === p.id;
-                  return (
-                    <div key={p.id} className={`rounded-2xl border p-4 transition-colors ${dm ? 'bg-[#141414] border-white/[0.07] lg:hover:border-white/[0.14]' : 'bg-white border-zinc-200 lg:hover:border-zinc-300'}`}>
-                      <div className="flex items-center justify-between gap-2 mb-1.5">
-                        <div className={`text-xs font-bold flex items-center gap-1.5 ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                          <Clock size={12}/>{timeAgoStr(p.createdAt)}
-                        </div>
-                        <button onClick={() => handleEliminarPedido(p)} title="Borrar para siempre"
-                          className={`p-1.5 rounded-lg transition-colors active:scale-90 ${dm ? 'text-zinc-600 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-500 hover:bg-red-50'}`}>
-                          <Trash2 size={14}/>
-                        </button>
-                      </div>
-                      <p className={`text-base leading-snug whitespace-pre-wrap font-semibold ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{p.mensaje}</p>
-                      <button onClick={() => setExpandedFinalizadoId(isExpanded ? null : p.id)}
-                        className={`flex items-center gap-1 text-xs font-bold mt-2 py-1 ${dm ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-700'}`}>
-                        {isExpanded ? 'Ver menos' : 'Ver datos de la venta'} {isExpanded ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}
-                      </button>
-                      {isExpanded && p.venta && (
-                        <div className={`mt-2 rounded-xl border p-3.5 text-sm space-y-2 ${dm ? 'border-white/[0.07] bg-white/[0.02]' : 'border-zinc-200 bg-zinc-50'}`}>
-                          <div className="flex justify-between gap-3"><span className="opacity-60">Tipo de cliente</span><span className="font-bold text-right">{PEDIDO_TIPO_CLIENTE_LABELS[p.venta.tipoCliente] || p.venta.tipoCliente}</span></div>
-                          {/* venta.items = varios productos (formato nuevo); si no está, es un pedido
-                              viejo con un solo producto guardado directo en venta.producto/unidades/precio. */}
-                          {(p.venta.items || [{ producto: p.venta.producto, unidades: p.venta.unidades, precio: p.venta.precio }]).map((it, idx) => (
-                            <div key={idx} className={idx > 0 ? `pt-2 mt-1 border-t space-y-2 ${dm ? 'border-white/[0.06]' : 'border-zinc-200'}` : 'space-y-2'}>
-                              <div className="flex justify-between gap-3"><span className="opacity-60">Producto</span><span className="font-bold text-right">{it.producto}</span></div>
-                              {it.unidades != null && <div className="flex justify-between gap-3"><span className="opacity-60">Unidades</span><span className="font-bold">{it.unidades}</span></div>}
-                              <div className="flex justify-between gap-3"><span className="opacity-60">{it.unidades != null ? 'Precio unitario' : 'Precio'}</span><span className="font-bold">{formatMoney(it.precio)}</span></div>
-                              {it.unidades != null && <div className="flex justify-between gap-3"><span className="opacity-60">Total</span><span className="font-bold">{formatMoney(it.precio * it.unidades)}</span></div>}
-                            </div>
-                          ))}
-                          {p.venta.items && p.venta.items.length > 1 && (
-                            <div className={`flex justify-between gap-3 pt-2 mt-1 border-t ${dm ? 'border-white/[0.06]' : 'border-zinc-200'}`}>
-                              <span className="opacity-60">Total general</span>
-                              <span className="font-bold">{formatMoney(p.venta.items.reduce((s, it) => s + (it.precio || 0) * (it.unidades || 1), 0))}</span>
-                            </div>
-                          )}
-                          <div className="flex justify-between gap-3"><span className="opacity-60">Medio de pago</span><span className="font-bold">{PAYMENT_METHOD_LABELS[p.venta.medioPago] || p.venta.medioPago}</span></div>
-                          {p.venta.vendedor && <div className="flex justify-between gap-3"><span className="opacity-60">Vendedor</span><span className="font-bold">{p.venta.vendedor}</span></div>}
-                          {p.venta.envioCliente != null && <div className="flex justify-between gap-3"><span className="opacity-60">Envío cobrado</span><span className="font-bold">{formatMoney(p.venta.envioCliente)}</span></div>}
-                          {p.venta.costoEnvio != null && <div className="flex justify-between gap-3"><span className="opacity-60">Costo envío</span><span className="font-bold">{formatMoney(p.venta.costoEnvio)}</span></div>}
-                          <div className={`flex justify-between gap-3 pt-2 mt-1 border-t ${dm ? 'border-white/[0.06]' : 'border-zinc-200'}`}><span className="opacity-60">Finalizado</span><span className="font-bold">{safeDateStr(p.finalizadoAt, { day: '2-digit', month: 'short' })} · {safeTimeStr(p.finalizadoAt)}</span></div>
-                        </div>
-                      )}
+              <>
+                <div className="space-y-6 lg:hidden">
+                  <FinalizadoGrupo titulo="Moto" icon={Bike} list={finalizadosMoto} dm={dm}
+                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                  <FinalizadoGrupo titulo="Uber" icon={Car} list={finalizadosUber} dm={dm}
+                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                  <FinalizadoGrupo titulo="Retiro" icon={Store} list={finalizadosRetiro} dm={dm}
+                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                </div>
+
+                <div className="hidden lg:grid lg:grid-cols-3 lg:gap-6 lg:items-start">
+                  <FinalizadoGrupo titulo="Moto" icon={Bike} list={finalizadosMoto} dm={dm}
+                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                  <FinalizadoGrupo titulo="Uber" icon={Car} list={finalizadosUber} dm={dm}
+                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                  <FinalizadoGrupo titulo="Retiro" icon={Store} list={finalizadosRetiro} dm={dm}
+                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                </div>
+
+                {/* Pedidos de antes de que existiera tipoEnvio — no es un canal real, solo aparece
+                    si quedó alguno viejo colgado, para no perderlo. */}
+                {finalizadosSinTipo.length > 0 && (
+                  <div className="mt-6 space-y-3">
+                    <span className={`text-[11px] font-black uppercase tracking-widest px-1 ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>Sin tipo ({finalizadosSinTipo.length})</span>
+                    <div className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 xl:grid-cols-3 lg:gap-3 lg:items-start">
+                      {finalizadosSinTipo.map(p => (
+                        <FinalizadoCard key={p.id} p={p} dm={dm} isExpanded={expandedFinalizadoId === p.id}
+                          onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                      ))}
                     </div>
-                  );
-                })}
-              </div>
+                  </div>
+                )}
+              </>
             )
         )}
       </div>

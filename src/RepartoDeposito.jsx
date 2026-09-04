@@ -116,8 +116,9 @@ function LoginReparto({ dm, onAuth }) {
 
 // Una parada arrastrable de la lista. La posición 1 se vuelve no-arrastrable (disabled en
 // useSortable) cuando el repartidor ya salió — dnd-kit se encarga de que no reaccione al drag,
-// acá solo hace falta marcarla visualmente distinta (candado + sin agarradera).
-function StopRow({ dm, pedido, index, locked, expanded, onToggleExpand, onBorrar, onHoverStart, onHoverEnd }) {
+// acá solo hace falta marcarla visualmente distinta (candado + sin agarradera). El bloqueo se
+// puede sacar a mano tocando "Desbloquear" (ver handleDesbloquear) para corregir el orden igual.
+function StopRow({ dm, pedido, index, locked, expanded, onToggleExpand, onBorrar, onDesbloquear, onHoverStart, onHoverEnd }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: pedido.id, disabled: locked });
   const style = {
     transform: DndCSS.Transform.toString(transform),
@@ -137,7 +138,12 @@ function StopRow({ dm, pedido, index, locked, expanded, onToggleExpand, onBorrar
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-1">
-            {locked && <span className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wide text-indigo-400"><Lock size={11}/> En camino</span>}
+            {locked && (
+              <button onClick={() => onDesbloquear(pedido)} title="Desbloquear esta parada para poder moverla"
+                className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wide text-indigo-400 hover:text-indigo-300">
+                <Lock size={11}/> En camino · Desbloquear
+              </button>
+            )}
             <span className={`flex items-center gap-1 text-[10px] font-bold ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>
               <Clock size={11}/> {formatHora(pedido.createdAt)}
             </span>
@@ -413,6 +419,21 @@ export default function RepartoDeposito() {
     }
   };
 
+  // Desbloqueo manual y puntual de la parada congelada: por defecto queda fija mientras Norman
+  // está en la calle (ver StopRow), pero a veces hace falta corregir el orden igual (se cargó mal,
+  // cambió de planes, etc.). Solo saca el candado — no toca el orden ni el estado del recorrido —
+  // así que vuelve a quedar arrastrable como cualquier otra parada hasta que Norman entregue de
+  // nuevo (ahí RepartoMoto vuelve a congelar la nueva parada 1 automáticamente).
+  const handleDesbloquear = async (pedido) => {
+    if (!window.confirm(`¿Desbloquear "${pedido.direccion?.texto || 'esta parada'}"? Se va a poder mover de lugar aunque Norman ya haya salido para ahí.`)) return;
+    try {
+      await setDoc(doc(db, 'recorridos', 'activo'), { estado: recorrido?.estado || 'en_calle', salidaEn: recorrido?.salidaEn || null, paradaCongelada: null });
+      showToast('Parada desbloqueada');
+    } catch (e) {
+      showToast('Error al desbloquear: ' + e.message, 'error');
+    }
+  };
+
   // Sin clave — esta pantalla (y /pedidos y /reparto) queda sin login a propósito, la usan
   // Jero/depósito directo desde el celular. El resto del sistema sigue pidiendo clave.
 
@@ -444,7 +465,7 @@ export default function RepartoDeposito() {
             <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${enCalle ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'}`}/>
             <div className="min-w-0">
               <p className={`text-sm font-black ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{enCalle ? 'Norman está en la calle' : 'Norman está en el depósito'}</p>
-              <p className="text-[11px] text-zinc-500">{enCalle ? 'La parada 1 quedó fija — está yendo para ahí' : 'Todavía no salió a repartir: se puede mover cualquier parada'}</p>
+              <p className="text-[11px] text-zinc-500">{enCalle ? 'La parada 1 quedó fija — está yendo para ahí (se puede desbloquear abajo)' : 'Todavía no salió a repartir: se puede mover cualquier parada'}</p>
             </div>
             <span className={`flex items-center gap-1.5 h-7 pl-2 pr-2.5 rounded-full text-[11px] font-bold flex-shrink-0 ml-auto ${
               repartidorActivo
@@ -469,7 +490,7 @@ export default function RepartoDeposito() {
                   {stopsOrdenadas.map((p, i) => (
                     <StopRow key={p.id} dm={dm} pedido={p} index={i} locked={p.id === paradaCongeladaId}
                       expanded={expandedId === p.id} onToggleExpand={id => setExpandedId(cur => cur === id ? null : id)}
-                      onBorrar={handleBorrarPedido}
+                      onBorrar={handleBorrarPedido} onDesbloquear={handleDesbloquear}
                       onHoverStart={setHoveredId} onHoverEnd={id => setHoveredId(cur => cur === id ? null : cur)} />
                   ))}
                 </div>
