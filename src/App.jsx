@@ -191,7 +191,7 @@ const safeTimeStr = (dateStr) => {
   return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 };
 
-const PAYMENT_METHOD_LABELS = { alias1: 'Alias 1', alias2: 'Alias 2', alias3: 'Alias 3', alias4: 'Alias 4', efectivo: 'Efectivo' };
+const PAYMENT_METHOD_LABELS = { alias1: 'Alias 1', alias2: 'Alias 2', alias3: 'Alias 3', alias4: 'Alias 4', efectivo: 'Efectivo', mixto: 'Pago mixto' };
 const PAYMENT_METHOD_OPTIONS = [
   { value: '', label: 'Sin especificar' },
   { value: 'alias1', label: 'Alias 1' },

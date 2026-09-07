@@ -85,7 +85,7 @@ const parseTipoEnvio = (mensaje) => {
   return null;
 };
 
-const PAYMENT_METHOD_LABELS = { alias1: 'Alias 1', alias2: 'Alias 2', alias3: 'Alias 3', alias4: 'Alias 4', efectivo: 'Efectivo' };
+const PAYMENT_METHOD_LABELS = { alias1: 'Alias 1', alias2: 'Alias 2', alias3: 'Alias 3', alias4: 'Alias 4', efectivo: 'Efectivo', mixto: 'Pago mixto' };
 const PEDIDO_TIPO_CLIENTE_OPTIONS = [
   { value: '', label: '-- Elegir --' },
   { value: 'Frecuente', label: 'Frecuente' },
@@ -720,7 +720,21 @@ function FinalizadoCard({ p, dm, isExpanded, onToggleExpand, onEliminar }) {
               <span className="font-bold">{formatMoney(p.venta.items.reduce((s, it) => s + (it.precio || 0) * (it.unidades || 1), 0))}</span>
             </div>
           )}
-          <div className="flex justify-between gap-3"><span className="opacity-60">Medio de pago</span><span className="font-bold">{PAYMENT_METHOD_LABELS[p.venta.medioPago] || p.venta.medioPago}</span></div>
+          {/* venta.pagos = desglose real cuando el pago se dividió entre varios medios; si no está
+              o es de un solo medio, se muestra igual que siempre en una sola línea. */}
+          {p.venta.pagos && p.venta.pagos.length > 1 ? (
+            <div className="space-y-1">
+              <span className="opacity-60">Medios de pago</span>
+              {p.venta.pagos.map((pg, idx) => (
+                <div key={idx} className="flex justify-between gap-3 pl-2">
+                  <span className="opacity-60">{PAYMENT_METHOD_LABELS[pg.medioPago] || pg.medioPago}</span>
+                  <span className="font-bold">{formatMoney(pg.monto)}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex justify-between gap-3"><span className="opacity-60">Medio de pago</span><span className="font-bold">{PAYMENT_METHOD_LABELS[p.venta.medioPago] || p.venta.medioPago}</span></div>
+          )}
           {p.venta.vendedor && <div className="flex justify-between gap-3"><span className="opacity-60">Vendedor</span><span className="font-bold">{p.venta.vendedor}</span></div>}
           {p.venta.envioCliente != null && <div className="flex justify-between gap-3"><span className="opacity-60">Envío cobrado</span><span className="font-bold">{formatMoney(p.venta.envioCliente)}</span></div>}
           {p.venta.costoEnvio != null && <div className="flex justify-between gap-3"><span className="opacity-60">Costo envío</span><span className="font-bold">{formatMoney(p.venta.costoEnvio)}</span></div>}
@@ -773,12 +787,19 @@ export default function PedidosPage() {
   const [cancelTarget, setCancelTarget] = useState(null);
   const [cancelMotivo, setCancelMotivo] = useState('');
   const [finalizarTarget, setFinalizarTarget] = useState(null);
-  const [finalizarForm, setFinalizarForm] = useState({ tipoCliente: '', medioPago: '', vendedor: '', envioCliente: '', costoEnvio: '', fecha: getTodayDate() });
+  const [finalizarForm, setFinalizarForm] = useState({ tipoCliente: '', vendedor: '', envioCliente: '', costoEnvio: '', fecha: getTodayDate() });
   // Líneas de producto de la venta que se está por cerrar — arranca con una sola, pero se puede
   // sumar más (a veces se vende más de una marca/producto en el mismo pedido). Cada línea tiene su
   // propio autocompletar de stock, cantidad y precio, independiente de las demás.
   const nuevaLineaProducto = () => ({ uid: Math.random().toString(36).slice(2), producto: '', selectedProductItem: null, unidades: '1', precio: '' });
   const [finalizarItems, setFinalizarItems] = useState(() => [nuevaLineaProducto()]);
+  // Medios de pago de la venta que se está por cerrar — arranca con uno solo (el caso de siempre:
+  // todo por el mismo medio). Si el cliente pagó parte por un lado y parte por otro (ej. mitad
+  // transferencia, mitad efectivo), se suma otra línea y cada una lleva su propio monto; entre
+  // todas tienen que sumar el total del pedido. Solo una puede ser Alias 1/2 (los únicos con
+  // emisor dado de alta en ARCA) — facturar dos veces la misma venta no está soportado.
+  const nuevoPago = () => ({ uid: Math.random().toString(36).slice(2), medioPago: '', monto: '' });
+  const [finalizarPagos, setFinalizarPagos] = useState(() => [nuevoPago()]);
   const [savingFinalizar, setSavingFinalizar] = useState(false);
   const [showCancelados, setShowCancelados] = useState(false);
   const [pedidosBorrados, setPedidosBorrados] = useState([]);
@@ -1016,8 +1037,9 @@ export default function PedidosPage() {
   };
 
   const handleAbrirFinalizar = (pedido) => {
-    setFinalizarForm({ tipoCliente: '', medioPago: '', vendedor: '', envioCliente: '', costoEnvio: '', fecha: getTodayDate() });
+    setFinalizarForm({ tipoCliente: '', vendedor: '', envioCliente: '', costoEnvio: '', fecha: getTodayDate() });
     setFinalizarItems([nuevaLineaProducto()]);
+    setFinalizarPagos([nuevoPago()]);
     setFinalizarTarget(pedido);
   };
 
@@ -1044,8 +1066,27 @@ export default function PedidosPage() {
     return (finalizarQtyPorItemId[it.selectedProductItem.itemId] || 0) <= it.selectedProductItem.currentStock;
   };
   const finalizarTotalGeneral = finalizarItems.reduce((sum, it) => sum + (parseFloat(it.precio) || 0) * (parseInt(it.unidades) || 0), 0);
-  const finalizarValido = finalizarForm.tipoCliente && finalizarForm.medioPago && finalizarForm.vendedor && finalizarForm.fecha &&
-    finalizarItems.length > 0 && finalizarItems.every(finalizarItemEsValido);
+  // Total a repartir entre los medios de pago: productos + lo que se le cobró de envío al cliente.
+  const finalizarTotalConEnvio = finalizarTotalGeneral + (finalizarForm.envioCliente !== '' ? (parseFloat(finalizarForm.envioCliente) || 0) : 0);
+
+  const actualizarFinalizarPago = (uid, patch) => setFinalizarPagos(pagos => pagos.map(p => p.uid === uid ? { ...p, ...patch } : p));
+  const agregarFinalizarPago = () => setFinalizarPagos(pagos => [...pagos, nuevoPago()]);
+  const quitarFinalizarPago = (uid) => setFinalizarPagos(pagos => pagos.length > 1 ? pagos.filter(p => p.uid !== uid) : pagos);
+
+  // Con un solo medio de pago no hace falta cargar el monto (es el total del pedido, como siempre).
+  // Con dos o más, cada uno necesita su monto y entre todos tienen que sumar el total exacto — y
+  // como máximo uno puede ser Alias 1/2, porque facturar dos veces la misma venta no está soportado.
+  const finalizarPagosDivididos = finalizarPagos.length > 1;
+  const finalizarPagosSuma = finalizarPagos.reduce((s, p) => s + (parseFloat(p.monto) || 0), 0);
+  const finalizarPagosAliasFacturables = finalizarPagos.filter(p => p.medioPago === 'alias1' || p.medioPago === 'alias2').length;
+  const finalizarPagosValido = finalizarPagos.length > 0 && finalizarPagos.every(p => p.medioPago) &&
+    (!finalizarPagosDivididos || (
+      finalizarPagos.every(p => (parseFloat(p.monto) || 0) > 0) &&
+      Math.abs(finalizarPagosSuma - finalizarTotalConEnvio) < 1 &&
+      finalizarPagosAliasFacturables <= 1
+    ));
+  const finalizarValido = finalizarForm.tipoCliente && finalizarForm.vendedor && finalizarForm.fecha &&
+    finalizarItems.length > 0 && finalizarItems.every(finalizarItemEsValido) && finalizarPagosValido;
 
   // Al finalizar no solo se cierra el pedido: se anota como venta real (mismo efecto que cargarla
   // a mano en Ventas) — descuenta stock del lote y, si el medio de pago es un alias, acredita la
@@ -1068,6 +1109,12 @@ export default function PedidosPage() {
       const [fechaY, fechaM, fechaD] = (finalizarForm.fecha || getTodayDate()).split('-').map(Number);
       const dateStr = new Date(fechaY, fechaM - 1, fechaD, new Date().getHours(), new Date().getMinutes()).toISOString();
       const ticketId = `PED-${Date.now()}`;
+
+      // Un solo medio de pago: se guarda tal cual en cada línea de venta, como siempre. Dividido
+      // entre varios: cada línea de venta queda marcada "mixto" (ninguna línea de producto es "de"
+      // un medio de pago en particular) y el desglose real vive en venta.pagos, más abajo.
+      const pagosLimpios = finalizarPagos.map(p => ({ medioPago: p.medioPago, monto: finalizarPagosDivididos ? (parseFloat(p.monto) || 0) : finalizarTotalConEnvio }));
+      const medioPagoUnico = pagosLimpios.length === 1 ? pagosLimpios[0].medioPago : 'mixto';
 
       let totalSaleRawGeneral = 0;
       const ventaItems = [];
@@ -1093,7 +1140,7 @@ export default function PedidosPage() {
           shippingCostArs,
           clientShippingCharge,
           shippingProfit,
-          medioPago: finalizarForm.medioPago,
+          medioPago: medioPagoUnico,
           source: 'Pedidos',
           operationType: isReseller ? 'MAYORISTA' : 'VENTA',
           isReseller,
@@ -1129,13 +1176,21 @@ export default function PedidosPage() {
         if (items) await updateDoc(doc(db, 'batches', batchId), { items });
       }
 
-      // 3) Billetera (solo alias1-4). Cuenta Recaudadora (alias4) es la única a la que nunca se le
-      // resta nada: entra la plata de la venta tal cual, más lo que se cobró de envío COMPLETO (no
-      // la ganancia neta del envío como en las demás billeteras).
+      // 3) Billeteras (solo alias1-4) — una acreditación por cada medio de pago cargado, cada una
+      // con SU monto: si se dividió el pago entre dos alias, cada billetera recibe solo lo que le
+      // corresponde. Cuenta Recaudadora (alias4) es la única a la que nunca se le resta nada: entra
+      // la plata tal cual se cobró por ese medio, envío incluido (no solo la ganancia neta del envío
+      // como en las demás). El envío se reparte a prorrata entre los medios de pago según su monto.
       const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', alias4: 'CUENTA_RECAUDADORA' };
-      const wName = aliasWalletMap[finalizarForm.medioPago];
-      if (wName) {
-        const wAmount = totalSaleRawGeneral + (finalizarForm.medioPago === 'alias4' ? clientShippingCharge : Math.max(0, shippingProfit));
+      const totalGrand = totalSaleRawGeneral + clientShippingCharge;
+      for (const pago of pagosLimpios) {
+        const wName = aliasWalletMap[pago.medioPago];
+        if (!wName) continue;
+        const fraction = totalGrand > 0 ? pago.monto / totalGrand : 0;
+        const shippingChargeShare = clientShippingCharge * fraction;
+        const shippingProfitShare = shippingProfit * fraction;
+        const productShare = pago.monto - shippingChargeShare;
+        const wAmount = pago.medioPago === 'alias4' ? pago.monto : (productShare + Math.max(0, shippingProfitShare));
         const walletsRef = doc(db, 'settings', 'wallets');
         await runTransaction(db, async (t) => {
           const wSnap = await t.get(walletsRef);
@@ -1152,7 +1207,8 @@ export default function PedidosPage() {
         venta: {
           tipoCliente: finalizarForm.tipoCliente,
           items: ventaItems,
-          medioPago: finalizarForm.medioPago,
+          medioPago: medioPagoUnico,
+          pagos: pagosLimpios,
           vendedor: finalizarForm.vendedor,
           envioCliente: clientShippingCharge || null,
           costoEnvio: shippingCostArs || null,
@@ -1161,18 +1217,22 @@ export default function PedidosPage() {
 
       setFinalizarTarget(null);
       setFinalizarItems([nuevaLineaProducto()]);
+      setFinalizarPagos([nuevoPago()]);
       setFocusArmadoId(null);
 
       // Igual que por WhatsApp: con Alias 1 o Alias 2 (los únicos con emisor dado de alta en ARCA)
-      // se pregunta si se factura la venta. Con cualquier otro medio de pago no se pregunta nada.
-      if (finalizarForm.medioPago === 'alias1' || finalizarForm.medioPago === 'alias2') {
+      // se pregunta si se factura la venta, pero solo por LA PARTE pagada con ese alias — no por el
+      // total del pedido. Como máximo un medio de pago puede ser Alias 1/2 (se valida al completar
+      // el formulario), así que alcanza con encontrarlo.
+      const pagoFacturable = pagosLimpios.find(p => p.medioPago === 'alias1' || p.medioPago === 'alias2');
+      if (pagoFacturable) {
         setFacturaStep('preguntar');
         setFacturaResultado(null);
         setFacturaPrompt({
           pedidoId: pedidoIdCerrado,
           saleIds: ventaItems.map(it => it.saleId),
-          monto: totalSaleRawGeneral + clientShippingCharge,
-          emisorId: finalizarForm.medioPago,
+          monto: pagoFacturable.monto,
+          emisorId: pagoFacturable.medioPago,
         });
       } else {
         showToast('Pedido finalizado y venta registrada');
@@ -1612,17 +1672,57 @@ export default function PedidosPage() {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-1.5">
-                <label className={`text-xs font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>Medio de pago</label>
-                <div className="relative">
-                  <select value={finalizarForm.medioPago} onChange={e => setFinalizarForm({ ...finalizarForm, medioPago: e.target.value })}
-                    className={`h-12 appearance-none w-full border rounded-xl px-3.5 pr-9 text-base outline-none cursor-pointer transition-all ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100 focus:border-[#6366f1]/50 focus:ring-1 focus:ring-[#6366f1]/10' : 'bg-white border-zinc-200 text-zinc-900 focus:border-blue-400 focus:ring-1 focus:ring-blue-100'}`}>
-                    {PEDIDO_MEDIO_PAGO_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                  <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                    <ChevronDown size={14} className={dm ? 'text-zinc-500' : 'text-zinc-400'} />
-                  </div>
+              {/* Medio(s) de pago: arranca con uno solo, como siempre. "Dividir" suma otra línea con
+                  su propio monto para cuando el cliente pagó parte por un lado y parte por otro
+                  (ej. mitad transferencia, mitad efectivo, o mitad en un alias y mitad en otro). */}
+              <div className="flex flex-col gap-2 lg:col-span-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className={`text-xs font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                    {finalizarPagosDivididos ? 'Medios de pago' : 'Medio de pago'}
+                  </label>
+                  {finalizarPagosDivididos && (
+                    <span className={`text-[11px] font-bold ${Math.abs(finalizarPagosSuma - finalizarTotalConEnvio) < 1 ? (dm ? 'text-emerald-400' : 'text-emerald-600') : (dm ? 'text-red-400' : 'text-red-500')}`}>
+                      {formatMoney(finalizarPagosSuma)} / {formatMoney(finalizarTotalConEnvio)}
+                    </span>
+                  )}
                 </div>
+                <div className="space-y-2">
+                  {finalizarPagos.map(pg => (
+                    <div key={pg.uid} className="flex items-center gap-2">
+                      <div className="relative flex-1">
+                        <select value={pg.medioPago} onChange={e => actualizarFinalizarPago(pg.uid, { medioPago: e.target.value })}
+                          className={`h-12 appearance-none w-full border rounded-xl px-3.5 pr-9 text-base outline-none cursor-pointer transition-all ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100 focus:border-[#6366f1]/50 focus:ring-1 focus:ring-[#6366f1]/10' : 'bg-white border-zinc-200 text-zinc-900 focus:border-blue-400 focus:ring-1 focus:ring-blue-100'}`}>
+                          {PEDIDO_MEDIO_PAGO_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                        <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                          <ChevronDown size={14} className={dm ? 'text-zinc-500' : 'text-zinc-400'} />
+                        </div>
+                      </div>
+                      {finalizarPagosDivididos && (
+                        <div className="relative w-32 flex-shrink-0">
+                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><span className={`text-sm font-medium ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>$</span></div>
+                          <input type="number" inputMode="decimal" value={pg.monto} onChange={e => actualizarFinalizarPago(pg.uid, { monto: e.target.value })}
+                            onWheel={e => e.target.blur()}
+                            className={`h-12 border rounded-xl pl-6 pr-2 w-full text-base outline-none transition-all ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100 focus:border-[#6366f1]/50 focus:ring-1 focus:ring-[#6366f1]/10' : 'bg-white border-zinc-200 text-zinc-900 focus:border-blue-400 focus:ring-1 focus:ring-blue-100'}`}
+                          />
+                        </div>
+                      )}
+                      {finalizarPagos.length > 1 && (
+                        <button type="button" onClick={() => quitarFinalizarPago(pg.uid)}
+                          className={`p-2.5 -m-1 rounded-lg transition-colors active:scale-90 flex-shrink-0 ${dm ? 'text-zinc-600 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-500 hover:bg-red-50'}`}>
+                          <Trash2 size={14}/>
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <button type="button" onClick={agregarFinalizarPago}
+                  className={`w-full h-10 rounded-xl font-bold text-xs border border-dashed transition-all active:scale-[0.98] flex items-center justify-center gap-1.5 ${dm ? 'border-white/[0.15] text-zinc-400 hover:text-zinc-200 hover:border-white/[0.3]' : 'border-zinc-300 text-zinc-500 hover:text-zinc-700 hover:border-zinc-400'}`}>
+                  <Plus size={13}/> Dividir entre otro medio de pago
+                </button>
+                {finalizarPagosAliasFacturables > 1 && (
+                  <p className="text-[11px] font-semibold text-red-400">Como máximo uno de los medios puede ser Alias 1 o Alias 2 — no se puede facturar dos veces la misma venta.</p>
+                )}
               </div>
 
               <div className="flex flex-col gap-1.5 lg:col-span-2">

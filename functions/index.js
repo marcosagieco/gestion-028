@@ -311,7 +311,7 @@ const parseMensajeNuevo = (textoOriginal) => {
         general[key] = value;
     }
     guardarItemActual();
-    const parsedItems = items.map((item, index) => ({ producto: String(item.producto || "").trim(), variante: String(item.variante || "").trim(), cantidad: parseInt(item.cantidad) || 0, precio: limpiarNumero(item.precio), esFalla: String(item.precio ?? "").trim().toLowerCase() === "falla", index: index + 1 })).filter(item => item.producto && item.variante && item.cantidad > 0);
+    const parsedItems = items.map((item, index) => ({ producto: String(item.producto || "").trim(), variante: String(item.variante || "").trim(), cantidad: parseInt(item.cantidad) || 0, precio: limpiarNumero(item.precio), esFalla: String(item.precio ?? "").trim().toLowerCase() === "falla", esRobo: String(item.precio ?? "").trim().toLowerCase() === "robo", index: index + 1 })).filter(item => item.producto && item.variante && item.cantidad > 0);
     return { tipo, general, items: parsedItems };
 };
 
@@ -770,6 +770,7 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
                         const limpiarNum = (texto) => parseFloat(String(texto).replace(/[^0-9,-]+/g,"").replace(",", ".")) || 0;
                         const precioRaw = String(partes[baseIndex + 3 + indexOffset] || "").trim();
                         const esFalla = precioRaw.toLowerCase() === "falla";
+                        const esRobo = precioRaw.toLowerCase() === "robo";
                         const precioUnitario = limpiarNum(precioRaw);
 
                         if (!productoRaw || !varianteRaw || !cantidad) {
@@ -846,7 +847,7 @@ exports.webhook = functions.https.onRequest(async (req, res) => {
 
                         const resultado = esMovimientoNeutro
                             ? await procesarStockNeutro(productoRaw, varianteRaw, cantidad, precioUnitario, motivoNeutro, notaNeutra, vendedor)
-                            : await procesarVenta(productoRaw, varianteRaw, cantidad, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor, null, "Whatsapp", "", medioPagoViejo, esFalla);
+                            : await procesarVenta(productoRaw, varianteRaw, cantidad, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor, null, "Whatsapp", "", medioPagoViejo, esFalla, esRobo);
 
                         let numeroParaMeta = numeroRemitente;
                         if (numeroParaMeta.startsWith("549") && numeroParaMeta.length === 13) {
@@ -1122,7 +1123,7 @@ async function procesarMensajeNuevoWhatsapp(mensaje, numeroRemitente, fechaHoySh
 
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
-            if (!item.esFalla && (!item.precio || item.precio <= 0))
+            if (!item.esFalla && !item.esRobo && (!item.precio || item.precio <= 0))
                 return { exito: false, error_msg: errorConProducto(item, i, `❌ Falta precio en ${item.producto} (${item.variante}).`) };
             const pBuscar = normalizarParaComparar(item.producto);
             const vBuscar = normalizarParaComparar(item.variante);
@@ -1154,10 +1155,10 @@ async function procesarMensajeNuevoWhatsapp(mensaje, numeroRemitente, fechaHoySh
             const item = items[i];
             const costoEnvio = i === 0 ? limpiarNumero(general.envioCosto || 0) : 0;
             const cobroEnvio = i === 0 ? limpiarNumero(general.envioCobro || 0) : 0;
-            const r = await procesarVenta(item.producto, item.variante, item.cantidad, item.precio, fecha, costoEnvio, cobroEnvio, esRevendedor, tipoCliente, vendedor, ticketIdGrupo, canal, clienteMayorista, medioPago, item.esFalla);
+            const r = await procesarVenta(item.producto, item.variante, item.cantidad, item.precio, fecha, costoEnvio, cobroEnvio, esRevendedor, tipoCliente, vendedor, ticketIdGrupo, canal, clienteMayorista, medioPago, item.esFalla, item.esRobo);
             if (r && r.exito === false) return { ...r, error_msg: errorConProducto(item, i, r.error_msg) };
             if (r.saleId) saleIds.push(r.saleId);
-            total += (item.esFalla ? 0 : item.precio * item.cantidad) + (i === 0 ? (cobroEnvio || 0) : 0);
+            total += ((item.esFalla || item.esRobo) ? 0 : item.precio * item.cantidad) + (i === 0 ? (cobroEnvio || 0) : 0);
             unidades += item.cantidad;
             await registrarEnSheet(tipo === "MAYORISTA" ? "Mayorista" : "Ventas", [fechaHoySheet, numeroRemitente, item.producto, item.variante, item.cantidad, item.precio, `ÉXITO (${vendedor})`, tipoCliente]);
         }
@@ -1630,7 +1631,7 @@ async function procesarStockNeutro(userProducto, userVariante, cantARestar, prec
 // ==========================================
 // FUNCIÓN PROCESAR VENTA
 // ==========================================
-async function procesarVenta(userProducto, userVariante, cantARestar, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor, ticketIdManual = null, source = "Whatsapp", clienteMayorista = "", medioPago = null, esFalla = false) {
+async function procesarVenta(userProducto, userVariante, cantARestar, precioUnitario, fechaManual, costoEnvioMio, precioEnvioCliente, esRevendedor, esNuevo, vendedor, ticketIdManual = null, source = "Whatsapp", clienteMayorista = "", medioPago = null, esFalla = false, esRobo = false) {
     if (isNaN(cantARestar) || cantARestar <= 0) return { exito: false, error_msg: "❌ La cantidad ingresada no es válida." };
 
     const pBuscar = normalizarParaComparar(userProducto);
@@ -1713,8 +1714,9 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
 
     if (itemsActualizados) {
         // totalSaleRaw = solo producto (el envío no es ganancia del emisor)
-        const totalVentaCalculado = esFalla ? 0 : precioUnitario * cantARestar;
+        const totalVentaCalculado = (esFalla || esRobo) ? 0 : precioUnitario * cantARestar;
         const failedValueCalculado = esFalla ? (costoUnitarioOficial || 0) * cantARestar : 0;
+        const stolenValueCalculado = esRobo ? (costoUnitarioOficial || 0) * cantARestar : 0;
         // Si solo se cargó uno de los dos (precio o costo), es solo informativo: no debe sumar ni restar a la ganancia.
         const shippingProfitCalculado = (precioEnvioCliente && costoEnvioMio) ? (precioEnvioCliente - costoEnvioMio) : 0;
         const ticketIdGenerado = ticketIdManual || Date.now().toString();
@@ -1740,9 +1742,11 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
             clientName: esRevendedor ? (clienteMayorista || "") : "",
             ticketId: ticketIdGenerado,
             totalSaleRaw: totalVentaCalculado,
-            unitPrice: esFalla ? 0 : precioUnitario,
+            unitPrice: (esFalla || esRobo) ? 0 : precioUnitario,
             isFalla: !!esFalla,
             failedValue: failedValueCalculado,
+            isRobo: !!esRobo,
+            stolenValue: stolenValueCalculado,
             variant: varianteOficial,
             seller: vendedor
         });
