@@ -58,3 +58,21 @@ export const MAP_DARK_STYLE = [
   { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0d1420' }] },
   { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#4a5a70' }] },
 ];
+
+// Contraparte clara del estilo de arriba — mismo criterio (sin POIs, calles limpias), pero en la
+// paleta blanca del resto de la app, para que el mapa cambie junto con el resto de la pantalla al
+// tocar el toggle de modo claro/oscuro.
+export const MAP_LIGHT_STYLE = [
+  { elementType: 'geometry', stylers: [{ color: '#f5f5f7' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#ffffff' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#71717a' }] },
+  { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#d4d4d8' }] },
+  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#e4e4e7' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#eaeaee' }] },
+  { featureType: 'road.arterial', elementType: 'labels.text.fill', stylers: [{ color: '#8a8a94' }] },
+  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#cfe3f5' }] },
+  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#6d8aa8' }] },
+];

@@ -8,7 +8,7 @@ import {
   Bike, Moon, Sun, LogOut, ChevronDown, ChevronRight, Navigation, CheckCircle2,
   Lock, XCircle, PartyPopper, Loader2, History, X, Clock,
 } from 'lucide-react';
-import { loadGoogleMaps, MAP_DARK_STYLE } from './reparto/googleMapsLoader';
+import { loadGoogleMaps, MAP_DARK_STYLE, MAP_LIGHT_STYLE } from './reparto/googleMapsLoader';
 import { ZONAS_POR_ID, DEPOSITO_ORIGEN } from './reparto/zonas';
 import { computeRecorrido, ordenAPersistir } from './reparto/recorridoEngine';
 import { costoMotomensajeriaDe, medirCostoMotomensajeriaReal } from './reparto/motomensajeria';
@@ -285,7 +285,7 @@ export default function RepartoMoto() {
       mapRef.current = new maps.Map(mapDivRef.current, {
         center: { lat: DEPOSITO_ORIGEN.lat, lng: DEPOSITO_ORIGEN.lng },
         zoom: 13,
-        styles: MAP_DARK_STYLE,
+        styles: dm ? MAP_DARK_STYLE : MAP_LIGHT_STYLE,
         disableDefaultUI: true,
         zoomControl: true,
         gestureHandling: 'greedy',

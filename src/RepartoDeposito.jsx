@@ -16,7 +16,7 @@ import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } 
 import { CSS as DndCSS } from '@dnd-kit/utilities';
 import { ZONAS_POR_ID, DEPOSITO_ORIGEN } from './reparto/zonas';
 import { computeRecorrido, ordenAPersistir } from './reparto/recorridoEngine';
-import { loadGoogleMaps, MAP_DARK_STYLE } from './reparto/googleMapsLoader';
+import { loadGoogleMaps, MAP_DARK_STYLE, MAP_LIGHT_STYLE } from './reparto/googleMapsLoader';
 
 // --- Firebase: mismo patrón self-contenido que PedidosPage.jsx ---
 const firebaseConfig = {
@@ -243,7 +243,7 @@ export default function RepartoDeposito() {
       mapRef.current = new maps.Map(mapDivRef.current, {
         center: { lat: DEPOSITO_ORIGEN.lat, lng: DEPOSITO_ORIGEN.lng },
         zoom: 13,
-        styles: MAP_DARK_STYLE,
+        styles: dm ? MAP_DARK_STYLE : MAP_LIGHT_STYLE,
         disableDefaultUI: true,
         zoomControl: true,
         gestureHandling: 'greedy',
@@ -257,7 +257,14 @@ export default function RepartoDeposito() {
       });
     }).catch(err => console.error('Google Maps no cargó:', err));
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Repinta el mapa ya creado al tocar el toggle de modo claro/oscuro — la creación de arriba solo
+  // corre una vez, así que el cambio de estilo en caliente necesita este segundo efecto aparte.
+  useEffect(() => {
+    mapRef.current?.setOptions({ styles: dm ? MAP_DARK_STYLE : MAP_LIGHT_STYLE });
+  }, [dm]);
 
   // Mismos marcadores numerados que en la pantalla del motomensajero — se redibujan enteros cada
   // vez que cambia el orden, así no quedan marcadores fantasma con la librería clásica de Marker.
