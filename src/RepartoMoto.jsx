@@ -45,6 +45,29 @@ try {
 } catch { db = getFirestore(fbApp); }
 if (!db) db = getFirestore(fbApp);
 
+// Avisa al agente de IA (n8n) que un pedido cambio de estado en el reparto, para que le escriba
+// al cliente ("tu pedido llego" / "fue entregado"). Fire-and-forget: nunca bloquea ni rompe el
+// flujo del repartidor. Si VITE_N8N_ENTREGA_WEBHOOK no esta seteada, no hace nada.
+const N8N_ENTREGA_WEBHOOK = import.meta.env.VITE_N8N_ENTREGA_WEBHOOK || '';
+function notificarEntregaAgente(pedido, evento) {
+  if (!N8N_ENTREGA_WEBHOOK || !pedido?.telefono) return;
+  try {
+    fetch(N8N_ENTREGA_WEBHOOK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pedidoId: pedido.id,
+        telefono: pedido.telefono,
+        cliente: pedido.cliente || null,
+        evento, // 'entregado' | 'llegue'
+        direccion: pedido.direccion?.texto || null,
+        ts: new Date().toISOString(),
+      }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch { /* noop */ }
+}
+
 const AUTH_KEY = '028_user';
 const AUTH_PWD = '1717';
 
@@ -550,6 +573,9 @@ export default function RepartoMoto() {
         entregadoEn: nowIso,
         ubicacionEntrega: posEntrega ? { lat: posEntrega.lat, lng: posEntrega.lng } : null,
       });
+
+      // Avisa al agente de IA para que le escriba al cliente. No bloquea nada.
+      notificarEntregaAgente(pedido, 'entregado');
 
       // Plata de la motomensajería: se mide la distancia REAL por calle acá, una sola vez, y se
       // guarda en el pedido para que el historial no tenga que volver a llamar a Google nunca más.
