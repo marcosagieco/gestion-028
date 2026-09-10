@@ -151,7 +151,6 @@ que el bot no se confunda; la frase la arma el prompt según `situacion`.
 ```json
 {
   "ok": true,
-  "abierto": true,
   "situacion": "demora",
   "proximaSalida": "16:00",
   "actualizadoEn": "2026-09-10T18:30:00.000Z"
@@ -159,9 +158,10 @@ que el bot no se confunda; la frase la arma el prompt según `situacion`.
 ```
 
 `situacion` ∈ `sin_demora` | `normal` | `demora` | `demora_fuerte` | `solo_manana`.
+El bot toma pedidos siempre — no hay estado "cerrado". `solo_manana` = "hoy ya no se despacha".
 
 > Lo setea el staff desde **`/operativo`** en el dashboard (pantalla `src/OperativoPage.jsx`):
-> toggle abierto/cerrado + un botón para la demora del día + próxima salida opcional. 2 toques.
+> un botón para la demora del día + próxima salida opcional. 1 toque.
 
 ---
 
@@ -179,7 +179,7 @@ que el bot no se confunda; la frase la arma el prompt según `situacion`.
 - `comprobantes_financiera` — un doc por comprobante de la alias financiera (`alias3`):
   `{ pedidoId, numero, monto, nombre, telefono, createdAt }`.
 - `settings/operativo` — estado del día (lo setea el staff desde `/operativo`):
-  `{ abierto: bool, situacion: string, proximaSalida: string, actualizadoEn: string }`.
+  `{ situacion: string, proximaSalida: string, actualizadoEn: string }`.
 
 ## Implementación y deploy
 

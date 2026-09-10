@@ -414,7 +414,6 @@ exports.agentEstadoOperativo = withAuth(async (req, res) => {
   const situacion = SITUACIONES_VALIDAS.includes(d.situacion) ? d.situacion : "sin_demora";
   return res.json({
     ok: true,
-    abierto: d.abierto !== false,
     situacion,                    // sin_demora | normal | demora | demora_fuerte | solo_manana
     proximaSalida: d.proximaSalida || null,
     actualizadoEn: d.actualizadoEn || null,

@@ -5,7 +5,7 @@ import {
   initializeFirestore, getFirestore, doc, onSnapshot, setDoc,
   persistentLocalCache, persistentMultipleTabManager,
 } from 'firebase/firestore';
-import { Radio, Moon, Sun, Save, ArrowLeft, Power, Check } from 'lucide-react';
+import { Radio, Moon, Sun, Save, ArrowLeft, Check } from 'lucide-react';
 
 // --- Firebase: mismo patron que PedidosPage.jsx / FacturasPage.jsx (pagina 100% independiente). ---
 const firebaseConfig = {
@@ -75,14 +75,14 @@ const DOC_REF = () => doc(db, 'settings', 'operativo');
 // Cada opcion mapea a una frase fija que usa el bot (ver 028_system_prompt.md).
 // El staff solo elige una — el bot nunca ve texto libre.
 const SITUACIONES = [
-  { id: 'sin_demora',    label: 'Sin demora',       hint: 'los envios salen normal' },
-  { id: 'normal',        label: 'Normal (~1:30h)',  hint: 'demora habitual' },
-  { id: 'demora',        label: 'Demora (~2h)',     hint: 'hay bastante pedido' },
-  { id: 'demora_fuerte', label: 'Demora fuerte (+3h)', hint: 'mejor ofrecer flash para lo urgente' },
-  { id: 'solo_manana',   label: 'Solo para manana', hint: 'ya no llegamos a despachar hoy' },
+  { id: 'sin_demora',    label: 'Sin demora',          hint: 'los envios salen normal' },
+  { id: 'normal',        label: 'Normal (1:30 hs aprox)', hint: 'demora habitual' },
+  { id: 'demora',        label: 'Demora (2 hs aprox)',  hint: 'hay bastante pedido' },
+  { id: 'demora_fuerte', label: 'Demora fuerte (mas de 3 hs)', hint: 'mejor ofrecer flash para lo urgente' },
+  { id: 'solo_manana',   label: 'Solo para manana',     hint: 'ya no llegamos a despachar hoy' },
 ];
 
-const DEFAULTS = { abierto: true, situacion: 'sin_demora', proximaSalida: '' };
+const DEFAULTS = { situacion: 'sin_demora', proximaSalida: '' };
 
 export default function OperativoPage() {
   const [dm, setDm] = useState(() => localStorage.getItem('028_dark_mode') === 'true');
@@ -109,7 +109,6 @@ export default function OperativoPage() {
     setSaving(true);
     try {
       await setDoc(DOC_REF(), {
-        abierto: !!form.abierto,
         situacion: SITUACIONES.some((s) => s.id === form.situacion) ? form.situacion : 'sin_demora',
         proximaSalida: (form.proximaSalida || '').trim(),
         actualizadoEn: new Date().toISOString(),
@@ -155,41 +154,14 @@ export default function OperativoPage() {
         </div>
 
         <p className={`text-xs mb-5 ${label}`}>
-          Esto lo lee el bot de WhatsApp para avisarle a los clientes si estamos abiertos y si hay demora.
+          Esto lo lee el bot de WhatsApp para avisarle a los clientes si hay demora en los envios.
+          El bot toma pedidos siempre.
         </p>
 
         <div className={`rounded-2xl border p-5 space-y-6 ${card}`}>
 
-          {/* Abierto / cerrado */}
-          <div>
-            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>¿Estamos tomando pedidos?</label>
-            <div className="grid grid-cols-2 gap-2">
-              <button onClick={() => set('abierto', true)}
-                className={`rounded-xl border px-3 py-3 text-sm font-bold flex items-center justify-center gap-2 transition-colors ${
-                  form.abierto
-                    ? (dm ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-400' : 'border-emerald-400 bg-emerald-50 text-emerald-700')
-                    : (dm ? 'border-white/10 text-zinc-500' : 'border-zinc-300 text-zinc-400')
-                }`}>
-                <Power size={15} /> Tomando pedidos
-              </button>
-              <button onClick={() => set('abierto', false)}
-                className={`rounded-xl border px-3 py-3 text-sm font-bold flex items-center justify-center gap-2 transition-colors ${
-                  !form.abierto
-                    ? (dm ? 'border-red-500/50 bg-red-500/15 text-red-400' : 'border-red-400 bg-red-50 text-red-700')
-                    : (dm ? 'border-white/10 text-zinc-500' : 'border-zinc-300 text-zinc-400')
-                }`}>
-                Cerrado hoy
-              </button>
-            </div>
-            {!form.abierto && (
-              <p className={`text-[11px] mt-2 ${label}`}>
-                El bot igual toma el pedido, pero le avisa al cliente que sale al dia siguiente.
-              </p>
-            )}
-          </div>
-
           {/* Demora del dia */}
-          <div className={form.abierto ? '' : 'opacity-40 pointer-events-none'}>
+          <div>
             <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Demora de hoy</label>
             <div className="space-y-2">
               {SITUACIONES.map((s) => {
@@ -213,8 +185,9 @@ export default function OperativoPage() {
           </div>
 
           {/* Proxima salida */}
-          <div className={form.abierto ? '' : 'opacity-40 pointer-events-none'}>
+          <div>
             <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Proxima salida de moto <span className="normal-case font-normal">(opcional)</span></label>
+            <p className={`text-[11px] mb-2 ${label}`}>Hora a la que sale la proxima tanda de envios. El bot la usa si el cliente pregunta cuando le llega.</p>
             <input value={form.proximaSalida} onChange={(e) => set('proximaSalida', e.target.value)}
               placeholder="16:00"
               className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors ${input}`} />
