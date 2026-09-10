@@ -1874,3 +1874,6 @@ function esParecido(usuarioTexto, bdTexto) {
     }
     return true;
 }  
+
+// --- Endpoints del agente de IA (ver agente-api.js - todo aditivo, no toca nada de arriba) ---
+Object.assign(exports, require("./agente-api"));
