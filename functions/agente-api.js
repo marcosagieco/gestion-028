@@ -404,15 +404,19 @@ exports.agentPedido = withAuth(async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // 5. GET /agentEstadoOperativo
 // ─────────────────────────────────────────────────────────────────────────────
+// El staff setea esto desde /operativo en el dashboard. Solo campos estructurados (nada de
+// texto libre) para que el bot no se confunda: la frase la arma el prompt segun `situacion`.
+const SITUACIONES_VALIDAS = ["sin_demora", "normal", "demora", "demora_fuerte", "solo_manana"];
+
 exports.agentEstadoOperativo = withAuth(async (req, res) => {
   const doc = await db.collection("settings").doc("operativo").get();
   const d = doc.exists ? doc.data() : {};
+  const situacion = SITUACIONES_VALIDAS.includes(d.situacion) ? d.situacion : "sin_demora";
   return res.json({
     ok: true,
     abierto: d.abierto !== false,
-    horarioAtencion: d.horarioAtencion || "12:00-20:00",
-    demoraEstimadaMin: Number(d.demoraEstimadaMin) || 90,
-    mensajeDemora: d.mensajeDemora || null,
+    situacion,                    // sin_demora | normal | demora | demora_fuerte | solo_manana
     proximaSalida: d.proximaSalida || null,
+    actualizadoEn: d.actualizadoEn || null,
   });
 });

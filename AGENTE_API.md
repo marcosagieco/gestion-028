@@ -143,24 +143,25 @@ Lógica:
 
 ---
 
-## 5. `GET /agentEstadoOperativo` — horarios y demoras del día
+## 5. `GET /agentEstadoOperativo` — estado del día
 
-Sin params. Lee `settings/operativo`:
+Sin params. Lee `settings/operativo`. **Solo campos estructurados** — nada de texto libre, para
+que el bot no se confunda; la frase la arma el prompt según `situacion`.
 
 ```json
 {
   "ok": true,
   "abierto": true,
-  "horarioAtencion": "12:00-20:00",
-  "demoraEstimadaMin": 120,
-  "mensajeDemora": "hoy los envíos salen con demora de ~2 hs",
-  "proximaSalida": "16:00"
+  "situacion": "demora",
+  "proximaSalida": "16:00",
+  "actualizadoEn": "2026-09-10T18:30:00.000Z"
 }
 ```
 
-> **Requiere del lado de `gestion-028`:** una pantallita en el dashboard para setear
-> `settings/operativo` (demora del día, abierto/cerrado, mensaje). Acordado en el onboarding:
-> el staff carga la demora y el agente la lee, en vez de avisarle a Gino.
+`situacion` ∈ `sin_demora` | `normal` | `demora` | `demora_fuerte` | `solo_manana`.
+
+> Lo setea el staff desde **`/operativo`** en el dashboard (pantalla `src/OperativoPage.jsx`):
+> toggle abierto/cerrado + un botón para la demora del día + próxima salida opcional. 2 toques.
 
 ---
 
@@ -177,8 +178,8 @@ Sin params. Lee `settings/operativo`:
 - `clientes_bot/{telefono}` — `{ cantidadPedidos, ultimoPedido, primerContacto, origen }`.
 - `comprobantes_financiera` — un doc por comprobante de la alias financiera (`alias3`):
   `{ pedidoId, numero, monto, nombre, telefono, createdAt }`.
-- `settings/operativo` — demora/horario del día (lo setea el staff desde el dashboard):
-  `{ abierto: bool, horarioAtencion, demoraEstimadaMin, mensajeDemora, proximaSalida }`.
+- `settings/operativo` — estado del día (lo setea el staff desde `/operativo`):
+  `{ abierto: bool, situacion: string, proximaSalida: string, actualizadoEn: string }`.
 
 ## Implementación y deploy
 

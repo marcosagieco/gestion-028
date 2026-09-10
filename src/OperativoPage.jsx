@@ -5,7 +5,7 @@ import {
   initializeFirestore, getFirestore, doc, onSnapshot, setDoc,
   persistentLocalCache, persistentMultipleTabManager,
 } from 'firebase/firestore';
-import { Radio, Moon, Sun, Save, ArrowLeft, Power } from 'lucide-react';
+import { Radio, Moon, Sun, Save, ArrowLeft, Power, Check } from 'lucide-react';
 
 // --- Firebase: mismo patron que PedidosPage.jsx / FacturasPage.jsx (pagina 100% independiente). ---
 const firebaseConfig = {
@@ -50,7 +50,7 @@ function Login({ dm, onAuth }) {
           </div>
           <div>
             <p className={`text-xs font-bold uppercase tracking-widest ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>028 Import</p>
-            <h1 className={`text-sm font-black leading-tight ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>Estado operativo</h1>
+            <h1 className={`text-sm font-black leading-tight ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>Estado del dia</h1>
           </div>
         </div>
         <form onSubmit={submit} className="space-y-4">
@@ -72,13 +72,17 @@ function Login({ dm, onAuth }) {
 
 const DOC_REF = () => doc(db, 'settings', 'operativo');
 
-const DEFAULTS = {
-  abierto: true,
-  horarioAtencion: '12:00-20:00',
-  demoraEstimadaMin: 90,
-  mensajeDemora: '',
-  proximaSalida: '',
-};
+// Cada opcion mapea a una frase fija que usa el bot (ver 028_system_prompt.md).
+// El staff solo elige una — el bot nunca ve texto libre.
+const SITUACIONES = [
+  { id: 'sin_demora',    label: 'Sin demora',       hint: 'los envios salen normal' },
+  { id: 'normal',        label: 'Normal (~1:30h)',  hint: 'demora habitual' },
+  { id: 'demora',        label: 'Demora (~2h)',     hint: 'hay bastante pedido' },
+  { id: 'demora_fuerte', label: 'Demora fuerte (+3h)', hint: 'mejor ofrecer flash para lo urgente' },
+  { id: 'solo_manana',   label: 'Solo para manana', hint: 'ya no llegamos a despachar hoy' },
+];
+
+const DEFAULTS = { abierto: true, situacion: 'sin_demora', proximaSalida: '' };
 
 export default function OperativoPage() {
   const [dm, setDm] = useState(() => localStorage.getItem('028_dark_mode') === 'true');
@@ -99,17 +103,15 @@ export default function OperativoPage() {
     return unsub;
   }, [authed]);
 
-  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const set = (k, v) => { setForm((f) => ({ ...f, [k]: v })); setSavedAt(null); };
 
   const guardar = async () => {
     setSaving(true);
     try {
       await setDoc(DOC_REF(), {
         abierto: !!form.abierto,
-        horarioAtencion: form.horarioAtencion.trim() || DEFAULTS.horarioAtencion,
-        demoraEstimadaMin: Math.max(0, parseInt(form.demoraEstimadaMin) || 0),
-        mensajeDemora: form.mensajeDemora.trim(),
-        proximaSalida: form.proximaSalida.trim(),
+        situacion: SITUACIONES.some((s) => s.id === form.situacion) ? form.situacion : 'sin_demora',
+        proximaSalida: (form.proximaSalida || '').trim(),
         actualizadoEn: new Date().toISOString(),
       }, { merge: true });
       setSavedAt(Date.now());
@@ -123,10 +125,10 @@ export default function OperativoPage() {
   if (!authed) return <Login dm={dm} onAuth={() => setAuthed(true)} />;
 
   const card = dm ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200';
+  const label = dm ? 'text-zinc-400' : 'text-zinc-600';
   const input = dm
     ? 'bg-[#0a0a0a] border-white/10 text-zinc-100 focus:border-indigo-500'
     : 'bg-white border-zinc-300 text-zinc-900 focus:border-indigo-500';
-  const label = dm ? 'text-zinc-400' : 'text-zinc-600';
 
   return (
     <div className={`min-h-screen ${dm ? 'bg-[#050505] text-zinc-100' : 'bg-slate-50 text-zinc-900'}`}
@@ -142,75 +144,89 @@ export default function OperativoPage() {
           </button>
         </div>
 
-        <div className="flex items-center gap-3 mb-6">
+        <div className="flex items-center gap-3 mb-2">
           <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#6366f1' }}>
             <Radio size={17} className="text-white" />
           </div>
           <div>
             <p className={`text-xs font-bold uppercase tracking-widest ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>028 Import</p>
-            <h1 className="text-base font-black leading-tight">Estado operativo</h1>
+            <h1 className="text-base font-black leading-tight">Estado del dia</h1>
           </div>
         </div>
 
         <p className={`text-xs mb-5 ${label}`}>
-          Lo que cargues acá lo lee el bot de WhatsApp para avisarle a los clientes por tiempos y demoras del día.
+          Esto lo lee el bot de WhatsApp para avisarle a los clientes si estamos abiertos y si hay demora.
         </p>
 
-        <div className={`rounded-2xl border p-5 space-y-5 ${card}`}>
+        <div className={`rounded-2xl border p-5 space-y-6 ${card}`}>
 
           {/* Abierto / cerrado */}
-          <button onClick={() => set('abierto', !form.abierto)}
-            className={`w-full flex items-center justify-between rounded-xl border px-4 py-3 transition-colors ${
-              form.abierto
-                ? (dm ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-emerald-300 bg-emerald-50')
-                : (dm ? 'border-red-500/40 bg-red-500/10' : 'border-red-300 bg-red-50')
-            }`}>
-            <span className="flex items-center gap-2 text-sm font-bold">
-              <Power size={15} className={form.abierto ? 'text-emerald-500' : 'text-red-500'} />
-              {form.abierto ? 'Abierto — tomando pedidos' : 'Cerrado'}
-            </span>
-            <span className={`text-xs font-semibold ${label}`}>tocá para cambiar</span>
-          </button>
-
           <div>
-            <label className={`block text-xs font-semibold mb-1.5 ${label}`}>Horario de atención</label>
-            <input value={form.horarioAtencion} onChange={(e) => set('horarioAtencion', e.target.value)}
-              placeholder="12:00-20:00"
-              className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors ${input}`} />
+            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>¿Estamos tomando pedidos?</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={() => set('abierto', true)}
+                className={`rounded-xl border px-3 py-3 text-sm font-bold flex items-center justify-center gap-2 transition-colors ${
+                  form.abierto
+                    ? (dm ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-400' : 'border-emerald-400 bg-emerald-50 text-emerald-700')
+                    : (dm ? 'border-white/10 text-zinc-500' : 'border-zinc-300 text-zinc-400')
+                }`}>
+                <Power size={15} /> Tomando pedidos
+              </button>
+              <button onClick={() => set('abierto', false)}
+                className={`rounded-xl border px-3 py-3 text-sm font-bold flex items-center justify-center gap-2 transition-colors ${
+                  !form.abierto
+                    ? (dm ? 'border-red-500/50 bg-red-500/15 text-red-400' : 'border-red-400 bg-red-50 text-red-700')
+                    : (dm ? 'border-white/10 text-zinc-500' : 'border-zinc-300 text-zinc-400')
+                }`}>
+                Cerrado hoy
+              </button>
+            </div>
+            {!form.abierto && (
+              <p className={`text-[11px] mt-2 ${label}`}>
+                El bot igual toma el pedido, pero le avisa al cliente que sale al dia siguiente.
+              </p>
+            )}
           </div>
 
-          <div>
-            <label className={`block text-xs font-semibold mb-1.5 ${label}`}>Demora estimada de hoy (minutos)</label>
-            <input type="number" min="0" step="15" value={form.demoraEstimadaMin}
-              onChange={(e) => set('demoraEstimadaMin', e.target.value)}
-              className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors ${input}`} />
-            <p className={`text-[11px] mt-1 ${label}`}>Ej: 90 = "sale con demora de ~1:30 hs". 120 = "~2 hs".</p>
+          {/* Demora del dia */}
+          <div className={form.abierto ? '' : 'opacity-40 pointer-events-none'}>
+            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Demora de hoy</label>
+            <div className="space-y-2">
+              {SITUACIONES.map((s) => {
+                const sel = form.situacion === s.id;
+                return (
+                  <button key={s.id} onClick={() => set('situacion', s.id)}
+                    className={`w-full rounded-xl border px-4 py-2.5 flex items-center justify-between text-left transition-colors ${
+                      sel
+                        ? (dm ? 'border-indigo-500/60 bg-indigo-500/15' : 'border-indigo-400 bg-indigo-50')
+                        : (dm ? 'border-white/[0.08] hover:border-white/20' : 'border-zinc-200 hover:border-zinc-300')
+                    }`}>
+                    <span>
+                      <span className={`text-sm font-bold ${sel ? (dm ? 'text-indigo-300' : 'text-indigo-700') : ''}`}>{s.label}</span>
+                      <span className={`block text-[11px] ${label}`}>{s.hint}</span>
+                    </span>
+                    {sel && <Check size={16} className={dm ? 'text-indigo-400' : 'text-indigo-600'} />}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          <div>
-            <label className={`block text-xs font-semibold mb-1.5 ${label}`}>Próxima salida (opcional)</label>
+          {/* Proxima salida */}
+          <div className={form.abierto ? '' : 'opacity-40 pointer-events-none'}>
+            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Proxima salida de moto <span className="normal-case font-normal">(opcional)</span></label>
             <input value={form.proximaSalida} onChange={(e) => set('proximaSalida', e.target.value)}
               placeholder="16:00"
               className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors ${input}`} />
           </div>
 
-          <div>
-            <label className={`block text-xs font-semibold mb-1.5 ${label}`}>Mensaje libre para el bot (opcional)</label>
-            <textarea rows={2} value={form.mensajeDemora} onChange={(e) => set('mensajeDemora', e.target.value)}
-              placeholder='Ej: "hoy despachamos recién a las 15 hs"'
-              className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors resize-none ${input}`} />
-          </div>
-
           <button onClick={guardar} disabled={saving || !loaded}
-            className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-            style={{ background: '#6366f1' }}>
-            <Save size={15} /> {saving ? 'Guardando…' : 'Guardar'}
+            className="w-full flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            style={{ background: savedAt ? '#10b981' : '#6366f1' }}>
+            {savedAt ? <><Check size={16} /> Guardado</> : <><Save size={15} /> {saving ? 'Guardando...' : 'Guardar'}</>}
           </button>
-
           {savedAt && (
-            <p className="text-xs text-center text-emerald-500 font-semibold">
-              Guardado — el bot lo toma en la próxima consulta
-            </p>
+            <p className={`text-xs text-center ${label}`}>El bot lo toma en la proxima consulta de un cliente.</p>
           )}
         </div>
       </div>
