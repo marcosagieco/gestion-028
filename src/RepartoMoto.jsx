@@ -3,11 +3,17 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   initializeFirestore, getFirestore, collection, query, orderBy, onSnapshot,
   doc, setDoc, updateDoc, writeBatch,
+  persistentLocalCache, persistentMultipleTabManager,
 } from 'firebase/firestore';
 import {
-  Bike, Moon, Sun, LogOut, ChevronDown, ChevronRight, Navigation, CheckCircle2,
-  Lock, XCircle, PartyPopper, Loader2, History, X, Clock,
+  Bike, Moon, Sun, ChevronDown, ChevronRight, Navigation, CheckCircle2,
+  Lock, XCircle, PartyPopper, Loader2, History, X, Clock, AlertTriangle, GripVertical,
 } from 'lucide-react';
+import {
+  DndContext, PointerSensor, TouchSensor, useSensor, useSensors, closestCenter,
+} from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
+import { CSS as DndCSS } from '@dnd-kit/utilities';
 import { loadGoogleMaps, MAP_DARK_STYLE, MAP_LIGHT_STYLE } from './reparto/googleMapsLoader';
 import { ZONAS_POR_ID, DEPOSITO_ORIGEN } from './reparto/zonas';
 import { computeRecorrido, ordenAPersistir } from './reparto/recorridoEngine';
@@ -24,8 +30,19 @@ const firebaseConfig = {
 };
 const fbApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
 let db;
-try { db = initializeFirestore(fbApp, { experimentalForceLongPolling: true }); }
-catch { db = getFirestore(fbApp); }
+try {
+  // Caché persistente (IndexedDB) igual que el dashboard principal (App.jsx) — sin esto, la
+  // pantalla queda en blanco apenas se corta la señal, justo cuando más se usa (Norman en la
+  // calle, a veces en subte o en un ascensor). Con la caché, lo último que se sincronizó queda
+  // disponible al instante aunque no haya internet, y las escrituras (marcar una entrega, etc.)
+  // quedan en cola y se mandan solas apenas vuelve la señal. persistentMultipleTabManager permite
+  // que esta pantalla y otra pestaña/página del sistema compartan la caché sin pisarse si están
+  // abiertas al mismo tiempo en el mismo navegador.
+  db = initializeFirestore(fbApp, {
+    experimentalForceLongPolling: true,
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+  });
+} catch { db = getFirestore(fbApp); }
 if (!db) db = getFirestore(fbApp);
 
 const AUTH_KEY = '028_user';
@@ -114,15 +131,149 @@ function ConfirmModal({ dm, title, text, confirmLabel = 'Aceptar', onConfirm, on
   );
 }
 
+// Cartel para registrar una entrega fallida (cliente no atendió, rechazó el pedido, no había
+// nadie, etc.) — antes la única salida de una parada era marcarla "Entregado", así que una
+// entrega fallida solo se podía mentir como entregada o dejar el pedido colgado en el recorrido
+// para siempre. Pide motivo siempre (el botón de confirmar queda deshabilitado sin texto): sin
+// motivo, el registro no dice nada útil ni a Norman ni a depósito.
+function EntregaFallidaModal({ dm, pedido, onConfirm, onCancel }) {
+  const [motivo, setMotivo] = useState('');
+  return (
+    <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 animate-in fade-in duration-150"
+      style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)' }}
+      onClick={onCancel}>
+      <div onClick={e => e.stopPropagation()}
+        className={`w-full max-w-sm rounded-3xl border p-5 shadow-2xl animate-in zoom-in-95 duration-150 ${dm ? 'bg-[#161616] border-white/[0.1]' : 'bg-white border-zinc-200'}`}>
+        <p className={`text-lg font-black text-center mb-1.5 ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>¿Por qué no se pudo entregar?</p>
+        <p className={`text-sm text-center leading-snug mb-4 ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>{pedido.direccion?.texto}</p>
+        <textarea value={motivo} onChange={e => setMotivo(e.target.value)} rows={3} autoFocus
+          placeholder="Ej: no atendió, no había nadie, rechazó el pedido..."
+          className={`w-full rounded-xl border p-3 text-sm resize-none outline-none transition-all focus:ring-2 focus:ring-amber-500/30 mb-4 ${dm ? 'bg-[#101010] border-white/[0.08] text-zinc-100 placeholder-zinc-600' : 'bg-white border-zinc-200 text-zinc-900'}`} />
+        <div className="flex flex-col gap-2">
+          <button onClick={() => onConfirm(motivo.trim())} disabled={!motivo.trim()}
+            className="w-full h-14 rounded-2xl font-black text-base text-white transition-all active:scale-[0.97] bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+            <AlertTriangle size={18}/> Registrar intento fallido
+          </button>
+          <button onClick={onCancel}
+            className={`w-full h-11 rounded-xl font-bold text-sm transition-all ${dm ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Fila arrastrable de la vista previa "Recorrido de hoy" (antes de tocar "Salí a repartir") —
+// mismo patrón de useSortable que StopRow en RepartoDeposito.jsx, pero con la versión chica de la
+// tarjeta que ya tenía esta pantalla (sin acciones, solo para mirar el orden). Acá nunca hay
+// parada congelada (recién se congela la primera al salir), así que todas se pueden mover.
+function PreviewStopRow({ dm, pedido, index }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: pedido.id });
+  const style = {
+    transform: DndCSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 10 : undefined,
+  };
+  const zona = ZONAS_POR_ID[pedido.direccion?.zona];
+  const caliente = zona?.temperatura === 'caliente';
+  return (
+    <div ref={setNodeRef} style={style}
+      className={`rounded-xl border p-3 flex items-center gap-3 ${dm ? 'bg-[#141414] border-white/[0.07]' : 'bg-white border-zinc-200'}`}>
+      <span className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm font-black flex-shrink-0 ${dm ? 'bg-white/[0.08] text-zinc-300' : 'bg-zinc-100 text-zinc-600'}`}>{index + 1}</span>
+      <div className="min-w-0 flex-1">
+        <p className={`text-sm font-bold truncate ${dm ? 'text-zinc-200' : 'text-zinc-800'}`}>{pedido.direccion?.texto}</p>
+        {zona && <span className={`text-[10px] font-bold ${caliente ? 'text-red-400' : 'text-sky-400'}`}>{zona.nombre.replace(/^Zona \S+ — /, '')}</span>}
+      </div>
+      <button {...attributes} {...listeners} className={`p-2 -m-1 rounded-lg flex-shrink-0 cursor-grab active:cursor-grabbing touch-none ${dm ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.06]' : 'text-zinc-300 hover:text-zinc-600 hover:bg-zinc-100'}`}>
+        <GripVertical size={18}/>
+      </button>
+    </div>
+  );
+}
+
+// Fila arrastrable de "Después" (con el recorrido ya activo) — misma tarjeta grande de siempre
+// (zona, intentos fallidos, mensaje, Cómo llegar / Entregado / No pude entregar), con una
+// agarradera nueva para reordenar. La parada congelada ("Próxima parada", más arriba) nunca entra
+// acá: no se renderiza como fila de esta lista, así que no hace falta bloquearla por separado.
+function RestoStopRow({ dm, pedido, index, expanded, onToggleExpand, entregandoId, marcandoFallidaId, onConfirmEntrega, onFallida }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: pedido.id });
+  const style = {
+    transform: DndCSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 10 : undefined,
+  };
+  const zona = ZONAS_POR_ID[pedido.direccion?.zona];
+  const caliente = zona?.temperatura === 'caliente';
+  return (
+    <div ref={setNodeRef} style={style} className={`rounded-2xl border p-4 ${dm ? 'bg-[#141414] border-white/[0.07]' : 'bg-white border-zinc-200'}`}>
+      <div className="flex items-start gap-3">
+        <span className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm font-black flex-shrink-0 ${dm ? 'bg-white/[0.08] text-zinc-300' : 'bg-zinc-100 text-zinc-600'}`}>{index + 2}</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+            {zona && (
+              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-1 ${caliente ? 'bg-red-500/10 text-red-400' : 'bg-sky-500/10 text-sky-400'}`}>
+                <span className="w-1.5 h-1.5 rounded-full" style={{ background: caliente ? '#f87171' : '#38bdf8' }}/>
+                {zona.nombre.replace(/^Zona \S+ — /, '')}
+              </span>
+            )}
+            {pedido.intentosFallidos?.length > 0 && (
+              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-1 ${dm ? 'bg-amber-500/15 text-amber-400' : 'bg-amber-100 text-amber-700'}`}>
+                <AlertTriangle size={10}/> {pedido.intentosFallidos.length}
+              </span>
+            )}
+          </div>
+          <p className={`text-base font-bold leading-snug ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{pedido.direccion.texto}</p>
+          {pedido.direccion.referencias && <p className={`text-sm mt-0.5 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>{pedido.direccion.referencias}</p>}
+          <button onClick={onToggleExpand}
+            className={`flex items-center gap-1.5 text-base font-bold mt-2 ${dm ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-800'}`}>
+            {expanded ? 'Ocultar mensaje' : 'Ver mensaje'} {expanded ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
+          </button>
+          {expanded && (
+            <p className={`text-base mt-2 whitespace-pre-wrap rounded-lg p-2.5 ${dm ? 'bg-white/[0.03] text-zinc-400' : 'bg-zinc-50 text-zinc-600'}`}>{pedido.mensaje}</p>
+          )}
+        </div>
+        <button {...attributes} {...listeners} className={`p-2 -m-1 rounded-lg flex-shrink-0 cursor-grab active:cursor-grabbing touch-none ${dm ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.06]' : 'text-zinc-300 hover:text-zinc-600 hover:bg-zinc-100'}`}>
+          <GripVertical size={18}/>
+        </button>
+      </div>
+      <div className="flex gap-2 mt-3">
+        <a href={comoLlegarUrl(pedido.direccion)} target="_blank" rel="noopener noreferrer"
+          className={`flex-1 h-11 rounded-xl font-bold text-sm transition-all active:scale-[0.97] flex items-center justify-center gap-1.5 ${dm ? 'bg-white/[0.06] text-zinc-200 hover:bg-white/10' : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'}`}>
+          <Navigation size={15}/> Cómo llegar
+        </a>
+        <button onClick={onConfirmEntrega} disabled={!!entregandoId}
+          className="flex-1 h-11 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.97] bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 flex items-center justify-center gap-1.5">
+          <CheckCircle2 size={15}/> Entregado
+        </button>
+        <button onClick={onFallida} disabled={marcandoFallidaId === pedido.id} title="No pude entregar"
+          className={`flex-shrink-0 h-11 w-11 rounded-xl border transition-all active:scale-[0.97] disabled:opacity-50 flex items-center justify-center ${dm ? 'border-amber-500/30 text-amber-400 hover:bg-amber-500/10' : 'border-amber-200 text-amber-600 hover:bg-amber-50'}`}>
+          <AlertTriangle size={16}/>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function RepartoMoto() {
-  const [dm] = useState(() => localStorage.getItem('028_dark_mode') === 'true');
-  const [auth, setAuth] = useState(() => !!localStorage.getItem(AUTH_KEY));
+  const [dm, setDm] = useState(() => localStorage.getItem('028_dark_mode') === 'true');
+  // Único botón de modo claro/oscuro de esta pantalla — antes solo lo respetaba (mapa incluido)
+  // pero para cambiarlo había que ir a otra pantalla. Al sol del mediodía en la calle, el modo
+  // claro se lee mucho mejor, así que el repartidor necesita poder tocarlo desde acá mismo.
+  useEffect(() => { localStorage.setItem('028_dark_mode', dm); }, [dm]);
   const [pedidos, setPedidos] = useState([]);
   const [recorrido, setRecorrido] = useState(null);
   const [userPos, setUserPos] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
   const [salioLoading, setSalioLoading] = useState(false);
   const [entregandoId, setEntregandoId] = useState(null);
+  // Pedido con la parada que se va a marcar como intento fallido, mientras se pide el motivo
+  // (EntregaFallidaModal) — distinto de confirmEntregaPedido porque ahí no hace falta escribir
+  // nada, solo confirmar.
+  const [fallidaPedido, setFallidaPedido] = useState(null);
+  const [marcandoFallidaId, setMarcandoFallidaId] = useState(null);
   const [toast, setToast] = useState(null);
   // Norman se marca "inactivo" a mano cuando termina su turno/no está disponible — documento aparte
   // de recorridos/activo a propósito, para no interferir con esa lógica (parada congelada, etc.) ni
@@ -141,6 +292,12 @@ export default function RepartoMoto() {
   const markersRef = useRef([]);
   const userMarkerRef = useRef(null);
   const computedOnceRef = useRef(false);
+  // El script de Google Maps tarda en cargar; si los pedidos ya llegaron de Firestore ANTES de
+  // que el mapa termine de crearse, el efecto que dibuja los puntos corre una vez con
+  // mapRef.current todavía en null, no dibuja nada, y como stopsOrdenadas no vuelve a cambiar
+  // solo (no cambia hasta que entre/salga un pedido), los puntos quedaban sin aparecer hasta que
+  // pasara algo más. mapReady fuerza a que ese efecto se vuelva a correr apenas el mapa esté listo.
+  const [mapReady, setMapReady] = useState(false);
 
   const showToast = (message, type = 'success') => { setToast({ message, type }); setTimeout(() => setToast(null), 3000); };
 
@@ -290,9 +447,17 @@ export default function RepartoMoto() {
         zoomControl: true,
         gestureHandling: 'greedy',
       });
+      setMapReady(true);
     }).catch(err => console.error('Google Maps no cargó:', err));
     return () => { cancelled = true; };
   }, []);
+
+  // Repinta el mapa ya creado al tocar el toggle de modo claro/oscuro — la creación de arriba solo
+  // corre una vez, así que el cambio de estilo en caliente necesita este segundo efecto aparte.
+  // Mismo patrón que RepartoDeposito.jsx.
+  useEffect(() => {
+    mapRef.current?.setOptions({ styles: dm ? MAP_DARK_STYLE : MAP_LIGHT_STYLE });
+  }, [dm]);
 
   // Redibuja los marcadores numerados cada vez que cambia el orden de paradas. Los marcadores
   // viejos se sacan del mapa antes de poner los nuevos — es la única forma simple y confiable de
@@ -324,7 +489,7 @@ export default function RepartoMoto() {
       if (userPos) bounds.extend(userPos);
       mapRef.current.fitBounds(bounds, 60);
     }
-  }, [stopsOrdenadas, userPos]);
+  }, [stopsOrdenadas, userPos, mapReady]);
 
   // Punto azul de "dónde estoy" — se actualiza en su propio marcador aparte de los numerados.
   useEffect(() => {
@@ -338,7 +503,7 @@ export default function RepartoMoto() {
       });
     }
     userMarkerRef.current.setPosition(userPos);
-  }, [userPos]);
+  }, [userPos, mapReady]);
 
   const handleSalir = async () => {
     if (stopsOrdenadas.length === 0 || salioLoading) return;
@@ -413,10 +578,79 @@ export default function RepartoMoto() {
     }
   };
 
+  // Registra un intento de entrega que no se pudo concretar (no atendió, rechazó el pedido, no
+  // había nadie) — a diferencia de handleEntregado, el pedido NO se cierra: sigue "armado" y
+  // sigue en stopsRaw, solo se anota el motivo en su historial de intentos y se recalcula el
+  // recorrido saliendo de donde se intentó, para que la parada vuelva a competir por orden con el
+  // resto en vez de quedar congelada ahí para siempre. No se cobra motomensajería por el intento:
+  // solo se paga el km real cuando la entrega se concreta (ver medirCostoMotomensajeriaReal en
+  // handleEntregado) — así el costo del viaje queda igual que hoy, y esto no le agrega plata a
+  // pagar de más a la motomensajería.
+  const handleEntregaFallida = async (pedido, motivo) => {
+    if (marcandoFallidaId || !motivo?.trim()) return;
+    setMarcandoFallidaId(pedido.id);
+    try {
+      const posActual = await getPosicionActual();
+      const nowIso = new Date().toISOString();
+      const intentos = [...(pedido.intentosFallidos || []), { motivo: motivo.trim(), fecha: nowIso }];
+      await updateDoc(doc(db, 'pedidos', pedido.id), { intentosFallidos: intentos });
+
+      // Recalcula el recorrido con TODAS las paradas de siempre (esta incluida, sin quitarla) —
+      // a diferencia de handleEntregado, que la sacaba de la lista al entregar.
+      const origin = posActual || { lat: pedido.direccion.lat, lng: pedido.direccion.lng };
+      const ordenado = await computeRecorrido({ pedidos: stopsRaw, paradaCongeladaId: null, origin });
+      const batch = writeBatch(db);
+      ordenado.forEach((p, i) => batch.update(doc(db, 'pedidos', p.id), { ordenRecorrido: i + 1 }));
+      await batch.commit();
+      await setDoc(doc(db, 'recorridos', 'activo'), { estado: 'en_calle', salidaEn: recorrido?.salidaEn || nowIso, paradaCongelada: ordenado[0].id });
+
+      showToast('Intento fallido registrado — el pedido vuelve a la cola');
+    } catch (e) {
+      showToast('Error al registrar el intento: ' + e.message, 'error');
+    } finally {
+      setMarcandoFallidaId(null);
+    }
+  };
+
   // Sin clave — esta pantalla (y /pedidos y /pedidos/reparto) queda sin login a propósito, la
   // usan Norman/depósito directo desde el celular. El resto del sistema sigue pidiendo clave.
   const proxima = stopsOrdenadas[0];
   const resto = stopsOrdenadas.slice(1);
+
+  const paradaCongeladaId = enCalle ? recorrido?.paradaCongelada : null;
+
+  const dragSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 8 } })
+  );
+
+  // Reordenar a mano, mismo criterio que el panel de depósito (RepartoDeposito.jsx): se persiste
+  // directo, sin llamar a Routes API — Norman ya decidió el orden, no hace falta que Google lo
+  // "corrija". Marca ordenManual=true en todo lo que no sea la parada congelada, así un pedido
+  // nuevo que entre después se agrega al final sin tocar este orden a mano. La parada congelada
+  // (si el recorrido ya está activo) ni siquiera aparece en la lista arrastrable — no hace falta
+  // excluirla acá aparte, aunque igual se la protege por las dudas.
+  const handleDragEnd = async (event) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const ids = stopsOrdenadas.map(p => p.id);
+    const oldIndex = ids.indexOf(active.id);
+    const newIndex = ids.indexOf(over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    if (ids[oldIndex] === paradaCongeladaId || ids[newIndex] === paradaCongeladaId) return;
+
+    const nuevoOrden = arrayMove(stopsOrdenadas, oldIndex, newIndex);
+    try {
+      const batch = writeBatch(db);
+      nuevoOrden.forEach((p, i) => {
+        if (p.id === paradaCongeladaId) return;
+        batch.update(doc(db, 'pedidos', p.id), { ordenRecorrido: i + 1, ordenManual: true });
+      });
+      await batch.commit();
+    } catch (e) {
+      showToast('Error al reordenar: ' + e.message, 'error');
+    }
+  };
 
   return (
     <div className={`min-h-screen ${dm ? 'bg-[#050505] text-zinc-100' : 'bg-slate-50 text-zinc-900'}`} style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -442,7 +676,8 @@ export default function RepartoMoto() {
             </button>
             <button onClick={() => setShowHistorial(true)} title="Historial de entregas"
               className={`p-2.5 rounded-lg transition-colors ${dm ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.06]' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}><History size={19}/></button>
-            <button onClick={() => { localStorage.removeItem(AUTH_KEY); setAuth(false); }} className={`p-2.5 rounded-lg transition-colors ${dm ? 'text-zinc-600 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-500 hover:bg-red-50'}`}><LogOut size={19}/></button>
+            <button onClick={() => setDm(v => !v)} title={dm ? 'Modo claro' : 'Modo oscuro'}
+              className={`p-2.5 rounded-lg transition-colors ${dm ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.06]' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}>{dm ? <Sun size={19}/> : <Moon size={19}/>}</button>
           </div>
         </div>
       </div>
@@ -465,22 +700,19 @@ export default function RepartoMoto() {
               Salí a repartir
             </button>
             {/* Antes de salir, solo vista previa del recorrido — sin "Cómo llegar" ni "Entregado":
-                esas acciones aparecen recién cuando el recorrido pasa a estar activo. */}
+                esas acciones aparecen recién cuando el recorrido pasa a estar activo. Sí se puede
+                arrastrar para acomodar el orden a gusto antes de salir. */}
             <div className="space-y-2 mt-3">
-              <span className={`text-[11px] font-black uppercase tracking-widest px-1 ${dm ? 'text-zinc-600' : 'text-zinc-400'}`}>Recorrido de hoy ({stopsOrdenadas.length})</span>
-              {stopsOrdenadas.map((p, i) => {
-                const zona = ZONAS_POR_ID[p.direccion?.zona];
-                const caliente = zona?.temperatura === 'caliente';
-                return (
-                  <div key={p.id} className={`rounded-xl border p-3 flex items-center gap-3 ${dm ? 'bg-[#141414] border-white/[0.07]' : 'bg-white border-zinc-200'}`}>
-                    <span className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm font-black flex-shrink-0 ${dm ? 'bg-white/[0.08] text-zinc-300' : 'bg-zinc-100 text-zinc-600'}`}>{i + 1}</span>
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-sm font-bold truncate ${dm ? 'text-zinc-200' : 'text-zinc-800'}`}>{p.direccion?.texto}</p>
-                      {zona && <span className={`text-[10px] font-bold ${caliente ? 'text-red-400' : 'text-sky-400'}`}>{zona.nombre.replace(/^Zona \S+ — /, '')}</span>}
-                    </div>
+              <span className={`text-[11px] font-black uppercase tracking-widest px-1 ${dm ? 'text-zinc-600' : 'text-zinc-400'}`}>Recorrido de hoy ({stopsOrdenadas.length}) · mantené apretado para reordenar</span>
+              <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <SortableContext items={stopsOrdenadas.map(p => p.id)} strategy={verticalListSortingStrategy}>
+                  <div className="space-y-2">
+                    {stopsOrdenadas.map((p, i) => (
+                      <PreviewStopRow key={p.id} dm={dm} pedido={p} index={i} />
+                    ))}
                   </div>
-                );
-              })}
+                </SortableContext>
+              </DndContext>
             </div>
           </>
         ) : null}
@@ -494,6 +726,11 @@ export default function RepartoMoto() {
               <span className={`text-xs font-black uppercase tracking-widest ${dm ? 'text-indigo-300' : 'text-indigo-600'}`}>Próxima parada</span>
               {enCalle && <Lock size={14} className="text-indigo-400 ml-auto"/>}
             </div>
+            {proxima.intentosFallidos?.length > 0 && (
+              <span className={`inline-flex items-center gap-1 text-[11px] font-black px-2 py-0.5 rounded-full mb-1.5 ${dm ? 'bg-amber-500/15 text-amber-400' : 'bg-amber-100 text-amber-700'}`}>
+                <AlertTriangle size={11}/> {proxima.intentosFallidos.length === 1 ? '1 intento fallido' : `${proxima.intentosFallidos.length} intentos fallidos`}
+              </span>
+            )}
             <p className={`text-2xl font-black leading-snug ${dm ? 'text-zinc-50' : 'text-zinc-900'}`}>{proxima.direccion.texto}</p>
             {proxima.direccion.referencias && <p className={`text-base mt-1 ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>{proxima.direccion.referencias}</p>}
             <p className={`text-sm font-bold mt-1 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>{ZONAS_POR_ID[proxima.direccion.zona]?.nombre.replace(/^Zona \S+ — /, '')}</p>
@@ -516,54 +753,31 @@ export default function RepartoMoto() {
                 {entregandoId === proxima.id ? <Loader2 size={22} className="animate-spin"/> : <CheckCircle2 size={22}/>}
                 {entregandoId === proxima.id ? 'Guardando...' : 'Entregado'}
               </button>
+              <button onClick={() => setFallidaPedido(proxima)} disabled={marcandoFallidaId === proxima.id}
+                className={`w-full h-11 rounded-xl font-bold text-sm border transition-all active:scale-[0.97] disabled:opacity-60 flex items-center justify-center gap-1.5 ${dm ? 'border-amber-500/30 text-amber-400 hover:bg-amber-500/10' : 'border-amber-200 text-amber-600 hover:bg-amber-50'}`}>
+                <AlertTriangle size={15}/> No pude entregar
+              </button>
             </div>
           </div>
         )}
 
-        {/* Resto de las paradas: mismo patrón, más chico */}
+        {/* Resto de las paradas: mismo patrón, más chico. La parada congelada (arriba, "Próxima
+            parada") no participa acá — se puede reordenar libremente todo lo demás. */}
         {enCalle && resto.length > 0 && (
           <div className="space-y-2.5">
-            <span className={`text-[11px] font-black uppercase tracking-widest px-1 ${dm ? 'text-zinc-600' : 'text-zinc-400'}`}>Después ({resto.length})</span>
-            {resto.map((p, i) => {
-              const zona = ZONAS_POR_ID[p.direccion?.zona];
-              const caliente = zona?.temperatura === 'caliente';
-              return (
-                <div key={p.id} className={`rounded-2xl border p-4 ${dm ? 'bg-[#141414] border-white/[0.07]' : 'bg-white border-zinc-200'}`}>
-                  <div className="flex items-start gap-3">
-                    <span className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm font-black flex-shrink-0 ${dm ? 'bg-white/[0.08] text-zinc-300' : 'bg-zinc-100 text-zinc-600'}`}>{i + 2}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        {zona && (
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-1 ${caliente ? 'bg-red-500/10 text-red-400' : 'bg-sky-500/10 text-sky-400'}`}>
-                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: caliente ? '#f87171' : '#38bdf8' }}/>
-                            {zona.nombre.replace(/^Zona \S+ — /, '')}
-                          </span>
-                        )}
-                      </div>
-                      <p className={`text-base font-bold leading-snug ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{p.direccion.texto}</p>
-                      {p.direccion.referencias && <p className={`text-sm mt-0.5 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>{p.direccion.referencias}</p>}
-                      <button onClick={() => setExpandedId(cur => cur === p.id ? null : p.id)}
-                        className={`flex items-center gap-1.5 text-base font-bold mt-2 ${dm ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-800'}`}>
-                        {expandedId === p.id ? 'Ocultar mensaje' : 'Ver mensaje'} {expandedId === p.id ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
-                      </button>
-                      {expandedId === p.id && (
-                        <p className={`text-base mt-2 whitespace-pre-wrap rounded-lg p-2.5 ${dm ? 'bg-white/[0.03] text-zinc-400' : 'bg-zinc-50 text-zinc-600'}`}>{p.mensaje}</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex gap-2 mt-3">
-                    <a href={comoLlegarUrl(p.direccion)} target="_blank" rel="noopener noreferrer"
-                      className={`flex-1 h-11 rounded-xl font-bold text-sm transition-all active:scale-[0.97] flex items-center justify-center gap-1.5 ${dm ? 'bg-white/[0.06] text-zinc-200 hover:bg-white/10' : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'}`}>
-                      <Navigation size={15}/> Cómo llegar
-                    </a>
-                    <button onClick={() => setConfirmEntregaPedido(p)} disabled={!!entregandoId}
-                      className="flex-1 h-11 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.97] bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 flex items-center justify-center gap-1.5">
-                      <CheckCircle2 size={15}/> Entregado
-                    </button>
-                  </div>
+            <span className={`text-[11px] font-black uppercase tracking-widest px-1 ${dm ? 'text-zinc-600' : 'text-zinc-400'}`}>Después ({resto.length}) · mantené apretado para reordenar</span>
+            <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={resto.map(p => p.id)} strategy={verticalListSortingStrategy}>
+                <div className="space-y-2.5">
+                  {resto.map((p, i) => (
+                    <RestoStopRow key={p.id} dm={dm} pedido={p} index={i}
+                      expanded={expandedId === p.id} onToggleExpand={() => setExpandedId(cur => cur === p.id ? null : p.id)}
+                      entregandoId={entregandoId} marcandoFallidaId={marcandoFallidaId}
+                      onConfirmEntrega={() => setConfirmEntregaPedido(p)} onFallida={() => setFallidaPedido(p)} />
+                  ))}
                 </div>
-              );
-            })}
+              </SortableContext>
+            </DndContext>
           </div>
         )}
       </div>
@@ -580,6 +794,12 @@ export default function RepartoMoto() {
           confirmLabel="Sí, entregado"
           onConfirm={() => { const p = confirmEntregaPedido; setConfirmEntregaPedido(null); handleEntregado(p); }}
           onCancel={() => setConfirmEntregaPedido(null)} />
+      )}
+
+      {fallidaPedido && (
+        <EntregaFallidaModal dm={dm} pedido={fallidaPedido}
+          onConfirm={(motivo) => { const p = fallidaPedido; setFallidaPedido(null); handleEntregaFallida(p, motivo); }}
+          onCancel={() => setFallidaPedido(null)} />
       )}
 
       {showEndDayConfirm && (

@@ -10,9 +10,21 @@ const ROUTES_ENDPOINT = 'https://routes.googleapis.com/directions/v2:computeRout
 
 const toWaypoint = (stop) => ({ location: { latLng: { latitude: stop.lat, longitude: stop.lng } } });
 
-// Optimiza el orden de un grupo de paradas saliendo de `origin`, con destino fijo en la última
-// parada del array recibido (Routes API necesita un destino fijo — ver comentario abajo). Devuelve
-// las paradas reordenadas (mismos objetos de entrada, en el orden óptimo).
+// Haversine: distancia en línea recta entre dos puntos lat/lng, en kilómetros. Se usa acá solo
+// para ELEGIR el destino fijo (ver optimizeStopOrder) — no para medir plata ni kilómetros reales,
+// eso lo hace getDrivingDistanceKm.
+function distanciaKmLineaRecta(a, b) {
+  const R = 6371;
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+// Optimiza el orden de un grupo de paradas saliendo de `origin`, con destino fijo en la parada más
+// lejana de `origin` en línea recta (Routes API necesita un destino fijo — ver comentario abajo).
+// Devuelve las paradas reordenadas (mismos objetos de entrada, en el orden óptimo).
 //
 // Si el grupo tiene 0 o 1 parada, no hace falta llamar a la API — se devuelve tal cual.
 export async function optimizeStopOrder(origin, stops) {
@@ -24,12 +36,18 @@ export async function optimizeStopOrder(origin, stops) {
 
   // Routes API con optimizeWaypointOrder reordena los "intermediates", pero el "destination" queda
   // fijo donde lo pongamos — no hay forma de pedirle que optimice TODAS las paradas sin fijar
-  // ninguna como destino. Como acá no nos importa cuál termina siendo la última parada del grupo
-  // (eso lo decide la distancia, no una parada en particular), se toma la última del array tal
-  // como llegó como destino fijo, y el resto como intermediates a optimizar — el resultado sigue
-  // siendo un recorrido válido y cercano al óptimo para el grupo completo.
-  const destination = stops[stops.length - 1];
-  const intermediates = stops.slice(0, -1);
+  // ninguna como destino. Elegimos como destino la parada más lejana de `origin` (línea recta,
+  // sin llamar a la API): es determinístico para un mismo conjunto de paradas sin importar en qué
+  // orden llegaron (antes se tomaba "la última del array tal como llegó", que dependía del orden de
+  // carga y podía dar un recorrido distinto para las mismas paradas — ver notas de la auditoría,
+  // hallazgo D4) y de paso tiene sentido de reparto: se termina en el punto más alejado.
+  let destination = stops[0];
+  let maxDist = -1;
+  for (const s of stops) {
+    const d = distanciaKmLineaRecta(origin, s);
+    if (d > maxDist) { maxDist = d; destination = s; }
+  }
+  const intermediates = stops.filter(s => s !== destination);
 
   const body = {
     origin: toWaypoint(origin),

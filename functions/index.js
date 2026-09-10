@@ -1649,167 +1649,175 @@ async function procesarVenta(userProducto, userVariante, cantARestar, precioUnit
         }
     }
 
+    // ── FASE 1: BUSCAR (sin tocar nada) ──────────────────────────────────────────────────────
+    // Recorre todos los lotes con la comparación difusa de siempre para averiguar en qué lote y en
+    // qué ítem está el producto que pidieron. Acá SOLO se lee: no se descuenta stock ni se escribe
+    // nada. Va afuera de la transacción a propósito, porque una transacción de Firestore no puede
+    // hacer consultas — solo leer documentos por referencia, y todavía no sabemos cuál es.
     const batchesRef = db.collection("batches");
-    const snapshot = await batchesRef.orderBy("createdAt", "asc").get(); 
+    const snapshot = await batchesRef.orderBy("createdAt", "asc").get();
 
-    let restante = cantARestar;
-    let itemsActualizados = false;
-    
     let productoEncontrado = false;
     let stockInsuficiente = false;
     let stockMascercanoDisponible = 0;
-    
-    let batchNameOficial = "Venta por WhatsApp";
-    let batchIdOficial = null; 
-    let itemIdOficial = null;
-    let nombreOficial = userProducto; 
-    let varianteOficial = userVariante;
-    let costoUnitarioOficial = 0; 
+    let objetivo = null; // { batchId, itemId } del ítem que va a cubrir la venta entera
 
     for (const doc of snapshot.docs) {
-        if (restante <= 0) break;
+        if (objetivo) break;
         const batchData = doc.data();
+        if (batchData.finalizedAt) continue;
 
-        if (batchData.finalizedAt) continue; 
-
-        let items = batchData.items || [];
-        let batchModificado = false;
-
-        for (let i = 0; i < items.length; i++) {
-            if (restante <= 0) break;
-            let item = items[i];
-            
+        for (const item of (batchData.items || [])) {
             const dbProd = normalizarParaComparar(item.product);
             const dbVar = normalizarParaComparar(item.variant);
 
-            const productMatches = esParecido(pBuscar, dbProd);
-            const variantMatches = esParecido(vBuscar, dbVar);
-
-            if (productMatches && variantMatches) {
+            if (esParecido(pBuscar, dbProd) && esParecido(vBuscar, dbVar)) {
                 productoEncontrado = true;
                 stockMascercanoDisponible = item.currentStock;
 
-                if (item.currentStock >= restante) {
-                    let cantidadADescontar = Math.min(item.currentStock, restante);
-                    
-                    item.currentStock -= cantidadADescontar;
-                    restante -= cantidadADescontar;
-                    
-                    batchModificado = true;
-                    itemsActualizados = true;
-                    
-                    batchNameOficial = batchData.name || "Venta por WhatsApp";
-                    batchIdOficial = doc.id; 
-                    itemIdOficial = item.id; 
-                    nombreOficial = item.product || userProducto; 
-                    varianteOficial = item.variant || userVariante; 
-                    costoUnitarioOficial = item.costArs || 0; 
-                } else {
-                    stockInsuficiente = true;
+                // Igual que siempre: la venta sale entera de un solo ítem, nunca se parte entre
+                // varios. Si este no alcanza, se sigue buscando otro que sí.
+                if ((item.currentStock || 0) >= cantARestar) {
+                    objetivo = { batchId: doc.id, itemId: item.id };
+                    break;
                 }
+                stockInsuficiente = true;
             }
         }
-        if (batchModificado) await doc.ref.update({ items: items });
     }
 
-    if (itemsActualizados) {
-        // totalSaleRaw = solo producto (el envío no es ganancia del emisor)
+    if (objetivo) {
+        // ── FASE 2: DESCONTAR Y REGISTRAR (todo junto) ───────────────────────────────────────
+        // El lote se vuelve a leer acá adentro, fresco: entre la búsqueda de arriba y este momento
+        // pudo entrar otra venta (desde la web, desde /pedidos o desde otro mensaje) y llevarse esas
+        // unidades. La transacción lo detecta y, si ya no alcanza, no deja pasar la venta.
+        // Antes esto se hacía en escrituras sueltas: el lote se escribía entero desde una copia en
+        // memoria, así que dos ventas simultáneas del mismo lote se pisaban el stock, y si algo
+        // fallaba entre el descuento y el alta de la venta quedaban descoordinados.
         const totalVentaCalculado = (esFalla || esRobo) ? 0 : precioUnitario * cantARestar;
-        const failedValueCalculado = esFalla ? (costoUnitarioOficial || 0) * cantARestar : 0;
-        const stolenValueCalculado = esRobo ? (costoUnitarioOficial || 0) * cantARestar : 0;
-        // Si solo se cargó uno de los dos (precio o costo), es solo informativo: no debe sumar ni restar a la ganancia.
         const shippingProfitCalculado = (precioEnvioCliente && costoEnvioMio) ? (precioEnvioCliente - costoEnvioMio) : 0;
         const ticketIdGenerado = ticketIdManual || Date.now().toString();
         const fechaCreacionReal = new Date().toISOString();
+        const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', alias4: 'CUENTA_RECAUDADORA', efectivo: 'EFECTIVO' };
 
-        const saleRef = await db.collection("sales").add({
-            batchId: batchIdOficial,
-            batchName: batchNameOficial,
-            costArsAtSale: costoUnitarioOficial,
-            createdAt: fechaCreacionReal,
-            date: fechaFinalVenta,
-            isReseller: esRevendedor,
-            isNewClient: esNuevo,
-            itemId: itemIdOficial,
-            productName: nombreOficial,
-            quantity: cantARestar,
-            shippingCostArs: costoEnvioMio,
-            clientShippingCharge: precioEnvioCliente,
-            shippingProfit: shippingProfitCalculado,
-            medioPago: medioPago || null,
-            source: source || "Whatsapp",
-            operationType: esRevendedor ? "MAYORISTA" : "VENTA",
-            clientName: esRevendedor ? (clienteMayorista || "") : "",
-            ticketId: ticketIdGenerado,
-            totalSaleRaw: totalVentaCalculado,
-            unitPrice: (esFalla || esRobo) ? 0 : precioUnitario,
-            isFalla: !!esFalla,
-            failedValue: failedValueCalculado,
-            isRobo: !!esRobo,
-            stolenValue: stolenValueCalculado,
-            variant: varianteOficial,
-            seller: vendedor
-        });
+        let resultadoTx;
+        try {
+            resultadoTx = await db.runTransaction(async (t) => {
+                const batchRef = db.collection('batches').doc(objetivo.batchId);
+                const snap = await t.get(batchRef);
+                if (!snap.exists) {
+                    const err = new Error('lote_borrado');
+                    err.msgUsuario = `⚠️ *Error de Inventario:*\nEl lote del producto *"${userProducto}"* ya no existe.`;
+                    throw err;
+                }
 
-        const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', alias4: 'CUENTA_RECAUDADORA' };
-        if (medioPago && aliasWalletMap[medioPago]) {
-            const wName = aliasWalletMap[medioPago];
-            // Cuenta Recaudadora es la única billetera a la que nunca se le resta nada: entra la
-            // plata de la venta tal cual, más lo que se cobró de envío COMPLETO (no la ganancia neta
-            // del envío como en las demás billeteras) — nunca se le descuenta el costo del envío acá.
-            const wAmount = totalVentaCalculado + (medioPago === 'alias4' ? (precioEnvioCliente || 0) : Math.max(0, shippingProfitCalculado));
-            const walletsRef = db.collection('settings').doc('wallets');
-            await db.runTransaction(async t => {
-                const walletsDoc = await t.get(walletsRef);
-                const current = walletsDoc.exists ? (walletsDoc.data()[wName] || 0) : 0;
-                t.set(walletsRef, { [wName]: current + wAmount }, { merge: true });
+                const items = (snap.data().items || []).map(x => ({ ...x }));
+                const item = items.find(x => x.id === objetivo.itemId);
+                if (!item) {
+                    const err = new Error('item_borrado');
+                    err.msgUsuario = `⚠️ *Error de Inventario:*\nEl producto *"${userProducto}"* ya no está en su lote.`;
+                    throw err;
+                }
+                if ((item.currentStock || 0) < cantARestar) {
+                    const err = new Error('sin_stock');
+                    err.msgUsuario = `🛑 *Stock insuficiente:*\nProducto: *${item.product}*\nModelo: *${item.variant || 'Único'}*\nPediste: *${cantARestar}*\nDisponible: *${item.currentStock || 0}*`;
+                    throw err;
+                }
+
+                const costoUnitarioOficial = item.costArs || 0;
+                const failedValueCalculado = esFalla ? costoUnitarioOficial * cantARestar : 0;
+                const stolenValueCalculado = esRobo ? costoUnitarioOficial * cantARestar : 0;
+
+                item.currentStock = (item.currentStock || 0) - cantARestar;
+                t.update(batchRef, { items });
+
+                const saleRef = db.collection('sales').doc();
+                t.set(saleRef, {
+                    batchId: objetivo.batchId,
+                    batchName: snap.data().name || "Venta por WhatsApp",
+                    costArsAtSale: costoUnitarioOficial,
+                    createdAt: fechaCreacionReal,
+                    date: fechaFinalVenta,
+                    isReseller: esRevendedor,
+                    isNewClient: esNuevo,
+                    itemId: item.id,
+                    productName: item.product || userProducto,
+                    quantity: cantARestar,
+                    shippingCostArs: costoEnvioMio,
+                    clientShippingCharge: precioEnvioCliente,
+                    shippingProfit: shippingProfitCalculado,
+                    medioPago: medioPago || null,
+                    source: source || "Whatsapp",
+                    operationType: esRevendedor ? "MAYORISTA" : "VENTA",
+                    clientName: esRevendedor ? (clienteMayorista || "") : "",
+                    ticketId: ticketIdGenerado,
+                    totalSaleRaw: totalVentaCalculado,
+                    unitPrice: (esFalla || esRobo) ? 0 : precioUnitario,
+                    isFalla: !!esFalla,
+                    failedValue: failedValueCalculado,
+                    isRobo: !!esRobo,
+                    stolenValue: stolenValueCalculado,
+                    variant: item.variant || userVariante,
+                    seller: vendedor
+                });
+
+                // La plata entra en la MISMA transacción que la venta y el stock, así no puede
+                // quedar una venta registrada sin acreditar (ni al revés). Con increment() el
+                // servidor suma sobre el saldo real y toca solo esa cuenta: si la web o /pedidos
+                // escriben otra billetera al mismo tiempo, ninguna de las dos se pisa.
+                // Cuánto entra: Cuenta Recaudadora (alias4) recibe la venta más el envío cobrado
+                // completo; efectivo recibe SOLO el producto (cuando una venta en efectivo lleva
+                // envío, esa plata va entera a la motomensajería); el resto de los alias reciben la
+                // venta más la ganancia neta del envío.
+                const wName = medioPago ? aliasWalletMap[medioPago] : null;
+                if (wName) {
+                    const wAmount = medioPago === 'efectivo'
+                        ? totalVentaCalculado
+                        : totalVentaCalculado + (medioPago === 'alias4' ? (precioEnvioCliente || 0) : Math.max(0, shippingProfitCalculado));
+                    if (wAmount) {
+                        t.set(
+                            db.collection('settings').doc('wallets'),
+                            { [wName]: admin.firestore.FieldValue.increment(wAmount) },
+                            { merge: true }
+                        );
+                    }
+                }
+
+                return { saleId: saleRef.id };
             });
+        } catch (e) {
+            if (e.msgUsuario) return { exito: false, error_msg: e.msgUsuario };
+            throw e;
         }
-        return { exito: true, saleId: saleRef.id, totalSaleRaw: totalVentaCalculado, clientShippingCharge: precioEnvioCliente, medioPago: medioPago || null };
-    } 
-    else {
-        if (!productoEncontrado) {
-            return { exito: false, error_msg: `⚠️ *Error de Inventario:*\nEl producto *"${userProducto}"* (Variante: ${userVariante || 'Única'}) no existe o está mal escrito.` };
-        } else if (stockInsuficiente) {
-            return { exito: false, error_msg: `🛑 *Stock insuficiente:*\nProducto: *${userProducto}*\nModelo: *${userVariante || 'Único'}*\nPediste: *${cantARestar}*\nDisponible: *${stockMascercanoDisponible}*` };
-        } else {
-            return { exito: false, error_msg: `⚠️ *Error desconocido* al procesar la venta.` };
-        }
+
+        return { exito: true, saleId: resultadoTx.saleId, totalSaleRaw: totalVentaCalculado, clientShippingCharge: precioEnvioCliente, medioPago: medioPago || null };
+    }
+
+    // No se encontró ningún ítem que pudiera cubrir la venta entera: se avisa por qué.
+    if (!productoEncontrado) {
+        return { exito: false, error_msg: `⚠️ *Error de Inventario:*\nEl producto *"${userProducto}"* (Variante: ${userVariante || 'Única'}) no existe o está mal escrito.` };
+    } else if (stockInsuficiente) {
+        return { exito: false, error_msg: `🛑 *Stock insuficiente:*\nProducto: *${userProducto}*\nModelo: *${userVariante || 'Único'}*\nPediste: *${cantARestar}*\nDisponible: *${stockMascercanoDisponible}*` };
+    } else {
+        return { exito: false, error_msg: `⚠️ *Error desconocido* al procesar la venta.` };
     }
 }
 
 // ==========================================
-// MIGRACIÓN: SINCRONIZAR BILLETERAS CON VENTAS HISTÓRICAS
-// Llamar UNA SOLA VEZ: POST /sincronizarBilleteras
-// Suma todos los totales de ventas con alias1/2/3 y pisa los saldos.
+// (Acá vivía exports.sincronizarBilleteras, un endpoint POST de migración pensado para llamarse
+// una sola vez cuando se armó el sistema. Se sacó a propósito, por tres motivos:
+//   1) mandaba Alias 3 a LEMON cuando en todo el resto del sistema va a MERCADO_PAGO, e ignoraba
+//      por completo Alias 2, Alias 4 y efectivo;
+//   2) escribía el documento de billeteras con .set() SIN merge, así que borraba de una todas las
+//      cuentas que no fueran Galicia y Lemon (Efectivo, Mercado Pago, Galicia Gieco, Cuenta
+//      Recaudadora, Ahorros, USD, USDT);
+//   3) era una URL pública sin ninguna clave: bastaba un POST para pisar todos los saldos, sin
+//      guardar el saldo anterior en ningún lado y sin forma de deshacerlo.
+// Ya no hace falta: las ventas acreditan la billetera solas por los cuatro caminos por los que
+// entran (Ventas, /pedidos, este chatbot y el asistente de IA), así que el saldo se mantiene al
+// día sin recalcular nada. Si hay que corregir un saldo puntual, se edita la billetera desde la
+// pestaña Gastos, que sí deja registrado un movimiento de "ajuste" con el valor anterior.)
 // ==========================================
-exports.sincronizarBilleteras = functions.https.onRequest(async (req, res) => {
-    if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
-
-    const aliasWalletMap = { alias1: 'GALICIA', alias3: 'LEMON' };
-    const totales = { GALICIA: 0, LEMON: 0 };
-
-    const snap = await db.collection('sales').get();
-    let contadas = 0;
-
-    snap.docs.forEach(doc => {
-        const s = doc.data();
-        const mp = s.medioPago;
-        if (mp && aliasWalletMap[mp]) {
-            const wallet = aliasWalletMap[mp];
-            totales[wallet] += (s.totalSaleRaw || 0) + (s.clientShippingCharge || 0);
-            contadas++;
-        }
-    });
-
-    await db.collection('settings').doc('wallets').set(totales);
-
-    return res.status(200).json({
-        ok: true,
-        ventasContadas: contadas,
-        saldos: totales
-    });
-});
 
 // ==========================================
 // FÓRMULAS MATEMÁTICAS INTACTAS

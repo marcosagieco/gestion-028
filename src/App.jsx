@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useId } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useId, useCallback } from 'react';
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package, UserCircle,
   ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw, Target, RefreshCw, Receipt, Minus, ArrowDownLeft, ArrowUpRight, Landmark, CreditCard, ArrowLeftRight, Pencil, Check, ClipboardList, GripVertical,
@@ -20,7 +20,7 @@ import { buildDailySeries, buildFullHistoryDailySeries, buildRatioSeries, comput
 import { initializeApp } from "firebase/app";
 import {
   initializeFirestore, collection, addDoc, deleteDoc, doc, updateDoc, setDoc,
-  onSnapshot, query, orderBy, where, getDocs, deleteField,
+  onSnapshot, query, orderBy, where, getDocs, deleteField, runTransaction, increment,
   persistentLocalCache, persistentMultipleTabManager
 } from 'firebase/firestore';
 
@@ -96,6 +96,7 @@ const HOME_CARD_META = {
   productosVendidos:  { title: 'Productos Vendidos',    sector: 'sector1' },
   pedidosTotales:     { title: 'Pedidos',               sector: 'sector1' },
   ticketPromedio:     { title: 'Ticket Promedio',       sector: 'sector1' },
+  precioPorUnidad:    { title: 'Precio por Unidad',     sector: 'sector1' },
   clientesNuevos:     { title: 'Clientes Nuevos',       sector: 'sector2' },
   clientesOrganicos:  { title: 'Clientes Orgánicos',    sector: 'sector2' },
   clientesPorAds:     { title: 'Clientes por Ads',      sector: 'sector2' },
@@ -110,7 +111,7 @@ const HOME_CARD_META = {
 };
 
 const DEFAULT_HOME_CARD_ORDER = {
-  sector1: ['facturacion','gananciaBruta','gananciaNeta','gananciaEnvio','gastosTotales','gastosEmpresa','gastoMetaAds','inversion','productosFallados','productosRobados','promedioVentas','productosVendidos','pedidosTotales','ticketPromedio'],
+  sector1: ['facturacion','gananciaBruta','gananciaNeta','gananciaEnvio','gastosTotales','gastosEmpresa','gastoMetaAds','inversion','productosFallados','productosRobados','promedioVentas','productosVendidos','pedidosTotales','ticketPromedio','precioPorUnidad'],
   sector2: ['clientesNuevos','clientesOrganicos','clientesPorAds','clientesFijosAds','ventasRevendedor'],
   sector3: ['alias1','alias2','alias3','alias4','efectivo','inversionActiva'],
 };
@@ -303,7 +304,12 @@ const PRODUCT_GROUPS = [
   { name: 'Ignite V400',     keywords: ['ignite v4', 'v400'] },
 ];
 
-const stripAccents = (str) => str.normalize('NFD').replace(new RegExp('[̀-ͯ]', 'g'), '');
+// El rango de tildes va escrito con codigos de escape (no con el caracter de tilde pegado
+// directo en el codigo, como estaba antes): son caracteres de teclado normales, asi que un
+// formateador automatico o un copiar/pegar entre editores no los puede corromper en silencio.
+// Misma tecnica que ya usan normalizeText (Ventas) y normalizeStockString (Conciliador de
+// Stock), mas abajo en este mismo archivo.
+const stripAccents = (str) => str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
 const normalizeProductName = (name) => {
   if (!name) return null;
@@ -1923,17 +1929,28 @@ const AIChat = ({ darkMode, db }) => {
         await updateDoc(doc(db, 'batches', batchId), { items: updItems });
         pushAction(chatId, { type: 'venta', saleId: saleRef.id, batchId, itemId, quantity: Number(quantity), previousStock: prevStock });
       }
-      const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', alias4: 'CUENTA_RECAUDADORA' };
+      const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', alias4: 'CUENTA_RECAUDADORA', efectivo: 'EFECTIVO' };
       const mp = toolInput.medioPago;
       if (mp && aliasWalletMap[mp]) {
         const wName = aliasWalletMap[mp];
-        // Cuenta Recaudadora es la única billetera a la que nunca se le resta nada: entra la plata
-        // de la venta tal cual, más lo que se cobró de envío COMPLETO (no la ganancia neta del
-        // envío como en las demás billeteras) — nunca se le descuenta el costo del envío acá.
-        const wAmount = totalSaleRaw + (mp === 'alias4' ? shippingPrice : shippingProfit);
-        const updatedW = { ...wallets, [wName]: (wallets[wName] || 0) + wAmount };
-        setWallets(updatedW);
-        await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+        // Cuánto entra a la billetera, mismo criterio que /pedidos, Ventas y el chatbot:
+        // - Cuenta Recaudadora (alias4): la venta más el envío cobrado COMPLETO — es la única
+        //   billetera a la que nunca se le resta nada.
+        // - Efectivo: SOLO el producto. Cuando una venta en efectivo lleva envío, esa plata va
+        //   entera a la motomensajería que reparte, así que no es plata del negocio.
+        // - Resto de los alias: la venta más la ganancia neta del envío.
+        const wAmount = mp === 'efectivo'
+          ? totalSaleRaw
+          : totalSaleRaw + (mp === 'alias4' ? shippingPrice : Math.max(0, shippingProfit));
+        // Con transacción (no leyendo el saldo que tiene la pantalla y volviéndolo a escribir
+        // entero): si hay otra pestaña o el chatbot escribiendo al mismo tiempo, así ninguno de los
+        // dos movimientos se pierde. El estado local se actualiza solo por el onSnapshot de wallets.
+        const walletsDocRef = doc(db, 'settings', 'wallets');
+        await runTransaction(db, async (t) => {
+          const wSnap = await t.get(walletsDocRef);
+          const current = wSnap.exists() ? (wSnap.data()[wName] || 0) : 0;
+          t.set(walletsDocRef, { [wName]: current + wAmount }, { merge: true });
+        });
       }
       return JSON.stringify({ success: true, saleId: saleRef.id, totalSaleRaw, costArsAtSale, shippingPrice, shippingCost, shippingProfit });
     }
@@ -3053,10 +3070,21 @@ export default function App() {
     if (darkMode) document.body.classList.add('dark'); else document.body.classList.remove('dark');
   }, [darkMode]);
 
-  const [activeTab, setActiveTab] = useState('home'); 
+  const [activeTab, setActiveTab] = useState('home');
   const [batches, setBatches] = useState([]);
-  const [sales, setSales] = useState([]);
-  const [expenses, setExpenses] = useState([]);
+  // sales/expenses/cashFlow ya NO son un solo useState: el listener en vivo solo trae los últimos
+  // ~2 meses (Reciente) para que abrir la web no dependa de cuánto historial se acumuló; el resto
+  // (Historico) se trae una sola vez con getDocs cuando algo de verdad lo necesita (ver
+  // asegurarHistoricoCompleto más abajo) y se combina con lo reciente en el useMemo `sales`/
+  // `expenses`/`cashFlow` de más abajo — así el resto del archivo (100+ usos) sigue leyendo esos
+  // mismos nombres sin cambiar una línea. batches NO se acota: el stock actual depende de lotes que
+  // pueden tener meses de antigüedad y todavía tener unidades sin vender (currentStock vive adentro
+  // de items[], que Firestore no puede filtrar del lado del servidor), así que acotarlo por fecha
+  // arriesgaría mostrar "sin stock" de un producto que sí tiene — ver auditoría, hallazgo E2.
+  const [salesReciente, setSalesReciente] = useState([]);
+  const [salesHistorico, setSalesHistorico] = useState([]);
+  const [expensesReciente, setExpensesReciente] = useState([]);
+  const [expensesHistorico, setExpensesHistorico] = useState([]);
   const [neutralStockEntries, setNeutralStockEntries] = useState([]);
   const [consignments, setConsignments] = useState([]);
   const [teamMembers, setTeamMembers] = useState([]);
@@ -3154,9 +3182,37 @@ export default function App() {
   const [newBatchCategory, setNewBatchCategory] = useState('');
   const [newBatchSkipExpense, setNewBatchSkipExpense] = useState(false);
   const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '', repeatCount: '1' });
-  const [cashFlow, setCashFlow] = useState([]);
+  const [cashFlowReciente, setCashFlowReciente] = useState([]);
+  const [cashFlowHistorico, setCashFlowHistorico] = useState([]);
   const [wallets, setWallets] = useState({ LEMON: 0, AHORROS: 0, GALICIA: 0, GALICIA_GIECO: 0, MERCADO_PAGO: 0, CUENTA_RECAUDADORA: 0, EFECTIVO: 0, USDT: 0, USD: 0, SIN_CUENTA: 0 });
   const walletsScrollRef = useRef(null);
+
+  // Única vía para mover saldos de billetera. Recibe cuánto CAMBIA cada cuenta (positivo suma,
+  // negativo resta) y deja que el server haga la cuenta con increment(), en vez de leer el saldo
+  // que tiene esta pantalla, calcular acá y escribir el objeto entero.
+  //
+  //   applyWalletDeltas({ GALICIA: -5000 })                 → le resta 5000 a Galicia
+  //   applyWalletDeltas({ GALICIA: -5000, EFECTIVO: 5000 }) → mueve 5000 de una a la otra
+  //
+  // Por qué importa: el saldo lo escriben varios lados a la vez (esta pantalla, /pedidos, el
+  // chatbot de WhatsApp, el asistente de IA y el sync de Meta Ads). Escribiendo el objeto completo
+  // —que es lo que se hacía antes— cada guardado pisaba TODAS las cuentas con los valores que
+  // tuviera la pantalla en ese momento, así que un gasto cargado acá podía borrar una venta que el
+  // chatbot había acreditado un segundo antes, incluso en otra cuenta. Con increment el server
+  // aplica el cambio sobre el valor real y solo toca las cuentas que recibe: si dos movimientos
+  // llegan juntos, se aplican los dos.
+  //
+  // No hace falta tocar el estado local: el onSnapshot de settings/wallets lo refresca solo, y
+  // Firestore aplica la escritura en su caché local antes de mandarla, así que se ve al instante.
+  const applyWalletDeltas = async (deltas) => {
+    const patch = {};
+    for (const [acc, delta] of Object.entries(deltas || {})) {
+      if (!acc || !delta || !Number.isFinite(delta)) continue;
+      patch[acc] = increment(delta);
+    }
+    if (Object.keys(patch).length === 0) return;
+    await setDoc(doc(db, 'settings', 'wallets'), patch, { merge: true });
+  };
   const [editingWallet, setEditingWallet] = useState(null);
   const [editingWalletValue, setEditingWalletValue] = useState('');
   // Mismo motivo que newBatchAccount: sin cuenta por defecto, para no descontar de LEMON sin
@@ -3166,6 +3222,100 @@ export default function App() {
   // `editingGroupId` es el id del ítem que se está editando ahora mismo (null = ninguno).
   const [editingGroupId, setEditingGroupId] = useState(null);
   const [editingGroupValue, setEditingGroupValue] = useState('');
+
+  // --- Ventana en vivo de sales/expenses/cashFlow (auditoría, hallazgo E2) ---
+  // Antes, esos tres listeners traían la colección ENTERA sin límite de fecha: cuantos más meses de
+  // operación se acumulan, más tarda en abrir la web, para siempre. Ahora el listener en vivo (ver
+  // más abajo, donde se arman) solo cubre desde `ventanaVivaCutoff` en adelante — calculado una sola
+  // vez al abrir la sesión, no se mueve mientras la pestaña sigue abierta — y lo anterior a esa
+  // fecha se trae aparte con `asegurarHistoricoCompleto`, una sola vez por sesión y solo si algo de
+  // verdad lo necesita. Arranca el día 1 de hace 2 meses (no "hace 60 días" a secas) para dejar
+  // margen: Inicio compara "últimos 30 días" contra los 30 anteriores a esos, y esa comparación
+  // tiene que entrar siempre en la ventana en vivo sin depender del histórico bajo demanda.
+  const ventanaVivaCutoffRef = useRef(null);
+  if (ventanaVivaCutoffRef.current === null) {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(1);
+    d.setMonth(d.getMonth() - 2);
+    ventanaVivaCutoffRef.current = d;
+  }
+  const ventanaVivaCutoffISO = ventanaVivaCutoffRef.current.toISOString();
+
+  // Qué colección ya se pidió (o está pidiendo) fuera de la ventana en vivo. Un ref, no un
+  // useState: esto no tiene que disparar ningún render por sí solo, el render lo dispara el
+  // setXxxHistorico cuando la data efectivamente llega.
+  const historicoEnCursoRef = useRef({ sales: false, expenses: false, cashFlow: false });
+
+  // Trae TODO lo anterior a la ventana en vivo de una colección, una sola vez: después de la
+  // primera vez no vuelve a pedir nada más (no puede aparecer un documento nuevo ahí — son todos
+  // anteriores a un corte que no se mueve durante la sesión). Se llama solo cuando una pantalla
+  // necesita de verdad ver más allá de la ventana en vivo (ver los efectos más abajo), así el fetch
+  // pesado pasa cuando hace falta, no en cada apertura de la web.
+  const asegurarHistoricoCompleto = useCallback((coleccion) => {
+    if (historicoEnCursoRef.current[coleccion]) return;
+    historicoEnCursoRef.current[coleccion] = true;
+    const setHistorico = coleccion === 'sales' ? setSalesHistorico : coleccion === 'expenses' ? setExpensesHistorico : setCashFlowHistorico;
+    getDocs(query(collection(db, coleccion), where('date', '<', ventanaVivaCutoffISO)))
+      .then(snap => setHistorico(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+      .catch(e => {
+        console.error(`Error trayendo histórico de ${coleccion}:`, e);
+        historicoEnCursoRef.current[coleccion] = false; // permite reintentar en el próximo trigger
+      });
+  }, [ventanaVivaCutoffISO]);
+
+  // sales/expenses/cashFlow combinados (ventana reciente + histórico, si ya se trajo) — mismo
+  // nombre que usa el resto del archivo, ordenado más nuevo primero como siempre (no todos los
+  // consumidores hacen su propio sort, así que se mantiene acá el mismo orden que tenía el listener
+  // original para no cambiarles el comportamiento).
+  const sales = useMemo(
+    () => (salesHistorico.length === 0 ? salesReciente : [...salesReciente, ...salesHistorico].sort((a, b) => new Date(b.date) - new Date(a.date))),
+    [salesReciente, salesHistorico]
+  );
+  const expenses = useMemo(
+    () => (expensesHistorico.length === 0 ? expensesReciente : [...expensesReciente, ...expensesHistorico].sort((a, b) => new Date(b.date) - new Date(a.date))),
+    [expensesReciente, expensesHistorico]
+  );
+  const cashFlow = useMemo(
+    () => (cashFlowHistorico.length === 0 ? cashFlowReciente : [...cashFlowReciente, ...cashFlowHistorico].sort((a, b) => new Date(b.date) - new Date(a.date))),
+    [cashFlowReciente, cashFlowHistorico]
+  );
+
+  // Dispara la carga del histórico completo de sales/expenses apenas arranca la sesión: Inicio (la
+  // pestaña con la que abre la web) proyecta ventas usando TODO el historial disponible
+  // (estacionalidad mensual y ciclos recurrentes — ver projectionEngine.js), así que tarde o
+  // temprano hace falta igual. Pidiéndolo acá (sin bloquear el primer render) Inicio pinta rápido
+  // con la ventana reciente, y las proyecciones/el resto del historial completan solos apenas están
+  // listos, en vez de demorar toda la pantalla como pasaba antes.
+  useEffect(() => {
+    if (!user) return;
+    asegurarHistoricoCompleto('sales');
+    asegurarHistoricoCompleto('expenses');
+  }, [user, asegurarHistoricoCompleto]);
+
+  // Red de seguridad explícita para cuando el usuario elige un período de Inicio que cae antes de
+  // la ventana en vivo (un mes viejo, "Histórico completo", un rango personalizado o "Comparar
+  // fechas") — en la práctica ya está cubierto por el efecto de arriba, pero si esa carga de fondo
+  // todavía no terminó, esto la vuelve a pedir explícitamente.
+  useEffect(() => {
+    const necesitaHistoricoDeVentas =
+      globalMonth === 'all' ||
+      globalMonth === 'custom' ||
+      globalMonth === 'compare' ||
+      (/^\d{4}-\d{2}$/.test(globalMonth) && new Date(`${globalMonth}-01T00:00:00`) < ventanaVivaCutoffRef.current);
+    if (necesitaHistoricoDeVentas) {
+      asegurarHistoricoCompleto('sales');
+      asegurarHistoricoCompleto('expenses');
+    }
+  }, [globalMonth, customDateRange, compareDateRange, asegurarHistoricoCompleto]);
+
+  // La pestaña Gastos muestra ingresos/retiros TOTALES por cuenta (de toda la vida, no de un
+  // período) apenas se abre, y ahí mismo viven los historiales de Stock y de Ajustes — así que
+  // necesita el histórico completo de cashFlow siempre que está activa.
+  useEffect(() => {
+    if (activeTab === 'expenses') asegurarHistoricoCompleto('cashFlow');
+  }, [activeTab, asegurarHistoricoCompleto]);
+
   // Nombres de grupo ya usados antes (ej. "Bauti"), para autocompletar y no terminar con "Bauti" y
   // "bauti" separados por una letra distinta al tipear.
   const existingExpenseGroups = useMemo(() => {
@@ -3272,6 +3422,31 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('homeCardOrder', JSON.stringify(homeCardOrder));
   }, [homeCardOrder]);
+
+  // Red de contención para las tarjetas que se agregan al sistema DESPUÉS de que el usuario ya
+  // acomodó su Inicio (el orden vive en localStorage, así que una tarjeta nueva no está en esa
+  // lista y no se renderiza). El inicializador de homeCardOrder ya intenta esto, pero corre una
+  // sola vez y solo sobre lo que leyó de localStorage: si el estado ya estaba en memoria (recarga
+  // en caliente en desarrollo, por ejemplo), la tarjeta nueva no aparecía nunca. Esto lo repara
+  // sobre el estado actual, así cualquier tarjeta que se sume en el futuro entra sola.
+  // Segundo caso que cubre: si la sección donde debería ir ya no existe (el usuario la borró o
+  // renombró), la tarjeta caería en una clave que nadie renderiza — ahí va a la primera sección
+  // que exista, para que no quede invisible.
+  useEffect(() => {
+    const known = new Set(Object.values(homeCardOrder).flat());
+    const missing = Object.keys(HOME_CARD_META).filter(id => !known.has(id));
+    if (missing.length === 0) return;
+    setHomeCardOrder(prev => {
+      const next = { ...prev };
+      missing.forEach(id => {
+        const preferido = HOME_CARD_META[id].sector;
+        const destino = homeSectorOrder.includes(preferido) ? preferido : homeSectorOrder[0];
+        if (!destino) return;
+        next[destino] = [...(next[destino] || []), id];
+      });
+      return next;
+    });
+  }, [homeCardOrder, homeSectorOrder]);
 
   const resetHomeCardOrder = () => {
     setHomeCardOrder(DEFAULT_HOME_CARD_ORDER);
@@ -3421,6 +3596,13 @@ export default function App() {
   const [isApplyingStockSync, setIsApplyingStockSync] = useState(false);
 
   const [salesSearch, setSalesSearch] = useState('');
+  // Buscar en todo el historial (no solo la ventana reciente): apagado por default, el buscador del
+  // Libro de Ventas trabaja sobre `sales` recién cuando se prende. Ver ventanaVivaCutoffRef /
+  // asegurarHistoricoCompleto — auditoría, hallazgo E2.
+  const [salesSearchHistorico, setSalesSearchHistorico] = useState(false);
+  useEffect(() => {
+    if (salesSearchHistorico) asegurarHistoricoCompleto('sales');
+  }, [salesSearchHistorico, asegurarHistoricoCompleto]);
   // Filtro de medio de pago del Libro de Ventas: 'TODOS' | 'alias1' | 'alias2' | 'alias3' | 'alias4' | 'efectivo' | 'SIN_ESPECIFICAR'
   const [salesMedioPagoFilter, setSalesMedioPagoFilter] = useState('TODOS');
   const [consignmentSearch, setConsignmentSearch] = useState('');
@@ -3481,19 +3663,28 @@ export default function App() {
             setIsOffline(false);
         }, (error) => { setIsOffline(true); setLoading(false); });
         
-        const unsubSales = onSnapshot(query(collection(db, 'sales'), orderBy('date', 'desc')), (snap) => {
-            setSales(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-            setIsOffline(false);
-        }, (error) => setIsOffline(true));
-        
-        const unsubExp = onSnapshot(query(collection(db, 'expenses'), orderBy('date', 'desc')), (snap) => {
-            setExpenses(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-            setIsOffline(false);
-        }, (error) => setIsOffline(true));
+        // Ventana en vivo de sales/expenses/cashFlow: solo lo posterior a `ventanaVivaCutoffISO`
+        // (ver definición más arriba del archivo). Lo anterior a esa fecha se trae aparte, una sola
+        // vez, con asegurarHistoricoCompleto — ver ese comentario para el motivo completo (E2).
+        const unsubSales = onSnapshot(
+            query(collection(db, 'sales'), where('date', '>=', ventanaVivaCutoffISO), orderBy('date', 'desc')),
+            (snap) => {
+                setSalesReciente(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                setIsOffline(false);
+            }, (error) => setIsOffline(true));
 
-        const unsubCash = onSnapshot(query(collection(db, 'cashFlow'), orderBy('date', 'desc')), (snap) => {
-            setCashFlow(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        }, () => {});
+        const unsubExp = onSnapshot(
+            query(collection(db, 'expenses'), where('date', '>=', ventanaVivaCutoffISO), orderBy('date', 'desc')),
+            (snap) => {
+                setExpensesReciente(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                setIsOffline(false);
+            }, (error) => setIsOffline(true));
+
+        const unsubCash = onSnapshot(
+            query(collection(db, 'cashFlow'), where('date', '>=', ventanaVivaCutoffISO), orderBy('date', 'desc')),
+            (snap) => {
+                setCashFlowReciente(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            }, () => {});
 
         const unsubNeutralStock = onSnapshot(query(collection(db, 'neutral_stock'), orderBy('createdAt', 'desc')), (snap) => {
             setNeutralStockEntries(snap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -3906,7 +4097,14 @@ export default function App() {
           // "Pago" del flujo de caja también se cuenta como gasto de la empresa.
           // "Retiro" NO cuenta como gasto: es plata que ya era ganancia y el dueño retira, no un costo del negocio.
           const fPagos = cashFlow.filter(m => m.type === 'pago' && inRange(m.date));
-          const fGastos = expenses.filter(e => inRange(e.date));
+          // Los gastos que carga solo el sync de Meta Ads (source: 'meta_ads_auto', ver más abajo)
+          // quedan AFUERA de este total a propósito: el gasto de publicidad se muestra siempre por
+          // su propio lado, con el dato que viene directo de la API de Meta (homeAdSpend en
+          // buildHomeCardNodes). Si se contaran también acá, "Gastos Totales" y "Ganancia Neta" lo
+          // estarían sumando dos veces — una por el gasto asentado y otra por el dato de la API.
+          // Ojo: esto es solo para las cuentas de Inicio; en la pestaña Gastos esos movimientos se
+          // siguen viendo y siguen descontando de la billetera Lemon como cualquier otro gasto.
+          const fGastos = expenses.filter(e => inRange(e.date) && e.source !== 'meta_ads_auto');
           const fCashExp = [...fPagos];
           const fExp = [...fGastos, ...fCashExp];
           const fBatches = batches.filter(b => inRange(b.createdAt));
@@ -4345,7 +4543,6 @@ export default function App() {
     const fixedAdsClients = new Array(7).fill(0);
     const resellerClients = new Array(7).fill(0);
     const exps = new Array(7).fill(0);
-    const txCount = new Array(7).fill(0);
     const invest = new Array(7).fill(0);
     const shipProfit = new Array(7).fill(0);
     const failedValue = new Array(7).fill(0);
@@ -4372,7 +4569,6 @@ export default function App() {
       rev[idx] += s.totalSaleRaw || 0;
       units[idx] += s.quantity || 0;
       profit[idx] += (s.totalSaleRaw || 0) - ((s.costArsAtSale || 0) * (s.quantity || 0)) + saleShippingProfit;
-      txCount[idx] += 1;
       ticketsByDay[idx].add(s.ticketId || s.id);
       shipProfit[idx] += saleShippingProfit;
       if (s.medioPago === 'alias1') alias1[idx] += s.totalSaleRaw || 0;
@@ -4393,6 +4589,10 @@ export default function App() {
     });
     expenses.forEach(e => {
       if (!e.date) return;
+      // Mismo criterio que analysisData: el gasto de Meta Ads no entra en la serie de gastos
+      // "anotados" — va aparte en adSpend, y las dos se suman recién en expensesWithAds (abajo)
+      // para la tarjeta que sí muestra el total con publicidad incluida.
+      if (e.source === 'meta_ads_auto') return;
       const d = new Date(e.date);
       if (isNaN(d.getTime())) return;
       const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -4415,9 +4615,16 @@ export default function App() {
       const idx = dayKeys.indexOf(key);
       if (idx >= 0) invest[idx] += (b.items || []).reduce((s, i) => s + (i.costArs||0)*(i.initialStock||0), 0);
     });
-    const avgTicket = rev.map((r, i) => txCount[i] > 0 ? r / txCount[i] : 0);
     const pedidos = ticketsByDay.map(set => set.size);
-    return { revenue: rev, units, profit, clients, organicClients, adsClients, fixedAdsClients, resellerClients, expenses: exps, avgTicket, investment: invest, shipProfit, failedValue, stolenValue, alias1, alias2, alias3, alias4, efectivo, adSpend, pedidos, labels };
+    // Una serie por cada tarjeta, con el mismo divisor que usa su número grande: ticket promedio
+    // se divide por pedidos y precio por unidad por unidades. Antes las dos compartían una serie
+    // dividida por líneas de venta, que no era ninguno de los dos.
+    const avgTicket = rev.map((r, i) => pedidos[i] > 0 ? r / pedidos[i] : 0);
+    const avgUnitPrice = rev.map((r, i) => units[i] > 0 ? r / units[i] : 0);
+    // Serie para "Gastos Totales": gastos anotados + publicidad, cada uno contado una sola vez.
+    // "Gastos Empresa" usa `expenses` a secas (solo lo anotado a mano, sin Meta Ads).
+    const expsWithAds = exps.map((v, i) => v + adSpend[i]);
+    return { revenue: rev, units, profit, clients, organicClients, adsClients, fixedAdsClients, resellerClients, expenses: exps, expensesWithAds: expsWithAds, avgTicket, avgUnitPrice, investment: invest, shipProfit, failedValue, stolenValue, alias1, alias2, alias3, alias4, efectivo, adSpend, pedidos, labels };
   }, [sales, expenses, cashFlow, batches, homeMetaDailyData], activeTab === 'home');
 
   const isMetaAdsTab = activeTab === 'metaads';
@@ -4737,11 +4944,20 @@ export default function App() {
     fetchProjectionMetaDaily();
   }, []);
 
-  // Ref con el saldo de billeteras más reciente, para poder leerlo desde el sync de Meta Ads sin
-  // que "wallets" sea dependencia del efecto (eso re-dispararía el sync en bucle con cada escritura).
-  const walletsRef = useRef(wallets);
-  useEffect(() => { walletsRef.current = wallets; }, [wallets]);
+  // (Acá vivía walletsRef, que le daba al sync de Meta Ads el saldo más reciente sin tener que
+  // poner "wallets" como dependencia del efecto. Ya no hace falta: el sync usa applyWalletDeltas,
+  // que le manda a Firestore cuánto restar en vez de leer el saldo actual para recalcularlo.)
   const metaAdsSyncingRef = useRef(false);
+  // Ref con la lista de gastos más reciente, para que el sync de Meta Ads pueda leerla sin que
+  // "expenses" sea dependencia del efecto de abajo — ese efecto ESCRIBE en expenses (carga el
+  // gasto del día), así que si expenses fuera dependencia, el efecto se dispararía otra vez apenas
+  // termina de correr, y de nuevo, y de nuevo. El guard de metaAdsSyncingRef y el filtro de
+  // alreadyRecorded ya cortan ese lazo hoy (no encuentran nada pendiente en la segunda vuelta),
+  // pero dependen de que esa lógica de negocio no cambie — saco la dependencia de raíz para que el
+  // lazo sea imposible, no solo esté frenado. Mismo patrón que ya se usaba para "wallets" en el
+  // sync de billeteras.
+  const expensesRef = useRef(expenses);
+  useEffect(() => { expensesRef.current = expenses; }, [expenses]);
 
   // Sync automático: cada gasto diario de Meta Ads (día ya cerrado, desde META_ADS_AUTO_EXPENSE_CUTOFF_DATE)
   // se carga solo como un "Gasto" más con cuenta LEMON, y se descuenta del saldo de esa billetera.
@@ -4753,7 +4969,7 @@ export default function App() {
       if (!homeMetaDailyData.length) return;
       const today = getTodayDate();
       const alreadyRecorded = new Set(
-        expenses.filter(e => e.source === 'meta_ads_auto' && e.metaDate).map(e => e.metaDate)
+        expensesRef.current.filter(e => e.source === 'meta_ads_auto' && e.metaDate).map(e => e.metaDate)
       );
       const pending = homeMetaDailyData
         .filter(d => d.date_start && d.date_start >= META_ADS_AUTO_EXPENSE_CUTOFF_DATE && d.date_start < today)
@@ -4778,10 +4994,7 @@ export default function App() {
           });
           lemonDelta += p.amount;
         }
-        const updatedW = { ...walletsRef.current, LEMON: (walletsRef.current.LEMON || 0) - lemonDelta };
-        walletsRef.current = updatedW;
-        setWallets(updatedW);
-        await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+        await applyWalletDeltas({ LEMON: -lemonDelta });
       } catch (e) {
         console.error('Error sincronizando gasto de Meta Ads con Lemon:', e);
       } finally {
@@ -4789,7 +5002,9 @@ export default function App() {
       }
     };
     syncMetaAdsExpenses();
-  }, [homeMetaDailyData, expenses]);
+    // expenses NO es dependencia a propósito — ver comentario junto a expensesRef, arriba.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [homeMetaDailyData]);
 
   // Carga silenciosa de nombres de campañas (todas, activas o no) para sugerir al cargar una venta
   useEffect(() => {
@@ -6120,12 +6335,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                 await deleteDoc(doc(db, 'expenses', exp.id));
                 if (exp.account && exp.amount) deltas[exp.account] = (deltas[exp.account] || 0) + exp.amount;
             }
-            if (Object.keys(deltas).length > 0) {
-                const updatedW = { ...wallets };
-                for (const acc in deltas) updatedW[acc] = (updatedW[acc] || 0) + deltas[acc];
-                setWallets(updatedW);
-                await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
-            }
+            await applyWalletDeltas(deltas);
             setEditingBatchId(null);
             const removedCount = stockEntries.length + expensesToDelete.length;
             showToast("Lote actualizado" + (removedCount > 0 ? ` y se revirtieron ${removedCount} movimiento(s) de caja` : ""), "success");
@@ -6145,11 +6355,12 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
         if (accountChanged) {
             const total = stockEntries.reduce((s, e) => s + (e.amount || 0), 0);
             if (total > 0) {
-                const updatedW = { ...wallets };
-                if (oldAccount) updatedW[oldAccount] = (updatedW[oldAccount] || 0) + total;
-                updatedW[editingBatchAccount] = (updatedW[editingBatchAccount] || 0) - total;
-                setWallets(updatedW);
-                await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+                // La plata vuelve a la cuenta vieja y sale de la nueva. Si es la misma cuenta no
+                // hay nada que mover, pero eso ya lo cubre `accountChanged` de más arriba.
+                await applyWalletDeltas({
+                    ...(oldAccount ? { [oldAccount]: total } : {}),
+                    [editingBatchAccount]: -total,
+                });
             }
         }
 
@@ -6173,12 +6384,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
         await deleteDoc(doc(db, 'cashFlow', entry.id));
         if (entry.account && entry.amount) deltas[entry.account] = (deltas[entry.account] || 0) + entry.amount;
       }
-      if (Object.keys(deltas).length > 0) {
-        const updatedW = { ...wallets };
-        for (const acc in deltas) updatedW[acc] = (updatedW[acc] || 0) + deltas[acc];
-        setWallets(updatedW);
-        await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
-      }
+      await applyWalletDeltas(deltas);
     }
     await deleteDoc(doc(db, 'batches', id));
   };
@@ -6229,9 +6435,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
           });
         }
         const totalCost = itemCost * count;
-        const updatedW = { ...wallets, [batch.account]: (wallets[batch.account] || 0) - totalCost };
-        setWallets(updatedW);
-        await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+        await applyWalletDeltas({ [batch.account]: -totalCost });
       }
       setNewItem({ product: '', variant: '', costArs: '', initialStock: '', repeatCount: '1' });
       showToast(count > 1 ? `${count} entradas agregadas` : 'Producto agregado', 'success');
@@ -6252,12 +6456,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
           await deleteDoc(doc(db, 'cashFlow', entry.id));
           if (entry.account && entry.amount) deltas[entry.account] = (deltas[entry.account] || 0) + entry.amount;
         }
-        if (Object.keys(deltas).length > 0) {
-          const updatedW = { ...wallets };
-          for (const acc in deltas) updatedW[acc] = (updatedW[acc] || 0) + deltas[acc];
-          setWallets(updatedW);
-          await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
-        }
+        await applyWalletDeltas(deltas);
       }
       showToast("Producto eliminado", 'success');
     } catch (e) { showToast("Error al borrar: " + e.message, 'error'); }
@@ -6338,11 +6537,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
             description: `Compra stock: ${updatedItem.product}${updatedItem.variant ? ' / ' + updatedItem.variant : ''} (${batch.name})`,
           });
         }
-        if (diff !== 0) {
-          const updatedW = { ...wallets, [batch.account]: (wallets[batch.account] || 0) - diff };
-          setWallets(updatedW);
-          await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
-        }
+        await applyWalletDeltas({ [batch.account]: -diff });
       }
 
       setEditingItem(null);
@@ -6391,101 +6586,169 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     const dateStr = saleDateObj.toISOString();
     const ticketId = Date.now().toString(); 
 
-    let totalCashIn = 0;
-    let totalFailedValue = 0;
-    let totalStolenValue = 0;
-    const batchUpdates = {};
+    // Los totales salen de la transacción en vez de acumularse sobre variables de acá afuera: una
+    // transacción de Firestore se reintenta sola si alguien tocó el mismo lote mientras corría, y
+    // si fuéramos sumando sobre variables externas, el reintento contaría todo dos veces.
+    let resumen = { totalCashIn: 0, totalProductRaw: 0, totalFailedValue: 0, totalStolenValue: 0 };
 
     try {
-        for (let i = 0; i < saleItems.length; i++) {
-            const si = saleItems[i];
-            const isFirstItem = i === 0;
-            const qty = parseInt(si.quantity) || 1;
-            const unitPriceNorm = String(si.unitPrice).trim().toLowerCase();
-            const isFalla = unitPriceNorm === 'falla';
-            const isRobo = unitPriceNorm === 'robo';
-            const uPrice = (isFalla || isRobo) ? 0 : (parseFloat(si.unitPrice) || 0);
+        // Toda la venta entra en UNA transacción: las líneas de venta y el descuento de stock de
+        // cada lote se guardan juntos, o no se guarda nada. Antes se hacía de a una escritura
+        // suelta y un corte de internet a mitad de camino dejaba ventas guardadas sin stock
+        // descontado (y volver a cargarla las duplicaba). Además el stock se lee acá adentro,
+        // fresco del servidor: si el chatbot o /pedidos se llevaron la última unidad mientras se
+        // completaba el formulario, la transacción lo ve y no deja pasar la venta.
+        resumen = await runTransaction(db, async (t) => {
+            // --- 1) LECTURAS (Firestore exige que todas vayan antes de cualquier escritura) ---
+            const batchIds = [...new Set(saleItems.map(si => si.batchId))];
+            const batchDocs = {};
+            for (const bId of batchIds) {
+                const snap = await t.get(doc(db, 'batches', bId));
+                if (!snap.exists()) {
+                    const err = new Error('El lote de uno de los productos ya no existe. Recargá la página.');
+                    err.esValidacion = true;
+                    throw err;
+                }
+                const data = snap.data();
+                batchDocs[bId] = {
+                    name: data.name,
+                    finalizedAt: data.finalizedAt,
+                    items: (data.items || []).map(it => ({ ...it })),
+                };
+            }
 
-            const batch = batches.find(b => b.id === si.batchId);
-            const item = batch.items.find(it => it.id === si.itemId);
+            // --- 2) VALIDACIÓN contra lo recién leído, no contra el estado de la pantalla ---
+            const necesita = {};
+            saleItems.forEach(si => { necesita[si.itemId] = (necesita[si.itemId] || 0) + (parseInt(si.quantity) || 1); });
+            for (const si of saleItems) {
+                const item = batchDocs[si.batchId].items.find(it => it.id === si.itemId);
+                if (!item) {
+                    const err = new Error('Uno de los productos ya no está en su lote. Recargá la página y volvé a cargar la venta.');
+                    err.esValidacion = true;
+                    throw err;
+                }
+                const need = necesita[si.itemId] || 0;
+                if ((item.currentStock || 0) < need) {
+                    const err = new Error(`Stock insuficiente de ${item.product}. Quedan ${item.currentStock || 0} y pediste ${need}.`);
+                    err.esValidacion = true;
+                    throw err;
+                }
+            }
 
-            const itemShippingProfit = (!isNeutralSale && isFirstItem && !isFalla && !isRobo) ? shippingProfit : 0;
-            const itemTotalRaw = (isFalla || isRobo) ? 0 : (uPrice * qty) + itemShippingProfit;
-            const itemFailedValue = isFalla ? (item.costArs || 0) * qty : 0;
-            const itemStolenValue = isRobo ? (item.costArs || 0) * qty : 0;
-            totalCashIn += itemTotalRaw;
-            totalFailedValue += itemFailedValue;
-            totalStolenValue += itemStolenValue;
+            // --- 3) ESCRITURAS ---
+            const out = { totalCashIn: 0, totalProductRaw: 0, totalFailedValue: 0, totalStolenValue: 0 };
+            for (let i = 0; i < saleItems.length; i++) {
+                const si = saleItems[i];
+                const isFirstItem = i === 0;
+                const qty = parseInt(si.quantity) || 1;
+                const unitPriceNorm = String(si.unitPrice).trim().toLowerCase();
+                const isFalla = unitPriceNorm === 'falla';
+                const isRobo = unitPriceNorm === 'robo';
+                const uPrice = (isFalla || isRobo) ? 0 : (parseFloat(si.unitPrice) || 0);
 
-            const saleData = {
-                ticketId,
-                createdAt: createdAtStr,
-                date: dateStr,
-                batchId: batch.id,
-                batchName: batch.name,
-                itemId: item.id,
-                productName: item.product,
-                variant: item.variant,
-                quantity: qty,
-                unitPrice: uPrice,
-                totalSaleRaw: itemTotalRaw,
-                costArsAtSale: item.costArs,
-                isFalla,
-                failedValue: itemFailedValue,
-                isRobo,
-                stolenValue: itemStolenValue,
-                shippingCostArs: isFirstItem ? parseFloat(saleGeneral.shippingCost || 0) : 0,
-                shippingProfit: itemShippingProfit,
-                source: saleGeneral.source,
-                isReseller: saleGeneral.isReseller === 'Si',
-                isNewClient: saleGeneral.isNewClient,
-                adCampaign: (saleGeneral.isNewClient === 'Nuevo - Publicidad' || saleGeneral.isNewClient === 'Clientes - Publicidad') ? String(saleGeneral.adCampaign || '').trim() : '',
-                clientName: saleGeneral.isReseller === 'Si' ? String(saleGeneral.wholesaleClient || '').trim() : '',
-                operationType: saleGeneral.isReseller === 'Si' ? 'MAYORISTA' : 'VENTA',
-                medioPago: saleGeneral.medioPago || '',
-                seller: '028 Import'
-            };
+                const bData = batchDocs[si.batchId];
+                const item = bData.items.find(it => it.id === si.itemId);
 
-            if (isNeutralSale) {
-                await addDoc(collection(db, 'neutral_stock'), {
+                const itemShippingProfit = (!isNeutralSale && isFirstItem && !isFalla && !isRobo) ? shippingProfit : 0;
+                const itemTotalRaw = (isFalla || isRobo) ? 0 : (uPrice * qty) + itemShippingProfit;
+                const itemFailedValue = isFalla ? (item.costArs || 0) * qty : 0;
+                const itemStolenValue = isRobo ? (item.costArs || 0) * qty : 0;
+                out.totalCashIn += itemTotalRaw;
+                out.totalProductRaw += (isFalla || isRobo) ? 0 : (uPrice * qty);
+                out.totalFailedValue += itemFailedValue;
+                out.totalStolenValue += itemStolenValue;
+
+                const saleData = {
+                    ticketId,
                     createdAt: createdAtStr,
-                    accountingType: 'neutral',
-                    reason: 'Venta neutra',
-                    note: `Registrado desde Ventas · Canal: ${saleGeneral.source || 'Sin canal'}`,
-                    batchId: batch.id,
-                    batchName: batch.name,
+                    date: dateStr,
+                    batchId: si.batchId,
+                    batchName: bData.name,
                     itemId: item.id,
                     productName: item.product,
                     variant: item.variant,
                     quantity: qty,
                     unitPrice: uPrice,
-                    costArsAtEntry: item.costArs || 0,
                     totalSaleRaw: itemTotalRaw,
-                    totalCostRaw: (item.costArs || 0) * qty,
-                    grossProfitRaw: itemTotalRaw - ((item.costArs || 0) * qty),
-                    source: 'Ventas / Neutro',
+                    costArsAtSale: item.costArs,
+                    isFalla,
+                    failedValue: itemFailedValue,
+                    isRobo,
+                    stolenValue: itemStolenValue,
+                    shippingCostArs: isFirstItem ? parseFloat(saleGeneral.shippingCost || 0) : 0,
+                    shippingProfit: itemShippingProfit,
+                    source: saleGeneral.source,
+                    isReseller: saleGeneral.isReseller === 'Si',
+                    isNewClient: saleGeneral.isNewClient,
+                    adCampaign: (saleGeneral.isNewClient === 'Nuevo - Publicidad' || saleGeneral.isNewClient === 'Clientes - Publicidad') ? String(saleGeneral.adCampaign || '').trim() : '',
+                    clientName: saleGeneral.isReseller === 'Si' ? String(saleGeneral.wholesaleClient || '').trim() : '',
+                    operationType: saleGeneral.isReseller === 'Si' ? 'MAYORISTA' : 'VENTA',
+                    medioPago: saleGeneral.medioPago || '',
                     seller: '028 Import'
-                });
-            } else {
-                await addDoc(collection(db, 'sales'), saleData);
+                };
+
+                // doc(collection(...)) sin id reserva una referencia nueva sin escribir nada — es la
+                // forma de hacer un "addDoc" adentro de una transacción, que solo acepta refs.
+                if (isNeutralSale) {
+                    t.set(doc(collection(db, 'neutral_stock')), {
+                        createdAt: createdAtStr,
+                        accountingType: 'neutral',
+                        reason: 'Venta neutra',
+                        note: `Registrado desde Ventas · Canal: ${saleGeneral.source || 'Sin canal'}`,
+                        batchId: si.batchId,
+                        batchName: bData.name,
+                        itemId: item.id,
+                        productName: item.product,
+                        variant: item.variant,
+                        quantity: qty,
+                        unitPrice: uPrice,
+                        costArsAtEntry: item.costArs || 0,
+                        totalSaleRaw: itemTotalRaw,
+                        totalCostRaw: (item.costArs || 0) * qty,
+                        grossProfitRaw: itemTotalRaw - ((item.costArs || 0) * qty),
+                        source: 'Ventas / Neutro',
+                        seller: '028 Import'
+                    });
+                } else {
+                    t.set(doc(collection(db, 'sales')), saleData);
+                }
+
+                item.currentStock = (item.currentStock || 0) - qty;
             }
 
-            if (!batchUpdates[batch.id]) {
-                batchUpdates[batch.id] = { items: [...batch.items], finalizedAt: batch.finalizedAt };
+            for (const bId of batchIds) {
+                const bData = batchDocs[bId];
+                const allZero = bData.items.every(x => (x.currentStock || 0) <= 0);
+                const updates = { items: bData.items };
+                if (allZero && !bData.finalizedAt) updates.finalizedAt = new Date().toISOString();
+                t.update(doc(db, 'batches', bId), updates);
             }
-            const bUpdate = batchUpdates[batch.id];
-            const itemIdx = bUpdate.items.findIndex(x => x.id === item.id);
-            if (itemIdx !== -1) {
-                bUpdate.items[itemIdx].currentStock -= qty;
-            }
-        }
 
-        for (const bId in batchUpdates) {
-            const bData = batchUpdates[bId];
-            const allZero = bData.items.every(x => x.currentStock <= 0);
-            const updates = { items: bData.items };
-            if (allZero && !bData.finalizedAt) updates.finalizedAt = new Date().toISOString();
-            await updateDoc(doc(db, 'batches', bId), updates);
+            return out;
+        });
+
+        const { totalCashIn, totalProductRaw, totalFailedValue, totalStolenValue } = resumen;
+
+        // Acreditación de la billetera según el medio de pago — mismo mapeo y mismo criterio que
+        // usan /pedidos y el chatbot de WhatsApp. Hasta ahora esta pantalla era la única de las tres
+        // que registraba la venta pero no sumaba la plata a ninguna cuenta: los gastos siempre
+        // restaban y las ventas cargadas acá no sumaban nunca, así que el saldo se iba quedando
+        // corto un poco más cada día.
+        // Cuánto entra:
+        // - Cuenta Recaudadora (alias4): producto + envío cobrado completo (nunca se le resta nada).
+        // - Efectivo: SOLO el producto — cuando una venta en efectivo lleva envío, esa plata va
+        //   entera a la motomensajería, no queda un peso para el negocio.
+        // - Resto de los alias: producto + ganancia neta del envío (lo cobrado menos lo que costó).
+        // Las ventas neutras no acreditan nada, igual que no entran en ningún otro reporte.
+        const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', alias4: 'CUENTA_RECAUDADORA', efectivo: 'EFECTIVO' };
+        const wName = aliasWalletMap[saleGeneral.medioPago];
+        if (!isNeutralSale && wName && totalProductRaw > 0) {
+            const wAmount = saleGeneral.medioPago === 'alias4'
+                ? totalProductRaw + shippingPriceNum
+                : saleGeneral.medioPago === 'efectivo'
+                ? totalProductRaw
+                : totalProductRaw + Math.max(0, shippingProfit);
+            await applyWalletDeltas({ [wName]: wAmount });
         }
 
         const failaMsg = totalFailedValue > 0 ? ` · ${formatMoney(totalFailedValue)} perdidos por falla` : '';
@@ -6496,7 +6759,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
         setSaleItems([{ id: Date.now(), batchId: '', itemId: '', quantity: 1, unitPrice: '' }]);
 
     } catch (e) {
-        showToast('Error al guardar: ' + e.message, 'error');
+        // Los errores de validación de la transacción (stock que se acabó mientras cargabas, lote
+        // borrado) ya traen un mensaje escrito para el usuario — no hay que disfrazarlos de falla
+        // técnica. Al llegar acá la transacción no escribió NADA, así que el formulario queda tal
+        // cual estaba y se puede corregir y reintentar sin miedo a duplicar.
+        showToast(e?.esValidacion ? e.message : 'Error al guardar: ' + e.message, 'error');
     }
   };
 
@@ -6666,9 +6933,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
         batchId: newCashMovement.batchId || null, batchName: batchName, account,
         group: newCashMovement.group.trim() || null
     });
-    const updatedW = { ...wallets, [account]: (wallets[account] || 0) - amount };
-    setWallets(updatedW);
-    await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+    await applyWalletDeltas({ [account]: -amount });
     setNewCashMovement(prev => ({ ...prev, description: '', amount: '', batchId: '', group: '' }));
     showToast('Gasto asentado', 'success');
   };
@@ -6677,9 +6942,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       const exp = expenses.find(e => e.id === id);
       await deleteDoc(doc(db, 'expenses', id));
       if (exp?.account && exp?.amount) {
-        const updatedW = { ...wallets, [exp.account]: (wallets[exp.account] || 0) + exp.amount };
-        setWallets(updatedW);
-        await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+        await applyWalletDeltas({ [exp.account]: exp.amount });
       }
       showToast('Gasto eliminado', 'success');
   };
@@ -6771,9 +7034,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       amountTo,
       exchangeRate,
     });
-    const updatedW = { ...wallets, [fromAcc]: (wallets[fromAcc] || 0) - amount, [toAcc]: (wallets[toAcc] || 0) + amountTo };
-    setWallets(updatedW);
-    await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+    await applyWalletDeltas({ [fromAcc]: -amount, [toAcc]: amountTo });
     setNewCashMovement(prev => ({ ...prev, description: '', amount: '', exchangeRate: '' }));
     showToast(`Transferencia registrada: ${accountLabel(fromAcc)} → ${accountLabel(toAcc)}`, 'success');
   };
@@ -6799,9 +7060,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       batchId: batch.id,
       batchName: batch.name,
     });
-    const updatedW = { ...wallets, [account]: (wallets[account] || 0) - amount };
-    setWallets(updatedW);
-    await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+    await applyWalletDeltas({ [account]: -amount });
     setNewCashMovement(prev => ({ ...prev, description: '', amount: '', batchId: '' }));
     showToast(`Compra de stock asentada en "${batch.name}"`, 'success');
   };
@@ -6824,9 +7083,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       ...(newCashMovement.type === 'pago' ? { group: newCashMovement.group.trim() || null } : {}),
     });
     const delta = newCashMovement.type === 'ingreso' ? amount : -amount;
-    const updatedW = { ...wallets, [account]: (wallets[account] || 0) + delta };
-    setWallets(updatedW);
-    await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+    await applyWalletDeltas({ [account]: delta });
     setNewCashMovement(prev => ({ ...prev, description: '', amount: '', group: '' }));
     showToast(`${newCashMovement.type === 'ingreso' ? 'Ingreso' : newCashMovement.type === 'pago' ? 'Pago' : 'Retiro'} registrado`, 'success');
   };
@@ -6836,14 +7093,10 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     const mov = cashFlow.find(m => m.id === id);
     await deleteDoc(doc(db, 'cashFlow', id));
     if (mov?.type === 'transferencia' && mov.account && mov.accountTo && mov.amount) {
-      const updatedW = { ...wallets, [mov.account]: (wallets[mov.account] || 0) + mov.amount, [mov.accountTo]: (wallets[mov.accountTo] || 0) - (mov.amountTo ?? mov.amount) };
-      setWallets(updatedW);
-      await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+      await applyWalletDeltas({ [mov.account]: mov.amount, [mov.accountTo]: -(mov.amountTo ?? mov.amount) });
     } else if (mov?.account && mov?.amount && mov.type !== 'ajuste') {
       const delta = mov.type === 'ingreso' ? -mov.amount : mov.amount; // retiro y pago ambos restan
-      const updatedW = { ...wallets, [mov.account]: (wallets[mov.account] || 0) + delta };
-      setWallets(updatedW);
-      await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+      await applyWalletDeltas({ [mov.account]: delta });
     }
     showToast('Movimiento eliminado', 'success');
   };
@@ -6864,12 +7117,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       await deleteDoc(doc(db, 'cashFlow', entry.id));
       if (entry.account && entry.amount) deltas[entry.account] = (deltas[entry.account] || 0) + entry.amount;
     }
-    if (Object.keys(deltas).length > 0) {
-      const updatedW = { ...wallets };
-      for (const acc in deltas) updatedW[acc] = (updatedW[acc] || 0) + deltas[acc];
-      setWallets(updatedW);
-      await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
-    }
+    await applyWalletDeltas(deltas);
     showToast('Registro de stock eliminado', 'success');
   };
 
@@ -6883,9 +7131,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       const targets = group.originalSales.filter(s => s.medioPago && s.id);
       await Promise.all(targets.map(s => updateDoc(doc(db, 'sales', s.id), { medioPago: deleteField() })));
       if (group.account && group.account !== 'SIN_CUENTA' && amount) {
-        const updatedW = { ...wallets, [group.account]: (wallets[group.account] || 0) - amount };
-        setWallets(updatedW);
-        await setDoc(doc(db, 'settings', 'wallets'), updatedW, { merge: true });
+        await applyWalletDeltas({ [group.account]: -amount });
       }
       showToast(`Venta desvinculada · -${formatMoney(amount)} del saldo de ${accountLabel(group.account)}`, 'success');
     } catch (e) {
@@ -6893,30 +7139,15 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     }
   };
 
-  const handleSincronizarBilleteras = async () => {
-    if (!window.confirm('¿Sincronizar billeteras con todas las ventas históricas con Alias 1/3? Esto va a pisar los saldos actuales.')) return;
-    const aliasWalletMap = { alias1: 'GALICIA', alias3: 'LEMON' };
-    const totales = { GALICIA: 0, LEMON: 0, EFECTIVO: 0 };
-    const snap = await getDocs(collection(db, 'sales'));
-    snap.docs.forEach(d => {
-      const s = d.data();
-      if (s.medioPago && aliasWalletMap[s.medioPago]) {
-        const saleShippingProfit = s.shippingProfit != null ? (s.shippingProfit || 0) : ((s.clientShippingCharge || 0) - (s.shippingCostArs || 0));
-        totales[aliasWalletMap[s.medioPago]] += (s.totalSaleRaw || 0) + saleShippingProfit;
-      }
-    });
-    await setDoc(doc(db, 'settings', 'wallets'), totales, { merge: true });
-    setWallets(prev => ({ ...prev, ...totales }));
-    showToast(`Billeteras sincronizadas — Galicia: ${formatMoney(totales.GALICIA)} · Lemon: ${formatMoney(totales.LEMON)} · Efectivo: ${formatMoney(totales.EFECTIVO)}`, 'success');
-  };
-
   const handleSaveWalletBalance = async (account) => {
     const val = parseFloat(editingWalletValue);
     if (isNaN(val)) return showToast('Ingresá un número válido', 'error');
     const prev = wallets[account] || 0;
-    const updated = { ...wallets, [account]: val };
-    setWallets(updated);
-    await setDoc(doc(db, 'settings', 'wallets'), updated, { merge: true });
+    // Única escritura que fija un valor absoluto en vez de un incremento — es justamente lo que se
+    // le está pidiendo: "el saldo de esta cuenta es este". Pero se escribe SOLO esa cuenta, no el
+    // objeto entero como antes: así, corregir a mano un saldo no pisa lo que hayan movido las
+    // demás cuentas mientras tanto.
+    await setDoc(doc(db, 'settings', 'wallets'), { [account]: val }, { merge: true });
     await addDoc(collection(db, 'cashFlow'), {
       type: 'ajuste',
       account,
@@ -7464,8 +7695,18 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       const cntAlias4 = countMP('alias4');
       const cntEfectivo = countMP('efectivo');
       const fVentas = v => `${v} pedido${v !== 1 ? 's' : ''}`;
-      const avgTicket = cur.itemsSold > 0 ? cur.totalRevenue / cur.itemsSold : 0;
-      const prevAvgTicket = prev && prev.itemsSold > 0 ? prev.totalRevenue / prev.itemsSold : null;
+      // Dos números distintos que antes estaban mezclados en una sola tarjeta:
+      // - Ticket promedio: lo que gasta un cliente por COMPRA (facturación ÷ pedidos). Es el que
+      //   sirve para decidir mínimo de compra o a partir de cuánto conviene regalar el envío.
+      // - Precio por unidad: a cuánto se vende un producto en promedio (facturación ÷ unidades).
+      // salesCount ya cuenta tickets únicos (no líneas de producto), ver calculateForRange.
+      const avgTicket = cur.salesCount > 0 ? cur.totalRevenue / cur.salesCount : 0;
+      const prevAvgTicket = prev && prev.salesCount > 0 ? prev.totalRevenue / prev.salesCount : null;
+      const avgUnitPrice = cur.itemsSold > 0 ? cur.totalRevenue / cur.itemsSold : 0;
+      const prevAvgUnitPrice = prev && prev.itemsSold > 0 ? prev.totalRevenue / prev.itemsSold : null;
+      // Cuántos productos entran en un pedido promedio — el dato que explica la diferencia entre
+      // las dos tarjetas de arriba, así que va como subtítulo de Ticket Promedio.
+      const unitsPerOrder = cur.salesCount > 0 ? cur.itemsSold / cur.salesCount : 0;
       const L = sparklines?.labels;
       const fMoney = v => formatMoney(v);
       const fUds = v => `${v} uds`;
@@ -7484,11 +7725,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       return {
           facturacion:       <PremiumMetricCard key="facturacion" darkMode={darkMode} title="Facturación" value={formatMoney(cur.totalRevenue)} subtitle="Bruto facturado" change={pct(cur.totalRevenue, prev?.totalRevenue)} sparkline={sparklines?.revenue} sparklineLabels={L} sparklineFormatter={fMoney} />,
           gananciaBruta:     <PremiumMetricCard key="gananciaBruta" darkMode={darkMode} title="Ganancia Bruta" value={showGananciaBrutaPct ? formatPercent(cur.grossMargin) : formatMoney(cur.grossProfit)} subtitle={`${formatPercent(cur.grossMargin)} margen`} change={pct(cur.grossProfit, prev?.grossProfit)} sparkline={sparklines?.profit} sparklineLabels={L} sparklineFormatter={fMoney} onClick={() => setShowGananciaBrutaPct(v => !v)} />,
-          gananciaNeta:      <PremiumMetricCard key="gananciaNeta" darkMode={darkMode} title="Ganancia Neta" value={showGananciaNetaPct ? formatPercent(netMarginWithAds) : formatMoney(netProfitWithAds)} subtitle={`${formatPercent(netMarginWithAds)} neto${homeAdSpend > 0 ? ' · incl. ads' : ''}`} change={pct(cur.netProfit, prev?.netProfit)} sparkline={sparklines?.profit} sparklineLabels={L} sparklineFormatter={fMoney} onClick={() => setShowGananciaNetaPct(v => !v)} tooltip={homeAdSpend > 0 ? `Ganancia neta descontando el gasto en Meta Ads del período (${formatMoney(homeAdSpend)}). Gastos fijos: ${formatMoney(cur.totalGlobalExpenses)}.` : undefined} />,
+          gananciaNeta:      <PremiumMetricCard key="gananciaNeta" darkMode={darkMode} title="Ganancia Neta" value={showGananciaNetaPct ? formatPercent(netMarginWithAds) : formatMoney(netProfitWithAds)} subtitle={`${formatPercent(netMarginWithAds)} neto${homeAdSpend > 0 ? ' · incl. ads' : ''}`} change={pct(cur.netProfit, prev?.netProfit)} sparkline={sparklines?.profit} sparklineLabels={L} sparklineFormatter={fMoney} onClick={() => setShowGananciaNetaPct(v => !v)} tooltip={homeAdSpend > 0 ? `Ganancia neta descontando el gasto en Meta Ads del período (${formatMoney(homeAdSpend)}). Gastos anotados por vos: ${formatMoney(cur.totalGlobalExpenses)}.` : undefined} />,
           gananciaEnvio:     <PremiumMetricCard key="gananciaEnvio" darkMode={darkMode} title="Ganancia Envío" value={formatMoney(cur.totalShippingProfit)} subtitle="Cobrado menos costo" change={pct(cur.totalShippingProfit, prev?.totalShippingProfit)} sparkline={sparklines?.shipProfit} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Diferencia entre lo que cobraste al cliente por envío y lo que te costó a vos el envío." />,
-          gastosTotales:     <PremiumMetricCard key="gastosTotales" darkMode={darkMode} title="Gastos Totales" value={formatMoney(totalExpWithAds)} subtitle={(homeAdSpend > 0 ? `incl. ${formatMoney(homeAdSpend)} en ads` : 'Logística y operativos') + ' · tocá para ver detalle'} change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklines?.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Gastos fijos (${formatMoney(cur.totalGlobalExpenses)}) + Meta Ads del período (${formatMoney(homeAdSpend)}).` : undefined}
+          gastosTotales:     <PremiumMetricCard key="gastosTotales" darkMode={darkMode} title="Gastos Totales" value={formatMoney(totalExpWithAds)} subtitle={(homeAdSpend > 0 ? `incl. ${formatMoney(homeAdSpend)} en ads` : 'Logística y operativos') + ' · tocá para ver detalle'} change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklines?.expensesWithAds} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Gastos anotados por vos (${formatMoney(cur.totalGlobalExpenses)}) + Meta Ads del período (${formatMoney(homeAdSpend)}). Cada uno se cuenta una sola vez.` : undefined}
             onClick={(e) => openGastosModal(e, { title: 'Gastos Totales', gasto: cur.expenseBreakdown.gasto, pago: cur.expenseBreakdown.pago, gastoEntries: cur.expenseBreakdown.gastoEntries, pagoEntries: cur.expenseBreakdown.pagoEntries, ...(homeAdSpend > 0 ? { ads: homeAdSpend } : {}) })} />,
-          gastosEmpresa:     <PremiumMetricCard key="gastosEmpresa" darkMode={darkMode} title="Gastos Empresa" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Gastos anotados · tocá para ver detalle" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklines?.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gastos operativos, logística y fijos registrados en el sistema para el período, incluyendo pagos del flujo de caja. Los retiros no cuentan como gasto."
+          gastosEmpresa:     <PremiumMetricCard key="gastosEmpresa" darkMode={darkMode} title="Gastos Empresa" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Gastos anotados · tocá para ver detalle" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklines?.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gastos operativos, logística y fijos que cargaste vos, incluyendo pagos del flujo de caja. No incluye Meta Ads (se muestra aparte, en su propia tarjeta y adentro de Gastos Totales). Los retiros no cuentan como gasto."
             onClick={(e) => openGastosModal(e, { title: 'Gastos Empresa', gasto: cur.expenseBreakdown.gasto, pago: cur.expenseBreakdown.pago, gastoEntries: cur.expenseBreakdown.gastoEntries, pagoEntries: cur.expenseBreakdown.pagoEntries })} />,
           gastoMetaAds:      <PremiumMetricCard key="gastoMetaAds" darkMode={darkMode} title="Gasto Meta Ads" value={homeAdSpend > 0 ? formatMoney(homeAdSpend) : '—'} subtitle="Inversión publicitaria" change={null} sparkline={sparklines?.adSpend} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gasto total en publicidad de Meta Ads durante el período seleccionado" />,
           inversion:         <PremiumMetricCard key="inversion" darkMode={darkMode} title="Inversión" value={formatMoney(cur.totalInvestment)} subtitle="Capital apostado" change={null} sparkline={sparklines?.investment} sparklineLabels={L} sparklineFormatter={fMoney} />,
@@ -7506,7 +7747,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                           />,
           productosVendidos: <PremiumMetricCard key="productosVendidos" darkMode={darkMode} title="Productos Vendidos" value={cur.itemsSold} subtitle={null} change={pct(cur.itemsSold, prev?.itemsSold)} sparkline={sparklines?.units} sparklineLabels={L} sparklineFormatter={fUds} />,
           pedidosTotales:    <PremiumMetricCard key="pedidosTotales" darkMode={darkMode} title="Pedidos" value={cur.salesCount} subtitle="Total del período" change={pct(cur.salesCount, prev?.salesCount)} sparkline={sparklines?.pedidos} sparklineLabels={L} sparklineFormatter={v => `${v} pedido${v !== 1 ? 's' : ''}`} />,
-          ticketPromedio:    <PremiumMetricCard key="ticketPromedio" darkMode={darkMode} title="Ticket Promedio" value={formatMoney(avgTicket)} subtitle="por producto" change={pct(avgTicket, prevAvgTicket)} sparkline={sparklines?.avgTicket} sparklineLabels={L} sparklineFormatter={fMoney} />,
+          ticketPromedio:    <PremiumMetricCard key="ticketPromedio" darkMode={darkMode} title="Ticket Promedio" value={formatMoney(avgTicket)} subtitle={unitsPerOrder > 0 ? `por pedido · ${unitsPerOrder.toFixed(1)} uds c/u` : 'por pedido'} change={pct(avgTicket, prevAvgTicket)} sparkline={sparklines?.avgTicket} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Cuánto gasta un cliente por compra: facturación dividida por la cantidad de pedidos. Es el número que sirve para fijar un mínimo de compra o decidir a partir de cuánto conviene regalar el envío." />,
+          precioPorUnidad:   <PremiumMetricCard key="precioPorUnidad" darkMode={darkMode} title="Precio por Unidad" value={formatMoney(avgUnitPrice)} subtitle="promedio por producto" change={pct(avgUnitPrice, prevAvgUnitPrice)} sparkline={sparklines?.avgUnitPrice} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="A cuánto se vendió un producto en promedio: facturación dividida por unidades vendidas. Si sube sin que suba el Ticket Promedio, quiere decir que estás vendiendo menos productos por pedido." />,
           clientesNuevos:    <PremiumMetricCard key="clientesNuevos" darkMode={darkMode} title="Clientes Nuevos" value={newClientsListFor.length} subtitle="Total del período" change={null} sparkline={sparklines?.clients} sparklineLabels={L} sparklineFormatter={fClientes} />,
           clientesOrganicos: <PremiumMetricCard key="clientesOrganicos" darkMode={darkMode} title="Clientes Orgánicos" value={newClientsOrganic} subtitle="Sin inversión en ads" change={null} sparkline={sparklines?.organicClients} sparklineLabels={L} sparklineFormatter={fClientes} />,
           clientesPorAds:    <PremiumMetricCard key="clientesPorAds" darkMode={darkMode} title="Clientes por Ads" value={newClientsAds} subtitle="Captados por publicidad" change={null} sparkline={sparklines?.adsClients} sparklineLabels={L} sparklineFormatter={fClientes} />,
@@ -8829,18 +9071,23 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             <h3 className="font-bold text-base flex-shrink-0">Libro de Ventas</h3>
                             <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
                               Mostrando {Math.min(visibleGroupedSales.length, groupedSales.length)} de {groupedSales.length} registros
+                              {!salesSearchHistorico && <span className="ml-1">(últimos ~2 meses — tildá "Todo el historial" para buscar más atrás)</span>}
                             </span>
                         </div>
                         <div className="flex gap-2 w-full sm:w-auto">
                             <div className="flex-1 sm:w-64">
-                                <Input 
-                                  darkMode={darkMode} 
-                                  type="search" 
-                                  placeholder="Buscar producto, sabor, precio, vendedor, origen..." 
+                                <Input
+                                  darkMode={darkMode}
+                                  type="search"
+                                  placeholder="Buscar producto, sabor, precio, vendedor, origen..."
                                   value={salesSearch}
                                   onChange={(e) => setSalesSearch(e.target.value)}
                                 />
                             </div>
+                            <label className={`flex items-center gap-1.5 px-2 rounded-lg text-[11px] font-bold flex-shrink-0 cursor-pointer select-none ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`} title="Trae también las ventas de hace más de ~2 meses (puede tardar un instante la primera vez)">
+                                <input type="checkbox" checked={salesSearchHistorico} onChange={(e) => setSalesSearchHistorico(e.target.checked)} />
+                                Todo el historial
+                            </label>
                             <Button darkMode={darkMode} onClick={handleExportSales} variant="outline" className="h-10 px-3 flex-shrink-0" title="Exportar CSV"><Download size={16}/></Button>
                         </div>
                     </div>
@@ -10942,12 +11189,16 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                   return (
                     <div className="space-y-6 animate-in fade-in duration-300">
 
-                      <div className="flex items-center justify-end">
-                        <button onClick={handleSincronizarBilleteras}
-                          className={`flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-[11px] font-bold border transition-all whitespace-nowrap ${darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300 hover:border-white/20' : 'border-zinc-200 text-zinc-400 hover:text-zinc-700'}`}>
-                          <RefreshCw size={11}/> Sincronizar con ventas
-                        </button>
-                      </div>
+                      {/* Acá vivía el botón "Sincronizar con ventas". Se sacó a propósito: pisaba
+                          los saldos con la suma de las ventas históricas de Alias 1 y 3 solamente
+                          (mandando Alias 3 a Lemon en vez de a Mercado Pago), dejaba Efectivo en
+                          cero, no restaba ningún gasto y no guardaba el saldo anterior en ningún
+                          lado, así que no había forma de deshacerlo. Ya no hace falta: las ventas
+                          acreditan la billetera solas por los cuatro caminos por los que entran
+                          (Ventas, /pedidos, el chatbot de WhatsApp y el asistente de IA), así que
+                          el saldo se mantiene al día sin tener que recalcular nada a mano. Si
+                          alguna vez hay que corregir un saldo, se edita la billetera — eso sí deja
+                          registrado un movimiento de "ajuste" con el valor anterior. */}
 
                       {/* Total en caja */}
                       <div className={`rounded-2xl border p-4 md:p-5 flex items-center justify-between ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}

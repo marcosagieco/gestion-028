@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { initializeFirestore, getFirestore, collection, query, orderBy, onSnapshot, addDoc, updateDoc, deleteDoc, doc, runTransaction } from 'firebase/firestore';
+import { initializeFirestore, getFirestore, collection, query, orderBy, onSnapshot, addDoc, updateDoc, deleteDoc, doc, runTransaction, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 import {
   ClipboardList, Plus, Clock, AlertTriangle, XCircle, CheckCircle, ChevronRight,
-  ChevronDown, History, Save, Moon, Sun, LogOut, PartyPopper, Search, Trash2,
-  Bike, Car, MapPin, PackageCheck, Store, Archive
+  ChevronDown, History, Save, Moon, Sun, PartyPopper, Search, Trash2,
+  Bike, Car, MapPin, PackageCheck, Store, Archive, Pencil
 } from 'lucide-react';
 import AddressAutocomplete from './reparto/AddressAutocomplete';
 import { ZONAS } from './reparto/zonas';
@@ -25,7 +25,17 @@ const firebaseConfig = {
 const fbApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
 let db;
 try {
-  db = initializeFirestore(fbApp, { experimentalForceLongPolling: true });
+  // Caché persistente (IndexedDB), mismo criterio que el dashboard principal (App.jsx) y las
+  // pantallas de reparto — sin esto, /pedidos queda en blanco apenas se corta la señal, justo la
+  // pantalla que usa depósito todo el día desde el celular. Con la caché, el último estado
+  // conocido de los pedidos queda disponible al instante sin internet, y las escrituras (marcar
+  // armado, finalizar un pedido) quedan en cola y se mandan solas apenas vuelve la conexión.
+  // persistentMultipleTabManager permite que esta pestaña y otra del sistema compartan la caché
+  // sin pisarse si están abiertas a la vez en el mismo navegador.
+  db = initializeFirestore(fbApp, {
+    experimentalForceLongPolling: true,
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+  });
 } catch {
   db = getFirestore(fbApp);
 }
@@ -365,6 +375,181 @@ function FacturaModal({ dm, prompt, step, resultado, onNo, onSiPrimero, onVolver
   );
 }
 
+// Mensaje del pedido con edición inline — llega tal cual como lo mandaron por WhatsApp, así que a
+// veces hace falta corregir un dato a mano (dirección mal escrita, precio, lo que sea) sin tener
+// que cancelar el pedido y pedirlo de nuevo. Lápiz para entrar en modo edición; "Confirmar" no
+// guarda directo, primero pide confirmación con el mismo mini cartel que se usa para el resto de
+// las acciones de la página, para no pisar el mensaje original por un toque de más.
+function EditableMensaje({ pedido, dm, textClassName }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(pedido.mensaje || '');
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const startEdit = () => { setDraft(pedido.mensaje || ''); setError(''); setEditing(true); };
+  const cancelEdit = () => { setEditing(false); setDraft(pedido.mensaje || ''); setError(''); };
+
+  const handleGuardar = async () => {
+    setShowConfirm(false);
+    const nuevo = draft.trim();
+    if (!nuevo || nuevo === pedido.mensaje) { setEditing(false); return; }
+    setSaving(true);
+    try {
+      await updateDoc(doc(db, 'pedidos', pedido.id), { mensaje: nuevo });
+      setEditing(false);
+    } catch (e) {
+      setError('Error al guardar: ' + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <div className="flex items-start gap-1.5">
+        <p className={`flex-1 ${textClassName}`}>{pedido.mensaje}</p>
+        <button onClick={startEdit} title="Editar mensaje"
+          className={`p-1.5 -m-1 rounded-lg flex-shrink-0 transition-colors active:scale-90 ${dm ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.08]' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}>
+          <Pencil size={16}/>
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={4} autoFocus disabled={saving}
+        className={`w-full rounded-xl border p-3 text-sm font-medium resize-none outline-none transition-all focus:ring-2 focus:ring-indigo-500/30 ${dm ? 'bg-[#1a1a1a] border-white/[0.08] text-zinc-100' : 'bg-white border-zinc-200 text-zinc-900'}`} />
+      {error && <p className="text-xs font-semibold text-red-400">{error}</p>}
+      <div className="flex gap-2">
+        <button onClick={() => setShowConfirm(true)} disabled={saving || !draft.trim()}
+          className="flex-1 h-10 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.97] bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50">
+          Confirmar
+        </button>
+        <button onClick={cancelEdit} disabled={saving}
+          className={`flex-1 h-10 rounded-xl font-bold text-sm border transition-all active:scale-[0.97] disabled:opacity-50 ${dm ? 'border-white/[0.1] text-zinc-400 hover:bg-white/[0.06]' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50'}`}>
+          Cancelar
+        </button>
+      </div>
+      {showConfirm && (
+        <ConfirmMiniModal dm={dm} text="¿Confirmás guardar los cambios en el mensaje de este pedido?"
+          confirmLabel="Sí, guardar cambios" onConfirm={handleGuardar} onCancel={() => setShowConfirm(false)} />
+      )}
+    </div>
+  );
+}
+
+// Dirección de un pedido de moto con edición inline — hoy se carga una sola vez al pasar a
+// "armado" y de ahí no había forma de tocarla desde /pedidos: si el cliente pasa el piso o el
+// timbre después de armado, o quedó mal escrita, no quedaba otra que cancelar el pedido y pedirlo
+// de nuevo. Mismo patrón que EditableMensaje (lápiz → edición → confirmar con mini cartel), pero
+// reutilizando los mismos tres campos que ya carga MotoPendienteCard la primera vez: dirección con
+// autocompletado de Google (nunca a mano), referencias y zona.
+function EditableDireccion({ pedido, dm }) {
+  const [editing, setEditing] = useState(false);
+  const [direccionTexto, setDireccionTexto] = useState(pedido.direccion?.texto || '');
+  const [direccionData, setDireccionData] = useState(null); // solo se llena si se elige una nueva de Google
+  const [referencias, setReferencias] = useState(pedido.direccion?.referencias || '');
+  const [zona, setZona] = useState(pedido.direccion?.zona || '');
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const startEdit = () => {
+    setDireccionTexto(pedido.direccion?.texto || '');
+    setDireccionData(null);
+    setReferencias(pedido.direccion?.referencias || '');
+    setZona(pedido.direccion?.zona || '');
+    setError('');
+    setEditing(true);
+  };
+  const cancelEdit = () => { setEditing(false); setError(''); };
+
+  // Si no se tocó el campo de dirección (direccionData sigue null), se guardan las coordenadas
+  // que ya tenía el pedido — así se puede corregir solo referencias/zona sin obligar a re-tipear
+  // la dirección entera. Si sí se eligió una dirección nueva de la lista de Google, esa manda.
+  const handleGuardar = async () => {
+    setShowConfirm(false);
+    setSaving(true);
+    try {
+      const nuevaDireccion = direccionData
+        ? { ...direccionData, referencias: referencias.trim() || null, zona: zona || null }
+        : { ...pedido.direccion, texto: direccionTexto, referencias: referencias.trim() || null, zona: zona || null };
+      await updateDoc(doc(db, 'pedidos', pedido.id), { direccion: nuevaDireccion });
+      setEditing(false);
+    } catch (e) {
+      setError('Error al guardar: ' + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!pedido.direccion) return null;
+
+  if (!editing) {
+    return (
+      <div className={`rounded-xl border p-3 flex items-start gap-2.5 ${dm ? 'bg-white/[0.03] border-white/[0.07]' : 'bg-zinc-50 border-zinc-200'}`}>
+        <MapPin size={15} className={`flex-shrink-0 mt-0.5 ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}/>
+        <div className="flex-1 min-w-0">
+          <p className={`text-sm font-semibold ${dm ? 'text-zinc-200' : 'text-zinc-800'}`}>{pedido.direccion.texto}</p>
+          {pedido.direccion.referencias && <p className={`text-xs mt-0.5 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>{pedido.direccion.referencias}</p>}
+        </div>
+        <button onClick={startEdit} title="Editar dirección"
+          className={`p-1.5 -m-1 rounded-lg flex-shrink-0 transition-colors active:scale-90 ${dm ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.08]' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}>
+          <Pencil size={15}/>
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1.5">
+        <label className={`text-xs font-semibold flex items-center gap-1.5 ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}><MapPin size={13}/> Dirección</label>
+        <AddressAutocomplete dm={dm} value={direccionTexto}
+          onChange={text => { setDireccionTexto(text); setDireccionData(null); }}
+          onSelect={data => {
+            setDireccionTexto(data.texto);
+            setDireccionData(data);
+            if (data.zonaSugerida) setZona(data.zonaSugerida);
+          }} />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <label className={`text-xs font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>Referencias (opcional)</label>
+        <input value={referencias} onChange={e => setReferencias(e.target.value)} placeholder="Piso, depto, timbre, portón negro..."
+          className={`h-11 border rounded-xl px-3 w-full text-sm outline-none transition-all ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100 placeholder-zinc-600 focus:ring-1 focus:ring-[#6366f1]/10' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-1 focus:ring-blue-100'}`} />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <label className={`text-xs font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>Zona</label>
+        <div className="relative">
+          <select value={zona} onChange={e => setZona(e.target.value)}
+            className={`h-11 appearance-none w-full border rounded-xl px-3 pr-9 text-sm outline-none cursor-pointer transition-all ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100 focus:border-[#6366f1]/50 focus:ring-1 focus:ring-[#6366f1]/10' : 'bg-white border-zinc-200 text-zinc-900 focus:border-blue-400 focus:ring-1 focus:ring-blue-100'}`}>
+            <option value="">-- Sin zona --</option>
+            {ZONAS.map(z => <option key={z.id} value={z.id}>{z.nombre}</option>)}
+          </select>
+          <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none"><ChevronDown size={14} className={dm ? 'text-zinc-500' : 'text-zinc-400'} /></div>
+        </div>
+      </div>
+      {error && <p className="text-xs font-semibold text-red-400">{error}</p>}
+      <div className="flex gap-2">
+        <button onClick={() => setShowConfirm(true)} disabled={saving || !direccionTexto.trim()}
+          className="flex-1 h-10 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.97] bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50">
+          Confirmar
+        </button>
+        <button onClick={cancelEdit} disabled={saving}
+          className={`flex-1 h-10 rounded-xl font-bold text-sm border transition-all active:scale-[0.97] disabled:opacity-50 ${dm ? 'border-white/[0.1] text-zinc-400 hover:bg-white/[0.06]' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50'}`}>
+          Cancelar
+        </button>
+      </div>
+      {showConfirm && (
+        <ConfirmMiniModal dm={dm} text="¿Confirmás guardar los cambios en la dirección de este pedido?"
+          confirmLabel="Sí, guardar cambios" onConfirm={handleGuardar} onCancel={() => setShowConfirm(false)} />
+      )}
+    </div>
+  );
+}
+
 // Tarjeta grande y centrada con el pedido que toca resolver AHORA (el más viejo de la cola,
 // salvo que el usuario haya tocado otro en la fila de abajo). Es el corazón de la pantalla:
 // un solo pedido a la vez, bien grande, con un botón enorme para no errarle.
@@ -416,9 +601,12 @@ function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, on
         </div>
       </div>
 
-      <p className={`text-xl leading-snug whitespace-pre-wrap font-bold ${dm ? 'text-zinc-50' : 'text-zinc-900'}`}>
-        {pedido.mensaje}
-      </p>
+      <EditableMensaje pedido={pedido} dm={dm}
+        textClassName={`text-xl leading-snug whitespace-pre-wrap font-bold ${dm ? 'text-zinc-50' : 'text-zinc-900'}`} />
+
+      {/* Solo pedidos de moto ya armados tienen dirección cargada (Uber/Retiro no la piden) —
+          EditableDireccion mismo se devuelve null si pedido.direccion no existe. */}
+      <EditableDireccion pedido={pedido} dm={dm} />
 
       <div className="flex flex-col gap-2 mt-1">
         <button onClick={() => requireConfirm ? setShowConfirm(true) : onAction()}
@@ -503,7 +691,8 @@ function MotoPendienteCard({ pedido, dm, onListo, onCancel }) {
         </div>
       </div>
 
-      <p className={`text-lg leading-snug whitespace-pre-wrap font-bold ${dm ? 'text-zinc-50' : 'text-zinc-900'}`}>{pedido.mensaje}</p>
+      <EditableMensaje pedido={pedido} dm={dm}
+        textClassName={`text-lg leading-snug whitespace-pre-wrap font-bold ${dm ? 'text-zinc-50' : 'text-zinc-900'}`} />
 
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-1.5">
@@ -774,7 +963,6 @@ function FinalizadoGrupo({ titulo, icon: Icon, list, dm, expandedId, onToggleExp
 
 export default function PedidosPage() {
   const [dm, setDm] = useState(() => localStorage.getItem('028_dark_mode') === 'true');
-  const [auth, setAuth] = useState(() => !!localStorage.getItem(AUTH_KEY));
   const [pedidos, setPedidos] = useState([]);
   const [batches, setBatches] = useState([]); // stock real, solo lectura acá (se descuenta al finalizar)
   const [section, setSection] = useState('pendiente'); // 'pendiente' | 'armado' | 'finalizado'
@@ -908,13 +1096,27 @@ export default function PedidosPage() {
   const finalizados = useMemo(() =>
     pedidos.filter(p => p.estado === 'finalizado').sort((a, b) => safeDateTime(b.finalizadoAt || b.createdAt) - safeDateTime(a.finalizadoAt || a.createdAt)),
     [pedidos]);
+  // Buscador de Finalizado: con cien pedidos cerrados encontrar uno puntual era solo scrollear —
+  // filtra por el texto del mensaje original y, si tiene venta cargada, también por vendedor,
+  // producto y medio de pago, para poder buscar "delfina" o "elfbar ice" y no solo lo que el
+  // cliente escribió por WhatsApp.
+  const [finalizadoSearch, setFinalizadoSearch] = useState('');
+  const finalizadosFiltrados = useMemo(() => {
+    const q = finalizadoSearch.trim().toLowerCase();
+    if (!q) return finalizados;
+    return finalizados.filter(p => {
+      const productos = (p.venta?.items || []).map(it => it.producto).join(' ');
+      const haystack = [p.mensaje, p.venta?.vendedor, p.venta?.medioPago, productos].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [finalizados, finalizadoSearch]);
   // Mismo criterio que pendientesMoto/Uber/Retiro: separados por tipo de envío, para que Finalizado
   // se pueda mirar por canal igual que Pendiente. "Sin tipo" son pedidos viejos de antes de que
   // existiera tipoEnvio — se muestra solo si hay alguno, no es un canal real.
-  const finalizadosMoto = useMemo(() => finalizados.filter(p => p.tipoEnvio === 'moto'), [finalizados]);
-  const finalizadosUber = useMemo(() => finalizados.filter(p => p.tipoEnvio === 'uber'), [finalizados]);
-  const finalizadosRetiro = useMemo(() => finalizados.filter(p => p.tipoEnvio === 'retiro'), [finalizados]);
-  const finalizadosSinTipo = useMemo(() => finalizados.filter(p => p.tipoEnvio == null), [finalizados]);
+  const finalizadosMoto = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'moto'), [finalizadosFiltrados]);
+  const finalizadosUber = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'uber'), [finalizadosFiltrados]);
+  const finalizadosRetiro = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'retiro'), [finalizadosFiltrados]);
+  const finalizadosSinTipo = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio == null), [finalizadosFiltrados]);
   const cancelados = useMemo(() =>
     pedidos.filter(p => p.estado === 'cancelado').sort((a, b) => safeDateTime(b.canceladoAt || b.createdAt) - safeDateTime(a.canceladoAt || a.createdAt)),
     [pedidos]);
@@ -1116,72 +1318,109 @@ export default function PedidosPage() {
       const pagosLimpios = finalizarPagos.map(p => ({ medioPago: p.medioPago, monto: finalizarPagosDivididos ? (parseFloat(p.monto) || 0) : finalizarTotalConEnvio }));
       const medioPagoUnico = pagosLimpios.length === 1 ? pagosLimpios[0].medioPago : 'mixto';
 
-      let totalSaleRawGeneral = 0;
-      const ventaItems = [];
-      const batchesLocal = {}; // batchId -> copia de trabajo de items, para acumular descuentos
+      // Las ventas y el descuento de stock van en UNA transacción: o se guarda todo, o no se
+      // guarda nada. Antes se escribía de a una y un corte de internet a mitad de camino dejaba
+      // ventas cargadas con el pedido sin cerrar (y volver a finalizarlo las duplicaba). Además el
+      // stock se lee acá adentro, fresco del servidor, no del listado que tiene la pantalla: si el
+      // chatbot o la pestaña Ventas se llevaron la última unidad mientras se completaba el
+      // formulario, la transacción lo detecta y no deja pasar la venta.
+      const { ventaItems, totalSaleRawGeneral } = await runTransaction(db, async (t) => {
+        // --- 1) LECTURAS (Firestore exige que todas vayan antes de cualquier escritura) ---
+        const batchIds = [...new Set(finalizarItems.map(it => it.selectedProductItem.batchId))];
+        const batchDocs = {};
+        for (const bId of batchIds) {
+          const snap = await t.get(doc(db, 'batches', bId));
+          if (!snap.exists()) {
+            const err = new Error('El lote de uno de los productos ya no existe. Recargá la página.');
+            err.esValidacion = true;
+            throw err;
+          }
+          batchDocs[bId] = (snap.data().items || []).map(x => ({ ...x }));
+        }
 
-      for (const it of finalizarItems) {
-        const qty = parseInt(it.unidades) || 0;
-        const unitPrice = parseFloat(it.precio) || 0;
-        const totalSaleRaw = unitPrice * qty;
-        totalSaleRawGeneral += totalSaleRaw;
-
-        // 1) Venta real de esta línea
-        const saleRef = await addDoc(collection(db, 'sales'), {
-          batchId: it.selectedProductItem.batchId,
-          batchName: it.selectedProductItem.batchName,
-          itemId: it.selectedProductItem.itemId,
-          productName: it.selectedProductItem.product,
-          variant: it.selectedProductItem.variant,
-          quantity: qty,
-          unitPrice,
-          totalSaleRaw,
-          costArsAtSale: it.selectedProductItem.costArs || 0,
-          shippingCostArs,
-          clientShippingCharge,
-          shippingProfit,
-          medioPago: medioPagoUnico,
-          source: 'Pedidos',
-          operationType: isReseller ? 'MAYORISTA' : 'VENTA',
-          isReseller,
-          isNewClient: finalizarForm.tipoCliente,
-          clientName: '',
-          ticketId,
-          isFalla: false,
-          failedValue: 0,
-          isRobo: false,
-          stolenValue: 0,
-          seller: finalizarForm.vendedor,
-          createdAt: nowIso,
-          date: dateStr,
+        // --- 2) VALIDACIÓN contra lo recién leído, no contra el listado de la pantalla ---
+        const necesita = {};
+        finalizarItems.forEach(it => {
+          const id = it.selectedProductItem.itemId;
+          necesita[id] = (necesita[id] || 0) + (parseInt(it.unidades) || 0);
         });
-
-        // 2) Descuento de stock, acumulado en la copia local del lote (todavía no se escribe)
-        const batchId = it.selectedProductItem.batchId;
-        if (!batchesLocal[batchId]) {
-          const batchActual = batches.find(b => b.id === batchId);
-          batchesLocal[batchId] = batchActual ? [...(batchActual.items || [])] : null;
+        for (const it of finalizarItems) {
+          const { batchId, itemId } = it.selectedProductItem;
+          const item = batchDocs[batchId].find(x => x.id === itemId);
+          if (!item) {
+            const err = new Error('Uno de los productos ya no está en su lote. Recargá la página y volvé a cargarlo.');
+            err.esValidacion = true;
+            throw err;
+          }
+          const need = necesita[itemId] || 0;
+          if ((item.currentStock || 0) < need) {
+            const err = new Error(`Stock insuficiente de ${item.product}. Quedan ${item.currentStock || 0} y pediste ${need}.`);
+            err.esValidacion = true;
+            throw err;
+          }
         }
-        if (batchesLocal[batchId]) {
-          batchesLocal[batchId] = batchesLocal[batchId].map(x =>
-            x.id === it.selectedProductItem.itemId ? { ...x, currentStock: Math.max(0, (x.currentStock || 0) - qty) } : x
-          );
+
+        // --- 3) ESCRITURAS ---
+        let totalGeneral = 0;
+        const items = [];
+        for (const it of finalizarItems) {
+          const qty = parseInt(it.unidades) || 0;
+          const unitPrice = parseFloat(it.precio) || 0;
+          const totalSaleRaw = unitPrice * qty;
+          totalGeneral += totalSaleRaw;
+
+          // doc(collection(...)) sin id reserva una referencia nueva sin escribir nada — es la
+          // forma de hacer un "addDoc" adentro de una transacción, que solo acepta referencias.
+          // Como se crea acá adentro, un reintento genera ids nuevos y no deja ventas huérfanas.
+          const saleRef = doc(collection(db, 'sales'));
+          t.set(saleRef, {
+            batchId: it.selectedProductItem.batchId,
+            batchName: it.selectedProductItem.batchName,
+            itemId: it.selectedProductItem.itemId,
+            productName: it.selectedProductItem.product,
+            variant: it.selectedProductItem.variant,
+            quantity: qty,
+            unitPrice,
+            totalSaleRaw,
+            costArsAtSale: it.selectedProductItem.costArs || 0,
+            shippingCostArs,
+            clientShippingCharge,
+            shippingProfit,
+            medioPago: medioPagoUnico,
+            source: 'Pedidos',
+            operationType: isReseller ? 'MAYORISTA' : 'VENTA',
+            isReseller,
+            isNewClient: finalizarForm.tipoCliente,
+            clientName: '',
+            ticketId,
+            isFalla: false,
+            failedValue: 0,
+            isRobo: false,
+            stolenValue: 0,
+            seller: finalizarForm.vendedor,
+            createdAt: nowIso,
+            date: dateStr,
+          });
+
+          const item = batchDocs[it.selectedProductItem.batchId].find(x => x.id === it.selectedProductItem.itemId);
+          item.currentStock = Math.max(0, (item.currentStock || 0) - qty);
+
+          items.push({ producto: it.selectedProductItem.label, unidades: qty, precio: unitPrice, saleId: saleRef.id });
         }
 
-        ventaItems.push({ producto: it.selectedProductItem.label, unidades: qty, precio: unitPrice, saleId: saleRef.id });
-      }
+        for (const bId of batchIds) {
+          t.update(doc(db, 'batches', bId), { items: batchDocs[bId] });
+        }
 
-      // Recién acá se escribe cada lote tocado, una sola vez, con todos sus descuentos ya aplicados.
-      for (const [batchId, items] of Object.entries(batchesLocal)) {
-        if (items) await updateDoc(doc(db, 'batches', batchId), { items });
-      }
+        return { ventaItems: items, totalSaleRawGeneral: totalGeneral };
+      });
 
       // 3) Billeteras (solo alias1-4) — una acreditación por cada medio de pago cargado, cada una
       // con SU monto: si se dividió el pago entre dos alias, cada billetera recibe solo lo que le
       // corresponde. Cuenta Recaudadora (alias4) es la única a la que nunca se le resta nada: entra
       // la plata tal cual se cobró por ese medio, envío incluido (no solo la ganancia neta del envío
       // como en las demás). El envío se reparte a prorrata entre los medios de pago según su monto.
-      const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', alias4: 'CUENTA_RECAUDADORA' };
+      const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', alias4: 'CUENTA_RECAUDADORA', efectivo: 'EFECTIVO' };
       const totalGrand = totalSaleRawGeneral + clientShippingCharge;
       for (const pago of pagosLimpios) {
         const wName = aliasWalletMap[pago.medioPago];
@@ -1190,7 +1429,13 @@ export default function PedidosPage() {
         const shippingChargeShare = clientShippingCharge * fraction;
         const shippingProfitShare = shippingProfit * fraction;
         const productShare = pago.monto - shippingChargeShare;
-        const wAmount = pago.medioPago === 'alias4' ? pago.monto : (productShare + Math.max(0, shippingProfitShare));
+        // Efectivo entra SOLO por el producto: cuando una venta en efectivo lleva envío, esa plata
+        // va entera a la motomensajería que reparte, no queda un peso para el negocio, así que no
+        // tiene por qué sumar a la caja. Alias 4 entra completo (envío incluido) y el resto de los
+        // alias entran con la ganancia neta del envío — ver comentario de arriba.
+        const wAmount = pago.medioPago === 'alias4' ? pago.monto
+          : pago.medioPago === 'efectivo' ? productShare
+          : (productShare + Math.max(0, shippingProfitShare));
         const walletsRef = doc(db, 'settings', 'wallets');
         await runTransaction(db, async (t) => {
           const wSnap = await t.get(walletsRef);
@@ -1238,7 +1483,10 @@ export default function PedidosPage() {
         showToast('Pedido finalizado y venta registrada');
       }
     } catch (e) {
-      showToast('Error al finalizar: ' + e.message, 'error');
+      // Si falló la validación de stock de la transacción, el mensaje ya está escrito para el
+      // usuario. En ese caso no se guardó nada: el pedido sigue abierto y el formulario queda como
+      // estaba, así que se puede corregir la cantidad y volver a finalizar sin duplicar ventas.
+      showToast(e?.esValidacion ? e.message : 'Error al finalizar: ' + e.message, 'error');
     } finally {
       setSavingFinalizar(false);
     }
@@ -1340,9 +1588,6 @@ export default function PedidosPage() {
             </button>
             <button onClick={() => setDm(v => !v)} className={`p-2.5 rounded-lg transition-colors ${dm ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.06]' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}>
               {dm ? <Sun size={17}/> : <Moon size={17}/>}
-            </button>
-            <button onClick={() => { localStorage.removeItem(AUTH_KEY); setAuth(false); }} className={`p-2.5 rounded-lg transition-colors ${dm ? 'text-zinc-600 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-500 hover:bg-red-50'}`} title="Salir">
-              <LogOut size={17}/>
             </button>
           </div>
         </div>
@@ -1468,6 +1713,18 @@ export default function PedidosPage() {
             ? <EmptyState dm={dm} icon={ClipboardList} text="Todavía no finalizaste ningún pedido." />
             : (
               <>
+                <div className="relative mb-1">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                    <Search size={16} className={dm ? 'text-zinc-500' : 'text-zinc-400'} />
+                  </div>
+                  <input value={finalizadoSearch} onChange={e => setFinalizadoSearch(e.target.value)}
+                    placeholder="Buscar por mensaje, vendedor, producto o medio de pago..."
+                    className={`h-11 border rounded-xl pl-9 pr-3.5 w-full text-sm outline-none transition-all ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100 placeholder-zinc-600 focus:ring-1 focus:ring-[#6366f1]/10' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-1 focus:ring-blue-100'}`} />
+                </div>
+                {finalizadoSearch.trim() && finalizadosFiltrados.length === 0 ? (
+                  <EmptyState dm={dm} icon={Search} text="Ningún pedido finalizado coincide con la búsqueda." />
+                ) : (
+                <>
                 <div className="space-y-6 lg:hidden">
                   <FinalizadoGrupo titulo="Moto" icon={Bike} list={finalizadosMoto} dm={dm}
                     expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
@@ -1485,6 +1742,8 @@ export default function PedidosPage() {
                   <FinalizadoGrupo titulo="Retiro" icon={Store} list={finalizadosRetiro} dm={dm}
                     expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
                 </div>
+                </>
+                )}
 
                 {/* Pedidos de antes de que existiera tipoEnvio — no es un canal real, solo aparece
                     si quedó alguno viejo colgado, para no perderlo. */}

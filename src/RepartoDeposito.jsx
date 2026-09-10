@@ -2,12 +2,13 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   initializeFirestore, getFirestore, collection, query, orderBy, onSnapshot,
-  doc, getDoc, setDoc, updateDoc, writeBatch,
+  doc, getDoc, setDoc, updateDoc, writeBatch, runTransaction,
+  persistentLocalCache, persistentMultipleTabManager,
 } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
 import {
-  Bike, ArrowLeft, Moon, Sun, LogOut, ChevronDown, ChevronRight, GripVertical,
-  MapPin, Lock, CheckCircle, XCircle, Loader2, PartyPopper, Clock, Trash2,
+  Bike, ArrowLeft, Moon, Sun, ChevronDown, ChevronRight, GripVertical,
+  MapPin, Lock, CheckCircle, XCircle, Loader2, PartyPopper, Clock, Trash2, AlertTriangle,
 } from 'lucide-react';
 import {
   DndContext, PointerSensor, TouchSensor, useSensor, useSensors, closestCenter,
@@ -29,8 +30,18 @@ const firebaseConfig = {
 };
 const fbApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
 let db;
-try { db = initializeFirestore(fbApp, { experimentalForceLongPolling: true }); }
-catch { db = getFirestore(fbApp); }
+try {
+  // Caché persistente (IndexedDB), mismo criterio que el dashboard principal (App.jsx) y que
+  // RepartoMoto.jsx — sin esto, el panel del depósito queda en blanco apenas se corta la señal.
+  // Con la caché, el último recorrido conocido queda disponible al instante sin internet, y las
+  // escrituras (reordenar una parada, borrar un pedido del reparto) quedan en cola y se mandan
+  // solas apenas vuelve la conexión. persistentMultipleTabManager permite que esta pantalla y
+  // otra pestaña del sistema compartan la caché sin pisarse si están abiertas a la vez.
+  db = initializeFirestore(fbApp, {
+    experimentalForceLongPolling: true,
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+  });
+} catch { db = getFirestore(fbApp); }
 if (!db) db = getFirestore(fbApp);
 
 const AUTH_KEY = '028_user';
@@ -43,6 +54,39 @@ const STOP_MARKER_BASE_SCALE = 15;
 const STOP_MARKER_HOVER_SCALE = 22;
 const STOP_MARKER_BASE_FONT = 12;
 const STOP_MARKER_HOVER_FONT = 16;
+
+// Traba compartida para que, si este panel está abierto a la vez en la compu del depósito y en un
+// celular, solo UNO de los dos llame a Routes API (que se factura por llamada) y escriba el orden
+// cuando entra un pedido nuevo o se abre el panel — sin esto, las dos pantallas recalculaban a la
+// vez, duplicando la llamada, y quedaba guardado el orden de la que terminara última, sin ningún
+// criterio. Es un documento en Firestore (recorridos/lockRecalculo) con una expiración corta: cada
+// panel intenta "tomarlo" con una transacción (atómica — dos transacciones a la vez, una gana), y
+// solo el que lo consigue sigue adelante. Si la pestaña que lo tomó se cuelga o pierde señal a
+// mitad de camino, el lock vence solo a los 20s y no deja el recálculo trabado para siempre.
+const RECALC_LOCK_TIMEOUT_MS = 20000;
+
+async function tomarLockRecalculo() {
+  try {
+    return await runTransaction(db, async (t) => {
+      const lockRef = doc(db, 'recorridos', 'lockRecalculo');
+      const snap = await t.get(lockRef);
+      const vigenteHasta = snap.exists() ? (snap.data().vigenteHasta || 0) : 0;
+      if (vigenteHasta > Date.now()) return false; // otro panel ya lo tiene y todavía no venció
+      t.set(lockRef, { vigenteHasta: Date.now() + RECALC_LOCK_TIMEOUT_MS });
+      return true;
+    });
+  } catch {
+    // Si la transacción falla (ej. sin señal), no bloqueamos el cálculo local — preferible el
+    // riesgo de duplicar una llamada a Google antes que dejar a Norman sin recorrido calculado.
+    return true;
+  }
+}
+
+// Libera el lock apenas termina, sin esperar a que vença solo — así el próximo recálculo (otro
+// pedido nuevo, el otro panel) no tiene que esperar los 20s completos si este ya terminó antes.
+async function liberarLockRecalculo() {
+  try { await setDoc(doc(db, 'recorridos', 'lockRecalculo'), { vigenteHasta: 0 }, { merge: true }); } catch {}
+}
 
 function animarEscalaMarcador(marker, agrandar) {
   if (!marker) return;
@@ -153,6 +197,15 @@ function StopRow({ dm, pedido, index, locked, expanded, onToggleExpand, onBorrar
                 {zona.nombre.replace(/^Zona \S+ — /, '')}
               </span>
             )}
+            {/* Norman ya intentó esta parada antes y no se pudo — se anota en el pedido desde
+                RepartoMoto (botón "No pude entregar"), esto solo lo muestra acá también para que
+                depósito lo vea sin tener que preguntarle. */}
+            {pedido.intentosFallidos?.length > 0 && (
+              <span title={pedido.intentosFallidos[pedido.intentosFallidos.length - 1].motivo}
+                className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-1 ${dm ? 'bg-amber-500/15 text-amber-400' : 'bg-amber-100 text-amber-700'}`}>
+                <AlertTriangle size={10}/> {pedido.intentosFallidos.length === 1 ? '1 intento fallido' : `${pedido.intentosFallidos.length} intentos fallidos`}
+              </span>
+            )}
           </div>
           <p className={`text-sm font-bold leading-snug ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{pedido.direccion?.texto}</p>
           {pedido.direccion?.referencias && (
@@ -200,6 +253,12 @@ export default function RepartoDeposito() {
   const markersRef = useRef([]);
   const markersByIdRef = useRef({});
   const origenMarkerRef = useRef(null);
+  // El script de Google Maps tarda en cargar; si las paradas ya llegaron de Firestore ANTES de
+  // que el mapa termine de crearse, el efecto que dibuja los puntos corre una vez con
+  // mapRef.current todavía en null, no dibuja nada, y como stopsOrdenadas no cambia por sí solo
+  // (recién cuando entra/sale un pedido), los puntos quedaban sin aparecer hasta que pasara algo
+  // más. mapReady fuerza a que ese efecto se vuelva a correr apenas el mapa esté listo.
+  const [mapReady, setMapReady] = useState(false);
 
   const showToast = (message, type = 'success') => { setToast({ message, type }); setTimeout(() => setToast(null), 3000); };
   useEffect(() => { localStorage.setItem('028_dark_mode', dm); }, [dm]);
@@ -255,6 +314,7 @@ export default function RepartoDeposito() {
         title: 'Depósito',
         zIndex: 1,
       });
+      setMapReady(true);
     }).catch(err => console.error('Google Maps no cargó:', err));
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -305,7 +365,7 @@ export default function RepartoDeposito() {
       animarEscalaMarcador(markersByIdRef.current[hoveredId], true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stopsOrdenadas, paradaCongeladaId]);
+  }, [stopsOrdenadas, paradaCongeladaId, mapReady]);
 
   // Anima el marcador correspondiente cada vez que cambia qué fila está en hover — agranda el
   // nuevo, achica el que se acaba de dejar de hoverear (si el efecto de arriba ya lo recreó, esto
@@ -317,9 +377,14 @@ export default function RepartoDeposito() {
   }, [hoveredId]);
 
   // Recalcula y persiste el orden. Se llama solo al montar (abrir el panel) y cuando aparece un
-  // pedido nuevo en el grupo — nunca en cada render ni por ningún timer.
+  // pedido nuevo en el grupo — nunca en cada render ni por ningún timer. Antes de llamar a Routes
+  // API intenta tomar el lock compartido (ver comentario junto a tomarLockRecalculo): si otro
+  // panel ya está calculando en este mismo momento, esta llamada se corta acá, sin gastar una
+  // llamada a Google — el resultado del que sí calculó llega solo por el onSnapshot de pedidos.
   const recalcularYGuardar = async (lista) => {
     if (lista.length === 0) return;
+    const tieneLock = await tomarLockRecalculo();
+    if (!tieneLock) return;
     setComputing(true);
     try {
       const ordenado = await computeRecorrido({ pedidos: lista, paradaCongeladaId });
@@ -337,6 +402,7 @@ export default function RepartoDeposito() {
       showToast('No se pudo calcular el recorrido: ' + e.message, 'error');
     } finally {
       setComputing(false);
+      await liberarLockRecalculo();
     }
   };
 
@@ -455,7 +521,6 @@ export default function RepartoDeposito() {
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
             <button onClick={() => setDm(v => !v)} className={`p-2.5 rounded-lg transition-colors ${dm ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.06]' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}>{dm ? <Sun size={17}/> : <Moon size={17}/>}</button>
-            <button onClick={() => { localStorage.removeItem(AUTH_KEY); setAuth(false); }} className={`p-2.5 rounded-lg transition-colors ${dm ? 'text-zinc-600 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-500 hover:bg-red-50'}`}><LogOut size={17}/></button>
           </div>
         </div>
       </div>
