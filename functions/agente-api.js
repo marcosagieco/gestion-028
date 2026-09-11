@@ -76,13 +76,20 @@ function similitud(s1, s2) {
 function esParecido(userTxt, bdTxt) {
   if (!userTxt) return true; // sin filtro
   if (bdTxt.includes(userTxt)) return true;
+  // "elf bar" → "elfbar": comparar sin espacios (solo si la query tiene algo de largo).
+  const uJoin = userTxt.replace(/ /g, "");
+  if (uJoin.length >= 4 && bdTxt.replace(/ /g, "").includes(uJoin)) return true;
+
   const pu = userTxt.split(" ").filter(Boolean);
   const pb = bdTxt.split(" ").filter(Boolean);
   if (pu.length === 0) return false;
+  const sinCeros = (s) => s.replace(/^0+/, "") || "0";
   for (const w of pu) {
     let ok = false;
     for (const x of pb) {
-      if (w.length <= 2 ? w === x : similitud(w, x) >= 0.75) {
+      const corto = w.length <= 2;
+      if (corto ? (w === x || (/^\d+$/.test(w) && /^\d+$/.test(x) && sinCeros(w) === sinCeros(x)))
+                : similitud(w, x) >= 0.75) {
         ok = true;
         break;
       }
