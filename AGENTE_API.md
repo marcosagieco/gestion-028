@@ -78,17 +78,23 @@ Lógica (reusar `src/reparto/`):
 2. Zona: `sugerirZonaPorComponentesDireccion(...)` de `zonas.js`.
 3. Km real: `getDrivingDistanceKm(DEPOSITO_ORIGEN, {lat,lng})` de `routesApi.js`.
 4. Monto: `Math.max(km * 1000, 3000)` (`aplicarTarifa` de `motomensajeria.js`).
-5. Cobertura: si no hay zona conocida y el punto cae fuera del área CABA + Corredor Norte →
-   `cubiertoMoto: false` (el agente ofrece Uber o correo).
+5. Cobertura (`cubiertoMoto`): `true` si el barrio matcheó una zona conocida (A–G), **o** si cae
+   a ≤13 km en línea recta del depósito. Nunca `true` a más de 20 km. Fuera → el agente ofrece
+   Uber o correo. (La Boca: caso a confirmar con Lucio — ver `PROYECTO_028.md`.)
+
+Sin `GOOGLE_MAPS_KEY` seteada el endpoint devuelve `{ ok: true, needsManualQuote: true }` y el
+agente cotiza el envío a mano vía `avisar_al_equipo`.
 
 ```json
 {
   "ok": true,
+  "encontrada": true,
   "direccion": { "texto": "Sánchez de Bustamante 1623, CABA", "lat": -34.61, "lng": -58.41, "zona": "E" },
   "zonaNombre": "Zona E — Centro-oeste",
   "km": 4.2,
   "monto": 4200,
-  "cubiertoMoto": true
+  "cubiertoMoto": true,
+  "estimado": true
 }
 ```
 
@@ -113,6 +119,7 @@ Body:
   "valorEnvio": 4200,
   "medioPago": "alias1",
   "comprobante": { "numero": "0001234", "monto": 30200, "nombre": "Uma Bach" },
+  "origen": "publicidad",
   "notas": ""
 }
 ```
@@ -122,14 +129,20 @@ Body:
 - `direccion` completa solo para `moto`. `uber` → `texto` + `zona`/barrio + `referencias`.
   `retiro` → sin dirección.
 - `comprobante` solo si ya lo mandó el cliente.
+- `origen` (opcional): `publicidad` | `organico` — atribución CTWA. Lo pasa n8n desde el
+  `referral` del primer mensaje (todavía no cableado). Se guarda en el pedido y, la **primera vez**
+  que se ve ese teléfono, en `clientes_bot`.
 
 Lógica:
 1. Crea `pedidos` doc — **mismos campos que hoy** (`mensaje`, `estado: 'pendiente'`, `tipoEnvio`,
    `createdAt`) **+ campos estructurados nuevos**: `telefono`, `cliente`, `direccion` (objeto
    completo, así el depósito no lo recarga a mano), `valorEnvio`, `medioPago`, `comprobante`,
-   `origen: 'agente-ia'`. El `mensaje` se arma formateado (productos + total + envío + dirección +
-   **teléfono siempre**), igual que la "cotización" que pidió Lucio.
-2. `clientes_bot/{telefono}`: incrementa `cantidadPedidos`, setea `ultimoPedido`.
+   `origen`, `origen: 'agente-ia'` interno. El `mensaje` se arma con emojis igual que la
+   "cotización" que pidió Lucio: `🛒 PRODUCTOS` / `💰 TOTALES` (Subtotal · Envío · TOTAL A PAGAR) /
+   `📦 ENTREGA` (tipo + dirección + zona + Ref) / `👤 CLIENTE` (**nombre — teléfono siempre**) /
+   `💳 medioPago`.
+2. `clientes_bot/{telefono}` (transacción): incrementa `cantidadPedidos`, setea `ultimoPedido`;
+   `primerContacto` y `origen` solo se escriben si el doc no existía todavía.
 3. `ultimo_pedido_whatsapp/{telefono}`: `{ pedidoId, createdAt }` (para que el "cancelar" por
    WhatsApp que ya existe siga funcionando).
 4. Si `medioPago === 'alias3'` → además registra en el Sheet (pestaña financiera): nº comprobante,

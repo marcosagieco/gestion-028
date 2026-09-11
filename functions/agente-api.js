@@ -144,7 +144,7 @@ function withAuth(handler) {
     if (!AGENT_API_KEY) {
       return res.status(500).json({ ok: false, error: "AGENT_API_KEY no configurada en el servidor" });
     }
-    const key = req.get("X-Agent-Key") || req.query.key;
+    const key = req.get("X-Agent-Key");
     if (key !== AGENT_API_KEY) {
       return res.status(401).json({ ok: false, error: "no autorizado" });
     }
@@ -280,8 +280,10 @@ exports.agentCotizarEnvio = withAuth(async (req, res) => {
 
   const km = haversineKm(DEPOSITO, { lat, lng });
   const monto = aplicarTarifa(km);
-  // Cobertura: dentro de ~18km del depósito y (si tenemos zona) que sea una conocida.
-  const cubiertoMoto = km <= 18;
+  // Cobertura: si el barrio matcheó una zona conocida (A–G) está cubierto; si no matcheó ninguna,
+  // se cubre solo si cae razonablemente cerca (~13 km en línea recta desde el depósito).
+  // Nunca cubierto más allá de 20 km. La Boca es un caso a confirmar con Lucio (ver PROYECTO_028).
+  const cubiertoMoto = km <= 20 && (zona !== null || km <= 13);
 
   return res.json({
     ok: true,
@@ -311,9 +313,10 @@ exports.agentPedido = withAuth(async (req, res) => {
   if (!tipoEnvio) return res.status(400).json({ ok: false, error: "'tipoEnvio' debe ser moto|uber|retiro" });
 
   // Arma el texto del pedido — mismo formato que la "cotización" que pidió Lucio.
+  const $ = (n) => `$${Number(n || 0).toLocaleString("es-AR")}`;
   const lineasItems = b.items.map(
-    (it) => `• ${it.cantidad}x ${it.producto}${it.variante ? " - " + it.variante : ""}` +
-      (it.precioUnitario ? ` ($${Number(it.precioUnitario).toLocaleString("es-AR")} c/u)` : "")
+    (it) => `* ${it.cantidad}x ${it.producto}${it.variante ? " - " + it.variante : ""}` +
+      (it.precioUnitario ? ` (${$(it.precioUnitario)} c/u)` : "")
   );
   const subtotal = b.items.reduce(
     (s, it) => s + (Number(it.precioUnitario) || 0) * (Number(it.cantidad) || 0),
@@ -322,22 +325,29 @@ exports.agentPedido = withAuth(async (req, res) => {
   const valorEnvio = Number(b.valorEnvio) || 0;
   const total = subtotal + valorEnvio;
   const dir = b.direccion || {};
+  const ENVIO_LABEL = { moto: "🛵 Moto mensajería", uber: "⚡ Envío flash (Uber)", retiro: "🏠 Retiro" };
 
   const mensaje = [
-    "PRODUCTOS",
+    "🛒 PRODUCTOS",
     ...lineasItems,
     "",
-    `Subtotal: $${subtotal.toLocaleString("es-AR")}`,
-    valorEnvio ? `Envío: $${valorEnvio.toLocaleString("es-AR")}` : null,
-    `TOTAL: $${total.toLocaleString("es-AR")}`,
+    "💰 TOTALES",
+    `Subtotal: ${$(subtotal)}`,
+    valorEnvio ? `Envío: ${$(valorEnvio)}` : null,
+    `TOTAL A PAGAR: ${$(total)}`,
     "",
-    `Entrega: ${tipoEnvio.toUpperCase()}`,
-    dir.texto ? `Dirección: ${dir.texto}` : null,
-    dir.referencias ? `Referencia: ${dir.referencias}` : null,
+    "📦 ENTREGA",
+    ENVIO_LABEL[tipoEnvio],
+    dir.texto ? dir.texto : null,
+    dir.zona ? `Zona ${dir.zona}` : null,
+    dir.referencias ? `Ref: ${dir.referencias}` : null,
     "",
-    `Cliente: ${b.cliente || "-"} — ${tel}`,
-    b.medioPago ? `Pago: ${b.medioPago}` : null,
-    b.notas ? `Nota: ${b.notas}` : null,
+    "👤 CLIENTE",
+    `${b.cliente || "-"} — ${tel}`,
+    "",
+    b.medioPago ? `💳 ${b.medioPago}` : null,
+    b.comprobante && b.comprobante.numero ? `Comprobante: ${b.comprobante.numero}` : null,
+    b.notas ? `📝 ${b.notas}` : null,
   ]
     .filter((l) => l !== null)
     .join("\n");
@@ -364,21 +374,27 @@ exports.agentPedido = withAuth(async (req, res) => {
     valorEnvio,
     medioPago: b.medioPago || null,
     comprobante: b.comprobante || null,
+    origen: b.origen || null,   // publicidad / organico / null — atribución CTWA
     items: b.items,
   });
 
-  // 2) clientes_bot — registra/incrementa.
-  await db
-    .collection("clientes_bot")
-    .doc(tel)
-    .set(
-      {
-        cantidadPedidos: admin.firestore.FieldValue.increment(1),
-        ultimoPedido: new Date().toISOString(),
-        primerContacto: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
+  // 2) clientes_bot — registra/incrementa. primerContacto y origen solo se setean la 1ª vez.
+  const clienteRef = db.collection("clientes_bot").doc(tel);
+  const nowISO = new Date().toISOString();
+  await db.runTransaction(async (t) => {
+    const snap = await t.get(clienteRef);
+    const patch = {
+      cantidadPedidos: admin.firestore.FieldValue.increment(1),
+      ultimoPedido: nowISO,
+    };
+    if (!snap.exists) {
+      patch.primerContacto = nowISO;
+      if (b.origen) patch.origen = b.origen;
+    } else if (b.origen && !snap.data().origen) {
+      patch.origen = b.origen;
+    }
+    t.set(clienteRef, patch, { merge: true });
+  });
 
   // 3) ultimo_pedido_whatsapp — para que el "cancelar" por WhatsApp que ya existe siga andando.
   await db
