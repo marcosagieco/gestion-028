@@ -11,6 +11,7 @@ const FacturasPage = lazy(() => import('./FacturasPage.jsx'))
 const PedidosPage = lazy(() => import('./PedidosPage.jsx'))
 const RepartoDeposito = lazy(() => import('./RepartoDeposito.jsx'))
 const RepartoMoto = lazy(() => import('./RepartoMoto.jsx'))
+const OperativoPage = lazy(() => import('./OperativoPage.jsx'))
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -35,6 +36,11 @@ createRoot(document.getElementById('root')).render(
         <Route path="/reparto" element={
           <Suspense fallback={null}>
             <RepartoMoto />
+          </Suspense>
+        } />
+        <Route path="/operativo" element={
+          <Suspense fallback={null}>
+            <OperativoPage />
           </Suspense>
         } />
       </Routes>
