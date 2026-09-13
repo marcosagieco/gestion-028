@@ -555,8 +555,10 @@ export default function RepartoMoto() {
       // guarda en el pedido para que el historial no tenga que volver a llamar a Google nunca más.
       // Corre aparte, sin bloquear el resto del flujo (el repartidor no tiene por qué esperarla) —
       // si falla o Google no responde, el historial cae solo al estimado en línea recta.
+      // pagado:false arranca sin pagar — Inicio lo suma como "a pagarle a Norman" hasta que el
+      // dueño lo marca como pagado (se paga junto, cada varios días, no envío por envío).
       medirCostoMotomensajeriaReal(pedido.direccion)
-        .then(costo => { if (costo) return updateDoc(doc(db, 'pedidos', pedido.id), { motomensajeria: costo }); })
+        .then(costo => { if (costo) return updateDoc(doc(db, 'pedidos', pedido.id), { motomensajeria: { ...costo, pagado: false } }); })
         .catch(err => console.error('motomensajería real:', err));
 
       const restantes = stopsRaw.filter(p => p.id !== pedido.id);

@@ -8,16 +8,17 @@ import {
 import { Link } from 'react-router-dom';
 import {
   Bike, ArrowLeft, Moon, Sun, ChevronDown, ChevronRight, GripVertical,
-  MapPin, Lock, CheckCircle, XCircle, Loader2, PartyPopper, Clock, Trash2, AlertTriangle,
+  MapPin, Lock, CheckCircle, XCircle, Loader2, PartyPopper, Clock, Trash2, AlertTriangle, Pencil,
 } from 'lucide-react';
 import {
   DndContext, PointerSensor, TouchSensor, useSensor, useSensors, closestCenter,
 } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS as DndCSS } from '@dnd-kit/utilities';
-import { ZONAS_POR_ID, DEPOSITO_ORIGEN } from './reparto/zonas';
+import { ZONAS, ZONAS_POR_ID, DEPOSITO_ORIGEN } from './reparto/zonas';
 import { computeRecorrido, ordenAPersistir } from './reparto/recorridoEngine';
 import { loadGoogleMaps, MAP_DARK_STYLE, MAP_LIGHT_STYLE } from './reparto/googleMapsLoader';
+import AddressAutocomplete from './reparto/AddressAutocomplete';
 
 // --- Firebase: mismo patrón self-contenido que PedidosPage.jsx ---
 const firebaseConfig = {
@@ -162,7 +163,7 @@ function LoginReparto({ dm, onAuth }) {
 // useSortable) cuando el repartidor ya salió — dnd-kit se encarga de que no reaccione al drag,
 // acá solo hace falta marcarla visualmente distinta (candado + sin agarradera). El bloqueo se
 // puede sacar a mano tocando "Desbloquear" (ver handleDesbloquear) para corregir el orden igual.
-function StopRow({ dm, pedido, index, locked, expanded, onToggleExpand, onBorrar, onDesbloquear, onHoverStart, onHoverEnd }) {
+function StopRow({ dm, pedido, index, locked, expanded, onToggleExpand, onBorrar, onDesbloquear, onEditarDireccion, onHoverStart, onHoverEnd }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: pedido.id, disabled: locked });
   const style = {
     transform: DndCSS.Transform.toString(transform),
@@ -172,6 +173,48 @@ function StopRow({ dm, pedido, index, locked, expanded, onToggleExpand, onBorrar
   };
   const zona = ZONAS_POR_ID[pedido.direccion?.zona];
   const caliente = zona?.temperatura === 'caliente';
+
+  // Edición inline de la dirección — antes se cargaba una sola vez al armar el pedido y de acá no
+  // había forma de corregirla (hallazgo B5 de la auditoría): si el cliente pasaba el piso/timbre
+  // después, o quedó mal escrita, no quedaba otra que borrar el pedido del reparto y rehacerlo.
+  // Mismo patrón que EditableDireccion en PedidosPage.jsx (dirección con autocompletado de Google,
+  // nunca a mano, + referencias + zona), reimplementado acá con los estilos propios de este panel.
+  const [editing, setEditing] = useState(false);
+  const [direccionTexto, setDireccionTexto] = useState('');
+  const [direccionData, setDireccionData] = useState(null); // solo se llena si se elige una nueva de Google
+  const [referencias, setReferencias] = useState('');
+  const [zonaEdit, setZonaEdit] = useState('');
+  const [savingDireccion, setSavingDireccion] = useState(false);
+  const [errorDireccion, setErrorDireccion] = useState('');
+
+  const startEdit = () => {
+    setDireccionTexto(pedido.direccion?.texto || '');
+    setDireccionData(null);
+    setReferencias(pedido.direccion?.referencias || '');
+    setZonaEdit(pedido.direccion?.zona || '');
+    setErrorDireccion('');
+    setEditing(true);
+  };
+  const cancelEdit = () => { setEditing(false); setErrorDireccion(''); };
+
+  const guardarDireccion = async () => {
+    setSavingDireccion(true);
+    setErrorDireccion('');
+    try {
+      // Si no se eligió una dirección nueva de la lista (direccionData sigue null), se guardan las
+      // coordenadas que ya tenía el pedido — así se puede corregir solo referencias/zona sin
+      // obligar a re-tipear la dirección entera.
+      const nuevaDireccion = direccionData
+        ? { ...direccionData, referencias: referencias.trim() || null, zona: zonaEdit || null }
+        : { ...pedido.direccion, texto: direccionTexto, referencias: referencias.trim() || null, zona: zonaEdit || null };
+      await onEditarDireccion(pedido, nuevaDireccion);
+      setEditing(false);
+    } catch (e) {
+      setErrorDireccion('Error al guardar: ' + e.message);
+    } finally {
+      setSavingDireccion(false);
+    }
+  };
 
   return (
     <div ref={setNodeRef} style={style} onMouseEnter={() => onHoverStart(pedido.id)} onMouseLeave={() => onHoverEnd(pedido.id)}
@@ -207,9 +250,50 @@ function StopRow({ dm, pedido, index, locked, expanded, onToggleExpand, onBorrar
               </span>
             )}
           </div>
-          <p className={`text-sm font-bold leading-snug ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{pedido.direccion?.texto}</p>
-          {pedido.direccion?.referencias && (
-            <p className={`text-xs mt-0.5 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>{pedido.direccion.referencias}</p>
+          {editing ? (
+            <div className={`flex flex-col gap-2 mt-1 p-2.5 rounded-xl ${dm ? 'bg-white/[0.04]' : 'bg-zinc-50'}`}>
+              <AddressAutocomplete dm={dm} value={direccionTexto}
+                onChange={text => { setDireccionTexto(text); setDireccionData(null); }}
+                onSelect={data => {
+                  setDireccionTexto(data.texto);
+                  setDireccionData(data);
+                  if (data.zonaSugerida) setZonaEdit(data.zonaSugerida);
+                }} />
+              <input value={referencias} onChange={e => setReferencias(e.target.value)} placeholder="Piso, depto, timbre, portón negro..."
+                className={`h-9 border rounded-lg px-2.5 w-full text-xs outline-none transition-all ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100 placeholder-zinc-600' : 'bg-white border-zinc-200 text-zinc-900'}`} />
+              <div className="relative">
+                <select value={zonaEdit} onChange={e => setZonaEdit(e.target.value)}
+                  className={`h-9 appearance-none w-full border rounded-lg px-2.5 pr-8 text-xs outline-none cursor-pointer ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100' : 'bg-white border-zinc-200 text-zinc-900'}`}>
+                  <option value="">-- Sin zona --</option>
+                  {ZONAS.map(z => <option key={z.id} value={z.id}>{z.nombre}</option>)}
+                </select>
+                <div className="absolute inset-y-0 right-0 pr-2.5 flex items-center pointer-events-none"><ChevronDown size={12} className={dm ? 'text-zinc-500' : 'text-zinc-400'} /></div>
+              </div>
+              {errorDireccion && <p className="text-xs font-semibold text-red-400">{errorDireccion}</p>}
+              <div className="flex gap-2">
+                <button onClick={guardarDireccion} disabled={savingDireccion || !direccionTexto.trim()}
+                  className="flex-1 h-8 rounded-lg font-bold text-xs text-white transition-all active:scale-[0.97] bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50">
+                  {savingDireccion ? 'Guardando…' : 'Confirmar'}
+                </button>
+                <button onClick={cancelEdit} disabled={savingDireccion}
+                  className={`flex-1 h-8 rounded-lg font-bold text-xs border transition-all active:scale-[0.97] disabled:opacity-50 ${dm ? 'border-white/[0.1] text-zinc-400 hover:bg-white/[0.06]' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-100'}`}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-start gap-1.5">
+              <div className="flex-1 min-w-0">
+                <p className={`text-sm font-bold leading-snug ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{pedido.direccion?.texto}</p>
+                {pedido.direccion?.referencias && (
+                  <p className={`text-xs mt-0.5 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>{pedido.direccion.referencias}</p>
+                )}
+              </div>
+              <button onClick={startEdit} title="Editar dirección"
+                className={`p-1.5 -m-1 rounded-lg flex-shrink-0 transition-colors active:scale-90 ${dm ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.08]' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}>
+                <Pencil size={13}/>
+              </button>
+            </div>
           )}
           <button onClick={() => onToggleExpand(pedido.id)} className={`flex items-center gap-1 text-xs font-bold mt-2 ${dm ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-700'}`}>
             {expanded ? 'Ocultar mensaje' : 'Ver mensaje original'} {expanded ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}
@@ -465,14 +549,25 @@ export default function RepartoDeposito() {
   // (el repartidor ya venía en camino para ahí), no queda "colgada" — se recalcula el recorrido de
   // lo que queda arrancando de cero (paradaCongeladaId null) y se anota la nueva parada 1 como
   // congelada, igual que hace la pantalla del motomensajero al marcar una entrega.
-  const handleBorrarPedido = async (pedido) => {
-    if (!window.confirm(`¿Borrar "${pedido.direccion?.texto || 'este pedido'}" del reparto? Se cancela el pedido.`)) return;
+  //
+  // Antes esto pedía confirmación con window.confirm y guardaba siempre el mismo motivo fijo
+  // ("Borrado desde el panel de reparto") — en el historial de Cancelados todos esos pedidos
+  // quedaban indistinguibles (hallazgo D3 de la auditoría). Ahora abre un mini-modal a pedir el
+  // motivo real, igual que ya hace "Cancelar pedido" en /pedidos; el motivo es opcional, así que si
+  // se deja vacío se sigue guardando el genérico de antes en vez de un campo en blanco.
+  const [cancelTarget, setCancelTarget] = useState(null);
+  const [cancelMotivo, setCancelMotivo] = useState('');
+  const cerrarModalCancelar = () => { setCancelTarget(null); setCancelMotivo(''); };
+
+  const handleConfirmarBorrado = async () => {
+    if (!cancelTarget) return;
+    const pedido = cancelTarget;
     const wasFrozen = pedido.id === paradaCongeladaId;
     try {
       await updateDoc(doc(db, 'pedidos', pedido.id), {
         estado: 'cancelado',
         canceladoAt: new Date().toISOString(),
-        motivoCancelacion: 'Borrado desde el panel de reparto',
+        motivoCancelacion: cancelMotivo.trim() || 'Borrado desde el panel de reparto',
       });
       const restantes = stopsRaw.filter(p => p.id !== pedido.id);
       if (restantes.length === 0) {
@@ -486,10 +581,23 @@ export default function RepartoDeposito() {
       } else {
         await recalcularYGuardar(restantes);
       }
+      cerrarModalCancelar();
       showToast('Pedido borrado del reparto');
     } catch (e) {
       showToast('Error al borrar: ' + e.message, 'error');
     }
+  };
+
+  // Corrige la dirección de una parada ya armada (hallazgo B5 de la auditoría): antes no había
+  // forma de tocarla desde ningún lado una vez cargada. Guarda la dirección nueva y recalcula el
+  // recorrido con las direcciones actualizadas — la que se corrigió puede haber cambiado de zona o
+  // quedar más lejos/cerca de lo que estaba, así que el orden y el pin del mapa tienen que
+  // reflejarlo, no quedarse con la posición vieja hasta el próximo pedido nuevo que entre.
+  const handleEditarDireccion = async (pedido, nuevaDireccion) => {
+    await updateDoc(doc(db, 'pedidos', pedido.id), { direccion: nuevaDireccion });
+    const actualizadas = stopsRaw.map(p => p.id === pedido.id ? { ...p, direccion: nuevaDireccion } : p);
+    await recalcularYGuardar(actualizadas);
+    showToast('Dirección actualizada');
   };
 
   // Desbloqueo manual y puntual de la parada congelada: por defecto queda fija mientras Norman
@@ -562,7 +670,7 @@ export default function RepartoDeposito() {
                   {stopsOrdenadas.map((p, i) => (
                     <StopRow key={p.id} dm={dm} pedido={p} index={i} locked={p.id === paradaCongeladaId}
                       expanded={expandedId === p.id} onToggleExpand={id => setExpandedId(cur => cur === id ? null : id)}
-                      onBorrar={handleBorrarPedido} onDesbloquear={handleDesbloquear}
+                      onBorrar={setCancelTarget} onDesbloquear={handleDesbloquear} onEditarDireccion={handleEditarDireccion}
                       onHoverStart={setHoveredId} onHoverEnd={id => setHoveredId(cur => cur === id ? null : cur)} />
                   ))}
                 </div>
@@ -582,6 +690,37 @@ export default function RepartoDeposito() {
         <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2.5 z-50 border max-w-[90vw] ${toast.type === 'error' ? 'bg-red-600/95 border-red-500 text-white' : 'bg-zinc-900/95 border-white/10 text-white'}`}>
           {toast.type === 'error' ? <XCircle size={16}/> : <CheckCircle size={16} className="text-emerald-400"/>}
           <span className="text-sm font-medium">{toast.message}</span>
+        </div>
+      )}
+
+      {/* Motivo de borrado (hallazgo D3): reemplaza el window.confirm de antes, que no dejaba
+          anotar por qué se borraba — quedaba siempre el mismo texto genérico en Cancelados. */}
+      {cancelTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.55)' }} onClick={cerrarModalCancelar}>
+          <div onClick={e => e.stopPropagation()}
+            className={`w-full max-w-sm rounded-2xl border p-5 flex flex-col gap-4 ${dm ? 'bg-[#141414] border-white/[0.1]' : 'bg-white border-zinc-200'}`}>
+            <div>
+              <h3 className={`font-bold text-base ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>Borrar pedido del reparto</h3>
+              <p className={`text-sm mt-1 ${dm ? 'text-zinc-400' : 'text-zinc-500'}`}>{cancelTarget.direccion?.texto || 'Este pedido'} se va a cancelar. Contame por qué.</p>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className={`text-xs font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>Motivo (opcional)</label>
+              <input autoFocus value={cancelMotivo} onChange={e => setCancelMotivo(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleConfirmarBorrado(); }}
+                placeholder="Ej: dirección errónea, el cliente canceló..."
+                className={`h-11 border rounded-xl px-3 w-full text-sm outline-none transition-all ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100 placeholder-zinc-600' : 'bg-white border-zinc-200 text-zinc-900'}`} />
+            </div>
+            <div className="flex gap-2">
+              <button onClick={handleConfirmarBorrado}
+                className="flex-1 h-11 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.97] bg-red-500 hover:bg-red-400">
+                Confirmar borrado
+              </button>
+              <button onClick={cerrarModalCancelar}
+                className={`flex-1 h-11 rounded-xl font-bold text-sm border transition-all active:scale-[0.97] ${dm ? 'border-white/[0.1] text-zinc-400 hover:bg-white/[0.06]' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50'}`}>
+                Volver
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

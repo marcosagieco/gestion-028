@@ -1420,7 +1420,14 @@ export default function PedidosPage() {
       // corresponde. Cuenta Recaudadora (alias4) es la única a la que nunca se le resta nada: entra
       // la plata tal cual se cobró por ese medio, envío incluido (no solo la ganancia neta del envío
       // como en las demás). El envío se reparte a prorrata entre los medios de pago según su monto.
+      //
+      // Pedidos de MOTO (esta sección "Entregado", los que reparte Norman) son la otra excepción:
+      // acá entra el envío COMPLETO igual que en Alias 4, no solo la ganancia — porque esa plata se
+      // junta toda en la cuenta y a Norman se le paga aparte, juntando varios días, en vez de que él
+      // se quede con el envío directo como en otros canales. Uber y Retiro (la sección "Armado") NO
+      // cambian: siguen entrando solo con la ganancia del envío, como siempre.
       const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', alias4: 'CUENTA_RECAUDADORA', efectivo: 'EFECTIVO' };
+      const esMoto = finalizarTarget.tipoEnvio === 'moto';
       const totalGrand = totalSaleRawGeneral + clientShippingCharge;
       for (const pago of pagosLimpios) {
         const wName = aliasWalletMap[pago.medioPago];
@@ -1429,11 +1436,12 @@ export default function PedidosPage() {
         const shippingChargeShare = clientShippingCharge * fraction;
         const shippingProfitShare = shippingProfit * fraction;
         const productShare = pago.monto - shippingChargeShare;
-        // Efectivo entra SOLO por el producto: cuando una venta en efectivo lleva envío, esa plata
-        // va entera a la motomensajería que reparte, no queda un peso para el negocio, así que no
-        // tiene por qué sumar a la caja. Alias 4 entra completo (envío incluido) y el resto de los
-        // alias entran con la ganancia neta del envío — ver comentario de arriba.
-        const wAmount = pago.medioPago === 'alias4' ? pago.monto
+        // Efectivo entra SOLO por el producto (salvo en moto, ver arriba): cuando una venta en
+        // efectivo lleva envío, esa plata va entera a la motomensajería que reparte, no queda un
+        // peso para el negocio, así que no tiene por qué sumar a la caja. Alias 4 y moto entran
+        // completos (envío incluido) y el resto de los alias (fuera de moto) entran con la
+        // ganancia neta del envío — ver comentario de arriba.
+        const wAmount = (pago.medioPago === 'alias4' || esMoto) ? pago.monto
           : pago.medioPago === 'efectivo' ? productShare
           : (productShare + Math.max(0, shippingProfitShare));
         const walletsRef = doc(db, 'settings', 'wallets');
