@@ -351,6 +351,7 @@ exports.agentPedido = withAuth(async (req, res) => {
     "",
     "👤 CLIENTE",
     `${b.cliente || "-"} — ${tel}`,
+    b.origen === "publicidad" ? "📣 Viene de un anuncio (Ads) — tildar en \"Finalizar pedido\"" : null,
     "",
     b.medioPago ? `💳 ${b.medioPago}` : null,
     b.comprobante && b.comprobante.numero ? `Comprobante: ${b.comprobante.numero}` : null,
@@ -366,7 +367,6 @@ exports.agentPedido = withAuth(async (req, res) => {
     tipoEnvio,
     createdAt: new Date().toISOString(),
     // nuevos (opcionales — no rompen nada que lea pedidos):
-    origen: "agente-ia",
     telefono: tel,
     cliente: b.cliente || "",
     direccion: dir.texto

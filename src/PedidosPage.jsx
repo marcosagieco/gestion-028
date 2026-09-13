@@ -1239,7 +1239,10 @@ export default function PedidosPage() {
   };
 
   const handleAbrirFinalizar = (pedido) => {
-    setFinalizarForm({ tipoCliente: '', vendedor: '', envioCliente: '', costoEnvio: '', fecha: getTodayDate() });
+    // Si el bot detectó que el cliente vino de un anuncio, precargamos el tipo de cliente
+    // (el vendedor lo puede cambiar si no corresponde) — así no depende de que se acuerde solo.
+    const tipoClienteSugerido = pedido?.origen === 'publicidad' ? 'Nuevo - Publicidad' : '';
+    setFinalizarForm({ tipoCliente: tipoClienteSugerido, vendedor: '', envioCliente: '', costoEnvio: '', fecha: getTodayDate() });
     setFinalizarItems([nuevaLineaProducto()]);
     setFinalizarPagos([nuevoPago()]);
     setFinalizarTarget(pedido);
