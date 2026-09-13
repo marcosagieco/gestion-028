@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo, useRef, useId, useCallback } from 
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package, UserCircle,
   ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw, Target, RefreshCw, Receipt, Minus, ArrowDownLeft, ArrowUpRight, Landmark, CreditCard, ArrowLeftRight, Pencil, Check, ClipboardList, GripVertical,
-  UserCog, HandCoins, CalendarClock, History
+  UserCog, HandCoins, CalendarClock, History, Bike, Eye, EyeOff
 } from 'lucide-react';
 
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Bar, ComposedChart, Line, ReferenceLine } from 'recharts';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Link } from 'react-router-dom';
@@ -20,7 +20,7 @@ import { buildDailySeries, buildFullHistoryDailySeries, buildRatioSeries, comput
 import { initializeApp } from "firebase/app";
 import {
   initializeFirestore, collection, addDoc, deleteDoc, doc, updateDoc, setDoc,
-  onSnapshot, query, orderBy, where, getDocs, deleteField, runTransaction, increment,
+  onSnapshot, query, orderBy, where, getDocs, deleteField, runTransaction, increment, writeBatch,
   persistentLocalCache, persistentMultipleTabManager
 } from 'firebase/firestore';
 
@@ -170,6 +170,18 @@ const HomeSectorDropZone = ({ id, darkMode, isEmpty, children }) => {
       ) : children}
     </div>
   );
+};
+
+// Día calendario LOCAL (no UTC) de una fecha con hora — "sales"/"pedidos" guardan la hora real en
+// que se cargó/entregó, así que algo cerrado de noche en Argentina (UTC-3) cae en el día calendario
+// SIGUIENTE si se lee con .toISOString()/.slice(0,10) (que es UTC). Usar esto en vez de esa técnica
+// en cualquier agrupado "por día" evita que esas cargas nocturnas terminen contadas en el día que no
+// es — y mantiene el resultado igual al de "Período de Análisis", que sí compara el instante real
+// contra el día local.
+const localDayKey = (dateLike) => {
+  const d = dateLike instanceof Date ? dateLike : new Date(dateLike);
+  if (isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
 const safeDateStr = (dateStr, options) => {
@@ -329,7 +341,10 @@ const normalizeProductName = (name) => {
 // --- EQUIPO 028 (pagos a empleados) ---
 // Tipo de pago de cada empleado: 'salario' (sueldo fijo mensual, ej. Gieco), 'comision' (solo gana
 // por comisión de ventas, ej. Delfina) o 'mixto' (sueldo + comisión, ej. Bautista y Jeronimo).
-const TEAM_PAYMENT_TYPE_LABELS = { salario: 'Sueldo fijo', comision: 'Comisión', mixto: 'Sueldo + Comisión' };
+// 'motomensajeria' es distinto a los otros tres: no devenga sueldo ni comisión sobre ventas, se le
+// debe un monto puntual por cada entrega (ver NormanPagosPanel) — se excluye a propósito de
+// teamSummary y nunca pasa por TeamMemberCard, solo se identifica acá para el nombre que se muestra.
+const TEAM_PAYMENT_TYPE_LABELS = { salario: 'Sueldo fijo', comision: 'Comisión', mixto: 'Sueldo + Comisión', motomensajeria: 'Motomensajería · por entrega' };
 const TEAM_DEFAULT_MEMBERS = [
   { name: 'Bautista', paymentType: 'mixto' },
   { name: 'Jeronimo', paymentType: 'mixto' },
@@ -927,21 +942,30 @@ const SortableHomeCard = ({ id, children }) => {
 // claro que son arrastrables (con una tarjeta chica alcanza con el cursor, acá no). `pointer-events:
 // none` en el contenido de adentro es lo que bloquea los clicks a los botones/filtros de adentro
 // mientras se edita, sin necesitar el mismo truco de overlay+stopPropagation que usan las tarjetas.
-const DraggableHomeBlock = ({ id, darkMode, children }) => {
+const DraggableHomeBlock = ({ id, darkMode, hidden, onToggleHide, children }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   const style = {
     transform: DndCSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.5 : 1,
+    opacity: isDragging ? 0.5 : hidden ? 0.4 : 1,
     zIndex: isDragging ? 30 : undefined,
     boxShadow: isDragging ? '0 20px 45px rgba(0,0,0,0.35)' : undefined,
     borderRadius: '1rem',
     touchAction: 'none',
   };
   return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners} className="relative select-none cursor-grab active:cursor-grabbing">
-      <div className={`flex items-center gap-1.5 mb-2 text-[10px] font-bold uppercase tracking-widest ${darkMode ? 'text-indigo-400' : 'text-indigo-500'}`}>
-        <GripVertical size={13}/> Arrastrar para reordenar
+    <div ref={setNodeRef} style={style} className="relative select-none">
+      <div className={`flex items-center justify-between gap-2 mb-2 text-[10px] font-bold uppercase tracking-widest ${darkMode ? 'text-indigo-400' : 'text-indigo-500'}`}>
+        <div {...attributes} {...listeners} className="flex items-center gap-1.5 cursor-grab active:cursor-grabbing flex-1 min-w-0">
+          <GripVertical size={13}/> Arrastrar para reordenar
+          {hidden && <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-zinc-500/10 text-zinc-500 normal-case tracking-normal">OCULTO</span>}
+        </div>
+        {onToggleHide && (
+          <button onClick={onToggleHide} title={hidden ? 'Mostrar este bloque' : 'Ocultar este bloque'}
+              className={`flex items-center justify-center w-6 h-6 rounded-lg border shrink-0 transition-colors normal-case ${hidden ? (darkMode ? 'border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10' : 'border-emerald-300 text-emerald-600 hover:bg-emerald-50') : (darkMode ? 'border-white/10 text-zinc-400 hover:bg-white/[0.06]' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-100')}`}>
+              {hidden ? <Eye size={12}/> : <EyeOff size={12}/>}
+          </button>
+        )}
       </div>
       <div className="pointer-events-none">
         {children}
@@ -949,6 +973,128 @@ const DraggableHomeBlock = ({ id, darkMode, children }) => {
     </div>
   );
 };
+
+// --- MOTOMENSAJERÍA: PANEL DE PAGO A NORMAN ---
+// Un solo componente, usado tal cual en dos lugares (Inicio → Rendimiento del Equipo, y Equipo 028
+// → como su propia tarjeta): el desglose día por día de lo que se le debe, y dos formas de pagar —
+// todo de una, o eligiendo a mano un rango de fechas (para pagar solo una parte). `variant="card"` le
+// da el mismo marco que TeamMemberCard (para que encaje entre las tarjetas de Equipo 028);
+// `variant="inline"` la deja sin marco propio (para vivir adentro de otra tarjeta, en Inicio).
+// Arranca colapsado ("mini despliegue"): el detalle y los controles de pago solo aparecen al tocar
+// "Ver y pagar", así no compite en tamaño con el resto de la tarjeta que lo contiene.
+function NormanPagosPanel({ darkMode, deuda, ultimoPago, onPagar, variant = 'inline' }) {
+  const [expanded, setExpanded] = useState(false);
+  const [modo, setModo] = useState('todo'); // 'todo' | 'rango'
+  const [rangoDesde, setRangoDesde] = useState('');
+  const [rangoHasta, setRangoHasta] = useState('');
+  const [pagando, setPagando] = useState(false);
+
+  // Al abrir el desglose por primera vez, precarga el rango con el pendiente completo — así
+  // "Elegir fechas" arranca mostrando todo y el usuario solo achica el rango si quiere pagar una
+  // parte, en vez de arrancar con los dos campos vacíos.
+  useEffect(() => {
+    if (expanded && deuda.desde && !rangoDesde) {
+      setRangoDesde(deuda.desde.slice(0, 10));
+      setRangoHasta(deuda.hasta.slice(0, 10));
+    }
+  }, [expanded, deuda.desde, deuda.hasta]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const diasEnRango = modo === 'rango'
+    ? deuda.porDia.filter(d => (!rangoDesde || d.dia >= rangoDesde) && (!rangoHasta || d.dia <= rangoHasta))
+    : deuda.porDia;
+  const totalSeleccion = diasEnRango.reduce((s, d) => s + d.total, 0);
+  const cantidadSeleccion = diasEnRango.reduce((s, d) => s + d.cantidad, 0);
+
+  const handlePagarClick = async () => {
+    setPagando(true);
+    try {
+      await onPagar(modo === 'todo' ? null : { desde: rangoDesde, hasta: rangoHasta });
+      setModo('todo');
+      setRangoDesde('');
+      setRangoHasta('');
+      setExpanded(false);
+    } finally {
+      setPagando(false);
+    }
+  };
+
+  const inputClass = `h-9 flex-1 border rounded-lg px-2 text-xs outline-none transition-all ${darkMode ? 'bg-[#101010] border-white/[0.07] text-zinc-100' : 'bg-white border-zinc-200 text-zinc-900'}`;
+
+  return (
+    <div className={variant === 'card' ? `rounded-2xl p-5 ${darkMode ? 'bg-[#0E0E0E]' : 'bg-white'}` : `mt-4 pt-4 border-t ${darkMode ? 'border-white/[0.06]' : 'border-zinc-100'}`}>
+      <div className="flex items-center gap-2.5 mb-3">
+        <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: deuda.cantidad > 0 ? 'rgba(245,158,11,0.14)' : (darkMode ? 'rgba(255,255,255,0.06)' : '#f4f4f5') }}>
+          <Bike size={12} style={{ color: deuda.cantidad > 0 ? '#f59e0b' : (darkMode ? '#a1a1aa' : '#71717a') }}/>
+        </div>
+        <div>
+          <span className={`text-sm font-bold ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Norman</span>
+          {variant === 'card' && (
+            <span className={`block text-[9px] font-bold uppercase tracking-wide mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{TEAM_PAYMENT_TYPE_LABELS.motomensajeria}</span>
+          )}
+        </div>
+        <span className={`ml-auto text-[10px] font-bold ${deuda.cantidad > 0 ? 'text-amber-500' : 'text-zinc-500'}`}>
+          {deuda.cantidad === 0 ? 'Al día' : `${deuda.cantidad} sin pagar`}
+        </span>
+      </div>
+
+      <div className="flex items-end justify-between gap-3 flex-wrap">
+        <div>
+          <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-0.5">A pagar</div>
+          <div className={`text-lg font-black leading-none ${deuda.cantidad > 0 ? 'text-amber-500' : (darkMode ? 'text-zinc-100' : 'text-zinc-900')}`}>{formatMoney(deuda.total)}</div>
+          {ultimoPago && <div className="text-[10px] text-zinc-500 mt-1.5">Último pago: {formatMoney(ultimoPago.monto)} el {safeDateStr(ultimoPago.fecha)}</div>}
+        </div>
+        <button onClick={() => setExpanded(v => !v)} disabled={deuda.cantidad === 0}
+          className={`flex items-center gap-1 text-xs font-bold px-2.5 py-1.5 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed ${darkMode ? 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.06]' : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100'}`}>
+          {expanded ? 'Ocultar' : 'Ver y pagar'} {expanded ? <ChevronUp size={13}/> : <ChevronDown size={13}/>}
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="mt-3 space-y-3">
+          <div className={`rounded-xl divide-y text-xs max-h-48 overflow-y-auto custom-scrollbar ${darkMode ? 'bg-white/[0.03] divide-white/[0.06]' : 'bg-zinc-50 divide-zinc-100'}`}>
+            {deuda.porDia.map(d => {
+              const dentroDelRango = modo !== 'rango' || ((!rangoDesde || d.dia >= rangoDesde) && (!rangoHasta || d.dia <= rangoHasta));
+              return (
+                <div key={d.dia} className={`flex items-center justify-between px-3 py-2 transition-opacity ${dentroDelRango ? '' : 'opacity-35'}`}>
+                  <span className={darkMode ? 'text-zinc-300' : 'text-zinc-600'}>
+                    {safeDateStr(d.dia)} <span className="text-zinc-500">· {d.cantidad} entrega{d.cantidad === 1 ? '' : 's'}</span>
+                  </span>
+                  <span className={`font-bold ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{formatMoney(d.total)}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex gap-1.5">
+            <button onClick={() => setModo('todo')}
+              className={`flex-1 h-8 rounded-lg text-[11px] font-bold border transition-all ${modo === 'todo' ? 'bg-indigo-500 text-white border-indigo-500' : (darkMode ? 'border-white/[0.1] text-zinc-400 hover:bg-white/[0.05]' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50')}`}>
+              Pagar todo
+            </button>
+            <button onClick={() => setModo('rango')}
+              className={`flex-1 h-8 rounded-lg text-[11px] font-bold border transition-all ${modo === 'rango' ? 'bg-indigo-500 text-white border-indigo-500' : (darkMode ? 'border-white/[0.1] text-zinc-400 hover:bg-white/[0.05]' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50')}`}>
+              Elegir fechas
+            </button>
+          </div>
+
+          {modo === 'rango' && (
+            <div className="flex items-center gap-2">
+              <input type="date" value={rangoDesde} onChange={e => setRangoDesde(e.target.value)} className={inputClass}/>
+              <span className="text-zinc-500 text-xs flex-shrink-0">—</span>
+              <input type="date" value={rangoHasta} onChange={e => setRangoHasta(e.target.value)} className={inputClass}/>
+            </div>
+          )}
+
+          <button onClick={handlePagarClick} disabled={pagando || cantidadSeleccion === 0}
+            className="w-full h-10 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98] bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed">
+            {pagando ? 'Guardando…' : modo === 'todo'
+              ? `Pagar todo · ${formatMoney(totalSeleccion)}`
+              : cantidadSeleccion === 0 ? 'Ninguna entrega en ese rango' : `Pagar ${cantidadSeleccion} entrega${cantidadSeleccion === 1 ? '' : 's'} · ${formatMoney(totalSeleccion)}`}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // --- EQUIPO 028: TARJETA DE EMPLEADO ---
 // Encapsula todo lo de un empleado: estado de sueldo/comisión pendiente, el form para registrar un
@@ -3185,6 +3331,14 @@ export default function App() {
   const [cashFlowReciente, setCashFlowReciente] = useState([]);
   const [cashFlowHistorico, setCashFlowHistorico] = useState([]);
   const [wallets, setWallets] = useState({ LEMON: 0, AHORROS: 0, GALICIA: 0, GALICIA_GIECO: 0, MERCADO_PAGO: 0, CUENTA_RECAUDADORA: 0, EFECTIVO: 0, USDT: 0, USD: 0, SIN_CUENTA: 0 });
+  // Deuda con Norman (motomensajería) — ver comentario en el listener de más abajo.
+  const [pedidosMotoPendientesPago, setPedidosMotoPendientesPago] = useState([]);
+  const [normanUltimoPago, setNormanUltimoPago] = useState(null);
+  // Pedidos recientes (ventana en vivo, igual que sales/expenses/cashFlow) — hoy solo alimenta el
+  // mapa de calor día×hora de Inicio (createdAt = cuándo entra el pedido a armar, no cuándo se
+  // arma ni se entrega). Si en el futuro algo más necesita pedidos, se suma acá antes de abrir un
+  // listener nuevo aparte.
+  const [pedidosRecientes, setPedidosRecientes] = useState([]);
   const walletsScrollRef = useRef(null);
 
   // Única vía para mover saldos de billetera. Recibe cuánto CAMBIA cada cuenta (positivo suma,
@@ -3213,6 +3367,64 @@ export default function App() {
     if (Object.keys(patch).length === 0) return;
     await setDoc(doc(db, 'settings', 'wallets'), patch, { merge: true });
   };
+
+  // Cuánto se le debe a Norman ahora mismo: suma de motomensajeria.monto de los pedidos moto
+  // entregados que todavía no se marcaron pagados, más el rango de fechas que cubren (para saber
+  // "estos son los envíos de tal semana"). Se paga junto cada varios días, no envío por envío.
+  const normanDeuda = useMemo(() => {
+    const fechas = pedidosMotoPendientesPago.map(p => p.entregadoEn).filter(Boolean).sort();
+    // Desglose día por día ("cuánto le tengo que pagar de cada día") — se agrupa por la fecha de
+    // entrega (entregadoEn), no por cuándo se cargó la venta, que puede ser otro día distinto.
+    const porDiaMap = {};
+    pedidosMotoPendientesPago.forEach(p => {
+      if (!p.entregadoEn) return;
+      // Día LOCAL de la entrega, no el día UTC — entregadoEn se guarda con la hora real (ver
+      // localDayKey), así que una entrega de noche no se corre al día siguiente acá.
+      const dia = localDayKey(p.entregadoEn);
+      if (!dia) return;
+      if (!porDiaMap[dia]) porDiaMap[dia] = { dia, cantidad: 0, total: 0 };
+      porDiaMap[dia].cantidad += 1;
+      porDiaMap[dia].total += p.motomensajeria?.monto || 0;
+    });
+    const porDia = Object.values(porDiaMap).sort((a, b) => a.dia.localeCompare(b.dia));
+    return {
+      cantidad: pedidosMotoPendientesPago.length,
+      total: pedidosMotoPendientesPago.reduce((s, p) => s + (p.motomensajeria?.monto || 0), 0),
+      desde: fechas[0] || null,
+      hasta: fechas[fechas.length - 1] || null,
+      porDia,
+    };
+  }, [pedidosMotoPendientesPago]);
+
+  // Marca como pagado lo pendiente — TODO (rango=null) o solo un rango de fechas elegido a mano
+  // (rango={desde,hasta}, YYYY-MM-DD inclusive los dos extremos, sobre entregadoEn) — y deja un
+  // resumen en settings/normanPagos para mostrar "último pago" sin tener que traer nunca el
+  // historial completo de pedidos ya pagados. Se usa igual desde Inicio y desde Equipo 028.
+  const handleMarcarNormanPagado = async (rango) => {
+    const objetivo = rango
+      ? pedidosMotoPendientesPago.filter(p => {
+          const dia = p.entregadoEn && localDayKey(p.entregadoEn);
+          return dia && dia >= rango.desde && dia <= rango.hasta;
+        })
+      : pedidosMotoPendientesPago;
+    if (objetivo.length === 0) { showToast('No hay entregas sin pagar en ese rango', 'error'); return; }
+    const total = objetivo.reduce((s, p) => s + (p.motomensajeria?.monto || 0), 0);
+    const rangoTexto = rango ? ` (${safeDateStr(rango.desde)} — ${safeDateStr(rango.hasta)})` : '';
+    if (!window.confirm(`¿Marcar como pagado ${formatMoney(total)} a Norman por ${objetivo.length} entrega${objetivo.length === 1 ? '' : 's'}${rangoTexto}?`)) return;
+    try {
+      const nowIso = new Date().toISOString();
+      const batch = writeBatch(db);
+      objetivo.forEach(p => {
+        batch.update(doc(db, 'pedidos', p.id), { 'motomensajeria.pagado': true, 'motomensajeria.pagadaEl': nowIso });
+      });
+      await batch.commit();
+      await setDoc(doc(db, 'settings', 'normanPagos'), { monto: total, cantidadEnvios: objetivo.length, fecha: nowIso });
+      showToast('Pago a Norman registrado', 'success');
+    } catch (e) {
+      showToast('Error al registrar el pago: ' + e.message, 'error');
+    }
+  };
+
   const [editingWallet, setEditingWallet] = useState(null);
   const [editingWalletValue, setEditingWalletValue] = useState('');
   // Mismo motivo que newBatchAccount: sin cuenta por defecto, para no descontar de LEMON sin
@@ -3475,6 +3687,17 @@ export default function App() {
   // arriba a la derecha. En este modo las tarjetas se pueden arrastrar (mouse o dedo) a
   // cualquier posición, incluso entre sectores, con animación de reacomodo tipo Trello.
   const [homeEditMode, setHomeEditMode] = useState(false);
+  // Gráficos de la sección fija de Inicio (Margen %, En qué se fue la facturación, Días de stock,
+  // Pareto, Cuándo entran los pedidos) que el usuario ocultó desde "Editar". A diferencia de las
+  // tarjetas de arriba, estos no se reordenan, solo se muestran u ocultan — así que basta una lista
+  // de ids ocultos en vez de todo el sistema de secciones/orden.
+  const [hiddenHomeCharts, setHiddenHomeCharts] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('hiddenHomeCharts') || '[]'); } catch { return []; }
+  });
+  useEffect(() => {
+    localStorage.setItem('hiddenHomeCharts', JSON.stringify(hiddenHomeCharts));
+  }, [hiddenHomeCharts]);
+  const toggleHomeChart = (id) => setHiddenHomeCharts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   // Tocar la tarjeta de Ganancia Bruta/Neta en Inicio alterna entre mostrar el monto y el margen (%).
   const [showGananciaBrutaPct, setShowGananciaBrutaPct] = useState(false);
   const [showGananciaNetaPct, setShowGananciaNetaPct] = useState(false);
@@ -3720,6 +3943,33 @@ export default function App() {
             if (docSnap.exists()) setWallets({ LEMON: 0, AHORROS: 0, GALICIA: 0, GALICIA_GIECO: 0, MERCADO_PAGO: 0, CUENTA_RECAUDADORA: 0, EFECTIVO: 0, USDT: 0, USD: 0, ...docSnap.data() });
         }, () => {});
 
+        // Deuda con Norman (motomensajería): un solo where de igualdad sobre motomensajeria.pagado
+        // (Firestore indexa cada campo de un mapa por separado, así que esto no necesita índice
+        // compuesto) — trae SOLO los pedidos de moto entregados que todavía no se le pagaron, nunca
+        // el historial completo, así esto no crece sin límite con los años como sales/expenses/
+        // cashFlow antes de acotarlos (ver hallazgo E2). Se marcan como pagados en bloque desde
+        // Inicio (handleMarcarNormanPagado) cuando el dueño le paga junto varios días de una vez.
+        const unsubNormanPendientes = onSnapshot(
+            query(collection(db, 'pedidos'), where('motomensajeria.pagado', '==', false)),
+            (snap) => setPedidosMotoPendientesPago(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+            () => setPedidosMotoPendientesPago([])
+        );
+        // Último pago a Norman: no se calcula de los pedidos ya pagados (traerlos todos para buscar
+        // el más reciente sí crecería para siempre) — se escribe este resumen aparte, una vez, cada
+        // vez que se marca un pago (ver handleMarcarNormanPagado).
+        const unsubNormanUltimoPago = onSnapshot(doc(db, 'settings', 'normanPagos'), (docSnap) => {
+            setNormanUltimoPago(docSnap.exists() ? docSnap.data() : null);
+        }, () => setNormanUltimoPago(null));
+
+        // Pedidos recientes: misma ventana en vivo que sales/expenses/cashFlow (últimos ~2 meses,
+        // ver ventanaVivaCutoffISO) — alimenta el mapa de calor día×hora de Inicio. No hace falta
+        // todo el historial para ver el patrón de cuándo entran los pedidos.
+        const unsubPedidosRecientes = onSnapshot(
+            query(collection(db, 'pedidos'), where('createdAt', '>=', ventanaVivaCutoffISO)),
+            (snap) => setPedidosRecientes(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+            () => setPedidosRecientes([])
+        );
+
         // Cotizaciones del dólar: las escribe la Cloud Function programada (cada 5 min, DolarApi.com)
         // en cotizaciones/actual — acá solo se escucha con onSnapshot, sin pedirle nada a ninguna API
         // desde el navegador, así que se actualiza sola apenas la Cloud Function detecta un cambio.
@@ -3738,7 +3988,7 @@ export default function App() {
         );
 
         setLoading(false);
-        return () => { unsubBatches(); unsubSales(); unsubExp(); unsubCash(); unsubNeutralStock(); unsubConsignments(); unsubSettings(); unsubWallets(); unsubTeamMembers(); unsubTeamPayments(); unsubCotizaciones(); unsubCotizacionesHistorico(); };
+        return () => { unsubBatches(); unsubSales(); unsubExp(); unsubCash(); unsubNeutralStock(); unsubConsignments(); unsubSettings(); unsubWallets(); unsubNormanPendientes(); unsubNormanUltimoPago(); unsubPedidosRecientes(); unsubTeamMembers(); unsubTeamPayments(); unsubCotizaciones(); unsubCotizacionesHistorico(); };
     } catch (e) {
         setIsOffline(true);
         setLoading(false);
@@ -3768,6 +4018,27 @@ export default function App() {
       }
     })();
   }, [teamSeeded, teamMembers.length]);
+
+  // Siembra única de Norman (motomensajería) en Equipo 028 — aparte del efecto de arriba porque
+  // ese solo corre si teamMembers está totalmente vacío, y acá ya puede haber otros empleados
+  // cargados de antes. Un ref propio para no reintentar en cada render mientras la escritura está
+  // en curso; se apaga solo cuando ya existe alguien con paymentType 'motomensajeria'.
+  const normanSeedAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (!teamSeeded || normanSeedAttemptedRef.current) return;
+    if (teamMembers.some(m => m.paymentType === 'motomensajeria')) return;
+    normanSeedAttemptedRef.current = true;
+    addDoc(collection(db, 'teamMembers'), {
+      name: 'Norman',
+      paymentType: 'motomensajeria',
+      monthlySalary: 0,
+      salaryStartDate: getTodayDate(),
+      commissionOwed: 0,
+      commissionStartDate: null,
+      nextPaymentDate: null,
+      createdAt: new Date().toISOString(),
+    }).catch(e => { console.error('Error creando a Norman en Equipo 028:', e); normanSeedAttemptedRef.current = false; });
+  }, [teamSeeded, teamMembers]);
 
   const { uniqueProducts, uniqueVariants } = useMemo(() => {
       const prodsMap = new Map();
@@ -4330,6 +4601,154 @@ export default function App() {
     return Object.values(map).map(p => ({ ...p, profit: p.revenue - p.cost })).sort((a, b) => b.units - a.units);
   }, [activeViewSales]);
 
+  // --- Gráficos nuevos de Inicio (auditoría, oportunidades) ---
+
+  // Pareto de productos: qué % de los productos hace el 80% de la ganancia del período — mismos
+  // datos que topProducts (ganancia por producto del período elegido arriba), reordenados por
+  // ganancia en vez de por unidades, con el acumulado.
+  const paretoProductos = useMemo(() => {
+    const conGanancia = topProducts.filter(p => p.profit > 0).slice().sort((a, b) => b.profit - a.profit);
+    const totalGanancia = conGanancia.reduce((s, p) => s + p.profit, 0);
+    let acumulado = 0;
+    const filas = conGanancia.map(p => {
+      acumulado += p.profit;
+      return {
+        ...p,
+        pctIndividual: totalGanancia > 0 ? (p.profit / totalGanancia) * 100 : 0,
+        pctAcumulado: totalGanancia > 0 ? (acumulado / totalGanancia) * 100 : 0,
+      };
+    });
+    const idx80 = filas.findIndex(f => f.pctAcumulado >= 80);
+    return { filas: filas.slice(0, 15), n80: idx80 === -1 ? filas.length : idx80 + 1, totalProductos: filas.length, totalGanancia };
+  }, [topProducts]);
+
+  // Margen % día a día (últimos 60 días, fijo — no depende del selector de período de arriba): el
+  // margen es el primer número que avisa cuando algo se rompió; la inflación tapa el problema en
+  // los montos en pesos, que siempre suben. Excluye fallas/robos, igual que el resto de Inicio.
+  const margenDiario = useMemo(() => {
+    const DIAS = 60;
+    // Clave por día en hora LOCAL (no UTC): "sales" guarda cada venta con la hora real en que se
+    // finalizó (PedidosPage arma esa fecha con la hora del momento), así que una venta cargada de
+    // noche en Argentina (UTC-3) cae en el día calendario SIGUIENTE en UTC. Si acá agrupamos con
+    // toISOString()/slice (que es UTC), esas ventas de la noche terminan contadas en el día
+    // equivocado — y encima, al formatear la etiqueta del eje X con la fecha ya en UTC, se corre un
+    // día más para atrás al mostrarla en hora local. Con las dos partes en hora local, esto queda
+    // igual a como "Período de Análisis" arma un día individual (que sí compara el instante real
+    // contra el local), y el número de un día puntual coincide con lo que muestra la tarjeta.
+    const dateKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+    const inicio = new Date(hoy); inicio.setDate(inicio.getDate() - (DIAS - 1));
+    const porDia = {};
+    for (let i = 0; i < DIAS; i++) {
+      const d = new Date(inicio); d.setDate(d.getDate() + i);
+      porDia[dateKey(d)] = { revenue: 0, cost: 0, shipping: 0, label: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) };
+    }
+    sales.forEach(s => {
+      if (s.isFalla || s.isRobo || !s.date) return;
+      const d = new Date(s.date);
+      if (isNaN(d.getTime())) return;
+      const key = dateKey(d);
+      if (!porDia[key]) return;
+      porDia[key].revenue += s.totalSaleRaw || 0;
+      porDia[key].cost += (s.costArsAtSale || 0) * (s.quantity || 0);
+      // Misma ganancia de envío que suma la tarjeta "Ganancia Bruta" de Inicio — si se omite acá,
+      // este gráfico da un margen más bajo que esa tarjeta todos los días (no es un error de cálculo,
+      // es que faltaba este término).
+      porDia[key].shipping += s.shippingProfit != null ? (s.shippingProfit || 0) : ((s.clientShippingCharge || 0) - (s.shippingCostArs || 0));
+    });
+    return Object.entries(porDia).map(([date, v]) => ({
+      date,
+      label: v.label,
+      margen: v.revenue > 0 ? ((v.revenue - v.cost + v.shipping) / v.revenue) * 100 : null,
+    }));
+  }, [sales]);
+
+  // Composición de la facturación: en qué se convierte cada peso facturado en el rango elegido
+  // arriba (globalMonth), como una sola barra que suma 100%. Se arma con los mismos números que ya
+  // muestran las tarjetas de Inicio (nunca un cálculo aparte) para que jamás pueda contradecirlas.
+  // Antes esto era una cascada con barras "flotando" entre escalones — matemáticamente correcto,
+  // pero difícil de leer de un vistazo. Una barra de composición dice lo mismo (de la facturación a
+  // la ganancia neta) de forma directa: "de cada $100 facturados, tanto fue costo, tanto gastos...".
+  // El costo de mercadería ya viene neto de Ganancia Envío (y de la ganancia neutra, en Histórico
+  // Completo) para que los segmentos sumen EXACTO la facturación, sin un resto que sobre o falte.
+  // OJO: fallas y robos hoy NO se restan en la Ganancia Neta que muestra la tarjeta de arriba (es un
+  // hueco real del sistema, no un invento de este gráfico) — acá sí se restan, así que el segmento
+  // de Ganancia Neta puede dar más bajo que la tarjeta; se lo marca explícito en vez de esconderlo.
+  const composicionFacturacion = useMemo(() => {
+    const cur = analysisData.baseStats;
+    const { rangeStart, rangeEnd } = analysisData;
+    const homeAdSpendCascada = (rangeStart && rangeEnd) ? homeMetaDailyData.reduce((sum, day) => {
+      if (!day.date_start) return sum;
+      const [y, m, d] = day.date_start.split('-').map(Number);
+      const dayDate = new Date(y, m - 1, d, 12, 0, 0);
+      return dayDate >= rangeStart && dayDate <= rangeEnd ? sum + parseFloat(day.spend || 0) : sum;
+    }, 0) : 0;
+    const costoMercaderia = cur.totalRevenue - cur.grossProfit + (cur.neutralProfit || 0) + (cur.totalShippingProfit || 0);
+    const costoNeto = costoMercaderia - (cur.totalShippingProfit || 0) - (cur.neutralProfit || 0);
+    const fallasRobos = (cur.failedValue || 0) + (cur.stolenValue || 0);
+    const gananciaNeta = cur.netProfit - homeAdSpendCascada - fallasRobos;
+    const facturacion = cur.totalRevenue;
+    const segmentos = [
+      { label: 'Costo de mercadería', sublabel: 'neto de envío', valor: costoNeto, color: '#8b5cf6' },
+      { label: 'Gastos', valor: cur.totalGlobalExpenses, color: '#f59e0b' },
+      { label: 'Meta Ads', valor: homeAdSpendCascada, color: '#3b82f6' },
+      { label: 'Fallas y robos', valor: fallasRobos, color: '#f43f5e' },
+      { label: 'Ganancia Neta', valor: gananciaNeta, color: gananciaNeta >= 0 ? '#10b981' : '#ef4444' },
+    ].map(s => ({ ...s, pct: facturacion > 0 ? (s.valor / facturacion) * 100 : 0 }));
+    return { facturacion, segmentos };
+  }, [analysisData, homeMetaDailyData]);
+
+  // Días de stock por producto: velocidad de venta (últimos 30 días) contra stock actual de lotes
+  // activos — "a este ritmo, se te termina en N días". diasRestantes queda en null cuando no hubo
+  // ventas recientes (no hay con qué estimar, no es que sobre stock infinito).
+  const diasDeStock = useMemo(() => {
+    const stockPorProducto = {};
+    batches.filter(b => !b.finalizedAt).forEach(b => {
+      (b.items || []).forEach(i => {
+        const name = normalizeProductName(i.product);
+        if (!name) return;
+        stockPorProducto[name] = (stockPorProducto[name] || 0) + (i.currentStock || 0);
+      });
+    });
+    const hace30 = new Date(); hace30.setDate(hace30.getDate() - 30);
+    const vendidoPorProducto = {};
+    sales.forEach(s => {
+      if (s.isFalla || s.isRobo || !s.date) return;
+      const d = new Date(s.date);
+      if (isNaN(d.getTime()) || d < hace30) return;
+      const name = normalizeProductName(s.productName);
+      if (!name) return;
+      vendidoPorProducto[name] = (vendidoPorProducto[name] || 0) + (s.quantity || 0);
+    });
+    return Object.entries(stockPorProducto)
+      .filter(([, stock]) => stock > 0)
+      .map(([name, stock]) => {
+        const velocidadDiaria = (vendidoPorProducto[name] || 0) / 30;
+        const diasRestantes = velocidadDiaria > 0 ? stock / velocidadDiaria : null;
+        return { name, stock, velocidadDiaria, diasRestantes };
+      })
+      .sort((a, b) => (a.diasRestantes ?? Infinity) - (b.diasRestantes ?? Infinity));
+  }, [batches, sales]);
+
+  // Mapa de calor día×hora: a qué hora entran los pedidos DE VERDAD — createdAt (cuándo se anota el
+  // pedido para armar), a pedido explícito, no armadoAt ni entregadoEn. Usa pedidosRecientes (ventana
+  // en vivo de ~2 meses, ver ventanaVivaCutoffISO): el patrón de "cuándo entran los pedidos" interesa
+  // siempre actualizado al presente, no de un período elegido a mano arriba.
+  const mapaCalorPedidos = useMemo(() => {
+    const grid = Array.from({ length: 7 }, () => new Array(24).fill(0));
+    let max = 0;
+    pedidosRecientes.forEach(p => {
+      if (!p.createdAt) return;
+      const d = new Date(p.createdAt);
+      if (isNaN(d.getTime())) return;
+      const dow = d.getDay();
+      const hour = d.getHours();
+      grid[dow][hour] += 1;
+      if (grid[dow][hour] > max) max = grid[dow][hour];
+    });
+    return { grid, max, total: pedidosRecientes.length };
+  }, [pedidosRecientes]);
+
   const topProductsBySeña = useMemo(() => {
     const map = {};
     activeViewSales.forEach(s => {
@@ -4411,6 +4830,7 @@ export default function App() {
   const teamSummary = useMemo(() => {
     let totalPendingSalary = 0, totalPendingCommission = 0;
     teamMembers.forEach(m => {
+      if (m.paymentType === 'motomensajeria') return; // se paga aparte, ver NormanPagosPanel
       if (m.paymentType !== 'comision') {
         const accrued = monthsElapsedInclusive(m.salaryStartDate) * (m.monthlySalary || 0);
         const paid = teamPayments.filter(p => p.memberId === m.id && p.concept === 'salario').reduce((a, p) => a + (p.amount || 0), 0);
@@ -4662,8 +5082,12 @@ export default function App() {
     const totalAllRevenue = sales.filter(s => s.date && inR(s.date)).reduce((s,v) => s+(v.totalSaleRaw||0), 0);
     const adsByDate = {};
     const newAdsByDate = {};
+    // Día LOCAL, no UTC (ver localDayKey) — esto se cruza más abajo contra date_start de Meta (que
+    // ya viene en el día local de la cuenta publicitaria), así que si acá se usa el día UTC, las
+    // ventas cargadas de noche quedan un día corridas y el ROAS/MER diario no pega con el gasto real
+    // de ese día.
     fs.forEach(s => {
-      const d = s.date?.slice(0, 10); if (!d) return;
+      const d = localDayKey(s.date); if (!d) return;
       if (!adsByDate[d]) adsByDate[d] = { revenue: 0, cost: 0, count: 0 };
       adsByDate[d].revenue += s.totalSaleRaw || 0;
       adsByDate[d].cost    += s.costArsAtSale || 0;
@@ -4672,7 +5096,7 @@ export default function App() {
     });
     const allByDate = {};
     sales.filter(s => s.date && inR(s.date)).forEach(s => {
-      const d = s.date?.slice(0, 10); if (!d) return;
+      const d = localDayKey(s.date); if (!d) return;
       allByDate[d] = (allByDate[d] || 0) + (s.totalSaleRaw || 0);
     });
     const uniqueClients = new Set(fs.map(s => String(s.clientName || '').trim().toLowerCase()).filter(Boolean));
@@ -4704,7 +5128,11 @@ export default function App() {
       map[month].spend += parseFloat(d.spend || 0);
     });
     sales.forEach(s => {
-      const month = s.date?.slice(0, 7); if (!month || !map[month]) return;
+      // Mes LOCAL, no UTC — una venta cargada en la última noche del mes se iría al mes siguiente
+      // si se lee el string tal cual (ver localDayKey).
+      const dayKey = s.date && localDayKey(s.date);
+      const month = dayKey && dayKey.slice(0, 7);
+      if (!month || !map[month]) return;
       if (s.isNewClient === 'Nuevo - Publicidad') { map[month].newAdsCount++; map[month].totalAdsCount++; }
       else if (s.isNewClient === 'Clientes - Publicidad') { map[month].totalAdsCount++; }
     });
@@ -6908,6 +7336,15 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     await deleteSaleGroups([orderGroup], true);
   };
 
+  // Borra UNA sola línea de producto de una venta mayorista con varios productos — para cuando se
+  // anotó mal uno solo y no hace falta rehacer todo el pedido. Reutiliza deleteSaleGroups armando
+  // un "grupo" de una sola venta (misma lógica de devolución de stock/consignación que "Borrar
+  // venta" y "Borrar cliente", solo que acá el grupo tiene una única línea en vez de todas).
+  const handleDeleteWholesaleProductLine = async (order, sale) => {
+    if (order.originalSales.length <= 1) return handleDeleteWholesaleOrder(order);
+    await deleteSaleGroups([{ ticketId: order.ticketId, originalSales: [sale], totalSaleRaw: sale.totalSaleRaw || 0 }], true);
+  };
+
   const handleDeleteWholesaleClient = async (client) => {
     const orders = client?.orderGroups || [];
     if (!orders.length) return showToast('Este cliente no tiene ventas para borrar.', 'error');
@@ -8372,6 +8809,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 </div>
                                 );
                             })()}
+
+                            {/* MOTOMENSAJERÍA · NORMAN — no es un vendedor (no factura ni cobra comisión),
+                                pero comparte esta tarjeta con el resto del equipo porque es la otra persona
+                                a la que hay que pagarle. Mismo panel que en Equipo 028 (ver NormanPagosPanel). */}
+                            <NormanPagosPanel darkMode={darkMode} deuda={normanDeuda} ultimoPago={normanUltimoPago} onPagar={handleMarcarNormanPagado} variant="inline" />
                         </div>
 
                         {/* NUEVOS CLIENTES + COSTO PROMEDIO POR PRODUCTO (columna derecha, apiladas para
@@ -8908,14 +9350,204 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 {homeBlockOrder.map(blockId => {
                                     const node = blocks[blockId];
                                     if (!node) return null;
+                                    const hidden = hiddenHomeCharts.includes(blockId);
+                                    if (hidden && !homeEditMode) return null;
                                     return homeEditMode
-                                        ? <DraggableHomeBlock key={blockId} id={blockId} darkMode={darkMode}>{node}</DraggableHomeBlock>
+                                        ? <DraggableHomeBlock key={blockId} id={blockId} darkMode={darkMode} hidden={hidden} onToggleHide={() => toggleHomeChart(blockId)}>{node}</DraggableHomeBlock>
                                         : <React.Fragment key={blockId}>{node}</React.Fragment>;
                                 })}
                             </div>
                         </SortableContext>
                     </DndContext>
                     );
+                    })()}
+
+                    {/* --- GRÁFICOS NUEVOS (auditoría, oportunidades "ya tenés los datos") ---
+                        Fijos, no forman parte del sistema de tarjetas arrastrables de arriba —
+                        viven siempre al final de Inicio, en el mismo orden. */}
+                    {(() => {
+                        const gridColor = darkMode ? '#1D1D1D' : '#e4e4e7';
+                        const textColor = darkMode ? '#71717a' : '#a1a1aa';
+                        const DIAS_SEMANA = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+                        // Envoltorio de cada gráfico fijo de Inicio: header con título/subtítulo + el botón de
+                        // ojo para ocultar/mostrar (solo visible en modo Editar). Oculto y NO editando = no se
+                        // renderiza (desaparece del todo); oculto y editando = se ve atenuado con badge "OCULTO"
+                        // para poder encontrarlo y volver a mostrarlo — nunca queda "perdido" sin forma de volver.
+                        const HomeChartCard = ({ id, title, subtitle, wide, children }) => {
+                            const hidden = hiddenHomeCharts.includes(id);
+                            if (hidden && !homeEditMode) return null;
+                            return (
+                                <div className={`rounded-2xl p-5 ${wide ? 'lg:col-span-2' : ''} ${darkMode ? 'bg-[#0E0E0E]' : 'bg-white'} ${hidden ? 'opacity-40' : ''}`}>
+                                    <div className="flex items-start justify-between gap-3 mb-3">
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">{title}</h3>
+                                                {hidden && <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-zinc-500/10 text-zinc-500 shrink-0">OCULTO</span>}
+                                            </div>
+                                            {subtitle && <p className="text-[11px] text-zinc-500 mt-0.5">{subtitle}</p>}
+                                        </div>
+                                        {homeEditMode && (
+                                            <button onClick={() => toggleHomeChart(id)} title={hidden ? 'Mostrar este gráfico' : 'Ocultar este gráfico'}
+                                                className={`flex items-center justify-center w-6 h-6 rounded-lg border shrink-0 transition-colors ${hidden ? (darkMode ? 'border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10' : 'border-emerald-300 text-emerald-600 hover:bg-emerald-50') : (darkMode ? 'border-white/10 text-zinc-400 hover:bg-white/[0.06]' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-100')}`}>
+                                                {hidden ? <Eye size={12}/> : <EyeOff size={12}/>}
+                                            </button>
+                                        )}
+                                    </div>
+                                    {children}
+                                </div>
+                            );
+                        };
+                        return (
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mt-5">
+
+                            {/* Margen % en el tiempo */}
+                            <HomeChartCard id="margenPct" title="Margen % · últimos 60 días" subtitle={`Ganancia bruta como % de la facturación, día a día (la línea punteada es el ${formatPercent(analysisData.baseStats.grossMargin)} de la tarjeta "Ganancia Bruta" para el período elegido arriba — cada día sube y baja alrededor de ese promedio, no tiene que coincidir día por día). Si el promedio baja aunque la plata en pesos suba, es la primera señal de que algo se rompió.`}>
+                                <div className={`w-full h-[220px] p-2 rounded-xl ${darkMode ? 'bg-[#0B0B0B]' : 'bg-zinc-50'}`}>
+                                    <ResponsiveContainer width="100%" height="100%" debounce={200}>
+                                        <AreaChart data={margenDiario} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                                            <defs>
+                                                <linearGradient id="colorMargenHome" x1="0" y1="0" x2="0" y2="1">
+                                                    <stop offset="0%" stopColor="#6366f1" stopOpacity={0.4}/>
+                                                    <stop offset="100%" stopColor="#6366f1" stopOpacity={0}/>
+                                                </linearGradient>
+                                            </defs>
+                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridColor} />
+                                            <XAxis dataKey="label" stroke={textColor} fontSize={10} tickLine={false} axisLine={false} minTickGap={30} />
+                                            <YAxis stroke={textColor} fontSize={10} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}%`} width={40} />
+                                            <ReferenceLine y={analysisData.baseStats.grossMargin} stroke="#a1a1aa" strokeDasharray="4 4" strokeWidth={1.5} label={{ value: `Promedio: ${formatPercent(analysisData.baseStats.grossMargin)}`, position: 'insideTopRight', fill: textColor, fontSize: 10 }} />
+                                            <RechartsTooltip content={({ active, payload, label }) => (active && payload?.[0]) ? (
+                                                <div className={`p-3 rounded-lg shadow-xl border ${darkMode ? 'bg-zinc-800 border-zinc-700 text-white' : 'bg-white border-zinc-200 text-zinc-900'}`}>
+                                                    <p className="text-xs font-semibold mb-1 opacity-70">{label}</p>
+                                                    <p className="text-sm font-bold" style={{ color: payload[0].color }}>
+                                                        Margen: {payload[0].value == null ? '—' : `${payload[0].value.toFixed(1)}%`}
+                                                    </p>
+                                                </div>
+                                            ) : null} />
+                                            <Area type="monotone" dataKey="margen" stroke="#6366f1" strokeWidth={2.5} fillOpacity={1} fill="url(#colorMargenHome)" connectNulls />
+                                        </AreaChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </HomeChartCard>
+
+                            {/* Composición de la facturación */}
+                            <HomeChartCard id="composicion" title="En qué se fue la facturación" subtitle="Facturación contra cada costo — la barra más larga es la más grande en pesos.">
+                                <div className="space-y-3">
+                                    {/* Facturación arriba de todo, como referencia — siempre la barra más larga (100%). */}
+                                    <div>
+                                        <div className="flex items-center justify-between text-xs mb-1 gap-2">
+                                            <span className={`font-bold ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Facturación</span>
+                                            <span className={`font-bold ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{formatMoney(composicionFacturacion.facturacion)}</span>
+                                        </div>
+                                        <div className={`h-2 overflow-hidden ${darkMode ? 'bg-white/[0.06]' : 'bg-zinc-100'}`}>
+                                            <div className="h-full" style={{ width: '100%', background: '#6366f1' }} />
+                                        </div>
+                                    </div>
+                                    {composicionFacturacion.segmentos.map(s => {
+                                        const pctBar = composicionFacturacion.facturacion > 0 ? Math.max(0, Math.min(100, (s.valor / composicionFacturacion.facturacion) * 100)) : 0;
+                                        return (
+                                            <div key={s.label}>
+                                                <div className="flex items-center justify-between text-xs mb-1 gap-2">
+                                                    <span className={`font-semibold truncate ${darkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                                                        {s.label}{s.sublabel && <span className="text-[10px] font-normal text-zinc-500"> ({s.sublabel})</span>}
+                                                    </span>
+                                                    <span className="font-bold shrink-0" style={{ color: s.color }}>{formatMoney(s.valor)} <span className="text-[10px] font-medium text-zinc-500">· {s.pct.toFixed(1)}%</span></span>
+                                                </div>
+                                                <div className={`h-2 overflow-hidden ${darkMode ? 'bg-white/[0.06]' : 'bg-zinc-100'}`}>
+                                                    <div className="h-full transition-all duration-500" style={{ width: `${pctBar}%`, background: s.color }} />
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                <p className="text-[10px] text-zinc-500 mt-4">* Esta Ganancia Neta ya descuenta fallas y robos — la tarjeta "Ganancia Neta" de Inicio todavía no los resta (hueco pendiente del sistema, no un error de este gráfico).</p>
+                            </HomeChartCard>
+
+                            {/* Días de stock por producto */}
+                            <HomeChartCard id="diasStock" title="Días de stock por producto" subtitle="Al ritmo de venta de los últimos 30 días, cuántos días de stock quedan — los más urgentes primero.">
+                                {diasDeStock.length === 0 ? (
+                                    <p className="text-sm text-zinc-500 text-center py-8 opacity-60">Sin stock activo para calcular.</p>
+                                ) : (
+                                    <div className="space-y-2.5 max-h-[280px] overflow-y-auto custom-scrollbar pr-1">
+                                        {diasDeStock.slice(0, 12).map(p => {
+                                            const urgente = p.diasRestantes != null && p.diasRestantes <= 7;
+                                            const alerta = p.diasRestantes != null && p.diasRestantes > 7 && p.diasRestantes <= 14;
+                                            const color = p.diasRestantes == null ? (darkMode ? '#52525b' : '#a1a1aa') : urgente ? '#ef4444' : alerta ? '#f59e0b' : '#10b981';
+                                            const pctBar = p.diasRestantes == null ? 100 : Math.min(100, (p.diasRestantes / 30) * 100);
+                                            return (
+                                                <div key={p.name}>
+                                                    <div className="flex items-center justify-between text-xs mb-1 gap-2">
+                                                        <span className={`font-semibold truncate ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{p.name}</span>
+                                                        <span className="font-bold flex-shrink-0" style={{ color }}>{p.diasRestantes == null ? 'sin ventas recientes' : `${p.diasRestantes.toFixed(0)} días`}</span>
+                                                    </div>
+                                                    <div className={`h-1.5 rounded-full overflow-hidden ${darkMode ? 'bg-white/[0.06]' : 'bg-zinc-100'}`}>
+                                                        <div className="h-full rounded-full" style={{ width: `${pctBar}%`, background: color }} />
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </HomeChartCard>
+
+                            {/* Pareto de productos */}
+                            <HomeChartCard id="pareto" title="Pareto de productos" subtitle={paretoProductos.totalProductos === 0 ? 'Sin ganancia en el período elegido.' : `${paretoProductos.n80} de ${paretoProductos.totalProductos} productos hacen el 80% de la ganancia del período.`}>
+                                {paretoProductos.totalProductos === 0 ? (
+                                    <p className="text-sm text-zinc-500 text-center py-8 opacity-60">Sin datos para este período.</p>
+                                ) : (
+                                    <div className={`w-full h-[240px] p-2 rounded-xl ${darkMode ? 'bg-[#0B0B0B]' : 'bg-zinc-50'}`}>
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <ComposedChart data={paretoProductos.filas} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridColor} />
+                                                <XAxis dataKey="name" stroke={textColor} fontSize={9} tickLine={false} axisLine={false} interval={0} angle={-30} textAnchor="end" height={55} />
+                                                <YAxis yAxisId="left" stroke={textColor} fontSize={10} tickLine={false} axisLine={false} tickFormatter={formatCompact} width={45} />
+                                                <YAxis yAxisId="right" orientation="right" stroke={textColor} fontSize={10} tickLine={false} axisLine={false} domain={[0, 100]} tickFormatter={(v) => `${v}%`} width={35} />
+                                                <RechartsTooltip content={({ active, payload, label }) => (active && payload?.[0]) ? (
+                                                    <div className={`p-3 rounded-lg shadow-xl border ${darkMode ? 'bg-zinc-800 border-zinc-700 text-white' : 'bg-white border-zinc-200 text-zinc-900'}`}>
+                                                        <p className="text-xs font-semibold mb-1 opacity-70">{label}</p>
+                                                        <p className="text-sm font-bold text-indigo-400">Ganancia: {formatMoney(payload[0].payload.profit)}</p>
+                                                        <p className="text-sm font-bold text-amber-400">{payload[0].payload.pctIndividual.toFixed(1)}% de la ganancia total</p>
+                                                        <p className="text-[11px] mt-1 opacity-60">Acumulado hasta acá: {payload[0].payload.pctAcumulado.toFixed(1)}%</p>
+                                                    </div>
+                                                ) : null} />
+                                                <Bar yAxisId="left" dataKey="profit" fill="#6366f1" radius={[4, 4, 0, 0]} name="Ganancia" />
+                                                <Line yAxisId="right" type="monotone" dataKey="pctAcumulado" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3 }} name="% acumulado" />
+                                            </ComposedChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                )}
+                            </HomeChartCard>
+
+                            {/* Mapa de calor día×hora — ancho completo, necesita las 24 columnas */}
+                            <HomeChartCard id="heatmap" wide title="Cuándo entran los pedidos" subtitle={`Día y hora en que se ANOTA el pedido para armar (no cuando se termina de armar ni se entrega) — últimos ~2 meses, ${mapaCalorPedidos.total} pedido${mapaCalorPedidos.total === 1 ? '' : 's'}.`}>
+                                {mapaCalorPedidos.total === 0 ? (
+                                    <p className="text-sm text-zinc-500 text-center py-8 opacity-60">Todavía no hay pedidos en la ventana reciente.</p>
+                                ) : (
+                                    <div className="overflow-x-auto custom-scrollbar">
+                                        <div style={{ minWidth: '640px' }}>
+                                            <div className="flex gap-[3px] mb-1 pl-9">
+                                                {Array.from({ length: 24 }).map((_, h) => (
+                                                    <div key={h} className="flex-1 text-center text-[8px] text-zinc-500" style={{ minWidth: '20px' }}>{h % 3 === 0 ? h : ''}</div>
+                                                ))}
+                                            </div>
+                                            {DIAS_SEMANA.map((label, dow) => (
+                                                <div key={dow} className="flex items-center gap-[3px] mb-[3px]">
+                                                    <div className="w-9 flex-shrink-0 text-[9px] font-bold text-zinc-500">{label}</div>
+                                                    {mapaCalorPedidos.grid[dow].map((count, hour) => {
+                                                        const intensity = mapaCalorPedidos.max > 0 ? count / mapaCalorPedidos.max : 0;
+                                                        return (
+                                                            <div key={hour} title={`${label} ${hour}:00 — ${count} pedido${count === 1 ? '' : 's'}`}
+                                                                className="flex-1 rounded-sm" style={{ minWidth: '20px', height: '20px', background: intensity === 0 ? (darkMode ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)') : `rgba(99,102,241,${0.15 + intensity * 0.85})` }} />
+                                                        );
+                                                    })}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </HomeChartCard>
+
+                        </div>
+                        );
                     })()}
 
                 </div>
@@ -9522,10 +10154,20 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
                                       {isOrderOpen && (
                                         <div className={`mt-3 pt-3 border-t space-y-1.5 ${darkMode ? 'border-white/[0.06]' : 'border-zinc-100'}`}>
-                                          {order.productList.map(p => (
-                                            <div key={p.name} className="flex items-center justify-between gap-3 text-xs">
-                                              <span className={darkMode ? 'text-zinc-300' : 'text-zinc-700'}>{p.name}</span>
-                                              <span className="font-bold shrink-0">{p.quantity}u</span>
+                                          {/* Línea por línea (no agrupado por nombre como el resumen de arriba) para
+                                              poder borrar UNA sola si se cargó mal, sin tocar el resto del pedido. */}
+                                          {order.originalSales.map(sale => (
+                                            <div key={sale.id} className="flex items-center justify-between gap-3 text-xs">
+                                              <span className={darkMode ? 'text-zinc-300' : 'text-zinc-700'}>
+                                                {sale.productName}{sale.variant ? ` · ${sale.variant}` : ''}
+                                              </span>
+                                              <div className="flex items-center gap-2 shrink-0">
+                                                <span className="font-bold">{sale.quantity}u · {formatMoney(sale.totalSaleRaw || 0)}</span>
+                                                <button onClick={() => handleDeleteWholesaleProductLine(order, sale)} title="Borrar este producto de la venta"
+                                                  className={`p-1 rounded-md transition-colors ${darkMode ? 'text-zinc-600 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-500 hover:bg-red-50'}`}>
+                                                  <Trash2 size={12}/>
+                                                </button>
+                                              </div>
                                             </div>
                                           ))}
                                         </div>
@@ -12191,6 +12833,16 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                 ) : (
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                     {teamMembers.map(member => {
+                      // Norman no factura ni cobra comisión — se le debe un monto puntual por
+                      // entrega, no por mes ni por venta, así que no encaja en TeamMemberCard.
+                      // Mismo panel que en Inicio (NormanPagosPanel), acá con marco propio de
+                      // tarjeta para que se vea igual que el resto de Equipo 028.
+                      if (member.paymentType === 'motomensajeria') {
+                        return (
+                          <NormanPagosPanel key={member.id} darkMode={darkMode} deuda={normanDeuda}
+                            ultimoPago={normanUltimoPago} onPagar={handleMarcarNormanPagado} variant="card" />
+                        );
+                      }
                       const memberPayments = teamPayments.filter(p => p.memberId === member.id);
                       const commissionStats = getTeamCommissionStats(member);
                       return (
