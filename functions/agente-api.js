@@ -185,8 +185,13 @@ exports.agentStock = withAuth(async (req, res) => {
       if (!esParecido(pQ, prod)) continue;
       if (vQ && !esParecido(vQ, varr)) continue;
       const clave = `${item.product}||${item.variant}`;
-      const prev = acc.get(clave) || { product: item.product, variant: item.variant, stock: 0 };
+      const prev = acc.get(clave) || { product: item.product, variant: item.variant, stock: 0, precioVenta: null };
       prev.stock += Number(item.currentStock) || 0;
+      // Lotes recorridos en orden ascendente por fecha — el precio del lote más nuevo que lo
+      // tenga cargado gana, así el precio no queda pegado a un lote viejo ya vendido.
+      if (item.precioVenta !== undefined && item.precioVenta !== null && item.precioVenta !== "") {
+        prev.precioVenta = Number(item.precioVenta);
+      }
       acc.set(clave, prev);
     }
   }
@@ -430,15 +435,18 @@ exports.agentPedido = withAuth(async (req, res) => {
 // El staff setea esto desde /operativo en el dashboard. Solo campos estructurados (nada de
 // texto libre) para que el bot no se confunda: la frase la arma el prompt segun `situacion`.
 const SITUACIONES_VALIDAS = ["sin_demora", "normal", "demora", "demora_fuerte", "solo_manana"];
+const ALIASES_VALIDOS = ["alias1", "alias2", "alias3"];
 
 exports.agentEstadoOperativo = withAuth(async (req, res) => {
   const doc = await db.collection("settings").doc("operativo").get();
   const d = doc.exists ? doc.data() : {};
   const situacion = SITUACIONES_VALIDAS.includes(d.situacion) ? d.situacion : "sin_demora";
+  const aliasActivo = ALIASES_VALIDOS.includes(d.aliasActivo) ? d.aliasActivo : "alias1";
   return res.json({
     ok: true,
     situacion,                    // sin_demora | normal | demora | demora_fuerte | solo_manana
     proximaSalida: d.proximaSalida || null,
+    aliasActivo,                  // alias1 | alias2 | alias3 — cual usar hoy
     actualizadoEn: d.actualizadoEn || null,
   });
 });

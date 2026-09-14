@@ -3327,7 +3327,7 @@ export default function App() {
   const [newBatchAccount, setNewBatchAccount] = useState('');
   const [newBatchCategory, setNewBatchCategory] = useState('');
   const [newBatchSkipExpense, setNewBatchSkipExpense] = useState(false);
-  const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', initialStock: '', repeatCount: '1' });
+  const [newItem, setNewItem] = useState({ product: '', variant: '', costArs: '', precioVenta: '', initialStock: '', repeatCount: '1' });
   const [cashFlowReciente, setCashFlowReciente] = useState([]);
   const [cashFlowHistorico, setCashFlowHistorico] = useState([]);
   const [wallets, setWallets] = useState({ LEMON: 0, AHORROS: 0, GALICIA: 0, GALICIA_GIECO: 0, MERCADO_PAGO: 0, CUENTA_RECAUDADORA: 0, EFECTIVO: 0, USDT: 0, USD: 0, SIN_CUENTA: 0 });
@@ -6837,11 +6837,13 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
     const count = Math.max(1, Math.min(parseInt(newItem.repeatCount) || 1, 500));
     const now = Date.now();
     const unitCost = parseFloat(newItem.costArs) || 0;
+    const precioVenta = newItem.precioVenta !== '' ? parseFloat(newItem.precioVenta) : null;
     const qty = parseInt(newItem.initialStock) || 0;
     const newItems = Array.from({ length: count }, (_, i) => ({
       id: now + i + '-' + Math.random().toString(36).substr(2, 9),
       product: newItem.product, variant: newItem.variant || 'Único',
       costArs: unitCost,
+      precioVenta,
       initialStock: qty,
       currentStock: qty,
     }));
@@ -6865,7 +6867,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
         const totalCost = itemCost * count;
         await applyWalletDeltas({ [batch.account]: -totalCost });
       }
-      setNewItem({ product: '', variant: '', costArs: '', initialStock: '', repeatCount: '1' });
+      setNewItem({ product: '', variant: '', costArs: '', precioVenta: '', initialStock: '', repeatCount: '1' });
       showToast(count > 1 ? `${count} entradas agregadas` : 'Producto agregado', 'success');
     } catch (e) { showToast("Error: " + e.message, 'error'); }
   };
@@ -6926,7 +6928,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
     const newInitialStock = parseInt(editingItem.initialStock) || 0;
     const newCost = parseFloat(editingItem.costArs) || 0;
-    
+    const newPrecioVenta = editingItem.precioVenta !== '' && editingItem.precioVenta != null
+      ? parseFloat(editingItem.precioVenta) : null;
+
     const diffStock = newInitialStock - (oldItem.initialStock || 0);
     let newCurrentStock = (oldItem.currentStock || 0) + diffStock;
     if (newCurrentStock < 0) newCurrentStock = 0;
@@ -6936,6 +6940,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       product: editingItem.product,
       variant: editingItem.variant,
       costArs: newCost,
+      precioVenta: newPrecioVenta,
       initialStock: newInitialStock,
       currentStock: newCurrentStock
     };
@@ -10328,6 +10333,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                               <div className="col-span-2 md:col-span-3"><Input darkMode={darkMode} list="products-list" label="Producto" placeholder="Ej: Cherry Fuse" value={newItem.product} onChange={e => setNewItem({...newItem, product: e.target.value})} /></div>
                               <div className="col-span-2 md:col-span-3"><Input darkMode={darkMode} list="variants-list" label="Variante" placeholder="Ej: Blanco" value={newItem.variant} onChange={e => setNewItem({...newItem, variant: e.target.value})} /></div>
                               <div className="col-span-1 md:col-span-2"><Input darkMode={darkMode} label="Costo ($)" type="number" value={newItem.costArs} onChange={e => setNewItem({...newItem, costArs: e.target.value})} /></div>
+                              <div className="col-span-1 md:col-span-2"><Input darkMode={darkMode} label="Precio venta ($)" type="number" placeholder="Opcional" value={newItem.precioVenta} onChange={e => setNewItem({...newItem, precioVenta: e.target.value})} /></div>
                               <div className="col-span-1 md:col-span-1"><Input darkMode={darkMode} label="Cant." type="number" value={newItem.initialStock} onChange={e => setNewItem({...newItem, initialStock: e.target.value})} /></div>
                               <div className="col-span-1 md:col-span-1">
                                 <Input
@@ -10364,12 +10370,13 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                               <div className="font-semibold text-sm">{item.product || 'Sin nombre'}</div>
                                               <div className={`text-xs font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{item.variant || ''}</div>
                                           </td>
-                                          <td className="px-5 py-3 font-mono font-medium text-sm text-zinc-500">{formatMoney(item.costArs)}</td>
+                                          <td className="px-5 py-3 font-mono font-medium text-sm text-zinc-500">{formatMoney(item.costArs)}{item.precioVenta ? <div className="text-[11px] font-sans font-normal text-emerald-500">venta {formatMoney(item.precioVenta)}</div> : null}</td>
                                           <td className="px-5 py-3">
                                               <div className="flex items-center gap-2">
                                                   <input
                                                       autoFocus
                                                       type="number" min="1" max={item.currentStock || 0}
+
                                                       placeholder="Cant."
                                                       className={`w-20 p-1.5 text-sm border rounded outline-none focus:border-rose-500 ${darkMode ? 'bg-[#0B0B0B] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`}
                                                       value={subtractingItem.amount}
@@ -10392,7 +10399,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                               <div className="font-semibold text-sm">{item.product || 'Sin nombre'}</div>
                                               <div className={`text-xs font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{item.variant || ''}</div>
                                           </td>
-                                          <td className="px-5 py-3 font-mono font-medium text-sm text-zinc-500">{formatMoney(item.costArs)}</td>
+                                          <td className="px-5 py-3 font-mono font-medium text-sm text-zinc-500">{formatMoney(item.costArs)}{item.precioVenta ? <div className="text-[11px] font-sans font-normal text-emerald-500">venta {formatMoney(item.precioVenta)}</div> : null}</td>
                                           <td className="px-5 py-3">
                                               <div className="flex items-center gap-2">
                                                   <input
@@ -10421,7 +10428,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                               <input className={`w-full p-1.5 text-xs border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0B0B0B] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`} value={editingItem.variant} onChange={e => setEditingItem({...editingItem, variant: e.target.value})} placeholder="Variante"/>
                                           </td>
                                           <td className="px-5 py-3">
-                                              <input type="number" className={`w-20 p-1.5 text-sm border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0B0B0B] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`} value={editingItem.costArs} onChange={e => setEditingItem({...editingItem, costArs: e.target.value})} />
+                                              <input type="number" title="Costo" placeholder="Costo" className={`w-20 p-1.5 mb-1 text-sm border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0B0B0B] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`} value={editingItem.costArs} onChange={e => setEditingItem({...editingItem, costArs: e.target.value})} />
+                                              <input type="number" title="Precio de venta" placeholder="Venta" className={`w-20 p-1.5 text-xs border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0B0B0B] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`} value={editingItem.precioVenta ?? ''} onChange={e => setEditingItem({...editingItem, precioVenta: e.target.value})} />
                                           </td>
                                           <td className="px-5 py-3">
                                               <input type="number" className={`w-16 p-1.5 text-sm border rounded outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0B0B0B] border-zinc-700 text-white' : 'bg-white border-zinc-300 text-black'}`} value={editingItem.initialStock} onChange={e => setEditingItem({...editingItem, initialStock: e.target.value})} title="Editar stock total comprado"/>
@@ -10439,7 +10447,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                               <div className="font-semibold text-sm">{item.product || 'Sin nombre'}</div>
                                               <div className={`text-xs font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{item.variant || ''}</div>
                                           </td>
-                                          <td className="px-5 py-3 font-mono font-medium text-sm text-zinc-500">{formatMoney(item.costArs)}</td>
+                                          <td className="px-5 py-3 font-mono font-medium text-sm text-zinc-500">{formatMoney(item.costArs)}{item.precioVenta ? <div className="text-[11px] font-sans font-normal text-emerald-500">venta {formatMoney(item.precioVenta)}</div> : null}</td>
                                           <td className="px-5 py-3">
                                               <div className="flex items-center gap-2">
                                                   <div className={`h-2 w-16 rounded-full overflow-hidden ${darkMode ? 'bg-zinc-800' : 'bg-zinc-200'}`}>
