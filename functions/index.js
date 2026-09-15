@@ -1877,3 +1877,8 @@ function esParecido(usuarioTexto, bdTexto) {
 
 // --- Endpoints del agente de IA (ver agente-api.js - todo aditivo, no toca nada de arriba) ---
 Object.assign(exports, require("./agente-api"));
+
+// (Acá vivía exports.tempMigrarPrecios, un endpoint de migración de una sola vez que completó
+// `precioVenta` en los items de `batches` ya cargados, usando los precios que en ese momento
+// estaban fijos en el prompt del agente. Se usó una vez (181 items actualizados: Elfbar EB
+// Create, Ice King, Duke y Te) y se sacó a propósito, mismo criterio que sincronizarBilleteras.)
