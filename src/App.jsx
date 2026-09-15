@@ -8410,6 +8410,16 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                 <ClipboardList size={16} strokeWidth={2} className="flex-shrink-0" />
                 {!sidebarCollapsed && <span>Pedidos</span>}
             </Link>
+            <Link
+                to="/operativo"
+                title={sidebarCollapsed ? 'Operativo' : undefined}
+                className={`flex items-center gap-3 py-2.5 rounded-xl font-medium text-sm transition-colors duration-150 ${sidebarCollapsed ? 'justify-center px-0' : 'px-3'} ${
+                    darkMode ? 'text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-100' : 'text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800'
+                }`}
+            >
+                <Settings size={16} strokeWidth={2} className="flex-shrink-0" />
+                {!sidebarCollapsed && <span>Operativo</span>}
+            </Link>
         </div>
 
         <div className={`p-4 border-t space-y-2 ${darkMode ? 'border-white/[0.06]' : 'border-zinc-100'}`}>
