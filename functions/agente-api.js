@@ -53,6 +53,9 @@ const normalizar = (texto) =>
     .normalize("NFD")
     .replace(/[^a-z0-9 ]/g, "")
     .replace(/\b\d+k\b/g, "")
+    // Conectores ("&", "y", "and") no forman parte del nombre real — "Honor & Glory" y
+    // "Honor and Glory" tienen que ser lo mismo para el buscador.
+    .replace(/\b(y|and)\b/g, " ")
     .replace(/ +/g, " ")
     .trim();
 
