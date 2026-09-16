@@ -376,9 +376,14 @@ exports.agentCotizarEnvio = withAuth(async (req, res) => {
         mensaje: "sin geocoding configurado — cotizar el envío a mano",
       });
     }
+    // No se fuerza ", CABA, Argentina" en el texto: eso le puede hacer resolver mal una
+    // dirección genuinamente lejana si coincide con un lugar/monumento que también existe
+    // dentro de CABA (ej. "Pilar" solo, sin más datos, matcheaba con la Basílica del Pilar en
+    // Recoleta en vez del partido de Pilar, a 43km). Se deja que Google resuelva la dirección
+    // tal cual la escribió el cliente, solo acotado al país.
     const geo = await axios.get("https://maps.googleapis.com/maps/api/geocode/json", {
       params: {
-        address: `${texto}, CABA, Argentina`,
+        address: texto,
         key: GOOGLE_MAPS_KEY,
         region: "ar",
         components: "country:AR",
