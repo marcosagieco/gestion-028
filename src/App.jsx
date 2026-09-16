@@ -5452,7 +5452,8 @@ export default function App() {
   // Sync automático: cada gasto diario de Meta Ads (día ya cerrado, desde META_ADS_AUTO_EXPENSE_CUTOFF_DATE)
   // se carga solo como un "Gasto" más con cuenta LEMON, y se descuenta del saldo de esa billetera.
   // Corre en silencio cada vez que se abre la app (sin pedir confirmación). Usa un id determinístico
-  // por fecha (metaads_YYYY-MM-DD) para no duplicar el gasto si corre en más de una pestaña/dispositivo.
+  // por fecha (metaads_YYYY-MM-DD) y una transacción por día para que ni el gasto ni el descuento
+  // de Lemon se repitan aunque corra en más de una pestaña/dispositivo.
   useEffect(() => {
     const syncMetaAdsExpenses = async () => {
       if (metaAdsSyncingRef.current) return;
@@ -5469,22 +5470,34 @@ export default function App() {
       if (!pending.length) return;
       metaAdsSyncingRef.current = true;
       try {
-        let lemonDelta = 0;
+        // "pending" sale de la lista de gastos que tiene la pantalla, y esa lista NO es confiable
+        // para decidir si se descuenta plata: al abrir la web, los datos de Meta suelen llegar antes
+        // que el primer snapshot de expenses (que espera el login), así que expenses está vacío y
+        // TODOS los días desde el corte parecen pendientes. Antes se reescribía cada gasto (id
+        // determinístico, no se duplicaba) pero se le volvía a restar a Lemon la suma de todos esos
+        // días en cada apertura — así llegó a -44 millones. Lo mismo pasaba con dos pestañas o
+        // dispositivos abiertos a la vez, y pasaría cuando los días viejos salgan de la ventana en
+        // vivo. Ahora cada día se chequea contra el servidor en una transacción: si el gasto ya
+        // existe no se toca nada; si no, se crea y se descuenta de Lemon juntos, o ninguno de los dos.
         for (const p of pending) {
           const [y, m, d] = p.date.split('-');
-          await setDoc(doc(db, 'expenses', `metaads_${p.date}`), {
-            date: new Date(Number(y), Number(m) - 1, Number(d), 12, 0, 0).toISOString(),
-            description: `Meta Ads · ${p.date}`,
-            amount: p.amount,
-            batchId: null,
-            batchName: 'Meta Ads',
-            account: 'LEMON',
-            source: 'meta_ads_auto',
-            metaDate: p.date,
+          const expenseRef = doc(db, 'expenses', `metaads_${p.date}`);
+          await runTransaction(db, async (t) => {
+            const snap = await t.get(expenseRef);
+            if (snap.exists()) return;
+            t.set(expenseRef, {
+              date: new Date(Number(y), Number(m) - 1, Number(d), 12, 0, 0).toISOString(),
+              description: `Meta Ads · ${p.date}`,
+              amount: p.amount,
+              batchId: null,
+              batchName: 'Meta Ads',
+              account: 'LEMON',
+              source: 'meta_ads_auto',
+              metaDate: p.date,
+            });
+            t.set(doc(db, 'settings', 'wallets'), { LEMON: increment(-p.amount) }, { merge: true });
           });
-          lemonDelta += p.amount;
         }
-        await applyWalletDeltas({ LEMON: -lemonDelta });
       } catch (e) {
         console.error('Error sincronizando gasto de Meta Ads con Lemon:', e);
       } finally {
@@ -5493,7 +5506,6 @@ export default function App() {
     };
     syncMetaAdsExpenses();
     // expenses NO es dependencia a propósito — ver comentario junto a expensesRef, arriba.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [homeMetaDailyData]);
 
   // Carga silenciosa de nombres de campañas (todas, activas o no) para sugerir al cargar una venta
