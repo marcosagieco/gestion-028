@@ -10843,14 +10843,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
             {/* --- PESTAÑA CATÁLOGO --- */}
             {activeTab === 'catalogo' && (
               <div className="animate-in fade-in duration-300 max-w-[1200px] space-y-6">
-                <div>
-                  <h2 className={`text-xl font-black ${darkMode ? 'text-white' : 'text-zinc-900'}`}>Catálogo</h2>
-                  <p className={`text-sm mt-1 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                    Acá se carga qué productos existen: marca, nombre, precio y descripción. El bot de WhatsApp
-                    usa esto para identificar lo que pide el cliente y darle el precio real — no toca el stock,
-                    eso sigue viviendo en "Lotes" tal cual está.
-                  </p>
-                </div>
+                <p className={`text-sm -mt-2 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                  Acá se carga qué productos existen: marca, nombre, precio y descripción. El bot de WhatsApp
+                  usa esto para identificar lo que pide el cliente y darle el precio real — el stock (cuánto hay
+                  de cada sabor) sigue viviendo en "Lotes" tal cual está, esto no lo reemplaza.
+                </p>
 
                 <div className={`rounded-2xl border p-5 space-y-4 ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
                   <h3 className={`text-sm font-bold uppercase tracking-wide ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>

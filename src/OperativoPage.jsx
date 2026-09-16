@@ -141,7 +141,7 @@ export default function OperativoPage() {
   return (
     <div className={`min-h-screen ${dm ? 'bg-[#050505] text-zinc-100' : 'bg-slate-50 text-zinc-900'}`}
       style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
-      <div className="max-w-lg mx-auto px-4 py-6">
+      <div className="max-w-[1200px] mx-auto px-4 md:px-8 py-6">
 
         <div className="flex items-center justify-between mb-6">
           <Link to="/" className={`flex items-center gap-1.5 text-xs font-semibold ${label} hover:opacity-80`}>
@@ -158,20 +158,20 @@ export default function OperativoPage() {
           </div>
           <div>
             <p className={`text-xs font-bold uppercase tracking-widest ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>028 Import</p>
-            <h1 className="text-base font-black leading-tight">Estado del dia</h1>
+            <h1 className="text-2xl font-black tracking-tight leading-tight">Estado del dia</h1>
           </div>
         </div>
 
-        <p className={`text-xs mb-5 ${label}`}>
+        <p className={`text-sm mb-6 ${label}`}>
           Esto lo lee el bot de WhatsApp: si hay demora en los envios, y que alias de pago pasarle
           al cliente. El bot toma pedidos siempre.
         </p>
 
-        <div className={`rounded-2xl border p-5 space-y-6 ${card}`}>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
 
           {/* Demora del dia */}
-          <div>
-            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Demora de hoy</label>
+          <div className={`rounded-2xl border p-5 ${card}`}>
+            <label className={`block text-xs font-bold uppercase tracking-wide mb-3 ${label}`}>Demora de hoy</label>
             <div className="space-y-2">
               {SITUACIONES.map((s) => {
                 const sel = form.situacion === s.id;
@@ -194,18 +194,18 @@ export default function OperativoPage() {
           </div>
 
           {/* Proxima salida */}
-          <div>
+          <div className={`rounded-2xl border p-5 ${card}`}>
             <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Proxima salida de moto <span className="normal-case font-normal">(opcional)</span></label>
-            <p className={`text-[11px] mb-2 ${label}`}>Hora a la que sale la proxima tanda de envios. El bot la usa si el cliente pregunta cuando le llega.</p>
+            <p className={`text-[11px] mb-3 ${label}`}>Hora a la que sale la proxima tanda de envios. El bot la usa si el cliente pregunta cuando le llega.</p>
             <input value={form.proximaSalida} onChange={(e) => set('proximaSalida', e.target.value)}
               placeholder="16:00"
               className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors ${input}`} />
           </div>
 
           {/* Alias activo */}
-          <div>
+          <div className={`rounded-2xl border p-5 ${card}`}>
             <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Alias a usar hoy</label>
-            <p className={`text-[11px] mb-2 ${label}`}>Cual de los 3 le pasa el bot al cliente cuando llega el momento de cobrar.</p>
+            <p className={`text-[11px] mb-3 ${label}`}>Cual de los 3 le pasa el bot al cliente cuando llega el momento de cobrar.</p>
             <div className="space-y-2">
               {ALIASES.map((a) => {
                 const sel = form.aliasActivo === a.id;
@@ -223,14 +223,16 @@ export default function OperativoPage() {
               })}
             </div>
           </div>
+        </div>
 
+        <div className={`rounded-2xl border p-5 mt-5 max-w-md ${card}`}>
           <button onClick={guardar} disabled={saving || !loaded}
             className="w-full flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
             style={{ background: savedAt ? '#10b981' : '#6366f1' }}>
             {savedAt ? <><Check size={16} /> Guardado</> : <><Save size={15} /> {saving ? 'Guardando...' : 'Guardar'}</>}
           </button>
           {savedAt && (
-            <p className={`text-xs text-center ${label}`}>El bot lo toma en la proxima consulta de un cliente.</p>
+            <p className={`text-xs text-center mt-2 ${label}`}>El bot lo toma en la proxima consulta de un cliente.</p>
           )}
         </div>
       </div>
