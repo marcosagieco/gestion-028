@@ -1878,14 +1878,11 @@ function esParecido(usuarioTexto, bdTexto) {
 // --- Endpoints del agente de IA (ver agente-api.js - todo aditivo, no toca nada de arriba) ---
 Object.assign(exports, require("./agente-api"));
 
-// (Acá vivieron exports.tempMigrarPrecios, tempMigrarPrecios2, tempMigrarPrecios3 y
-// tempMigrarPrecios4, endpoints de migración de una sola vez que completaron `precioVenta` en
-// items de `batches` ya cargados: 181 (nicotina Elfbar EB Create/Ice King/Duke/Te) + 171
-// ("Elfbar Ice" = mismo producto que "Elfbar Ice King", confirmado por el relevamiento) + 23
-// (Perfumes/Cápsulas/Batería cargados con nombre genérico en `product` y el real en `variant`)
-// + 49 (Ignite V400 Mix, Ghost 7g, Dozo, Elfbar EB Create, AirPods Pro, cable y adaptador Apple,
-// Victoria's Secret, cargados con nombres parciales/distintos a la plantilla). Total: 424 items.
-// Todo lo que no matcheó exacto contra un precio real conocido (Elfbar BC pro, Torch, Strike 5g,
-// cables/cargadores genéricos, cápsulas "jeeter"/"Big Chief", batería "pen negro", Buzz Gummies
-// sin precio unitario, perfumes fuera de catálogo) quedó sin precio a propósito — no se inventó
-// nada. Se usaron una vez y se sacaron, mismo criterio que sincronizarBilleteras.)
+// (Acá vivieron exports.tempMigrarPrecios, tempMigrarPrecios2, tempMigrarPrecios3,
+// tempMigrarPrecios4 y tempRevertirPrecios. Las primeras 4 completaron `precioVenta` en 424
+// items de `batches` usando los precios que en ese momento estaban fijos en el prompt del
+// agente. Se decidió después que ese dato viva en una sección nueva de "Catálogo" en vez de
+// mezclado en Lotes, así que tempRevertirPrecios deshizo la migración: los 424 items volvieron
+// a precioVenta: null, exactamente como estaban antes de esta sesión — no se tocó stock ni
+// ningún otro campo. Se usaron una vez cada uno y se sacaron, mismo criterio que
+// sincronizarBilleteras.)
