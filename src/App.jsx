@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useId, useCallback } from 
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package, UserCircle,
   ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw, Target, RefreshCw, Receipt, Minus, ArrowDownLeft, ArrowUpRight, Landmark, CreditCard, ArrowLeftRight, Pencil, Check, ClipboardList, GripVertical,
-  UserCog, HandCoins, CalendarClock, History, Bike, Eye, EyeOff
+  UserCog, HandCoins, CalendarClock, History, Bike, Eye, EyeOff, Tag
 } from 'lucide-react';
 
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Bar, ComposedChart, Line, ReferenceLine } from 'recharts';
@@ -3218,6 +3218,11 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState('home');
   const [batches, setBatches] = useState([]);
+  const [catalogo, setCatalogo] = useState([]);
+  const CATALOGO_VACIO = { categoria: '', marca: '', nombre: '', precio: '', descripcion: '' };
+  const [catalogoForm, setCatalogoForm] = useState(CATALOGO_VACIO);
+  const [editingCatalogoId, setEditingCatalogoId] = useState(null);
+  const [catalogoFiltro, setCatalogoFiltro] = useState('');
   // sales/expenses/cashFlow ya NO son un solo useState: el listener en vivo solo trae los últimos
   // ~2 meses (Reciente) para que abrir la web no dependa de cuánto historial se acumuló; el resto
   // (Historico) se trae una sola vez con getDocs cuando algo de verdad lo necesita (ver
@@ -3987,13 +3992,70 @@ export default function App() {
             () => setCotizacionesHistorico([])
         );
 
+        // Catálogo: identidad de producto (marca, nombre, precio, descripción) que consulta el
+        // agente de IA — separado de `batches` a propósito, no toca stock ni lotes existentes.
+        const unsubCatalogo = onSnapshot(collection(db, 'catalogo'), (snap) => {
+            setCatalogo(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        }, () => setCatalogo([]));
+
         setLoading(false);
-        return () => { unsubBatches(); unsubSales(); unsubExp(); unsubCash(); unsubNeutralStock(); unsubConsignments(); unsubSettings(); unsubWallets(); unsubNormanPendientes(); unsubNormanUltimoPago(); unsubPedidosRecientes(); unsubTeamMembers(); unsubTeamPayments(); unsubCotizaciones(); unsubCotizacionesHistorico(); };
+        return () => { unsubBatches(); unsubSales(); unsubExp(); unsubCash(); unsubNeutralStock(); unsubConsignments(); unsubSettings(); unsubWallets(); unsubNormanPendientes(); unsubNormanUltimoPago(); unsubPedidosRecientes(); unsubTeamMembers(); unsubTeamPayments(); unsubCotizaciones(); unsubCotizacionesHistorico(); unsubCatalogo(); };
     } catch (e) {
         setIsOffline(true);
         setLoading(false);
     }
   }, [user]);
+
+  // Catálogo: alta/edición/baja. Colección propia, no toca `batches` ni el stock.
+  const guardarCatalogoItem = async () => {
+    const { categoria, marca, nombre, precio, descripcion } = catalogoForm;
+    if (!nombre.trim()) { showToast('Falta el nombre del producto', 'error'); return; }
+    try {
+      const payload = {
+        categoria: categoria.trim(),
+        marca: marca.trim(),
+        nombre: nombre.trim(),
+        precio: precio !== '' ? parseFloat(precio) : null,
+        descripcion: descripcion.trim(),
+        activo: true,
+      };
+      if (editingCatalogoId) {
+        await updateDoc(doc(db, 'catalogo', editingCatalogoId), payload);
+        showToast('Producto actualizado', 'success');
+      } else {
+        await addDoc(collection(db, 'catalogo'), { ...payload, creadoEn: new Date().toISOString() });
+        showToast('Producto agregado al catálogo', 'success');
+      }
+      setCatalogoForm(CATALOGO_VACIO);
+      setEditingCatalogoId(null);
+    } catch (e) {
+      showToast('Error guardando: ' + e.message, 'error');
+    }
+  };
+  const editarCatalogoItem = (item) => {
+    setEditingCatalogoId(item.id);
+    setCatalogoForm({
+      categoria: item.categoria || '',
+      marca: item.marca || '',
+      nombre: item.nombre || '',
+      precio: item.precio != null ? String(item.precio) : '',
+      descripcion: item.descripcion || '',
+    });
+  };
+  const cancelarEdicionCatalogo = () => { setEditingCatalogoId(null); setCatalogoForm(CATALOGO_VACIO); };
+  const eliminarCatalogoItem = async (id) => {
+    if (!window.confirm('¿Borrar este producto del catálogo?')) return;
+    try {
+      await deleteDoc(doc(db, 'catalogo', id));
+      showToast('Producto eliminado', 'success');
+    } catch (e) {
+      showToast('Error eliminando: ' + e.message, 'error');
+    }
+  };
+  const toggleCatalogoActivo = async (item) => {
+    try { await updateDoc(doc(db, 'catalogo', item.id), { activo: !(item.activo !== false) }); }
+    catch (e) { showToast('Error: ' + e.message, 'error'); }
+  };
 
   // Siembra única de los 4 empleados de Equipo 028 (Bautista, Jeronimo, Delfina, Gieco) la primera
   // vez que carga la app, si todavía no hay ningún empleado guardado en Firestore. El ref (no un
@@ -8303,7 +8365,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       { id: 'home', icon: Activity, label: 'Inicio' },
       { id: 'sales', icon: ShoppingCart, label: 'Ventas' }, 
       { id: 'wholesale', icon: UserCircle, label: 'Mayorista' }, 
-      { id: 'batches', icon: FolderOpen, label: 'Lotes' }, 
+      { id: 'batches', icon: FolderOpen, label: 'Lotes' },
+      { id: 'catalogo', icon: Tag, label: 'Catálogo' },
       { id: 'consignment', icon: Users, label: 'Consignación' },
       { id: 'analysis', icon: BarChart3, label: 'Análisis' }, 
       { id: 'expenses', icon: Wallet, label: 'Gastos' },
@@ -10764,6 +10827,95 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
             )}
 
 
+
+            {/* --- PESTAÑA CATÁLOGO --- */}
+            {activeTab === 'catalogo' && (
+              <div className="animate-in fade-in duration-300 max-w-[1200px] space-y-6">
+                <div>
+                  <h2 className={`text-xl font-black ${darkMode ? 'text-white' : 'text-zinc-900'}`}>Catálogo</h2>
+                  <p className={`text-sm mt-1 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                    Acá se carga qué productos existen: marca, nombre, precio y descripción. El bot de WhatsApp
+                    usa esto para identificar lo que pide el cliente y darle el precio real — no toca el stock,
+                    eso sigue viviendo en "Lotes" tal cual está.
+                  </p>
+                </div>
+
+                <div className={`rounded-2xl border p-5 space-y-4 ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
+                  <h3 className={`text-sm font-bold uppercase tracking-wide ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                    {editingCatalogoId ? 'Editar producto' : 'Nuevo producto'}
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <Input darkMode={darkMode} label="Categoría" placeholder="Vape Nicotina, Perfume, etc." value={catalogoForm.categoria} onChange={e => setCatalogoForm({ ...catalogoForm, categoria: e.target.value })} />
+                    <Input darkMode={darkMode} label="Marca" placeholder="Elfbar, Rasasi, etc." value={catalogoForm.marca} onChange={e => setCatalogoForm({ ...catalogoForm, marca: e.target.value })} />
+                    <Input darkMode={darkMode} label="Nombre del producto" placeholder="Elfbar Duke" value={catalogoForm.nombre} onChange={e => setCatalogoForm({ ...catalogoForm, nombre: e.target.value })} />
+                    <Input darkMode={darkMode} label="Precio de venta ($)" type="number" placeholder="Opcional" value={catalogoForm.precio} onChange={e => setCatalogoForm({ ...catalogoForm, precio: e.target.value })} />
+                    <div className="md:col-span-2 lg:col-span-2">
+                      <Input darkMode={darkMode} label="Descripción (opcional)" placeholder="Info corta para que el bot recomiende" value={catalogoForm.descripcion} onChange={e => setCatalogoForm({ ...catalogoForm, descripcion: e.target.value })} />
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={guardarCatalogoItem} className="px-4 py-2.5 rounded-xl font-bold text-sm text-white transition-opacity hover:opacity-90" style={{ background: '#6366f1' }}>
+                      {editingCatalogoId ? 'Guardar cambios' : 'Agregar al catálogo'}
+                    </button>
+                    {editingCatalogoId && (
+                      <button onClick={cancelarEdicionCatalogo} className={`px-4 py-2.5 rounded-xl font-bold text-sm ${darkMode ? 'bg-white/[0.06] text-zinc-300' : 'bg-zinc-100 text-zinc-700'}`}>
+                        Cancelar
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <Input darkMode={darkMode} placeholder="Buscar por marca, nombre o categoría..." value={catalogoFiltro} onChange={e => setCatalogoFiltro(e.target.value)} />
+
+                <div className={`rounded-2xl border overflow-hidden ${darkMode ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
+                  <table className="w-full text-sm">
+                    <thead className={darkMode ? 'bg-white/[0.03]' : 'bg-zinc-50'}>
+                      <tr className="text-left">
+                        <th className="px-4 py-3 font-semibold">Categoría</th>
+                        <th className="px-4 py-3 font-semibold">Marca</th>
+                        <th className="px-4 py-3 font-semibold">Nombre</th>
+                        <th className="px-4 py-3 font-semibold">Precio</th>
+                        <th className="px-4 py-3 font-semibold">Descripción</th>
+                        <th className="px-4 py-3 font-semibold text-center">Activo</th>
+                        <th className="px-4 py-3 font-semibold text-right">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {catalogo
+                        .filter(it => {
+                          const f = catalogoFiltro.trim().toLowerCase();
+                          if (!f) return true;
+                          return [it.categoria, it.marca, it.nombre].some(v => (v || '').toLowerCase().includes(f));
+                        })
+                        .sort((a, b) => (a.categoria || '').localeCompare(b.categoria || '') || (a.nombre || '').localeCompare(b.nombre || ''))
+                        .map(item => (
+                        <tr key={item.id} className={`border-t ${darkMode ? 'border-white/[0.04]' : 'border-zinc-100'} ${item.activo === false ? 'opacity-40' : ''}`}>
+                          <td className="px-4 py-3">{item.categoria || '—'}</td>
+                          <td className="px-4 py-3">{item.marca || '—'}</td>
+                          <td className="px-4 py-3 font-medium">{item.nombre}</td>
+                          <td className="px-4 py-3 font-mono">{item.precio != null ? formatMoney(item.precio) : <span className={darkMode ? 'text-zinc-600' : 'text-zinc-400'}>sin precio</span>}</td>
+                          <td className={`px-4 py-3 text-xs ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{item.descripcion || '—'}</td>
+                          <td className="px-4 py-3 text-center">
+                            <button onClick={() => toggleCatalogoActivo(item)} title={item.activo === false ? 'Activar' : 'Desactivar'}>
+                              {item.activo === false ? <EyeOff size={16} className="text-zinc-500 mx-auto" /> : <Eye size={16} className="text-emerald-500 mx-auto" />}
+                            </button>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center justify-end gap-2">
+                              <button onClick={() => editarCatalogoItem(item)} className={`p-1.5 rounded-lg ${darkMode ? 'hover:bg-white/10' : 'hover:bg-zinc-100'}`}><Pencil size={14} /></button>
+                              <button onClick={() => eliminarCatalogoItem(item.id)} className={`p-1.5 rounded-lg text-red-500 ${darkMode ? 'hover:bg-red-500/10' : 'hover:bg-red-50'}`}><Trash2 size={14} /></button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {catalogo.length === 0 && (
+                        <tr><td colSpan={7} className={`px-4 py-8 text-center text-sm ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Todavía no hay productos cargados.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {/* --- PESTAÑA CONSIGNACIÓN --- */}
             {activeTab === 'consignment' && (

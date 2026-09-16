@@ -126,6 +126,12 @@ function haversineKm(a, b) {
 
 const aplicarTarifa = (km) => Math.max(Math.round(km * TARIFA_POR_KM), MINIMO_ENVIO);
 
+// Rubros que en el panel se cargan con un nombre genérico en `product` (Perfumes, Cápsulas,
+// Batería) y el nombre real de la marca/modelo vive en `variant`. Para estos, buscar por
+// "producto" tiene que mirar la variante — si no, preguntar por marca (ej. "rasasi", "028")
+// nunca encuentra nada, porque ningún item tiene esa palabra en el campo `product`.
+const PRODUCTOS_GENERICOS = new Set(["perfumes", "perfume", "capsulas", "capsula", "bateria", "baterias"]);
+
 // Barrio → zona. Subconjunto del mapeo de src/reparto/zonas.js (solo barrios que caen enteros
 // en una zona). Sirve para sugerir cobertura; si no matchea, cubiertoMoto = false.
 const BARRIO_A_ZONA = {
@@ -169,39 +175,98 @@ function withAuth(handler) {
   });
 }
 
+// Coincide si CUALQUIERA de las dos direcciones matchea — cubre tanto "el query trae una
+// palabra de más" (ej. buscar "elfbar ice king" contra el lote "elfbar ice") como el caso
+// normal (buscar "elfbar duke" contra "elfbar duke").
+function coincideConTexto(a, b) {
+  if (!a || !b) return false;
+  return esParecido(a, b) || esParecido(b, a);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. GET /agentStock?producto=&variante=
+//
+// Primero busca la identidad del producto en `catalogo` (marca, nombre, precio,
+// descripción — lo carga el staff desde el panel, sección Catálogo). Si lo encuentra, cruza
+// ese nombre canónico contra el stock real de `batches` para saber cuánto hay de cada sabor.
+// Si NO está en el catálogo todavía, cae al comportamiento anterior: busca directo en
+// `batches` por el texto que mandaron, sin precio (el staff todavía no lo cargó en Catálogo).
 // ─────────────────────────────────────────────────────────────────────────────
 exports.agentStock = withAuth(async (req, res) => {
   const pQ = normalizar(req.query.producto);
   const vQ = normalizar(req.query.variante);
   if (!pQ) return res.status(400).json({ ok: false, error: "falta 'producto'" });
 
-  const snap = await db.collection("batches").orderBy("createdAt", "asc").get();
+  const [catalogoSnap, batchesSnap] = await Promise.all([
+    db.collection("catalogo").get(),
+    db.collection("batches").orderBy("createdAt", "asc").get(),
+  ]);
 
-  // Acumula stock por (producto, variante) sumando todos los lotes vivos.
-  const acc = new Map();
-  for (const doc of snap.docs) {
-    const b = doc.data();
-    if (b.finalizedAt) continue;
-    for (const item of b.items || []) {
-      const prod = normalizar(item.product);
-      const varr = normalizar(item.variant);
-      if (!esParecido(pQ, prod)) continue;
-      if (vQ && !esParecido(vQ, varr)) continue;
-      const clave = `${item.product}||${item.variant}`;
-      const prev = acc.get(clave) || { product: item.product, variant: item.variant, stock: 0, precioVenta: null };
-      prev.stock += Number(item.currentStock) || 0;
-      // Lotes recorridos en orden ascendente por fecha — el precio del lote más nuevo que lo
-      // tenga cargado gana, así el precio no queda pegado a un lote viejo ya vendido.
-      if (item.precioVenta !== undefined && item.precioVenta !== null && item.precioVenta !== "") {
-        prev.precioVenta = Number(item.precioVenta);
+  const catalogoEntries = catalogoSnap.docs
+    .map((d) => d.data())
+    .filter((c) => c.activo !== false);
+
+  const catalogoMatches = catalogoEntries.filter((c) =>
+    coincideConTexto(pQ, normalizar(`${c.marca || ""} ${c.nombre || ""}`))
+  );
+
+  const matches = [];
+
+  if (catalogoMatches.length > 0) {
+    for (const cat of catalogoMatches) {
+      const nombreNorm = normalizar(cat.nombre || "");
+      const precio = cat.precio !== undefined && cat.precio !== null && cat.precio !== "" ? Number(cat.precio) : null;
+      const acc = new Map();
+      for (const doc of batchesSnap.docs) {
+        const b = doc.data();
+        if (b.finalizedAt) continue;
+        for (const item of b.items || []) {
+          const prod = normalizar(item.product);
+          const varr = normalizar(item.variant);
+          // Si el producto del lote es un rótulo genérico (Perfumes/Cápsulas/Batería), el
+          // nombre real vive en la variante — comparamos ahí en vez de contra el rótulo.
+          const campoComparar = PRODUCTOS_GENERICOS.has(prod) ? varr : prod;
+          if (!coincideConTexto(nombreNorm, campoComparar)) continue;
+          if (vQ && !esParecido(vQ, varr)) continue;
+          const clave = `${item.product}||${item.variant}`;
+          const prev = acc.get(clave) || { product: item.product, variant: item.variant, stock: 0 };
+          prev.stock += Number(item.currentStock) || 0;
+          acc.set(clave, prev);
+        }
       }
-      acc.set(clave, prev);
+      const filas = [...acc.values()];
+      if (filas.length === 0) {
+        // Existe en el catálogo pero no hay ningún lote cargado todavía — igual se informa,
+        // con stock 0, para que el bot sepa que el producto existe.
+        matches.push({ marca: cat.marca || null, product: cat.nombre, variant: null, stock: 0, precioVenta: precio, descripcion: cat.descripcion || null });
+      } else {
+        for (const f of filas) {
+          matches.push({ marca: cat.marca || null, product: f.product, variant: f.variant, stock: f.stock, precioVenta: precio, descripcion: cat.descripcion || null });
+        }
+      }
     }
+  } else {
+    // Sin match en Catálogo todavía: comportamiento anterior, directo contra batches, sin precio.
+    const acc = new Map();
+    for (const doc of batchesSnap.docs) {
+      const b = doc.data();
+      if (b.finalizedAt) continue;
+      for (const item of b.items || []) {
+        const prod = normalizar(item.product);
+        const varr = normalizar(item.variant);
+        const matcheaProducto = PRODUCTOS_GENERICOS.has(prod) ? esParecido(pQ, varr) : esParecido(pQ, prod);
+        if (!matcheaProducto) continue;
+        if (vQ && !esParecido(vQ, varr)) continue;
+        const clave = `${item.product}||${item.variant}`;
+        const prev = acc.get(clave) || { product: item.product, variant: item.variant, stock: 0, precioVenta: null };
+        prev.stock += Number(item.currentStock) || 0;
+        acc.set(clave, prev);
+      }
+    }
+    matches.push(...acc.values());
   }
 
-  const matches = [...acc.values()].sort((a, b) => b.stock - a.stock);
+  matches.sort((a, b) => b.stock - a.stock);
   return res.json({
     ok: true,
     matches,
