@@ -186,6 +186,24 @@ function coincideConTexto(a, b) {
   return esParecido(a, b) || esParecido(b, a);
 }
 
+// Para la búsqueda floja (fallback): compara palabra por palabra con un umbral más tolerante
+// que esParecido, y NO exige que matcheen todas — devuelve qué fracción de las palabras del
+// query encontró algo parecido en el texto del catálogo. Comparar la frase entera (en vez de
+// palabra por palabra) penaliza mal cuando el query es más corto que el nombre real (ej. "hidn
+// hils" vs "Hidden Hills Club" sale mal en similitud de texto completo, pero bien acá).
+function fraccionDeCoincidencia(query, texto) {
+  const pw = query.split(" ").filter(Boolean);
+  const cw = texto.split(" ").filter(Boolean);
+  if (!pw.length || !cw.length) return 0;
+  let matched = 0;
+  for (const w of pw) {
+    if (w.length <= 2) { if (cw.includes(w)) matched++; continue; }
+    const mejor = Math.max(0, ...cw.map((x) => similitud(w, x)));
+    if (mejor >= 0.6) matched++;
+  }
+  return matched / pw.length;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. GET /agentStock?producto=&variante=
 //
@@ -209,9 +227,28 @@ exports.agentStock = withAuth(async (req, res) => {
     .map((d) => d.data())
     .filter((c) => c.activo !== false);
 
-  const catalogoMatches = catalogoEntries.filter((c) =>
+  let catalogoMatches = catalogoEntries.filter((c) =>
     coincideConTexto(pQ, normalizar(`${c.marca || ""} ${c.nombre || ""}`))
   );
+  let aproximado = false;
+
+  // Búsqueda estricta sin resultados: puede ser un error de tipeo raro, un orden de palabras
+  // distinto, o una forma de escribirlo que no anticipamos. Segundo intento, más flojo — compara
+  // el texto completo (no palabra por palabra) contra cada producto del catálogo y toma el más
+  // parecido si supera un umbral razonable. Se marca "aproximado" para que el agente confirme
+  // con el cliente antes de darlo por sentado, en vez de fallar directo a "no lo tengo".
+  if (catalogoMatches.length === 0 && catalogoEntries.length > 0) {
+    let mejor = null;
+    for (const c of catalogoEntries) {
+      const texto = normalizar(`${c.marca || ""} ${c.nombre || ""}`);
+      const score = fraccionDeCoincidencia(pQ, texto);
+      if (score >= 0.6 && (!mejor || score > mejor.score)) mejor = { c, score };
+    }
+    if (mejor) {
+      catalogoMatches = [mejor.c];
+      aproximado = true;
+    }
+  }
 
   const matches = [];
 
@@ -241,10 +278,10 @@ exports.agentStock = withAuth(async (req, res) => {
       if (filas.length === 0) {
         // Existe en el catálogo pero no hay ningún lote cargado todavía — igual se informa,
         // con stock 0, para que el bot sepa que el producto existe.
-        matches.push({ marca: cat.marca || null, product: cat.nombre, variant: null, stock: 0, precioVenta: precio, descripcion: cat.descripcion || null });
+        matches.push({ marca: cat.marca || null, product: cat.nombre, variant: null, stock: 0, precioVenta: precio, descripcion: cat.descripcion || null, ...(aproximado ? { aproximado: true } : {}) });
       } else {
         for (const f of filas) {
-          matches.push({ marca: cat.marca || null, product: f.product, variant: f.variant, stock: f.stock, precioVenta: precio, descripcion: cat.descripcion || null });
+          matches.push({ marca: cat.marca || null, product: f.product, variant: f.variant, stock: f.stock, precioVenta: precio, descripcion: cat.descripcion || null, ...(aproximado ? { aproximado: true } : {}) });
         }
       }
     }
