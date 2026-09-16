@@ -1878,9 +1878,11 @@ function esParecido(usuarioTexto, bdTexto) {
 // --- Endpoints del agente de IA (ver agente-api.js - todo aditivo, no toca nada de arriba) ---
 Object.assign(exports, require("./agente-api"));
 
-// (Acá vivían exports.tempMigrarPrecios y exports.tempMigrarPrecios2, endpoints de migración
-// de una sola vez que completaron `precioVenta` en los items de `batches` ya cargados: primero
-// 181 items (Elfbar EB Create, Ice King, Duke, Te) usando los precios que estaban fijos en el
-// prompt, y después 171 items más de "Elfbar Ice" — confirmado por el documento de relevamiento
-// de Lucio que es el mismo producto que "Elfbar Ice King" (mismo listado de sabores), a $26.000.
-// Se usaron una vez y se sacaron a propósito, mismo criterio que sincronizarBilleteras.)
+// (Acá vivieron exports.tempMigrarPrecios, tempMigrarPrecios2 y tempMigrarPrecios3, endpoints
+// de migración de una sola vez que completaron `precioVenta` en items de `batches` ya cargados:
+// 181 items de nicotina Elfbar (EB Create, Ice King, Duke, Te) + 171 de "Elfbar Ice" (mismo
+// producto que "Elfbar Ice King", confirmado por el relevamiento de Lucio) + 23 más de Perfumes/
+// Cápsulas/Batería que estaban cargados con el nombre genérico en `product` y el nombre real en
+// `variant`. Todo lo que no matcheó exacto contra una lista de precios real (ej: "jeeter",
+// "Big Chief", "pen negro", "qahwa", "yara") quedó sin precio a propósito — no se inventó nada.
+// Se usaron una vez y se sacaron, mismo criterio que sincronizarBilleteras.)
