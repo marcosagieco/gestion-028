@@ -40,6 +40,12 @@ const MINIMO_ENVIO = 3000;
 
 const ALIAS_FINANCIERA = "alias3";
 
+// Mientras se testea el bot: los pedidos de este número (Gino, mismo número permitido en el
+// workflow principal) NUNCA van a la colección real `pedidos` — van a `pedidos_test`, invisible
+// para el panel del depósito. Así ningún pedido de prueba le puede llegar a Jero/Bauti mientras
+// están trabajando de verdad. BORRAR ESTE BLOQUE para salir a producción.
+const NUMERO_TEST = "5492914643232";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers de texto — copiados de index.js (no se importan para no acoplar).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -480,8 +486,12 @@ exports.agentPedido = withAuth(async (req, res) => {
     .filter((l) => l !== null)
     .join("\n");
 
-  // 1) Pedido — MISMOS campos base que hoy + estructurados nuevos.
-  const pedidoRef = await db.collection("pedidos").add({
+  const esNumeroTest = tel === NUMERO_TEST;
+  const coleccionPedidos = esNumeroTest ? "pedidos_test" : "pedidos";
+
+  // 1) Pedido — MISMOS campos base que hoy + estructurados nuevos. Si es el número de test, va
+  // a `pedidos_test` en vez de `pedidos` — no le llega al panel del depósito.
+  const pedidoRef = await db.collection(coleccionPedidos).add({
     mensaje,
     estado: "pendiente",
     tipoEnvio,
