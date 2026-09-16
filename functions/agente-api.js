@@ -43,13 +43,18 @@ const ALIAS_FINANCIERA = "alias3";
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers de texto — copiados de index.js (no se importan para no acoplar).
 // ─────────────────────────────────────────────────────────────────────────────
+// Saca tokens de capacidad tipo "35k"/"60k" (puffs) — son un dato aparte, nunca forman parte
+// del nombre real del producto en la base, pero el agente de IA a veces los pega al buscar
+// (los ve juntos en CONOCIMIENTO DE PRODUCTO, ej. "Elfbar Duke 35K").
 const normalizar = (texto) =>
   String(texto || "")
     .trim()
     .toLowerCase()
     .normalize("NFD")
     .replace(/[^a-z0-9 ]/g, "")
-    .replace(/ +/g, " ");
+    .replace(/\b\d+k\b/g, "")
+    .replace(/ +/g, " ")
+    .trim();
 
 function distanciaLevenshtein(a, b) {
   const m = [];
