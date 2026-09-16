@@ -82,7 +82,15 @@ const SITUACIONES = [
   { id: 'solo_manana',   label: 'Solo para manana',     hint: 'ya no llegamos a despachar hoy' },
 ];
 
-const DEFAULTS = { situacion: 'sin_demora', proximaSalida: '' };
+// Los 3 alias que rotan segun cuanta plata le entro a cada cuenta (ver relevamiento con Lucio).
+// El staff avisa por el grupo cuando cambia y quien reciba el aviso lo actualiza aca.
+const ALIASES = [
+  { id: 'alias1', label: 'Alias 1 — Lucio (028import.gl)' },
+  { id: 'alias2', label: 'Alias 2 — Marcos (028import.gal2)' },
+  { id: 'alias3', label: 'Alias 3 — Financiera (CALMO.DURO.DIA)' },
+];
+
+const DEFAULTS = { situacion: 'sin_demora', proximaSalida: '', aliasActivo: 'alias1' };
 
 export default function OperativoPage() {
   const [dm, setDm] = useState(() => localStorage.getItem('028_dark_mode') === 'true');
@@ -111,6 +119,7 @@ export default function OperativoPage() {
       await setDoc(DOC_REF(), {
         situacion: SITUACIONES.some((s) => s.id === form.situacion) ? form.situacion : 'sin_demora',
         proximaSalida: (form.proximaSalida || '').trim(),
+        aliasActivo: ALIASES.some((a) => a.id === form.aliasActivo) ? form.aliasActivo : 'alias1',
         actualizadoEn: new Date().toISOString(),
       }, { merge: true });
       setSavedAt(Date.now());
@@ -154,8 +163,8 @@ export default function OperativoPage() {
         </div>
 
         <p className={`text-xs mb-5 ${label}`}>
-          Esto lo lee el bot de WhatsApp para avisarle a los clientes si hay demora en los envios.
-          El bot toma pedidos siempre.
+          Esto lo lee el bot de WhatsApp: si hay demora en los envios, y que alias de pago pasarle
+          al cliente. El bot toma pedidos siempre.
         </p>
 
         <div className={`rounded-2xl border p-5 space-y-6 ${card}`}>
@@ -191,6 +200,28 @@ export default function OperativoPage() {
             <input value={form.proximaSalida} onChange={(e) => set('proximaSalida', e.target.value)}
               placeholder="16:00"
               className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors ${input}`} />
+          </div>
+
+          {/* Alias activo */}
+          <div>
+            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Alias a usar hoy</label>
+            <p className={`text-[11px] mb-2 ${label}`}>Cual de los 3 le pasa el bot al cliente cuando llega el momento de cobrar.</p>
+            <div className="space-y-2">
+              {ALIASES.map((a) => {
+                const sel = form.aliasActivo === a.id;
+                return (
+                  <button key={a.id} onClick={() => set('aliasActivo', a.id)}
+                    className={`w-full rounded-xl border px-4 py-2.5 flex items-center justify-between text-left transition-colors ${
+                      sel
+                        ? (dm ? 'border-indigo-500/60 bg-indigo-500/15' : 'border-indigo-400 bg-indigo-50')
+                        : (dm ? 'border-white/[0.08] hover:border-white/20' : 'border-zinc-200 hover:border-zinc-300')
+                    }`}>
+                    <span className={`text-sm font-bold ${sel ? (dm ? 'text-indigo-300' : 'text-indigo-700') : ''}`}>{a.label}</span>
+                    {sel && <Check size={16} className={dm ? 'text-indigo-400' : 'text-indigo-600'} />}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <button onClick={guardar} disabled={saving || !loaded}

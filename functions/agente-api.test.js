@@ -153,7 +153,7 @@ async function main() {
   await fakeDb.collection("batches").doc("b1").set({
     createdAt: "2026-09-01T00:00:00.000Z",
     items: [
-      { id: "i1", product: "Elfbar Ice King", variant: "Blue Razz Ice", currentStock: 8, costArs: 10000 },
+      { id: "i1", product: "Elfbar Ice King", variant: "Blue Razz Ice", currentStock: 8, costArs: 10000, precioVenta: 26000 },
       { id: "i2", product: "Elfbar Ice King", variant: "Sour Apple Ice", currentStock: 0, costArs: 10000 },
       { id: "i3", product: "Capsulas 028 1ml", variant: "Mango Kush", currentStock: 5, costArs: 20000 },
     ],
@@ -189,6 +189,16 @@ async function main() {
     const r = await callFn(api.agentStock, { query: {}, headers: { "X-Agent-Key": KEY } });
     ok("agentStock: sin 'producto' -> 400", r.status === 400, r.body);
   }
+  // 5b) agentStock: devuelve precioVenta cuando el lote lo tiene cargado
+  {
+    const r = await callFn(api.agentStock, { query: { producto: "elfbar ice king", variante: "blue razz" }, headers: { "X-Agent-Key": KEY } });
+    ok("agentStock: devuelve precioVenta cuando el lote lo tiene", r.status === 200 && r.body.matches[0]?.precioVenta === 26000, r.body);
+  }
+  // 5c) agentStock: precioVenta es null si el lote no lo cargo (compatibilidad con lotes viejos)
+  {
+    const r = await callFn(api.agentStock, { query: { producto: "elfbar ice king", variante: "sour apple" }, headers: { "X-Agent-Key": KEY } });
+    ok("agentStock: precioVenta null si el lote no lo cargo", r.status === 200 && r.body.matches[0]?.precioVenta === null, r.body);
+  }
 
   // 6) agentCliente — nuevo
   {
@@ -216,18 +226,21 @@ async function main() {
   {
     const r = await callFn(api.agentEstadoOperativo, { headers: { "X-Agent-Key": KEY } });
     ok("agentEstadoOperativo: default sin_demora, sin campo 'abierto'", r.status === 200 && r.body.situacion === "sin_demora" && !("abierto" in r.body), r.body);
+    ok("agentEstadoOperativo: sin doc -> aliasActivo default alias1", r.body.aliasActivo === "alias1", r.body);
   }
   // 11) agentEstadoOperativo — con doc seteado
   {
-    await fakeDb.collection("settings").doc("operativo").set({ situacion: "demora", proximaSalida: "16:00" });
+    await fakeDb.collection("settings").doc("operativo").set({ situacion: "demora", proximaSalida: "16:00", aliasActivo: "alias2" });
     const r = await callFn(api.agentEstadoOperativo, { headers: { "X-Agent-Key": KEY } });
     ok("agentEstadoOperativo: lee situacion+proximaSalida seteadas", r.status === 200 && r.body.situacion === "demora" && r.body.proximaSalida === "16:00", r.body);
+    ok("agentEstadoOperativo: lee aliasActivo seteado", r.body.aliasActivo === "alias2", r.body);
   }
-  // 12) agentEstadoOperativo — situacion invalida -> fallback
+  // 12) agentEstadoOperativo — situacion/alias invalidos -> fallback
   {
-    await fakeDb.collection("settings").doc("operativo").set({ situacion: "algo_invalido" });
+    await fakeDb.collection("settings").doc("operativo").set({ situacion: "algo_invalido", aliasActivo: "alias99" });
     const r = await callFn(api.agentEstadoOperativo, { headers: { "X-Agent-Key": KEY } });
     ok("agentEstadoOperativo: situacion invalida -> fallback sin_demora", r.status === 200 && r.body.situacion === "sin_demora", r.body);
+    ok("agentEstadoOperativo: aliasActivo invalido -> fallback alias1", r.body.aliasActivo === "alias1", r.body);
   }
 
   // 13) agentPedido — pedido completo con alias3 (financiera) -> registra comprobante
