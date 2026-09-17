@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useId, useCallback } from 
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package, UserCircle,
   ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw, Target, RefreshCw, Receipt, Minus, ArrowDownLeft, ArrowUpRight, Landmark, CreditCard, ArrowLeftRight, Pencil, Check, ClipboardList, GripVertical,
-  UserCog, HandCoins, CalendarClock, History, Bike, Eye, EyeOff, Tag, Bot
+  UserCog, HandCoins, CalendarClock, History, Bike, Eye, EyeOff, Tag, Bot, Car
 } from 'lucide-react';
 
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Bar, ComposedChart, Line, ReferenceLine } from 'recharts';
@@ -8431,6 +8431,16 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
             >
                 <Bot size={16} strokeWidth={2} className="flex-shrink-0" />
                 {!sidebarCollapsed && <span>Agente IA</span>}
+            </Link>
+            <Link
+                to="/cotizar-uber"
+                title={sidebarCollapsed ? 'Cotizar Uber' : undefined}
+                className={`flex items-center gap-3 py-2.5 rounded-xl font-medium text-sm transition-colors duration-150 ${sidebarCollapsed ? 'justify-center px-0' : 'px-3'} ${
+                    darkMode ? 'text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-100' : 'text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800'
+                }`}
+            >
+                <Car size={16} strokeWidth={2} className="flex-shrink-0" />
+                {!sidebarCollapsed && <span>Cotizar Uber</span>}
             </Link>
         </div>
 

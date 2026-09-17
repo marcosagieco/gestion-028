@@ -16,6 +16,9 @@
  *   GET  /agentCotizarEnvio?direccion=   (o  ?lat=&lng= )
  *   POST /agentPedido
  *   GET  /agentEstadoOperativo
+ *   POST /agentCrearCotizacionUber
+ *   GET  /agentCotizacionesUberPendientes
+ *   POST /agentMarcarCotizacionUberProcesada
  *
  * Contrato completo: ../AGENTE_API.md
  */
@@ -582,4 +585,52 @@ exports.agentEstadoOperativo = withAuth(async (req, res) => {
     appleTexto: typeof d.appleTexto === "string" ? d.appleTexto.trim().slice(0, 10000) : "",
     actualizadoEn: d.actualizadoEn || null,
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. Cotización manual de Uber — cola de pedidos derivados
+//
+// El bot no puede cotizar Uber (el precio no sale de una fórmula), así que cuando
+// lo necesita llama a avisar_al_equipo con motivo "cotizar_uber". Esa derivación
+// crea un registro acá con POST /agentCrearCotizacionUber. El equipo lo resuelve
+// desde /cotizar-uber en el panel (carga el monto ahí mismo, estado pasa a
+// "cotizado"). Un workflow de n8n hace polling con GET
+// /agentCotizacionesUberPendientes, manda el WhatsApp al cliente, reactiva la
+// conversación pausada, y marca el registro como "procesado" con POST
+// /agentMarcarCotizacionUberProcesada para no reenviarlo.
+// ─────────────────────────────────────────────────────────────────────────────
+exports.agentCrearCotizacionUber = withAuth(async (req, res) => {
+  const b = req.body || {};
+  const idConversacion = String(b.idConversacion || "").trim();
+  const telefonoCliente = String(b.telefonoCliente || "").trim();
+  if (!idConversacion || !telefonoCliente) {
+    return res.status(400).json({ ok: false, error: "faltan 'idConversacion' o 'telefonoCliente'" });
+  }
+  const ref = await db.collection("cotizaciones_uber").add({
+    idConversacion,
+    telefonoCliente,
+    nombreCliente: String(b.nombreCliente || "").trim(),
+    direccion: String(b.direccion || "").trim(),
+    explicacionCaso: String(b.explicacionCaso || "").trim(),
+    estado: "pendiente", // pendiente -> cotizado (staff cargó el monto) -> procesado (n8n ya avisó)
+    montoUber: null,
+    createdAt: new Date().toISOString(),
+  });
+  return res.json({ ok: true, id: ref.id });
+});
+
+exports.agentCotizacionesUberPendientes = withAuth(async (req, res) => {
+  const snap = await db.collection("cotizaciones_uber").where("estado", "==", "cotizado").get();
+  const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  return res.json({ ok: true, items });
+});
+
+exports.agentMarcarCotizacionUberProcesada = withAuth(async (req, res) => {
+  const id = String((req.body || {}).id || "").trim();
+  if (!id) return res.status(400).json({ ok: false, error: "falta 'id'" });
+  await db.collection("cotizaciones_uber").doc(id).update({
+    estado: "procesado",
+    procesadoEn: new Date().toISOString(),
+  });
+  return res.json({ ok: true });
 });
