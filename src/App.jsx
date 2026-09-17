@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useId, useCallback } from 
 import {
   Plus, Trash2, Save, TrendingUp, DollarSign, Package, UserCircle,
   ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw, Target, RefreshCw, Receipt, Minus, ArrowDownLeft, ArrowUpRight, Landmark, CreditCard, ArrowLeftRight, Pencil, Check, ClipboardList, GripVertical,
-  UserCog, HandCoins, CalendarClock, History, Bike, Eye, EyeOff, Tag
+  UserCog, HandCoins, CalendarClock, History, Bike, Eye, EyeOff, Tag, Bot
 } from 'lucide-react';
 
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Bar, ComposedChart, Line, ReferenceLine } from 'recharts';
@@ -8429,7 +8429,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                     darkMode ? 'text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-100' : 'text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800'
                 }`}
             >
-                <Settings size={16} strokeWidth={2} className="flex-shrink-0" />
+                <Bot size={16} strokeWidth={2} className="flex-shrink-0" />
                 {!sidebarCollapsed && <span>Agente IA</span>}
             </Link>
         </div>

@@ -5,7 +5,7 @@ import {
   initializeFirestore, getFirestore, doc, onSnapshot, setDoc,
   persistentLocalCache, persistentMultipleTabManager,
 } from 'firebase/firestore';
-import { Radio, Moon, Sun, Save, ArrowLeft, Check } from 'lucide-react';
+import { Bot, Moon, Sun, Save, ArrowLeft, Check } from 'lucide-react';
 
 // --- Firebase: mismo patron que PedidosPage.jsx / FacturasPage.jsx (pagina 100% independiente). ---
 const firebaseConfig = {
@@ -46,7 +46,7 @@ function Login({ dm, onAuth }) {
       <div className={`w-full max-w-sm rounded-2xl border p-8 shadow-xl ${dm ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
         <div className="flex items-center gap-3 mb-7">
           <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#6366f1' }}>
-            <Radio size={17} className="text-white" />
+            <Bot size={17} className="text-white" />
           </div>
           <div>
             <p className={`text-xs font-bold uppercase tracking-widest ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>028 Import</p>
@@ -164,7 +164,7 @@ export default function OperativoPage() {
 
         <div className="flex items-center gap-3 mb-2">
           <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#6366f1' }}>
-            <Radio size={17} className="text-white" />
+            <Bot size={17} className="text-white" />
           </div>
           <div>
             <p className={`text-xs font-bold uppercase tracking-widest ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>028 Import</p>
