@@ -94,6 +94,7 @@ const DEFAULTS = {
   situacion: 'sin_demora', proximaSalida: '', aliasActivo: 'alias1',
   stockNicotinaTexto: '', stockThcTexto: '',
   preciosVapesTexto: '', preciosThcTexto: '', perfumesTexto: '', appleTexto: '',
+  preciosMayoristaTexto: '',
 };
 
 export default function OperativoPage() {
@@ -130,6 +131,7 @@ export default function OperativoPage() {
         preciosThcTexto: (form.preciosThcTexto || '').trim(),
         perfumesTexto: (form.perfumesTexto || '').trim(),
         appleTexto: (form.appleTexto || '').trim(),
+        preciosMayoristaTexto: (form.preciosMayoristaTexto || '').trim(),
         actualizadoEn: new Date().toISOString(),
       }, { merge: true });
       setSavedAt(Date.now());
@@ -290,6 +292,15 @@ export default function OperativoPage() {
             <p className={`text-[11px] mb-3 ${label}`}>AirPods, cargadores, adaptadores, body splash, etc. El bot la manda tal cual cuando preguntan por accesorios Apple en general.</p>
             <textarea value={form.appleTexto} onChange={(e) => set('appleTexto', e.target.value)}
               rows={8} placeholder={'LISTA DE PRECIOS – APPLE & ACCESORIOS\n\n🎧 AIRPODS PRO GEN 3\n💰 $30.000\n...'}
+              className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors font-mono ${input}`} />
+          </div>
+
+          {/* Precios mayorista */}
+          <div className={`rounded-2xl border p-5 ${card}`}>
+            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Precios mayorista — texto</label>
+            <p className={`text-[11px] mb-3 ${label}`}>Lista de precios por volumen para revendedores. El bot la manda tal cual cuando alguien pregunta por mayorista — solo deriva al equipo si piden algo que esta lista no cubre.</p>
+            <textarea value={form.preciosMayoristaTexto} onChange={(e) => set('preciosMayoristaTexto', e.target.value)}
+              rows={8} placeholder={'LISTA MAYORISTA\n\nDesde 10 unidades: ...\nDesde 50 unidades: ...\n...'}
               className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors font-mono ${input}`} />
           </div>
         </div>

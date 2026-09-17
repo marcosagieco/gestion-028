@@ -20,10 +20,16 @@
  *   GET  /agentCotizacionesUberPendientes
  *   POST /agentMarcarCotizacionUberProcesada
  *
+ * Además, onCotizacionUberConfirmada es un trigger de Firestore (no HTTP,
+ * no requiere X-Agent-Key en la entrada): se dispara solo cuando un doc de
+ * cotizaciones_uber pasa a estado "cotizado", y le avisa al webhook de n8n
+ * al instante para no depender solo del polling de respaldo.
+ *
  * Contrato completo: ../AGENTE_API.md
  */
 
 const functions = require("firebase-functions");
+const { onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const admin = require("firebase-admin");
 const axios = require("axios");
 
@@ -35,6 +41,7 @@ const db = admin.firestore();
 // ─────────────────────────────────────────────────────────────────────────────
 const AGENT_API_KEY = process.env.AGENT_API_KEY || "";
 const GOOGLE_MAPS_KEY = process.env.GOOGLE_MAPS_KEY || "";
+const N8N_COTIZACION_UBER_WEBHOOK = "https://n8n.bunge.agenticsia.agency/webhook/cotizacion-uber-confirmada";
 
 // Depósito — mismas coordenadas que src/reparto/zonas.js (DEPOSITO_ORIGEN).
 const DEPOSITO = { lat: -34.55359497285959, lng: -58.4523699884262 };
@@ -583,6 +590,7 @@ exports.agentEstadoOperativo = withAuth(async (req, res) => {
     preciosThcTexto: typeof d.preciosThcTexto === "string" ? d.preciosThcTexto.trim().slice(0, 10000) : "",
     perfumesTexto: typeof d.perfumesTexto === "string" ? d.perfumesTexto.trim().slice(0, 10000) : "",
     appleTexto: typeof d.appleTexto === "string" ? d.appleTexto.trim().slice(0, 10000) : "",
+    preciosMayoristaTexto: typeof d.preciosMayoristaTexto === "string" ? d.preciosMayoristaTexto.trim().slice(0, 10000) : "",
     actualizadoEn: d.actualizadoEn || null,
   });
 });
@@ -633,4 +641,23 @@ exports.agentMarcarCotizacionUberProcesada = withAuth(async (req, res) => {
     procesadoEn: new Date().toISOString(),
   });
   return res.json({ ok: true });
+});
+
+// Se dispara solo cuando el panel (CotizarUberPage.jsx) pasa un doc a
+// estado "cotizado". Avisa al workflow de n8n al instante en vez de esperar
+// a que el polling de respaldo (cada varios minutos) lo encuentre — el
+// workflow de n8n vuelve a llamar a agentCotizacionesUberPendientes igual
+// que en el polling normal, esto solo lo despierta antes.
+exports.onCotizacionUberConfirmada = onDocumentUpdated("cotizaciones_uber/{id}", async (event) => {
+  const before = event.data.before.data() || {};
+  const after = event.data.after.data() || {};
+  if (after.estado !== "cotizado" || before.estado === "cotizado") return;
+  try {
+    await axios.post(N8N_COTIZACION_UBER_WEBHOOK, { id: event.params.id }, {
+      headers: { "X-Agent-Key": AGENT_API_KEY },
+      timeout: 5000,
+    });
+  } catch (e) {
+    console.error("[agente-api] no se pudo avisar a n8n de la cotizacion confirmada, el polling de respaldo la va a agarrar igual", e.message);
+  }
 });
