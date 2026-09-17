@@ -572,6 +572,14 @@ exports.agentEstadoOperativo = withAuth(async (req, res) => {
     situacion,                    // sin_demora | normal | demora | demora_fuerte | solo_manana
     proximaSalida: d.proximaSalida || null,
     aliasActivo,                  // alias1 | alias2 | alias3 — cual usar hoy
+    // Textos libres que le llegan al bot: los pega el staff a mano en /operativo (sección
+    // "Agente IA"), se mandan tal cual como plantillas protegidas (ver PLANTILLAS en el prompt).
+    stockNicotinaTexto: typeof d.stockNicotinaTexto === "string" ? d.stockNicotinaTexto.trim().slice(0, 4000) : "",
+    stockThcTexto: typeof d.stockThcTexto === "string" ? d.stockThcTexto.trim().slice(0, 4000) : "",
+    preciosVapesTexto: typeof d.preciosVapesTexto === "string" ? d.preciosVapesTexto.trim().slice(0, 4000) : "",
+    preciosThcTexto: typeof d.preciosThcTexto === "string" ? d.preciosThcTexto.trim().slice(0, 4000) : "",
+    perfumesTexto: typeof d.perfumesTexto === "string" ? d.perfumesTexto.trim().slice(0, 4000) : "",
+    appleTexto: typeof d.appleTexto === "string" ? d.appleTexto.trim().slice(0, 4000) : "",
     actualizadoEn: d.actualizadoEn || null,
   });
 });

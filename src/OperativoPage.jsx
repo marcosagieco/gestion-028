@@ -50,7 +50,7 @@ function Login({ dm, onAuth }) {
           </div>
           <div>
             <p className={`text-xs font-bold uppercase tracking-widest ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>028 Import</p>
-            <h1 className={`text-sm font-black leading-tight ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>Estado del dia</h1>
+            <h1 className={`text-sm font-black leading-tight ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>Agente IA</h1>
           </div>
         </div>
         <form onSubmit={submit} className="space-y-4">
@@ -90,7 +90,11 @@ const ALIASES = [
   { id: 'alias3', label: 'Alias 3 — Financiera (CALMO.DURO.DIA)' },
 ];
 
-const DEFAULTS = { situacion: 'sin_demora', proximaSalida: '', aliasActivo: 'alias1' };
+const DEFAULTS = {
+  situacion: 'sin_demora', proximaSalida: '', aliasActivo: 'alias1',
+  stockNicotinaTexto: '', stockThcTexto: '',
+  preciosVapesTexto: '', preciosThcTexto: '', perfumesTexto: '', appleTexto: '',
+};
 
 export default function OperativoPage() {
   const [dm, setDm] = useState(() => localStorage.getItem('028_dark_mode') === 'true');
@@ -120,6 +124,12 @@ export default function OperativoPage() {
         situacion: SITUACIONES.some((s) => s.id === form.situacion) ? form.situacion : 'sin_demora',
         proximaSalida: (form.proximaSalida || '').trim(),
         aliasActivo: ALIASES.some((a) => a.id === form.aliasActivo) ? form.aliasActivo : 'alias1',
+        stockNicotinaTexto: (form.stockNicotinaTexto || '').trim(),
+        stockThcTexto: (form.stockThcTexto || '').trim(),
+        preciosVapesTexto: (form.preciosVapesTexto || '').trim(),
+        preciosThcTexto: (form.preciosThcTexto || '').trim(),
+        perfumesTexto: (form.perfumesTexto || '').trim(),
+        appleTexto: (form.appleTexto || '').trim(),
         actualizadoEn: new Date().toISOString(),
       }, { merge: true });
       setSavedAt(Date.now());
@@ -158,13 +168,14 @@ export default function OperativoPage() {
           </div>
           <div>
             <p className={`text-xs font-bold uppercase tracking-widest ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>028 Import</p>
-            <h1 className="text-2xl font-black tracking-tight leading-tight">Estado del dia</h1>
+            <h1 className="text-2xl font-black tracking-tight leading-tight">Agente IA</h1>
           </div>
         </div>
 
         <p className={`text-sm mb-6 ${label}`}>
-          Esto lo lee el bot de WhatsApp: si hay demora en los envios, y que alias de pago pasarle
-          al cliente. El bot toma pedidos siempre.
+          Todo lo que el bot de WhatsApp necesita para responder actualizado: si hay demora en los
+          envios, que alias de pago pasarle al cliente, y el stock del dia de cada categoria. Si algo
+          de esto no esta al dia, el bot le va a pasar esa misma info vieja al cliente.
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -222,6 +233,64 @@ export default function OperativoPage() {
                 );
               })}
             </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-5">
+          {/* Stock nicotina pegado a mano */}
+          <div className={`rounded-2xl border p-5 ${card}`}>
+            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Stock de vapes (nicotina) — texto del depósito</label>
+            <p className={`text-[11px] mb-3 ${label}`}>Pegá acá tal cual el mensaje que arman a diario con el stock. El bot lo manda exactamente así (con emojis y todo) apenas alguien pregunta por vapes de nicotina en general.</p>
+            <textarea value={form.stockNicotinaTexto} onChange={(e) => set('stockNicotinaTexto', e.target.value)}
+              rows={8} placeholder={'STOCK ACTUALIZADO VAPES\n\n🌌 DINNER LADY GALAXY 60K\n\nCalifornia Cherry 🍒🌴 (4)\n...'}
+              className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors font-mono ${input}`} />
+          </div>
+
+          {/* Stock THC pegado a mano */}
+          <div className={`rounded-2xl border p-5 ${card}`}>
+            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Stock de vapes (THC) — texto del depósito</label>
+            <p className={`text-[11px] mb-3 ${label}`}>Igual que el de nicotina, pero para descartables y cápsulas THC.</p>
+            <textarea value={form.stockThcTexto} onChange={(e) => set('stockThcTexto', e.target.value)}
+              rows={8} placeholder={'STOCK ACTUALIZADO THC\n\n...'}
+              className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors font-mono ${input}`} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-5">
+          {/* Precios vapes */}
+          <div className={`rounded-2xl border p-5 ${card}`}>
+            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Precios de vapes (nicotina) — texto</label>
+            <p className={`text-[11px] mb-3 ${label}`}>La lista de precios por modelo (con combos de 2x, 5x, etc si aplica). El bot la manda tal cual cuando preguntan precio de vapes en general.</p>
+            <textarea value={form.preciosVapesTexto} onChange={(e) => set('preciosVapesTexto', e.target.value)}
+              rows={8} placeholder={'LISTA VAPES PRECIOS - CLIENTES\n\n✨ ELFBAR EB CREATE 40K\n💰 1x $22.000\n...'}
+              className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors font-mono ${input}`} />
+          </div>
+
+          {/* Precios THC */}
+          <div className={`rounded-2xl border p-5 ${card}`}>
+            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Precios THC — texto</label>
+            <p className={`text-[11px] mb-3 ${label}`}>Cápsulas, gummies y descartables THC con precio. El bot SOLO la usa si el cliente pregunta por THC — nunca la ofrece por su cuenta.</p>
+            <textarea value={form.preciosThcTexto} onChange={(e) => set('preciosThcTexto', e.target.value)}
+              rows={8} placeholder={'LISTA PRECIOS THC - CLIENTES\n\n💨 CÁPSULAS THC\n...'}
+              className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors font-mono ${input}`} />
+          </div>
+
+          {/* Perfumes */}
+          <div className={`rounded-2xl border p-5 ${card}`}>
+            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Perfumes árabes — texto</label>
+            <p className={`text-[11px] mb-3 ${label}`}>Lista completa de perfumes con precio y descripción. El bot la manda tal cual cuando preguntan por perfumes en general.</p>
+            <textarea value={form.perfumesTexto} onChange={(e) => set('perfumesTexto', e.target.value)}
+              rows={8} placeholder={'LISTA DE PRECIOS — PERFUMES ÁRABES\n\n✨ ECLAIRE — LATTAFA\n💰 $75.000\n...'}
+              className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors font-mono ${input}`} />
+          </div>
+
+          {/* Apple y accesorios */}
+          <div className={`rounded-2xl border p-5 ${card}`}>
+            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Apple y accesorios — texto</label>
+            <p className={`text-[11px] mb-3 ${label}`}>AirPods, cargadores, adaptadores, body splash, etc. El bot la manda tal cual cuando preguntan por accesorios Apple en general.</p>
+            <textarea value={form.appleTexto} onChange={(e) => set('appleTexto', e.target.value)}
+              rows={8} placeholder={'LISTA DE PRECIOS – APPLE & ACCESORIOS\n\n🎧 AIRPODS PRO GEN 3\n💰 $30.000\n...'}
+              className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors font-mono ${input}`} />
           </div>
         </div>
 
