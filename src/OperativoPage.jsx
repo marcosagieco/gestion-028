@@ -94,7 +94,7 @@ const DEFAULTS = {
   situacion: 'sin_demora', proximaSalida: '', aliasActivo: 'alias1',
   stockNicotinaTexto: '', stockThcTexto: '',
   preciosVapesTexto: '', preciosThcTexto: '', perfumesTexto: '', appleTexto: '',
-  preciosMayoristaTexto: '',
+  preciosMayoristaTexto: '', ofertasTexto: '',
 };
 
 export default function OperativoPage() {
@@ -132,6 +132,7 @@ export default function OperativoPage() {
         perfumesTexto: (form.perfumesTexto || '').trim(),
         appleTexto: (form.appleTexto || '').trim(),
         preciosMayoristaTexto: (form.preciosMayoristaTexto || '').trim(),
+        ofertasTexto: (form.ofertasTexto || '').trim(),
         actualizadoEn: new Date().toISOString(),
       }, { merge: true });
       setSavedAt(Date.now());
@@ -301,6 +302,18 @@ export default function OperativoPage() {
             <p className={`text-[11px] mb-3 ${label}`}>Lista de precios por volumen para revendedores. El bot la manda tal cual cuando alguien pregunta por mayorista — solo deriva al equipo si piden algo que esta lista no cubre.</p>
             <textarea value={form.preciosMayoristaTexto} onChange={(e) => set('preciosMayoristaTexto', e.target.value)}
               rows={8} placeholder={'LISTA MAYORISTA\n\nDesde 10 unidades: ...\nDesde 50 unidades: ...\n...'}
+              className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors font-mono ${input}`} />
+          </div>
+
+          {/* Ofertas temporales */}
+          <div className={`rounded-2xl border p-5 ${card}`}>
+            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Ofertas temporales — texto</label>
+            <p className={`text-[11px] mb-3 ${label}`}>Promos puntuales (combos, 2x1, descuentos por tiempo limitado). El bot la menciona cuando viene al caso — no la manda de oficio en cada mensaje. <b>Dejalo vacío cuando no haya promo vigente</b> y el bot no la nombra nunca.</p>
+            <textarea value={form.ofertasTexto} onChange={(e) => set('ofertasTexto', e.target.value)}
+              rows={8} placeholder={`✨ OFERTAS DE LA SEMANA
+
+2x1 en ...
+Hasta el domingo ...`}
               className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors font-mono ${input}`} />
           </div>
         </div>

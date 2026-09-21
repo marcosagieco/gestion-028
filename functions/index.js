@@ -1883,4 +1883,5 @@ Object.assign(exports, require("./agente-api"));
 // items de `batches`; se decidió después que el precio viva en la colección `catalogo` en vez
 // de en Lotes, así que tempRevertirPrecios deshizo esa migración (vuelta a precioVenta: null,
 // sin tocar stock); y tempSeedCatalogo cargó los ~40 productos iniciales en `catalogo`, usados
-// hoy por primera vez por la pantalla "Catálogo" del panel y por agentStock.)
+// hoy por la pantalla "Catálogo" del panel. (agentStock también los leía, pero se borró: el
+// agente nunca lo llamó, el stock y los precios le llegan por las plantillas del panel.))

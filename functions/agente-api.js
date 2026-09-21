@@ -2,7 +2,7 @@
  * agente-api.js — endpoints HTTP para el agente conversacional de IA (n8n).
  *
  * TODO ES ADITIVO. No modifica nada del sistema existente:
- *  - Solo LEE de `batches`, `pedidos`, `settings`.
+ *  - Solo LEE de `pedidos` y `settings`.
  *  - ESCRIBE únicamente en `pedidos` (con los mismos campos que hoy + campos nuevos opcionales)
  *    y en colecciones nuevas: `clientes_bot`, `comprobantes_financiera`, `settings/operativo`.
  *  - No toca `sales`, la facturación, ni el parser de comandos del staff.
@@ -11,7 +11,6 @@
  *    Object.assign(exports, require('./agente-api'));
  *
  * Endpoints (todos requieren header  X-Agent-Key: <AGENT_API_KEY>):
- *   GET  /agentStock?producto=&variante=
  *   GET  /agentCliente?telefono=
  *   GET  /agentCotizarEnvio?direccion=   (o  ?lat=&lng= )
  *   POST /agentPedido
@@ -43,6 +42,51 @@ const AGENT_API_KEY = process.env.AGENT_API_KEY || "";
 const GOOGLE_MAPS_KEY = process.env.GOOGLE_MAPS_KEY || "";
 const N8N_COTIZACION_UBER_WEBHOOK = "https://n8n.bunge.agenticsia.agency/webhook/cotizacion-uber-confirmada";
 
+// Mismo bucket que usan las facturas. El comprobante NO se deja apuntando a Chatwoot: esa URL
+// muere el dia que se apague Chatwoot al migrar a Meta, y con ella los comprobantes de todos los
+// pedidos viejos. Se copia una vez, al cargar el pedido, y se sirve desde acá.
+const STORAGE_BUCKET = "gestion-028.firebasestorage.app";
+const SERVE_COMPROBANTE_BASE = "https://us-central1-gestion-028.cloudfunctions.net/serveComprobante";
+const MAX_COMPROBANTE_BYTES = 15 * 1024 * 1024;
+
+const EXT_POR_TIPO = {
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/heic": "heic",
+  "application/pdf": "pdf",
+};
+
+// Baja la imagen del comprobante y la guarda en Storage. Devuelve el path, o null si algo falló:
+// un comprobante que no se pudo copiar NUNCA hace fallar el pedido, solo queda sin foto.
+async function copiarComprobanteAStorage(url, pedidoId) {
+  try {
+    if (!/^https?:\/\//i.test(String(url || ""))) return null;
+    const resp = await axios.get(url, {
+      responseType: "arraybuffer",
+      timeout: 15000,
+      maxContentLength: MAX_COMPROBANTE_BYTES,
+      maxRedirects: 5,
+    });
+    const tipo = String(resp.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+    const ext = EXT_POR_TIPO[tipo];
+    if (!ext) return null; // no es una imagen ni un PDF: no lo guardamos
+    const buf = Buffer.from(resp.data);
+    if (!buf.length || buf.length > MAX_COMPROBANTE_BYTES) return null;
+
+    const ahora = new Date();
+    const yyyy = ahora.getFullYear();
+    const mm = String(ahora.getMonth() + 1).padStart(2, "0");
+    const filePath = `comprobantes/${yyyy}/${mm}/${pedidoId}.${ext}`;
+    await admin.storage().bucket(STORAGE_BUCKET).file(filePath).save(buf, { contentType: tipo });
+    return { path: filePath, contentType: tipo, bytes: buf.length };
+  } catch (e) {
+    console.error("no se pudo copiar el comprobante:", e.message);
+    return null;
+  }
+}
+
 // Depósito — mismas coordenadas que src/reparto/zonas.js (DEPOSITO_ORIGEN).
 const DEPOSITO = { lat: -34.55359497285959, lng: -58.4523699884262 };
 const TARIFA_POR_KM = 1000;
@@ -50,10 +94,11 @@ const MINIMO_ENVIO = 3000;
 
 const ALIAS_FINANCIERA = "alias3";
 
-// Mientras se testea el bot: los pedidos de este número (Gino, mismo número permitido en el
-// workflow principal) NUNCA van a la colección real `pedidos` — van a `pedidos_test`, invisible
-// para el panel del depósito. Así ningún pedido de prueba le puede llegar a Jero/Bauti mientras
-// están trabajando de verdad. BORRAR ESTE BLOQUE para salir a producción.
+// Interruptor de pruebas. En PRODUCCIÓN va en `false`: TODOS los pedidos van a la colección real
+// `pedidos` y le llegan al panel del depósito, incluidos los de Gino.
+// En `true`, los pedidos de NUMERO_TEST se desvían a `pedidos_test`, invisible para el panel, para
+// que ningún pedido de prueba le aparezca a Jero/Bauti mientras trabajan de verdad.
+const DESVIAR_PEDIDOS_DE_PRUEBA = false;
 const NUMERO_TEST = "5492914643232";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -145,11 +190,74 @@ function haversineKm(a, b) {
 
 const aplicarTarifa = (km) => Math.max(Math.round(km * TARIFA_POR_KM), MINIMO_ENVIO);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Precios: parseo de las listas de texto libre del panel
+//
+// El depósito pega las listas a mano en /operativo. Tienen una estructura regular:
+// bloques separados por una línea de guiones/rayas, cada bloque arranca con el nombre del
+// modelo y adentro trae líneas tipo "💰 1x $22.000" / "🔥 2x $40.000" / "🎁 5x $90.000".
+// Parsearlas permite resolver el precio de un pedido POR CÓDIGO en vez de confiar en que el
+// agente lea bien la tabla. OJO: "2x $40.000" es el precio TOTAL del combo de 2, no el unitario.
+// ─────────────────────────────────────────────────────────────────────────────
+function parsearListaPrecios(texto) {
+  const bloques = String(texto || "").split(/\n[ \t]*[⸻─-╿=_—–-]+[ \t]*\n/);
+  const out = [];
+  for (const b of bloques) {
+    const lineas = b.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (!lineas.length) continue;
+    const precios = {};
+    for (const l of lineas) {
+      const m = l.match(/(\d+)\s*x\s*\$\s*([\d.,]+)/i);
+      if (!m) continue;
+      const cant = parseInt(m[1], 10);
+      const monto = parseInt(String(m[2]).replace(/[^\d]/g, ""), 10);
+      if (cant > 0 && monto > 0) precios[cant] = monto;
+    }
+    if (Object.keys(precios).length) out.push({ titulo: lineas[0], precios });
+  }
+  return out;
+}
+
+// Dado el nombre de un producto y una cantidad, devuelve el importe real de esa línea usando
+// los combos de la lista (el más grande que entre, y el resto al precio de a uno). Si el
+// producto no aparece en ninguna lista devuelve null, y el llamador cae al precio del agente.
+function resolverPrecioLinea(listas, producto, cantidad) {
+  const q = normalizar(producto);
+  if (!q) return null;
+
+  let mejor = null;
+  for (const l of listas) {
+    const t = normalizar(l.titulo);
+    if (!t) continue;
+    const score = coincideConTexto(q, t) ? 1 : fraccionDeCoincidencia(q, t);
+    if (score >= 0.6 && (!mejor || score > mejor.score)) mejor = { lista: l, score };
+  }
+  if (!mejor) return null;
+
+  const packs = mejor.lista.precios;
+  const tamanos = Object.keys(packs).map(Number).filter((n) => n > 0).sort((a, b) => b - a);
+  if (!tamanos.length) return null;
+
+  let restante = Math.max(1, Number(cantidad) || 1);
+  let importe = 0;
+  for (const t of tamanos) {
+    while (restante >= t) {
+      importe += packs[t];
+      restante -= t;
+    }
+  }
+  if (restante > 0) {
+    const masChico = tamanos[tamanos.length - 1];
+    const unitario = packs[1] || Math.round(packs[masChico] / masChico);
+    importe += unitario * restante;
+  }
+  return { importe, titulo: mejor.lista.titulo };
+}
+
 // Rubros que en el panel se cargan con un nombre genérico en `product` (Perfumes, Cápsulas,
 // Batería) y el nombre real de la marca/modelo vive en `variant`. Para estos, buscar por
 // "producto" tiene que mirar la variante — si no, preguntar por marca (ej. "rasasi", "028")
 // nunca encuentra nada, porque ningún item tiene esa palabra en el campo `product`.
-const PRODUCTOS_GENERICOS = new Set(["perfumes", "perfume", "capsulas", "capsula", "bateria", "baterias"]);
 
 // Barrio → zona. Subconjunto del mapeo de src/reparto/zonas.js (solo barrios que caen enteros
 // en una zona). Sirve para sugerir cobertura; si no matchea, cubiertoMoto = false.
@@ -167,6 +275,21 @@ const BARRIO_A_ZONA = {
   "san telmo": "G", constitucion: "G", barracas: "G", "la boca": "G",
   "parque patricios": "G", "nueva pompeya": "G",
 };
+// Resuelve la zona (A–G) a partir del texto de una dirección, con el mismo criterio que usa
+// agentCotizarEnvio cuando no hay address_components de Google: se parte por comas/guiones y se
+// busca cada pedazo en el mapa de barrios.
+function zonaDesdeTexto(texto) {
+  for (const w of String(texto || "").split(/[,-]/)) {
+    const z = BARRIO_A_ZONA[normalizar(w)];
+    if (z) return z;
+  }
+  return null;
+}
+
+// El efectivo contra entrega es solo para CABA. La única zona del mapa que NO es CABA es la B
+// (Corredor Norte). Si no matcheó ninguna zona tampoco se admite: no sabemos si es CABA.
+const zonaAdmiteEfectivo = (zona) => zona !== null && zona !== "B";
+
 const ZONA_NOMBRE = {
   A: "Zona A — Núcleo", B: "Zona B — Corredor Norte", C1: "Zona C1 — Palermo extendido",
   C2: "Zona C2 — Centro / Recoleta", D: "Zona D — Oeste cercano", E: "Zona E — Centro-oeste",
@@ -219,116 +342,6 @@ function fraccionDeCoincidencia(query, texto) {
   }
   return matched / pw.length;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 1. GET /agentStock?producto=&variante=
-//
-// Primero busca la identidad del producto en `catalogo` (marca, nombre, precio,
-// descripción — lo carga el staff desde el panel, sección Catálogo). Si lo encuentra, cruza
-// ese nombre canónico contra el stock real de `batches` para saber cuánto hay de cada sabor.
-// Si NO está en el catálogo todavía, cae al comportamiento anterior: busca directo en
-// `batches` por el texto que mandaron, sin precio (el staff todavía no lo cargó en Catálogo).
-// ─────────────────────────────────────────────────────────────────────────────
-exports.agentStock = withAuth(async (req, res) => {
-  const pQ = normalizar(req.query.producto);
-  const vQ = normalizar(req.query.variante);
-  if (!pQ) return res.status(400).json({ ok: false, error: "falta 'producto'" });
-
-  const [catalogoSnap, batchesSnap] = await Promise.all([
-    db.collection("catalogo").get(),
-    db.collection("batches").orderBy("createdAt", "asc").get(),
-  ]);
-
-  const catalogoEntries = catalogoSnap.docs
-    .map((d) => d.data())
-    .filter((c) => c.activo !== false);
-
-  let catalogoMatches = catalogoEntries.filter((c) =>
-    coincideConTexto(pQ, normalizar(`${c.marca || ""} ${c.nombre || ""}`))
-  );
-  let aproximado = false;
-
-  // Búsqueda estricta sin resultados: puede ser un error de tipeo raro, un orden de palabras
-  // distinto, o una forma de escribirlo que no anticipamos. Segundo intento, más flojo — compara
-  // el texto completo (no palabra por palabra) contra cada producto del catálogo y toma el más
-  // parecido si supera un umbral razonable. Se marca "aproximado" para que el agente confirme
-  // con el cliente antes de darlo por sentado, en vez de fallar directo a "no lo tengo".
-  if (catalogoMatches.length === 0 && catalogoEntries.length > 0) {
-    let mejor = null;
-    for (const c of catalogoEntries) {
-      const texto = normalizar(`${c.marca || ""} ${c.nombre || ""}`);
-      const score = fraccionDeCoincidencia(pQ, texto);
-      if (score >= 0.6 && (!mejor || score > mejor.score)) mejor = { c, score };
-    }
-    if (mejor) {
-      catalogoMatches = [mejor.c];
-      aproximado = true;
-    }
-  }
-
-  const matches = [];
-
-  if (catalogoMatches.length > 0) {
-    for (const cat of catalogoMatches) {
-      const nombreNorm = normalizar(cat.nombre || "");
-      const precio = cat.precio !== undefined && cat.precio !== null && cat.precio !== "" ? Number(cat.precio) : null;
-      const acc = new Map();
-      for (const doc of batchesSnap.docs) {
-        const b = doc.data();
-        if (b.finalizedAt) continue;
-        for (const item of b.items || []) {
-          const prod = normalizar(item.product);
-          const varr = normalizar(item.variant);
-          // Si el producto del lote es un rótulo genérico (Perfumes/Cápsulas/Batería), el
-          // nombre real vive en la variante — comparamos ahí en vez de contra el rótulo.
-          const campoComparar = PRODUCTOS_GENERICOS.has(prod) ? varr : prod;
-          if (!coincideConTexto(nombreNorm, campoComparar)) continue;
-          if (vQ && !esParecido(vQ, varr)) continue;
-          const clave = `${item.product}||${item.variant}`;
-          const prev = acc.get(clave) || { product: item.product, variant: item.variant, stock: 0 };
-          prev.stock += Number(item.currentStock) || 0;
-          acc.set(clave, prev);
-        }
-      }
-      const filas = [...acc.values()];
-      if (filas.length === 0) {
-        // Existe en el catálogo pero no hay ningún lote cargado todavía — igual se informa,
-        // con stock 0, para que el bot sepa que el producto existe.
-        matches.push({ marca: cat.marca || null, product: cat.nombre, variant: null, stock: 0, precioVenta: precio, descripcion: cat.descripcion || null, ...(aproximado ? { aproximado: true } : {}) });
-      } else {
-        for (const f of filas) {
-          matches.push({ marca: cat.marca || null, product: f.product, variant: f.variant, stock: f.stock, precioVenta: precio, descripcion: cat.descripcion || null, ...(aproximado ? { aproximado: true } : {}) });
-        }
-      }
-    }
-  } else {
-    // Sin match en Catálogo todavía: comportamiento anterior, directo contra batches, sin precio.
-    const acc = new Map();
-    for (const doc of batchesSnap.docs) {
-      const b = doc.data();
-      if (b.finalizedAt) continue;
-      for (const item of b.items || []) {
-        const prod = normalizar(item.product);
-        const varr = normalizar(item.variant);
-        const matcheaProducto = PRODUCTOS_GENERICOS.has(prod) ? esParecido(pQ, varr) : esParecido(pQ, prod);
-        if (!matcheaProducto) continue;
-        if (vQ && !esParecido(vQ, varr)) continue;
-        const clave = `${item.product}||${item.variant}`;
-        const prev = acc.get(clave) || { product: item.product, variant: item.variant, stock: 0, precioVenta: null };
-        prev.stock += Number(item.currentStock) || 0;
-        acc.set(clave, prev);
-      }
-    }
-    matches.push(...acc.values());
-  }
-
-  matches.sort((a, b) => b.stock - a.stock);
-  return res.json({
-    ok: true,
-    matches,
-    totalStock: matches.reduce((s, m) => s + m.stock, 0),
-  });
-});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. GET /agentCliente?telefono=
@@ -415,10 +428,7 @@ exports.agentCotizarEnvio = withAuth(async (req, res) => {
       if (z) { zona = z; break; }
     }
   } else if (texto) {
-    for (const w of texto.split(/[,\-]/)) {
-      const z = BARRIO_A_ZONA[normalizar(w)];
-      if (z) { zona = z; break; }
-    }
+    zona = zonaDesdeTexto(texto);
   }
 
   const km = haversineKm(DEPOSITO, { lat, lng });
@@ -436,6 +446,10 @@ exports.agentCotizarEnvio = withAuth(async (req, res) => {
     km: Math.round(km * 10) / 10,
     monto,
     cubiertoMoto,
+    // El pago en efectivo contra entrega es solo para CABA. La única zona del mapa que NO es
+    // CABA es la B (Corredor Norte: Vicente López, Olivos, La Lucila, Martínez). Si no matcheó
+    // ninguna zona, tampoco se ofrece: no sabemos si es CABA.
+    admiteEfectivo: zonaAdmiteEfectivo(zona),
     estimado: true, // línea recta — la medición real por calle la hace el panel de moto al entregar
   });
 });
@@ -452,23 +466,125 @@ exports.agentPedido = withAuth(async (req, res) => {
   if (!Array.isArray(b.items) || b.items.length === 0) {
     return res.status(400).json({ ok: false, error: "falta 'items'" });
   }
-  const tipoEnvio = ["moto", "uber", "retiro"].includes(b.tipoEnvio) ? b.tipoEnvio : null;
-  if (!tipoEnvio) return res.status(400).json({ ok: false, error: "'tipoEnvio' debe ser moto|uber|retiro" });
+  const tipoEnvio = ["moto", "uber", "correo", "retiro"].includes(b.tipoEnvio) ? b.tipoEnvio : null;
+  if (!tipoEnvio) {
+    return res.status(400).json({ ok: false, error: "'tipoEnvio' debe ser moto|uber|correo|retiro" });
+  }
 
-  // Arma el texto del pedido — mismo formato que la "cotización" que pidió Lucio.
+  const esPreview = b.preview === true || b.preview === "true";
+  // El efectivo es contra entrega; cualquier otro medio (transferencia, dólares, USDT, el alias
+  // de la financiera) es pago previo y tiene que venir con su comprobante.
+  const esEfectivo = /efectivo/i.test(String(b.medioPago || ""));
+
+  // ── Datos obligatorios para CARGAR el pedido ────────────────────────────────
+  // No es una lista fija: primero se define el tipo de envío y el medio de pago, y recién esos
+  // dos deciden qué más es obligatorio. Un pedido a moto sin dirección llega al depósito
+  // imposible de despachar, y una transferencia sin comprobante es un pedido sin cobrar.
+  // El preview (tool armar_resumen) corre ANTES del pago, así que ahí todavía no se exige nada.
+  if (!esPreview) {
+    const medioPago = String(b.medioPago || "").trim();
+    const tieneComprobante =
+      !!b.comprobante && typeof b.comprobante === "object" && Object.keys(b.comprobante).length > 0;
+
+    const faltan = [];
+    if (!String(b.cliente || "").trim()) faltan.push("el nombre del cliente");
+    if (!medioPago) faltan.push("el medio de pago");
+    // El correo necesita datos que la moto no: sin DNI, localidad y CP no se puede despachar.
+    // El agente ya se los pide al cliente (ver Paso 4 del prompt), asi que tienen que llegar.
+    if (tipoEnvio === "correo") {
+      const dc = b.datosCorreo || {};
+      if (!String(dc.dni || "").trim()) faltan.push("el DNI (hace falta para el correo)");
+      if (!String(dc.localidad || "").trim()) faltan.push("la localidad (hace falta para el correo)");
+      if (!String(dc.cp || "").trim()) faltan.push("el codigo postal (hace falta para el correo)");
+    }
+    // Retiro es el único tipo de envío que no necesita dirección.
+    if (tipoEnvio !== "retiro" && !String((b.direccion || {}).texto || "").trim()) {
+      faltan.push("la dirección de entrega");
+    }
+    // El comprobante solo es obligatorio cuando el pago es PREVIO. No lo es con efectivo contra
+    // entrega ni con correo, que se abona al recibir. Si igual viene un comprobante, se guarda.
+    const pagoContraEntrega = esEfectivo || tipoEnvio === "correo";
+    if (medioPago && !pagoContraEntrega && !tieneComprobante) faltan.push("el comprobante de pago");
+
+    // El efectivo contra entrega solo vale donde el cotizador lo habría ofrecido. Se revalida
+    // acá y no se confía en el agente: la zona que mandó se usa si viene, y si no se recalcula
+    // del texto de la dirección con el mismo mapa de barrios que usa agentCotizarEnvio.
+    if (esEfectivo && tipoEnvio === "moto") {
+      const zonaPedido = (b.direccion || {}).zona || zonaDesdeTexto((b.direccion || {}).texto);
+      if (!zonaAdmiteEfectivo(zonaPedido)) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            "NO se cargó el pedido: esa dirección no admite pago en efectivo contra entrega " +
+            "(el efectivo es solo para CABA). Ofrecele transferencia y volvé a intentar.",
+        });
+      }
+    }
+
+    // El Uber es siempre pago previo por transferencia: nunca puede cerrarse en efectivo.
+    if (esEfectivo && tipoEnvio === "uber") {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "NO se cargó el pedido: el envío flash (Uber) se paga siempre por transferencia previa, " +
+          "nunca en efectivo. Confirmá con el cliente cómo va a pagar antes de volver a intentar.",
+      });
+    }
+
+    if (faltan.length) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          `NO se cargó el pedido porque falta ${faltan.join(", falta ")}. ` +
+          "Pedíselo al cliente en tu próxima respuesta y recién después volvé a llamar a crear_pedido.",
+        faltan,
+      });
+    }
+  }
+
+  // ── PRECIOS: no se confía en lo que dijo el modelo ──────────────────────────
+  // Se leen las listas del día y se resuelve el importe de cada línea por código. El precio
+  // que mandó el agente solo se usa de respaldo, si ese producto no figura en ninguna lista.
+  const opDocPrecios = await db.collection("settings").doc("operativo").get();
+  const opPrecios = opDocPrecios.exists ? opDocPrecios.data() : {};
+  const listasPrecios = [
+    ...parsearListaPrecios(opPrecios.preciosVapesTexto),
+    ...parsearListaPrecios(opPrecios.preciosThcTexto),
+    ...parsearListaPrecios(opPrecios.perfumesTexto),
+    ...parsearListaPrecios(opPrecios.appleTexto),
+  ];
+
   const $ = (n) => `$${Number(n || 0).toLocaleString("es-AR")}`;
-  const lineasItems = b.items.map(
-    (it) => `* ${it.cantidad}x ${it.producto}${it.variante ? " - " + it.variante : ""}` +
-      (it.precioUnitario ? ` (${$(it.precioUnitario)} c/u)` : "")
+  const lineas = b.items.map((it) => {
+    const cantidad = Math.max(1, Number(it.cantidad) || 1);
+    const resuelto = resolverPrecioLinea(listasPrecios, it.producto, cantidad);
+    const importeAgente = (Number(it.precioUnitario) || 0) * cantidad;
+    const importe = resuelto ? resuelto.importe : importeAgente;
+    return {
+      producto: it.producto,
+      variante: it.variante,
+      cantidad,
+      importe,
+      unitario: Math.round(importe / cantidad),
+      fuente: resuelto ? "lista" : "agente",
+      difiere: !!(resuelto && importeAgente && importeAgente !== resuelto.importe),
+    };
+  });
+
+  const lineasItems = lineas.map(
+    (l) => `* ${l.cantidad}x ${l.producto}${l.variante ? " - " + l.variante : ""}` +
+      (l.unitario ? ` (${$(l.unitario)} c/u)` : "")
   );
-  const subtotal = b.items.reduce(
-    (s, it) => s + (Number(it.precioUnitario) || 0) * (Number(it.cantidad) || 0),
-    0
-  );
+  const subtotal = lineas.reduce((s, l) => s + l.importe, 0);
   const valorEnvio = Number(b.valorEnvio) || 0;
   const total = subtotal + valorEnvio;
   const dir = b.direccion || {};
-  const ENVIO_LABEL = { moto: "🛵 Moto mensajería", uber: "⚡ Envío flash (Uber)", retiro: "🏠 Retiro" };
+  const ENVIO_LABEL = {
+    moto: "🛵 Moto mensajería",
+    uber: "⚡ Envío flash (Uber)",
+    correo: "📮 Correo (Cargo)",
+    retiro: "🏠 Retiro",
+  };
 
   const mensaje = [
     "🛒 PRODUCTOS",
@@ -484,6 +600,8 @@ exports.agentPedido = withAuth(async (req, res) => {
     dir.texto ? dir.texto : null,
     dir.zona ? `Zona ${dir.zona}` : null,
     dir.referencias ? `Ref: ${dir.referencias}` : null,
+    tipoEnvio === "correo" && b.datosCorreo ? `DNI: ${b.datosCorreo.dni || "-"}` : null,
+    tipoEnvio === "correo" && b.datosCorreo ? `${b.datosCorreo.localidad || "-"} (CP ${b.datosCorreo.cp || "-"})` : null,
     "",
     "👤 CLIENTE",
     `${b.cliente || "-"} — ${tel}`,
@@ -496,11 +614,29 @@ exports.agentPedido = withAuth(async (req, res) => {
     .filter((l) => l !== null)
     .join("\n");
 
-  const esNumeroTest = tel === NUMERO_TEST;
-  const coleccionPedidos = esNumeroTest ? "pedidos_test" : "pedidos";
+  // ── preview: solo devuelve el resumen ya calculado, NO escribe nada ─────────
+  // Lo usa la tool armar_resumen, para que el resumen que ve el cliente antes de pagar salga
+  // de la misma cuenta que el pedido final y el agente no tenga que sumar nada.
+  if (esPreview) {
+    return res.json({
+      ok: true,
+      preview: true,
+      mensaje,
+      subtotal,
+      valorEnvio,
+      total,
+      lineas: lineas.map((l) => ({
+        producto: l.producto, variante: l.variante, cantidad: l.cantidad,
+        unitario: l.unitario, importe: l.importe, fuente: l.fuente, difiere: l.difiere,
+      })),
+    });
+  }
 
-  // 1) Pedido — MISMOS campos base que hoy + estructurados nuevos. Si es el número de test, va
-  // a `pedidos_test` en vez de `pedidos` — no le llega al panel del depósito.
+  const coleccionPedidos =
+    DESVIAR_PEDIDOS_DE_PRUEBA && tel === NUMERO_TEST ? "pedidos_test" : "pedidos";
+
+  // 1) Pedido — MISMOS campos base que hoy + estructurados nuevos. Con el interruptor de pruebas
+  // apagado (producción) esto siempre escribe en `pedidos` y le llega al panel del depósito.
   const pedidoRef = await db.collection(coleccionPedidos).add({
     mensaje,
     estado: "pendiente",
@@ -519,11 +655,37 @@ exports.agentPedido = withAuth(async (req, res) => {
         }
       : null,
     valorEnvio,
+    // Solo para correo: DNI, localidad y CP. En los demas envios queda null.
+    datosCorreo:
+      tipoEnvio === "correo" && b.datosCorreo
+        ? {
+            dni: String(b.datosCorreo.dni || "").trim(),
+            localidad: String(b.datosCorreo.localidad || "").trim(),
+            cp: String(b.datosCorreo.cp || "").trim(),
+          }
+        : null,
     medioPago: b.medioPago || null,
     comprobante: b.comprobante || null,
+    comprobanteImagen: null, // se completa abajo si el agente mandó la foto
     origen: b.origen || null,   // publicidad / organico / null — atribución CTWA
     items: b.items,
   });
+
+  // 1b) Comprobante: se copia la foto a Storage y el pedido guarda una URL propia, no la de
+  // Chatwoot. Si la copia falla, el pedido queda cargado igual pero sin foto — nunca se pierde
+  // una venta porque no se pudo bajar una imagen.
+  if (b.comprobanteUrl) {
+    const guardado = await copiarComprobanteAStorage(b.comprobanteUrl, pedidoRef.id);
+    if (guardado) {
+      await pedidoRef.update({
+        comprobanteImagen: {
+          url: `${SERVE_COMPROBANTE_BASE}?pedido=${pedidoRef.id}`,
+          path: guardado.path,
+          contentType: guardado.contentType,
+        },
+      });
+    }
+  }
 
   // 2) clientes_bot — registra/incrementa. primerContacto y origen solo se setean la 1ª vez.
   const clienteRef = db.collection("clientes_bot").doc(tel);
@@ -550,7 +712,13 @@ exports.agentPedido = withAuth(async (req, res) => {
     .set({ pedidoId: pedidoRef.id, createdAt: new Date().toISOString() });
 
   // 4) Alias financiera → registra el comprobante aparte (lo pidió Lucio explícito).
-  if (b.medioPago === ALIAS_FINANCIERA && b.comprobante) {
+  // Quién cobró lo decide el alias activo del día en settings/operativo, NO lo que el agente
+  // haya escrito en medioPago: el modelo manda "transferencia", nunca el nombre interno del
+  // alias, así que con la comparación vieja esto no se disparaba nunca. Se sigue aceptando
+  // medioPago === "alias3" por si alguien lo manda explícito.
+  const aliasActivo = ALIASES_VALIDOS.includes(opPrecios.aliasActivo) ? opPrecios.aliasActivo : "alias1";
+  const cobroFinanciera = aliasActivo === ALIAS_FINANCIERA || b.medioPago === ALIAS_FINANCIERA;
+  if (cobroFinanciera && !esEfectivo && b.comprobante) {
     await db.collection("comprobantes_financiera").add({
       pedidoId: pedidoRef.id,
       numero: b.comprobante.numero || "",
@@ -591,6 +759,8 @@ exports.agentEstadoOperativo = withAuth(async (req, res) => {
     perfumesTexto: typeof d.perfumesTexto === "string" ? d.perfumesTexto.trim().slice(0, 10000) : "",
     appleTexto: typeof d.appleTexto === "string" ? d.appleTexto.trim().slice(0, 10000) : "",
     preciosMayoristaTexto: typeof d.preciosMayoristaTexto === "string" ? d.preciosMayoristaTexto.trim().slice(0, 10000) : "",
+    // Ofertas temporales: promo puntual de la semana. Vacío la mayor parte del tiempo.
+    ofertasTexto: typeof d.ofertasTexto === "string" ? d.ofertasTexto.trim().slice(0, 10000) : "",
     actualizadoEn: d.actualizadoEn || null,
   });
 });
@@ -660,4 +830,40 @@ exports.onCotizacionUberConfirmada = onDocumentUpdated("cotizaciones_uber/{id}",
   } catch (e) {
     console.error("[agente-api] no se pudo avisar a n8n de la cotizacion confirmada, el polling de respaldo la va a agarrar igual", e.message);
   }
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// 9. GET /serveComprobante?pedido=<id>
+// Sirve la foto del comprobante guardada en Storage. Sin X-Agent-Key a propósito, igual que
+// servePdf: el panel la muestra con un <img>, donde no se pueden mandar headers. La "clave" es
+// el id de Firestore, aleatorio de 20 caracteres.
+// ──────────────────────────────────────────────────────────────────────
+exports.serveComprobante = functions.https.onRequest(async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  if (req.method === "OPTIONS") return res.status(204).send("");
+
+  const pedidoId = String(req.query.pedido || "").trim();
+  if (!pedidoId) return res.status(400).send("falta 'pedido'");
+
+  // El pedido puede estar en cualquiera de las dos colecciones.
+  let data = null;
+  for (const col of ["pedidos", "pedidos_test"]) {
+    const snap = await db.collection(col).doc(pedidoId).get();
+    if (snap.exists) { data = snap.data(); break; }
+  }
+  if (!data) return res.status(404).send("pedido no encontrado");
+
+  const img = data.comprobanteImagen;
+  if (!img || !img.path) return res.status(404).send("ese pedido no tiene comprobante guardado");
+
+  const file = admin.storage().bucket(STORAGE_BUCKET).file(img.path);
+  const [existe] = await file.exists();
+  if (!existe) return res.status(404).send("el archivo no está en Storage");
+
+  res.setHeader("Content-Type", img.contentType || "image/jpeg");
+  res.setHeader("Cache-Control", "private, max-age=3600");
+  file.createReadStream()
+    .on("error", (err) => { console.error("stream comprobante:", err); res.status(500).end(); })
+    .pipe(res);
 });

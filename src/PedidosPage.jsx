@@ -446,6 +446,31 @@ function EditableMensaje({ pedido, dm, textClassName }) {
 // de nuevo. Mismo patrón que EditableMensaje (lápiz → edición → confirmar con mini cartel), pero
 // reutilizando los mismos tres campos que ya carga MotoPendienteCard la primera vez: dirección con
 // autocompletado de Google (nunca a mano), referencias y zona.
+// Foto del comprobante que mandó el cliente por WhatsApp. La copia el backend a Storage al
+// cargar el pedido y se sirve por serveComprobante, así no depende de que Chatwoot siga vivo.
+// Si el pedido no tiene foto (pago en efectivo, correo, o el cliente no la mandó), no renderiza.
+function ComprobanteFoto({ pedido, dm }) {
+  const [abierto, setAbierto] = useState(false);
+  const img = pedido.comprobanteImagen;
+  if (!img || !img.url) return null;
+
+  return (
+    <div className={`rounded-2xl border p-3 ${dm ? 'border-white/[0.07] bg-white/[0.02]' : 'border-zinc-200 bg-zinc-50'}`}>
+      <p className={`text-[11px] font-bold uppercase tracking-wide mb-2 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>Comprobante</p>
+      <button onClick={() => setAbierto(true)} className="block w-full" title="Ver en grande">
+        <img src={img.url} alt="Comprobante de pago" loading="lazy"
+          className="w-full max-h-64 object-contain rounded-xl bg-black/20" />
+      </button>
+      {abierto && (
+        <div onClick={() => setAbierto(false)}
+          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 cursor-zoom-out">
+          <img src={img.url} alt="Comprobante de pago" className="max-w-full max-h-full object-contain rounded-xl" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EditableDireccion({ pedido, dm }) {
   const [editing, setEditing] = useState(false);
   const [direccionTexto, setDireccionTexto] = useState(pedido.direccion?.texto || '');
@@ -607,6 +632,8 @@ function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, on
       {/* Solo pedidos de moto ya armados tienen dirección cargada (Uber/Retiro no la piden) —
           EditableDireccion mismo se devuelve null si pedido.direccion no existe. */}
       <EditableDireccion pedido={pedido} dm={dm} />
+
+      <ComprobanteFoto pedido={pedido} dm={dm} />
 
       <div className="flex flex-col gap-2 mt-1">
         <button onClick={() => requireConfirm ? setShowConfirm(true) : onAction()}

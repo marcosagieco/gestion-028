@@ -149,55 +149,10 @@ async function main() {
   const results = [];
   const ok = (name, cond, extra) => results.push({ name, ok: !!cond, extra });
 
-  // --- Seed: un batch de stock con productos reales ---
-  await fakeDb.collection("batches").doc("b1").set({
-    createdAt: "2026-09-01T00:00:00.000Z",
-    items: [
-      { id: "i1", product: "Elfbar Ice King", variant: "Blue Razz Ice", currentStock: 8, costArs: 10000, precioVenta: 26000 },
-      { id: "i2", product: "Elfbar Ice King", variant: "Sour Apple Ice", currentStock: 0, costArs: 10000 },
-      { id: "i3", product: "Capsulas 028 1ml", variant: "Mango Kush", currentStock: 5, costArs: 20000 },
-    ],
-  });
-  await fakeDb.collection("batches").doc("b2-finalizado").set({
-    createdAt: "2026-08-01T00:00:00.000Z",
-    finalizedAt: "2026-08-15T00:00:00.000Z",
-    items: [{ id: "iX", product: "Ghost 7g", variant: "Watermelon", currentStock: 99, costArs: 1 }],
-  });
-
-  // 1) agentStock — match normal
+  // 1) auth: sin header -> 401 (cubre el wrapper withAuth de todos los endpoints)
   {
-    const r = await callFn(api.agentStock, { query: { producto: "elf bar ice king" }, headers: { "X-Agent-Key": KEY } });
-    ok("agentStock: 'elf bar ice king' matchea Elfbar Ice King", r.status === 200 && r.body.ok && r.body.matches.length === 2, r.body);
-  }
-  // 2) agentStock — con variante sin stock -> stock 0
-  {
-    const r = await callFn(api.agentStock, { query: { producto: "elfbar ice king", variante: "sour apple" }, headers: { "X-Agent-Key": KEY } });
-    ok("agentStock: variante sin stock devuelve 0, no error", r.status === 200 && r.body.matches[0]?.stock === 0, r.body);
-  }
-  // 3) agentStock — lote finalizado se ignora
-  {
-    const r = await callFn(api.agentStock, { query: { producto: "ghost" }, headers: { "X-Agent-Key": KEY } });
-    ok("agentStock: batch finalizado se excluye (sin stock de Ghost)", r.status === 200 && r.body.totalStock === 0, r.body);
-  }
-  // 4) auth: sin header -> 401
-  {
-    const r = await callFn(api.agentStock, { query: { producto: "elfbar" }, headers: {} });
-    ok("agentStock: sin X-Agent-Key -> 401", r.status === 401, r.body);
-  }
-  // 5) agentStock: falta producto -> 400
-  {
-    const r = await callFn(api.agentStock, { query: {}, headers: { "X-Agent-Key": KEY } });
-    ok("agentStock: sin 'producto' -> 400", r.status === 400, r.body);
-  }
-  // 5b) agentStock: devuelve precioVenta cuando el lote lo tiene cargado
-  {
-    const r = await callFn(api.agentStock, { query: { producto: "elfbar ice king", variante: "blue razz" }, headers: { "X-Agent-Key": KEY } });
-    ok("agentStock: devuelve precioVenta cuando el lote lo tiene", r.status === 200 && r.body.matches[0]?.precioVenta === 26000, r.body);
-  }
-  // 5c) agentStock: precioVenta es null si el lote no lo cargo (compatibilidad con lotes viejos)
-  {
-    const r = await callFn(api.agentStock, { query: { producto: "elfbar ice king", variante: "sour apple" }, headers: { "X-Agent-Key": KEY } });
-    ok("agentStock: precioVenta null si el lote no lo cargo", r.status === 200 && r.body.matches[0]?.precioVenta === null, r.body);
+    const r = await callFn(api.agentCliente, { query: { telefono: "5491158696086" }, headers: {} });
+    ok("withAuth: sin X-Agent-Key -> 401", r.status === 401, r.body);
   }
 
   // 6) agentCliente — nuevo
@@ -295,12 +250,149 @@ async function main() {
   }
   // 16) normalizarTelefono: variantes de formato dan la misma clave en clientes_bot
   {
-    const body1 = { telefono: "1158696086", items: [{ producto: "x", cantidad: 1, precioUnitario: 1 }], tipoEnvio: "retiro", valorEnvio: 0 };
-    const body2 = { telefono: "541158696086", items: [{ producto: "x", cantidad: 1, precioUnitario: 1 }], tipoEnvio: "retiro", valorEnvio: 0 };
+    const base = { items: [{ producto: "x", cantidad: 1, precioUnitario: 1 }], tipoEnvio: "retiro", valorEnvio: 0, cliente: "Uma Bach", medioPago: "efectivo" };
+    const body1 = { ...base, telefono: "1158696086" };
+    const body2 = { ...base, telefono: "541158696086" };
     await callFn(api.agentPedido, { method: "POST", body: body1, headers: { "X-Agent-Key": KEY } });
     await callFn(api.agentPedido, { method: "POST", body: body2, headers: { "X-Agent-Key": KEY } });
     const c = await fakeDb.collection("clientes_bot").doc("5491158696086").get();
     ok("normalizarTelefono: '1158696086' y '541158696086' -> mismo 5491158696086 (ahora 4 pedidos totales)", c.data().cantidadPedidos === 4, c.data());
+  }
+
+  // 17) agentPedido — datos obligatorios segun tipoEnvio y medioPago
+  {
+    const base = {
+      telefono: "5491158696086",
+      cliente: "Uma Bach",
+      items: [{ producto: "Elfbar Ice King", cantidad: 1, precioUnitario: 26000 }],
+      valorEnvio: 8000,
+    };
+    const dir = { texto: "Sanchez de Bustamante 1623", zona: "E" };
+    const comp = { numero: "0012345", monto: 34000 };
+
+    // moto sin direccion -> 400, y el error nombra lo que falta (el agente lo lee y lo pide)
+    let r = await callFn(api.agentPedido, { method: "POST", body: { ...base, tipoEnvio: "moto", medioPago: "transferencia", comprobante: comp }, headers: { "X-Agent-Key": KEY } });
+    ok("agentPedido: moto sin direccion -> 400", r.status === 400 && /direcci/i.test(r.body.error || ""), r.body);
+
+    // uber sin direccion -> 400 (uber tambien entrega a domicilio)
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, tipoEnvio: "uber", medioPago: "transferencia", comprobante: comp }, headers: { "X-Agent-Key": KEY } });
+    ok("agentPedido: uber sin direccion -> 400", r.status === 400, r.body);
+
+    // retiro sin direccion -> OK, es el unico que no la necesita
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, tipoEnvio: "retiro", valorEnvio: 0, medioPago: "efectivo" }, headers: { "X-Agent-Key": KEY } });
+    ok("agentPedido: retiro sin direccion -> 200", r.status === 200 && r.body.ok, r.body);
+
+    // transferencia sin comprobante -> 400
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, tipoEnvio: "moto", direccion: dir, medioPago: "transferencia" }, headers: { "X-Agent-Key": KEY } });
+    ok("agentPedido: transferencia sin comprobante -> 400", r.status === 400 && /comprobante/i.test(r.body.error || ""), r.body);
+
+    // efectivo contra entrega en moto: NO necesita comprobante
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, tipoEnvio: "moto", direccion: dir, medioPago: "efectivo" }, headers: { "X-Agent-Key": KEY } });
+    ok("agentPedido: moto + efectivo sin comprobante -> 200", r.status === 200 && r.body.ok, r.body);
+
+    // uber en efectivo -> 400, el flash es siempre transferencia previa
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, tipoEnvio: "uber", direccion: dir, medioPago: "efectivo" }, headers: { "X-Agent-Key": KEY } });
+    ok("agentPedido: uber + efectivo -> 400", r.status === 400 && /transferencia/i.test(r.body.error || ""), r.body);
+
+    // sin medioPago y sin cliente -> 400
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, cliente: "", tipoEnvio: "moto", direccion: dir }, headers: { "X-Agent-Key": KEY } });
+    ok("agentPedido: sin cliente ni medioPago -> 400", r.status === 400 && /cliente/i.test(r.body.error || ""), r.body);
+
+    // preview: corre ANTES del pago, no exige nada de esto y no escribe nada
+    const pedidosAntes = (await fakeDb.collection("pedidos").get()).size;
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, tipoEnvio: "moto", preview: true }, headers: { "X-Agent-Key": KEY } });
+    const pedidosDespues = (await fakeDb.collection("pedidos").get()).size;
+    ok("agentPedido: preview sin direccion ni pago -> 200 y no escribe", r.status === 200 && r.body.preview === true && pedidosAntes === pedidosDespues, r.body);
+  }
+
+  // 18) agentPedido — el efectivo contra entrega se revalida contra la zona
+  {
+    const base = {
+      telefono: "5491158696086",
+      cliente: "Uma Bach",
+      items: [{ producto: "Elfbar Ice King", cantidad: 1, precioUnitario: 26000 }],
+      tipoEnvio: "moto",
+      valorEnvio: 8000,
+      medioPago: "efectivo",
+    };
+
+    // zona B = Corredor Norte, no es CABA -> no admite efectivo
+    let r = await callFn(api.agentPedido, { method: "POST", body: { ...base, direccion: { texto: "Av. Maipu 2500, Olivos", zona: "B" } }, headers: { "X-Agent-Key": KEY } });
+    ok("agentPedido: moto + efectivo en zona B -> 400", r.status === 400 && /efectivo/i.test(r.body.error || ""), r.body);
+
+    // sin zona y con un barrio que no esta en el mapa: no sabemos si es CABA -> tampoco
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, direccion: { texto: "Calle Falsa 123, Quilmes" } }, headers: { "X-Agent-Key": KEY } });
+    ok("agentPedido: moto + efectivo sin zona reconocible -> 400", r.status === 400, r.body);
+
+    // sin zona explicita pero el barrio del texto si esta en el mapa -> se resuelve y pasa
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, direccion: { texto: "Av. Cabildo 2100, Belgrano" } }, headers: { "X-Agent-Key": KEY } });
+    ok("agentPedido: moto + efectivo con barrio CABA en el texto -> 200", r.status === 200 && r.body.ok, r.body);
+  }
+
+  // 19) agentPedido — el cobro por la financiera lo decide el alias activo, no el medioPago
+  {
+    await fakeDb.collection("settings").doc("operativo").set({ aliasActivo: "alias3" });
+    const antes = (await fakeDb.collection("comprobantes_financiera").get()).size;
+    const body = {
+      telefono: "5491158696086",
+      cliente: "Uma Bach",
+      items: [{ producto: "Elfbar Ice King", cantidad: 1, precioUnitario: 26000 }],
+      tipoEnvio: "moto",
+      direccion: { texto: "Sanchez de Bustamante 1623", zona: "E" },
+      valorEnvio: 8000,
+      medioPago: "transferencia", // lo que manda el agente de verdad, NUNCA "alias3"
+      comprobante: { numero: "0099887", monto: 34000, nombre: "Uma Bach" },
+    };
+    const r = await callFn(api.agentPedido, { method: "POST", body, headers: { "X-Agent-Key": KEY } });
+    const despues = await fakeDb.collection("comprobantes_financiera").get();
+    ok("agentPedido: aliasActivo=alias3 + medioPago='transferencia' registra el comprobante", r.status === 200 && despues.size === antes + 1, { antes, despues: despues.size, body: r.body });
+    ok("agentPedido: el comprobante registrado es el del pedido", despues.docs.some((d) => d.data().numero === "0099887"), despues.docs.map((d) => d.data()));
+
+    // con el alias comun NO se registra nada aparte
+    await fakeDb.collection("settings").doc("operativo").set({ aliasActivo: "alias1" });
+    const antes2 = (await fakeDb.collection("comprobantes_financiera").get()).size;
+    await callFn(api.agentPedido, { method: "POST", body: { ...body, comprobante: { numero: "0011111", monto: 34000 } }, headers: { "X-Agent-Key": KEY } });
+    const despues2 = (await fakeDb.collection("comprobantes_financiera").get()).size;
+    ok("agentPedido: aliasActivo=alias1 NO registra en comprobantes_financiera", despues2 === antes2, { antes2, despues2 });
+  }
+
+  // 20) agentPedido — envio por correo
+  {
+    const base = {
+      telefono: "5491158696086",
+      cliente: "Uma Bach",
+      items: [{ producto: "Elfbar Ice King", cantidad: 1, precioUnitario: 26000 }],
+      tipoEnvio: "correo",
+      direccion: { texto: "Belgrano 123, Rosario" },
+      valorEnvio: 19000,
+      medioPago: "contra reembolso",
+    };
+    const datos = { dni: "30111222", localidad: "Rosario", cp: "2000" };
+
+    // correo completo -> 200 (y NO exige comprobante: se abona al recibir)
+    let r = await callFn(api.agentPedido, { method: "POST", body: { ...base, datosCorreo: datos }, headers: { "X-Agent-Key": KEY } });
+    ok("agentPedido: correo con DNI/localidad/CP -> 200", r.status === 200 && r.body.ok, r.body);
+    ok("agentPedido: el mensaje al deposito muestra el DNI y el CP", /DNI: 30111222/.test(r.body.mensaje || "") && /Rosario \(CP 2000\)/.test(r.body.mensaje || ""), r.body.mensaje);
+    ok("agentPedido: la etiqueta de envio dice Correo", /Correo \(Cargo\)/.test(r.body.mensaje || ""), r.body.mensaje);
+
+    // correo sin los datos del correo -> 400, nombrando lo que falta
+    r = await callFn(api.agentPedido, { method: "POST", body: base, headers: { "X-Agent-Key": KEY } });
+    ok("agentPedido: correo sin DNI/localidad/CP -> 400", r.status === 400 && /DNI/.test(r.body.error || ""), r.body);
+
+    // correo sin direccion -> 400 (igual que moto y uber)
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, direccion: undefined, datosCorreo: datos }, headers: { "X-Agent-Key": KEY } });
+    ok("agentPedido: correo sin direccion -> 400", r.status === 400, r.body);
+
+    // el doc guardado tiene datosCorreo
+    const snap = await fakeDb.collection("pedidos").get();
+    const ultimoCorreo = snap.docs.map((d) => d.data()).filter((d) => d.tipoEnvio === "correo").pop();
+    ok("agentPedido: el pedido guarda datosCorreo", !!ultimoCorreo && ultimoCorreo.datosCorreo && ultimoCorreo.datosCorreo.cp === "2000", ultimoCorreo && ultimoCorreo.datosCorreo);
+
+    // en un pedido que no es correo, datosCorreo queda null
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, tipoEnvio: "moto", direccion: { texto: "Av. Cabildo 2100, Belgrano", zona: "A" }, medioPago: "efectivo" }, headers: { "X-Agent-Key": KEY } });
+    const snap2 = await fakeDb.collection("pedidos").get();
+    const ultimoMoto = snap2.docs.map((d) => d.data()).filter((d) => d.tipoEnvio === "moto").pop();
+    ok("agentPedido: en un pedido de moto datosCorreo es null", r.status === 200 && ultimoMoto.datosCorreo === null, ultimoMoto && ultimoMoto.datosCorreo);
   }
 
   // ---------- Reporte ----------
