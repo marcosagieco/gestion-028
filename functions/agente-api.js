@@ -712,7 +712,10 @@ exports.agentPedido = withAuth(async (req, res) => {
           texto: dir.texto,
           lat: typeof dir.lat === "number" ? dir.lat : null,
           lng: typeof dir.lng === "number" ? dir.lng : null,
-          zona: dir.zona || null,
+          // La zona SOLO puede ser una de las del mapa. Si el barrio no esta mapeado,
+          // cotizar_envio devuelve null y el agente tiende a inventarla con el nombre del
+          // barrio ("Flores"), que despues rompe el agrupado por zona del recorrido de moto.
+          zona: ZONA_NOMBRE[dir.zona] ? dir.zona : null,
           referencias: dir.referencias || null,
         }
       : null,
