@@ -491,6 +491,33 @@ async function main() {
     ok("zona: un barrio no mapeado no ensucia el pedido", !/Zona /.test(r.body.mensaje || ""), r.body.mensaje);
   }
 
+  // 24) agentPedido — ninguna linea puede quedar en $0 (lo mas caro que puede fallar)
+  {
+    const base = {
+      telefono: "5491158696086",
+      cliente: "Uma Bach",
+      tipoEnvio: "retiro",
+      valorEnvio: 0,
+      medioPago: "efectivo",
+    };
+
+    // producto que no esta en ninguna lista y sin precio -> se rechaza, no se carga gratis
+    let r = await callFn(api.agentPedido, { method: "POST", body: { ...base, items: [{ producto: "Algo que no existe en el catalogo", cantidad: 1 }] }, headers: { "X-Agent-Key": KEY } });
+    ok("precio: un producto sin precio no se carga en $0", r.status === 400 && /no pude resolver el precio/.test(r.body.error || ""), r.body);
+
+    // tampoco en preview: el cliente no tiene que ver un resumen con un item en cero
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, items: [{ producto: "Algo que no existe en el catalogo", cantidad: 1 }], preview: true }, headers: { "X-Agent-Key": KEY } });
+    ok("precio: el preview tampoco muestra un item en $0", r.status === 400, r.body);
+
+    // si el agente manda el precio a mano, si se acepta
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, items: [{ producto: "Producto nuevo del deposito", cantidad: 1, precioUnitario: 15000 }], preview: true }, headers: { "X-Agent-Key": KEY } });
+    ok("precio: con precioUnitario del agente si se acepta", r.status === 200 && r.body.subtotal === 15000, { subtotal: r.body.subtotal });
+
+    // y una linea valida no se ve afectada
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, items: [{ producto: "Elfbar Ice King", cantidad: 1, precioUnitario: 26000 }], preview: true }, headers: { "X-Agent-Key": KEY } });
+    ok("precio: un pedido normal sigue pasando", r.status === 200 && r.body.subtotal > 0, { subtotal: r.body.subtotal });
+  }
+
   // ---------- Reporte ----------
   console.log("\n=== RESULTADOS ===");
   let fails = 0;

@@ -655,6 +655,23 @@ exports.agentPedido = withAuth(async (req, res) => {
     };
   });
 
+  // ── Ninguna linea puede quedar en $0 ────────────────────────────────────────
+  // Si el producto no figura en las listas del dia y el agente tampoco mando un precio, el
+  // importe daba 0 y el pedido se cargaba GRATIS, sin que nadie se enterara. Es la falla mas
+  // cara posible, asi que corta el pedido antes de calcular nada.
+  const sinPrecio = lineas.filter((l) => !l.importe || l.importe <= 0);
+  if (sinPrecio.length) {
+    const nombres = sinPrecio.map((l) => `"${l.producto}"`).join(", ");
+    return res.status(400).json({
+      ok: false,
+      error:
+        `NO se cargó el pedido: no pude resolver el precio de ${nombres}. ` +
+        "Ese producto no figura en las listas de hoy con ese nombre. Confirmá con el cliente " +
+        "cuál es exactamente, buscándolo en la plantilla de su categoría, y volvé a intentar.",
+      sinPrecio: sinPrecio.map((l) => l.producto),
+    });
+  }
+
   const lineasItems = lineas.map(
     (l) => `* ${l.cantidad}x ${l.producto}${l.variante ? " - " + l.variante : ""}` +
       (l.unitario ? ` (${$(l.unitario)} c/u)` : "")
