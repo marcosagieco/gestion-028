@@ -428,6 +428,43 @@ async function main() {
     ok("agentPedido: el pedido guarda envioSeguro y su monto", r.status === 200 && !!ultimo && ultimo.montoEnvioSeguro === 1990, ultimo && { envioSeguro: ultimo.envioSeguro, monto: ultimo.montoEnvioSeguro });
   }
 
+  // 22) agentPedido — descuento por pagar en efectivo (tramos sobre el SUBTOTAL, sin envio)
+  {
+    const base = {
+      telefono: "5491158696086",
+      cliente: "Uma Bach",
+      tipoEnvio: "moto",
+      direccion: { texto: "Av. Cabildo 2100, Belgrano", zona: "A" },
+      valorEnvio: 8000,
+      preview: true,
+    };
+    const item = (precio) => [{ producto: "Producto suelto de prueba", cantidad: 1, precioUnitario: precio }];
+
+    // menos de 50.000 -> 1.500 off
+    let r = await callFn(api.agentPedido, { method: "POST", body: { ...base, items: item(30000), medioPago: "efectivo" }, headers: { "X-Agent-Key": KEY } });
+    ok("descuento efectivo: subtotal 30.000 -> 1.500 off", r.body.montoDescuento === 1500 && r.body.total === 30000 + 8000 - 1500, { desc: r.body.montoDescuento, total: r.body.total });
+
+    // desde 50.000 -> 2.500 off
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, items: item(50000), medioPago: "efectivo" }, headers: { "X-Agent-Key": KEY } });
+    ok("descuento efectivo: subtotal 50.000 -> 2.500 off", r.body.montoDescuento === 2500 && r.body.total === 50000 + 8000 - 2500, { desc: r.body.montoDescuento, total: r.body.total });
+
+    // desde 100.000 -> 5.000 off
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, items: item(120000), medioPago: "efectivo" }, headers: { "X-Agent-Key": KEY } });
+    ok("descuento efectivo: subtotal 120.000 -> 5.000 off", r.body.montoDescuento === 5000 && r.body.total === 120000 + 8000 - 5000, { desc: r.body.montoDescuento, total: r.body.total });
+
+    // el tramo se mide SIN el envio: 48.000 + 8.000 de envio sigue siendo el tramo chico
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, items: item(48000), medioPago: "efectivo" }, headers: { "X-Agent-Key": KEY } });
+    ok("descuento efectivo: el envio no empuja al tramo siguiente", r.body.montoDescuento === 1500, { desc: r.body.montoDescuento });
+
+    // por transferencia NO hay descuento
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, items: item(30000), medioPago: "alias1", comprobante: { numero: "1" } }, headers: { "X-Agent-Key": KEY } });
+    ok("descuento efectivo: por transferencia no se aplica", r.body.montoDescuento === 0 && r.body.total === 30000 + 8000, { desc: r.body.montoDescuento, total: r.body.total });
+
+    // el resumen lo muestra como linea propia
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, items: item(30000), medioPago: "efectivo" }, headers: { "X-Agent-Key": KEY } });
+    ok("descuento efectivo: aparece en el resumen", /Descuento por efectivo: -\$1\.500/.test(r.body.mensaje || ""), r.body.mensaje);
+  }
+
   // ---------- Reporte ----------
   console.log("\n=== RESULTADOS ===");
   let fails = 0;

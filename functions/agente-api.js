@@ -93,6 +93,24 @@ const TARIFA_POR_KM = 1000;
 // Envio seguro: adicional opcional que cubre reposicion ante robo/perdida. Solo se ofrece en
 // envio flash (Uber). El monto lo resuelve el backend, como todo el resto de la plata.
 const PRECIO_ENVIO_SEGURO = 1990;
+
+// Descuento por pagar en efectivo contra entrega. Los tramos se miden contra el SUBTOTAL de
+// productos, sin el envio: el descuento es por pagar la mercaderia en efectivo, no por el flete.
+// Hasta hoy el bot anunciaba este descuento con la plantilla DESCUENTO_EFECTIVO pero el total
+// salia sin aplicarlo, asi que el cliente esperaba pagar menos de lo que decia el pedido y el
+// que quedaba en el medio era el repartidor.
+const TRAMOS_DESCUENTO_EFECTIVO = [
+  { desde: 100000, off: 5000 },
+  { desde: 50000, off: 2500 },
+  { desde: 0, off: 1500 },
+];
+
+function descuentoEfectivo(subtotal) {
+  const s = Number(subtotal) || 0;
+  if (s <= 0) return 0;
+  const tramo = TRAMOS_DESCUENTO_EFECTIVO.find((t) => s >= t.desde);
+  return tramo ? tramo.off : 0;
+}
 const MINIMO_ENVIO = 3000;
 
 const ALIAS_FINANCIERA = "alias3";
@@ -636,7 +654,9 @@ exports.agentPedido = withAuth(async (req, res) => {
   // El envio seguro es solo para el flash: si viene marcado en otro tipo de envio, se ignora.
   const envioSeguro = (b.envioSeguro === true || b.envioSeguro === "true") && tipoEnvio === "uber";
   const montoEnvioSeguro = envioSeguro ? PRECIO_ENVIO_SEGURO : 0;
-  const total = subtotal + valorEnvio + montoEnvioSeguro;
+  // El descuento por efectivo solo corre si realmente paga en efectivo contra entrega.
+  const montoDescuento = esEfectivo ? descuentoEfectivo(subtotal) : 0;
+  const total = subtotal + valorEnvio + montoEnvioSeguro - montoDescuento;
   const dir = b.direccion || {};
   const ENVIO_LABEL = {
     moto: "🛵 Moto mensajería",
@@ -653,6 +673,7 @@ exports.agentPedido = withAuth(async (req, res) => {
     `Subtotal: ${$(subtotal)}`,
     valorEnvio ? `Envío: ${$(valorEnvio)}` : null,
     envioSeguro ? `🛡️ Envío seguro: ${$(montoEnvioSeguro)}` : null,
+    montoDescuento ? `💵 Descuento por efectivo: -${$(montoDescuento)}` : null,
     `TOTAL A PAGAR: ${$(total)}`,
     "",
     "📦 ENTREGA",
@@ -686,6 +707,7 @@ exports.agentPedido = withAuth(async (req, res) => {
       valorEnvio,
       envioSeguro,
       montoEnvioSeguro,
+      montoDescuento,
       total,
       lineas: lineas.map((l) => ({
         producto: l.producto, variante: l.variante, cantidad: l.cantidad,
@@ -722,6 +744,7 @@ exports.agentPedido = withAuth(async (req, res) => {
     valorEnvio,
     envioSeguro,
     montoEnvioSeguro,
+    montoDescuento,
     // Solo para correo: DNI, localidad y CP. En los demas envios queda null.
     datosCorreo:
       tipoEnvio === "correo" && b.datosCorreo
