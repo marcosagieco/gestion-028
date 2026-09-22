@@ -318,6 +318,16 @@ function zonaDesdeTexto(texto) {
 // (Corredor Norte). Si no matcheó ninguna zona tampoco se admite: no sabemos si es CABA.
 const zonaAdmiteEfectivo = (zona) => zona !== null && zona !== "B";
 
+// El agente tiende a mandar el NOMBRE del barrio ("Belgrano") donde va la zona ("A"), porque es
+// lo que escribio el cliente. Si lo que manda ya es una zona valida se respeta; si es un barrio
+// del mapa se traduce; si no se reconoce, queda null antes que ensuciar el recorrido de moto.
+function normalizarZona(z) {
+  const v = String(z || "").trim();
+  if (!v) return null;
+  if (ZONA_NOMBRE[v.toUpperCase()]) return v.toUpperCase();
+  return BARRIO_A_ZONA[normalizar(v)] || null;
+}
+
 // El mapa BARRIO_A_ZONA no cubre toda CABA (le faltan Flores, Balvanera, Boedo, Saavedra y
 // varios mas), asi que atar el efectivo SOLO a ese mapa se lo negaba a clientes de CABA por el
 // simple hecho de que su barrio no estaba escrito en la lista. Google ya sabe en que ciudad
@@ -658,6 +668,7 @@ exports.agentPedido = withAuth(async (req, res) => {
   const montoDescuento = esEfectivo ? descuentoEfectivo(subtotal) : 0;
   const total = subtotal + valorEnvio + montoEnvioSeguro - montoDescuento;
   const dir = b.direccion || {};
+  const zonaPedidoNormalizada = normalizarZona(dir.zona);
   const ENVIO_LABEL = {
     moto: "🛵 Moto mensajería",
     uber: "⚡ Envío flash (Uber)",
@@ -679,7 +690,7 @@ exports.agentPedido = withAuth(async (req, res) => {
     "📦 ENTREGA",
     ENVIO_LABEL[tipoEnvio] + (envioSeguro ? "  —  🛡️ CON ENVÍO SEGURO" : ""),
     dir.texto ? dir.texto : null,
-    dir.zona ? `Zona ${dir.zona}` : null,
+    zonaPedidoNormalizada ? `Zona ${zonaPedidoNormalizada}` : null,
     dir.referencias ? `Ref: ${dir.referencias}` : null,
     tipoEnvio === "correo" && b.datosCorreo ? `DNI: ${b.datosCorreo.dni || "-"}` : null,
     tipoEnvio === "correo" && b.datosCorreo ? `${b.datosCorreo.localidad || "-"} (CP ${b.datosCorreo.cp || "-"})` : null,
@@ -737,7 +748,7 @@ exports.agentPedido = withAuth(async (req, res) => {
           // La zona SOLO puede ser una de las del mapa. Si el barrio no esta mapeado,
           // cotizar_envio devuelve null y el agente tiende a inventarla con el nombre del
           // barrio ("Flores"), que despues rompe el agrupado por zona del recorrido de moto.
-          zona: ZONA_NOMBRE[dir.zona] ? dir.zona : null,
+          zona: zonaPedidoNormalizada,
           referencias: dir.referencias || null,
         }
       : null,

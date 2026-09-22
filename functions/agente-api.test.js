@@ -465,6 +465,32 @@ async function main() {
     ok("descuento efectivo: aparece en el resumen", /Descuento por efectivo: -\$1\.500/.test(r.body.mensaje || ""), r.body.mensaje);
   }
 
+  // 23) agentPedido — la zona se normaliza (el agente suele mandar el nombre del barrio)
+  {
+    const base = {
+      telefono: "5491158696086",
+      cliente: "Uma Bach",
+      items: [{ producto: "Elfbar Ice King", cantidad: 1, precioUnitario: 26000 }],
+      tipoEnvio: "moto",
+      valorEnvio: 8000,
+      medioPago: "alias1",
+      comprobante: { numero: "1" },
+      preview: true,
+    };
+
+    // manda el nombre del barrio -> se traduce a su zona
+    let r = await callFn(api.agentPedido, { method: "POST", body: { ...base, direccion: { texto: "Av. Cabildo 2100", zona: "Belgrano" } }, headers: { "X-Agent-Key": KEY } });
+    ok("zona: 'Belgrano' se traduce a 'A'", /Zona A/.test(r.body.mensaje || ""), r.body.mensaje);
+
+    // manda la zona correcta -> se respeta
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, direccion: { texto: "Av. Cabildo 2100", zona: "A" } }, headers: { "X-Agent-Key": KEY } });
+    ok("zona: 'A' se respeta", /Zona A/.test(r.body.mensaje || ""), r.body.mensaje);
+
+    // manda un barrio que no esta en el mapa -> no inventa una zona
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, direccion: { texto: "Av. Rivadavia 6800", zona: "Flores" } }, headers: { "X-Agent-Key": KEY } });
+    ok("zona: un barrio no mapeado no ensucia el pedido", !/Zona /.test(r.body.mensaje || ""), r.body.mensaje);
+  }
+
   // ---------- Reporte ----------
   console.log("\n=== RESULTADOS ===");
   let fails = 0;
