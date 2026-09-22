@@ -292,6 +292,9 @@ export default function RepartoMoto() {
   const [expandedId, setExpandedId] = useState(null);
   const [salioLoading, setSalioLoading] = useState(false);
   const [entregandoId, setEntregandoId] = useState(null);
+  // Pedidos a los que ya se les mando el aviso de "llegue". Solo para no mandarlo dos veces
+  // por error: no cambia el estado del pedido ni se guarda en Firestore.
+  const [avisadosLlegue, setAvisadosLlegue] = useState([]);
   // Pedido con la parada que se va a marcar como intento fallido, mientras se pide el motivo
   // (EntregaFallidaModal) — distinto de confirmEntregaPedido porque ahí no hace falta escribir
   // nada, solo confirmar.
@@ -562,6 +565,14 @@ export default function RepartoMoto() {
   // Marca la entrega, cierra la parada, y recalcula el resto del recorrido saliendo desde donde
   // se acaba de entregar — este es el único disparador de Routes API que le toca a esta pantalla
   // además del cálculo inicial de arriba (que casi nunca se llega a usar).
+  // Avisa al cliente que el repartidor esta en la puerta. No toca el estado del pedido: el
+  // pedido sigue en la parada hasta que se marque Entregado o No pude entregar.
+  const handleYaLlegue = (pedido) => {
+    if (avisadosLlegue.includes(pedido.id)) return;
+    setAvisadosLlegue(prev => [...prev, pedido.id]);
+    notificarEntregaAgente(pedido, 'llegue');
+  };
+
   const handleEntregado = async (pedido) => {
     if (entregandoId) return;
     setEntregandoId(pedido.id);
@@ -776,6 +787,15 @@ export default function RepartoMoto() {
                 className="w-full h-16 rounded-2xl font-black text-lg text-white transition-all active:scale-[0.97] bg-[#6366f1] hover:bg-[#4f46e5] flex items-center justify-center gap-2">
                 <Navigation size={22}/> Cómo llegar
               </a>
+              <button onClick={() => handleYaLlegue(proxima)} disabled={avisadosLlegue.includes(proxima.id)}
+                className={`w-full h-14 rounded-2xl font-black text-base transition-all active:scale-[0.97] flex items-center justify-center gap-2 ${
+                  avisadosLlegue.includes(proxima.id)
+                    ? (dm ? 'bg-white/[0.06] text-zinc-500' : 'bg-zinc-100 text-zinc-400')
+                    : 'bg-sky-500 hover:bg-sky-400 text-white'}`}>
+                {avisadosLlegue.includes(proxima.id)
+                  ? <><CheckCircle2 size={18}/> Cliente avisado</>
+                  : <><Navigation size={18}/> Ya llegue, avisarle al cliente</>}
+              </button>
               <button onClick={() => setConfirmEntregaPedido(proxima)} disabled={entregandoId === proxima.id}
                 className="w-full h-16 rounded-2xl font-black text-lg text-white transition-all active:scale-[0.97] bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 flex items-center justify-center gap-2">
                 {entregandoId === proxima.id ? <Loader2 size={22} className="animate-spin"/> : <CheckCircle2 size={22}/>}

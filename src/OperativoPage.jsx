@@ -91,7 +91,7 @@ const ALIASES = [
 ];
 
 const DEFAULTS = {
-  situacion: 'sin_demora', proximaSalida: '', aliasActivo: 'alias1',
+  situacion: 'sin_demora', proximaSalida: '', aliasActivo: 'alias1', limitePorTanda: 10,
   stockNicotinaTexto: '', stockThcTexto: '',
   preciosVapesTexto: '', preciosThcTexto: '', perfumesTexto: '', appleTexto: '',
   preciosMayoristaTexto: '', ofertasTexto: '',
@@ -124,6 +124,7 @@ export default function OperativoPage() {
       await setDoc(DOC_REF(), {
         situacion: SITUACIONES.some((s) => s.id === form.situacion) ? form.situacion : 'sin_demora',
         proximaSalida: (form.proximaSalida || '').trim(),
+        limitePorTanda: Number(form.limitePorTanda) > 0 ? Number(form.limitePorTanda) : 10,
         aliasActivo: ALIASES.some((a) => a.id === form.aliasActivo) ? form.aliasActivo : 'alias1',
         stockNicotinaTexto: (form.stockNicotinaTexto || '').trim(),
         stockThcTexto: (form.stockThcTexto || '').trim(),
@@ -213,6 +214,15 @@ export default function OperativoPage() {
             <p className={`text-[11px] mb-3 ${label}`}>Hora a la que sale la proxima tanda de envios. El bot la usa si el cliente pregunta cuando le llega.</p>
             <input value={form.proximaSalida} onChange={(e) => set('proximaSalida', e.target.value)}
               placeholder="16:00"
+              className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors ${input}`} />
+          </div>
+
+          {/* Limite de pedidos por tanda */}
+          <div className={`rounded-2xl border p-5 ${card}`}>
+            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Pedidos maximos por tanda</label>
+            <p className={`text-[11px] mb-3 ${label}`}>Cuantos envios (moto + Uber juntos) entran en una tanda. Cuando la cantidad de pedidos <b>sin completar</b> llega a este numero, el bot sigue vendiendo pero le avisa al cliente que su pedido sale en la tanda siguiente. <b>Ojo:</b> cuenta los pedidos que siguen en pendiente o armado, asi que hay que ir marcandolos a medida que salen.</p>
+            <input type="number" min="1" max="99" value={form.limitePorTanda}
+              onChange={(e) => set('limitePorTanda', e.target.value)}
               className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors ${input}`} />
           </div>
 

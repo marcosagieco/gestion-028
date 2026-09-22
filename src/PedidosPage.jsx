@@ -4,7 +4,7 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { initializeFirestore, getFirestore, collection, query, orderBy, onSnapshot, addDoc, updateDoc, deleteDoc, doc, runTransaction, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 import {
   ClipboardList, Plus, Clock, AlertTriangle, XCircle, CheckCircle, ChevronRight,
-  ChevronDown, History, Save, Moon, Sun, PartyPopper, Search, Trash2,
+  ChevronDown, ChevronUp, History, Save, Moon, Sun, PartyPopper, Search, Trash2, Download,
   Bike, Car, MapPin, PackageCheck, Store, Archive, Pencil
 } from 'lucide-react';
 import AddressAutocomplete from './reparto/AddressAutocomplete';
@@ -446,23 +446,110 @@ function EditableMensaje({ pedido, dm, textClassName }) {
 // de nuevo. Mismo patrón que EditableMensaje (lápiz → edición → confirmar con mini cartel), pero
 // reutilizando los mismos tres campos que ya carga MotoPendienteCard la primera vez: dirección con
 // autocompletado de Google (nunca a mano), referencias y zona.
-// Foto del comprobante que mandó el cliente por WhatsApp. La copia el backend a Storage al
-// cargar el pedido y se sirve por serveComprobante, así no depende de que Chatwoot siga vivo.
-// Si el pedido no tiene foto (pago en efectivo, correo, o el cliente no la mandó), no renderiza.
-function ComprobanteFoto({ pedido, dm }) {
+// Desplegable con todo lo comercial del pedido: envio, pago, comprobante y datos de facturacion.
+// Son datos que el bot ya venia guardando pero que no se veian en ningun lado. La foto del
+// comprobante la copia el backend a Storage al cargar el pedido y se sirve por serveComprobante,
+// asi no depende de que Chatwoot siga vivo.
+const $ars = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
+
+// Que cuenta corresponde a cada alias. El bot guarda el alias que uso, no el titular.
+const CUENTA_POR_ALIAS = {
+  alias1: 'Lucio Felix Bunge (Galicia)',
+  alias2: 'Marcos Agustin Gieco (Galicia)',
+  alias3: 'Tame Lake S.A. (financiera)',
+};
+
+// Exporta las transferencias a CSV para conciliar contra el banco, separadas por cuenta.
+// Se deja afuera el efectivo y el contra reembolso: no son transferencias, no hay nada que
+// conciliar. Se abre con Excel directamente (separador ; y BOM, que es lo que espera Excel en es-AR).
+function exportarTransferenciasCSV(pedidos) {
+  const esTransferencia = (p) => {
+    const mp = String(p.medioPago || '').toLowerCase();
+    return mp && !/efectivo|reembolso/.test(mp);
+  };
+  const filas = (pedidos || [])
+    .filter(esTransferencia)
+    .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+
+  const esc = (v) => {
+    const t = String(v == null ? '' : v).replace(/"/g, '""');
+    return /[";\n]/.test(t) ? `"${t}"` : t;
+  };
+  const cab = ['Fecha', 'Cliente', 'Telefono', 'Cuenta', 'Alias', 'Comprobante', 'Monto informado', 'Total del pedido', 'Envio', 'Estado'];
+  const cuerpo = filas.map((p) => [
+    (p.createdAt || '').slice(0, 10),
+    p.cliente || '',
+    p.telefono || '',
+    CUENTA_POR_ALIAS[p.medioPago] || p.medioPago || '',
+    p.medioPago || '',
+    (p.comprobante && p.comprobante.numero) || '',
+    (p.comprobante && p.comprobante.monto) || '',
+    p.total != null ? p.total : '',
+    p.valorEnvio != null ? p.valorEnvio : '',
+    p.estado || '',
+  ].map(esc).join(';'));
+
+  const csv = '\ufeff' + [cab.join(';'), ...cuerpo].join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `transferencias-028-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  return filas.length;
+}
+
+const ENVIO_NOMBRE = { moto: 'Moto mensajeria', uber: 'Envio flash (Uber)', correo: 'Correo (Cargo)', retiro: 'Retiro' };
+
+function DetalleComercial({ pedido, dm }) {
   const [abierto, setAbierto] = useState(false);
+  const [zoom, setZoom] = useState(false);
+
   const img = pedido.comprobanteImagen;
-  if (!img || !img.url) return null;
+  const comp = pedido.comprobante;
+  const dc = pedido.datosCorreo;
+  // Si el pedido es viejo y no tiene ninguno de estos datos, no tiene sentido mostrar el bloque.
+  const hayAlgo = pedido.valorEnvio != null || pedido.medioPago || comp || img || dc;
+  if (!hayAlgo) return null;
+
+  const fila = (label, valor) => valor == null || valor === '' ? null : (
+    <div className="flex justify-between gap-3 py-1">
+      <span className={dm ? 'text-zinc-500' : 'text-zinc-500'}>{label}</span>
+      <span className={`text-right font-semibold ${dm ? 'text-zinc-200' : 'text-zinc-800'}`}>{valor}</span>
+    </div>
+  );
 
   return (
-    <div className={`rounded-2xl border p-3 ${dm ? 'border-white/[0.07] bg-white/[0.02]' : 'border-zinc-200 bg-zinc-50'}`}>
-      <p className={`text-[11px] font-bold uppercase tracking-wide mb-2 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>Comprobante</p>
-      <button onClick={() => setAbierto(true)} className="block w-full" title="Ver en grande">
-        <img src={img.url} alt="Comprobante de pago" loading="lazy"
-          className="w-full max-h-64 object-contain rounded-xl bg-black/20" />
+    <div className={`rounded-2xl border ${dm ? 'border-white/[0.07] bg-white/[0.02]' : 'border-zinc-200 bg-zinc-50'}`}>
+      <button onClick={() => setAbierto(a => !a)}
+        className={`w-full flex items-center justify-between px-4 py-3 text-sm font-bold ${dm ? 'text-zinc-300' : 'text-zinc-700'}`}>
+        <span>Envio, pago y comprobante</span>
+        {abierto ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}
       </button>
+
       {abierto && (
-        <div onClick={() => setAbierto(false)}
+        <div className="px-4 pb-4 text-sm">
+          {fila('Tipo de envio', ENVIO_NOMBRE[pedido.tipoEnvio] || pedido.tipoEnvio)}
+          {fila('Valor del envio', pedido.valorEnvio != null ? $ars(pedido.valorEnvio) : null)}
+          {pedido.envioSeguro && fila('Envio seguro', $ars(pedido.montoEnvioSeguro || 1990))}
+          {fila('Medio de pago', pedido.medioPago)}
+          {comp && fila('Comprobante N°', comp.numero)}
+          {comp && fila('Monto informado', comp.monto ? $ars(comp.monto) : null)}
+          {comp && fila('A nombre de', comp.nombre)}
+          {dc && fila('DNI', dc.dni)}
+          {dc && fila('Localidad', dc.localidad ? `${dc.localidad} (CP ${dc.cp || '-'})` : null)}
+
+          {img && img.url && (
+            <button onClick={() => setZoom(true)} className="block w-full mt-3" title="Ver en grande">
+              <img src={img.url} alt="Comprobante de pago" loading="lazy"
+                className="w-full max-h-64 object-contain rounded-xl bg-black/20" />
+            </button>
+          )}
+        </div>
+      )}
+
+      {zoom && img && img.url && (
+        <div onClick={() => setZoom(false)}
           className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 cursor-zoom-out">
           <img src={img.url} alt="Comprobante de pago" className="max-w-full max-h-full object-contain rounded-xl" />
         </div>
@@ -633,7 +720,7 @@ function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, on
           EditableDireccion mismo se devuelve null si pedido.direccion no existe. */}
       <EditableDireccion pedido={pedido} dm={dm} />
 
-      <ComprobanteFoto pedido={pedido} dm={dm} />
+      <DetalleComercial pedido={pedido} dm={dm} />
 
       <div className="flex flex-col gap-2 mt-1">
         <button onClick={() => requireConfirm ? setShowConfirm(true) : onAction()}
@@ -1614,6 +1701,11 @@ export default function PedidosPage() {
               className="hidden lg:flex items-center gap-1.5 h-9 px-3.5 rounded-lg text-xs font-bold text-white transition-all hover:opacity-90 active:scale-[0.97] mr-1"
               style={{ background: '#6366f1' }}>
               <Plus size={15}/> Nuevo pedido
+            </button>
+            <button onClick={() => { const n = exportarTransferenciasCSV(pedidos); if (!n) alert('No hay transferencias para exportar todavia.'); }}
+              className={`p-2.5 rounded-lg transition-colors ${dm ? 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.06]' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}
+              title="Exportar transferencias a Excel (separadas por cuenta)">
+              <Download size={17}/>
             </button>
             <Link to="/pedidos/reparto" className={`p-2.5 rounded-lg transition-colors ${dm ? 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.06]' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`} title="Reparto en moto">
               <Bike size={17}/>

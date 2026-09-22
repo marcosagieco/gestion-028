@@ -395,6 +395,39 @@ async function main() {
     ok("agentPedido: en un pedido de moto datosCorreo es null", r.status === 200 && ultimoMoto.datosCorreo === null, ultimoMoto && ultimoMoto.datosCorreo);
   }
 
+  // 21) agentPedido — envio seguro (solo flash, monto fijo resuelto por el backend)
+  {
+    const base = {
+      telefono: "5491158696086",
+      cliente: "Uma Bach",
+      items: [{ producto: "Elfbar Ice King", cantidad: 1, precioUnitario: 26000 }],
+      direccion: { texto: "Av. Cabildo 2100, Belgrano", zona: "A" },
+      valorEnvio: 8000,
+      medioPago: "alias1",
+      comprobante: { numero: "0012345" },
+    };
+
+    // uber + envioSeguro -> suma 1990 al total y aparece en el resumen
+    let r = await callFn(api.agentPedido, { method: "POST", body: { ...base, tipoEnvio: "uber", envioSeguro: true, preview: true }, headers: { "X-Agent-Key": KEY } });
+    ok("agentPedido: envio seguro suma 1990 al total", r.status === 200 && r.body.total === 26000 + 8000 + 1990, { total: r.body.total });
+    ok("agentPedido: el resumen muestra la linea de envio seguro", /Envío seguro/.test(r.body.mensaje || "") && /\$1\.990/.test(r.body.mensaje || ""), r.body.mensaje);
+    ok("agentPedido: la entrega queda marcada CON ENVIO SEGURO", /CON ENVÍO SEGURO/.test(r.body.mensaje || ""), r.body.mensaje);
+
+    // el mismo pedido sin envio seguro no lo cobra
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, tipoEnvio: "uber", preview: true }, headers: { "X-Agent-Key": KEY } });
+    ok("agentPedido: sin envio seguro el total no lo incluye", r.status === 200 && r.body.total === 26000 + 8000 && r.body.envioSeguro === false, { total: r.body.total });
+
+    // moto con envioSeguro -> se ignora, es solo para flash
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, tipoEnvio: "moto", envioSeguro: true, preview: true }, headers: { "X-Agent-Key": KEY } });
+    ok("agentPedido: en moto el envio seguro se ignora", r.status === 200 && r.body.envioSeguro === false && r.body.total === 26000 + 8000, { total: r.body.total, envioSeguro: r.body.envioSeguro });
+
+    // queda guardado en el pedido real
+    r = await callFn(api.agentPedido, { method: "POST", body: { ...base, tipoEnvio: "uber", envioSeguro: true }, headers: { "X-Agent-Key": KEY } });
+    const snap = await fakeDb.collection("pedidos").get();
+    const ultimo = snap.docs.map((d) => d.data()).filter((d) => d.envioSeguro === true).pop();
+    ok("agentPedido: el pedido guarda envioSeguro y su monto", r.status === 200 && !!ultimo && ultimo.montoEnvioSeguro === 1990, ultimo && { envioSeguro: ultimo.envioSeguro, monto: ultimo.montoEnvioSeguro });
+  }
+
   // ---------- Reporte ----------
   console.log("\n=== RESULTADOS ===");
   let fails = 0;

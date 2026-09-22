@@ -90,9 +90,19 @@ async function copiarComprobanteAStorage(url, pedidoId) {
 // Depósito — mismas coordenadas que src/reparto/zonas.js (DEPOSITO_ORIGEN).
 const DEPOSITO = { lat: -34.55359497285959, lng: -58.4523699884262 };
 const TARIFA_POR_KM = 1000;
+// Envio seguro: adicional opcional que cubre reposicion ante robo/perdida. Solo se ofrece en
+// envio flash (Uber). El monto lo resuelve el backend, como todo el resto de la plata.
+const PRECIO_ENVIO_SEGURO = 1990;
 const MINIMO_ENVIO = 3000;
 
 const ALIAS_FINANCIERA = "alias3";
+
+// Cupo por tanda: el deposito despacha de a tandas y no puede con mas de N pedidos por vez.
+// Cuenta moto Y uber juntos (lo definio Lucio), sobre los pedidos que siguen SIN COMPLETAR en el
+// panel — no sobre los vendidos en la ultima media hora: lo que satura es la cola, no la venta.
+const LIMITE_POR_TANDA_DEFAULT = 10;
+const ESTADOS_SIN_COMPLETAR = ["pendiente", "armado"];
+const TIPOS_QUE_OCUPAN_TANDA = ["moto", "uber"];
 
 // Interruptor de pruebas. En PRODUCCIÓN va en `false`: TODOS los pedidos van a la colección real
 // `pedidos` y le llegan al panel del depósito, incluidos los de Gino.
@@ -290,6 +300,35 @@ function zonaDesdeTexto(texto) {
 // (Corredor Norte). Si no matcheó ninguna zona tampoco se admite: no sabemos si es CABA.
 const zonaAdmiteEfectivo = (zona) => zona !== null && zona !== "B";
 
+// El mapa BARRIO_A_ZONA no cubre toda CABA (le faltan Flores, Balvanera, Boedo, Saavedra y
+// varios mas), asi que atar el efectivo SOLO a ese mapa se lo negaba a clientes de CABA por el
+// simple hecho de que su barrio no estaba escrito en la lista. Google ya sabe en que ciudad
+// cae la direccion: si dice CABA, hay efectivo, este o no el barrio mapeado.
+function esCABAporGoogle(addressComponents) {
+  for (const c of addressComponents || []) {
+    const n = normalizar(c.long_name) + " " + normalizar(c.short_name);
+    if (/ciudad autonoma de buenos aires|caba|capital federal/.test(n)) return true;
+  }
+  return false;
+}
+
+// Geocodifica una direccion y dice si cae en CABA. Devuelve null si no se pudo resolver.
+async function direccionEsCABA(texto) {
+  if (!GOOGLE_MAPS_KEY || !String(texto || "").trim()) return null;
+  try {
+    const geo = await axios.get("https://maps.googleapis.com/maps/api/geocode/json", {
+      params: { address: texto, key: GOOGLE_MAPS_KEY, region: "ar", components: "country:AR" },
+      timeout: 8000,
+    });
+    const r = geo.data.results && geo.data.results[0];
+    if (!r) return null;
+    return esCABAporGoogle(r.address_components);
+  } catch (e) {
+    console.error("no se pudo verificar si la direccion es CABA:", e.message);
+    return null;
+  }
+}
+
 const ZONA_NOMBRE = {
   A: "Zona A — Núcleo", B: "Zona B — Corredor Norte", C1: "Zona C1 — Palermo extendido",
   C2: "Zona C2 — Centro / Recoleta", D: "Zona D — Oeste cercano", E: "Zona E — Centro-oeste",
@@ -395,6 +434,8 @@ exports.agentCotizarEnvio = withAuth(async (req, res) => {
   let lng = parseFloat(req.query.lng);
   let texto = String(req.query.direccion || "").trim();
   let zona = null;
+  // Lo resuelve Google cuando geocodifica; queda en null si vinieron lat/lng directos.
+  let esCABA = null;
 
   if (isNaN(lat) || isNaN(lng)) {
     if (!texto) return res.status(400).json({ ok: false, error: "falta 'direccion' o 'lat'+'lng'" });
@@ -427,6 +468,7 @@ exports.agentCotizarEnvio = withAuth(async (req, res) => {
       const z = BARRIO_A_ZONA[normalizar(c.long_name)] || BARRIO_A_ZONA[normalizar(c.short_name)];
       if (z) { zona = z; break; }
     }
+    esCABA = esCABAporGoogle(r.address_components);
   } else if (texto) {
     zona = zonaDesdeTexto(texto);
   }
@@ -449,7 +491,8 @@ exports.agentCotizarEnvio = withAuth(async (req, res) => {
     // El pago en efectivo contra entrega es solo para CABA. La única zona del mapa que NO es
     // CABA es la B (Corredor Norte: Vicente López, Olivos, La Lucila, Martínez). Si no matcheó
     // ninguna zona, tampoco se ofrece: no sabemos si es CABA.
-    admiteEfectivo: zonaAdmiteEfectivo(zona),
+    // CABA confirmada por Google gana sobre el mapa de barrios; si Google no opino, se cae al mapa.
+    admiteEfectivo: esCABA === true ? true : (esCABA === false ? false : zonaAdmiteEfectivo(zona)),
     estimado: true, // línea recta — la medición real por calle la hace el panel de moto al entregar
   });
 });
@@ -505,13 +548,26 @@ exports.agentPedido = withAuth(async (req, res) => {
     // entrega ni con correo, que se abona al recibir. Si igual viene un comprobante, se guarda.
     const pagoContraEntrega = esEfectivo || tipoEnvio === "correo";
     if (medioPago && !pagoContraEntrega && !tieneComprobante) faltan.push("el comprobante de pago");
+    // valorEnvio tiene que venir siempre que haya envio. Se acepta 0 (envio bonificado), pero no
+    // que falte: si no, un pedido se carga con el envio sin cobrar y nadie se entera.
+    if (tipoEnvio !== "retiro" && (b.valorEnvio === undefined || b.valorEnvio === null || b.valorEnvio === "")) {
+      faltan.push("el valor del envío (poné 0 si se lo bonificás)");
+    }
 
     // El efectivo contra entrega solo vale donde el cotizador lo habría ofrecido. Se revalida
     // acá y no se confía en el agente: la zona que mandó se usa si viene, y si no se recalcula
     // del texto de la dirección con el mismo mapa de barrios que usa agentCotizarEnvio.
     if (esEfectivo && tipoEnvio === "moto") {
       const zonaPedido = (b.direccion || {}).zona || zonaDesdeTexto((b.direccion || {}).texto);
-      if (!zonaAdmiteEfectivo(zonaPedido)) {
+      let admite = zonaAdmiteEfectivo(zonaPedido);
+      // El mapa de barrios no cubre toda CABA. Antes de rechazar, se le pregunta a Google: asi
+      // un cliente de Flores o de Once no se queda sin efectivo solo porque su barrio no figura
+      // en la lista. Solo se llama en este caso, que es el raro, para no sumar latencia al resto.
+      if (!admite) {
+        const caba = await direccionEsCABA((b.direccion || {}).texto);
+        if (caba === true) admite = true;
+      }
+      if (!admite) {
         return res.status(400).json({
           ok: false,
           error:
@@ -577,7 +633,10 @@ exports.agentPedido = withAuth(async (req, res) => {
   );
   const subtotal = lineas.reduce((s, l) => s + l.importe, 0);
   const valorEnvio = Number(b.valorEnvio) || 0;
-  const total = subtotal + valorEnvio;
+  // El envio seguro es solo para el flash: si viene marcado en otro tipo de envio, se ignora.
+  const envioSeguro = (b.envioSeguro === true || b.envioSeguro === "true") && tipoEnvio === "uber";
+  const montoEnvioSeguro = envioSeguro ? PRECIO_ENVIO_SEGURO : 0;
+  const total = subtotal + valorEnvio + montoEnvioSeguro;
   const dir = b.direccion || {};
   const ENVIO_LABEL = {
     moto: "🛵 Moto mensajería",
@@ -593,10 +652,11 @@ exports.agentPedido = withAuth(async (req, res) => {
     "💰 TOTALES",
     `Subtotal: ${$(subtotal)}`,
     valorEnvio ? `Envío: ${$(valorEnvio)}` : null,
+    envioSeguro ? `🛡️ Envío seguro: ${$(montoEnvioSeguro)}` : null,
     `TOTAL A PAGAR: ${$(total)}`,
     "",
     "📦 ENTREGA",
-    ENVIO_LABEL[tipoEnvio],
+    ENVIO_LABEL[tipoEnvio] + (envioSeguro ? "  —  🛡️ CON ENVÍO SEGURO" : ""),
     dir.texto ? dir.texto : null,
     dir.zona ? `Zona ${dir.zona}` : null,
     dir.referencias ? `Ref: ${dir.referencias}` : null,
@@ -624,6 +684,8 @@ exports.agentPedido = withAuth(async (req, res) => {
       mensaje,
       subtotal,
       valorEnvio,
+      envioSeguro,
+      montoEnvioSeguro,
       total,
       lineas: lineas.map((l) => ({
         producto: l.producto, variante: l.variante, cantidad: l.cantidad,
@@ -655,6 +717,8 @@ exports.agentPedido = withAuth(async (req, res) => {
         }
       : null,
     valorEnvio,
+    envioSeguro,
+    montoEnvioSeguro,
     // Solo para correo: DNI, localidad y CP. En los demas envios queda null.
     datosCorreo:
       tipoEnvio === "correo" && b.datosCorreo
@@ -745,6 +809,7 @@ exports.agentEstadoOperativo = withAuth(async (req, res) => {
   const d = doc.exists ? doc.data() : {};
   const situacion = SITUACIONES_VALIDAS.includes(d.situacion) ? d.situacion : "sin_demora";
   const aliasActivo = ALIASES_VALIDOS.includes(d.aliasActivo) ? d.aliasActivo : "alias1";
+  const tanda = await contarTanda(d.limitePorTanda);
   return res.json({
     ok: true,
     situacion,                    // sin_demora | normal | demora | demora_fuerte | solo_manana
@@ -761,9 +826,30 @@ exports.agentEstadoOperativo = withAuth(async (req, res) => {
     preciosMayoristaTexto: typeof d.preciosMayoristaTexto === "string" ? d.preciosMayoristaTexto.trim().slice(0, 10000) : "",
     // Ofertas temporales: promo puntual de la semana. Vacío la mayor parte del tiempo.
     ofertasTexto: typeof d.ofertasTexto === "string" ? d.ofertasTexto.trim().slice(0, 10000) : "",
+    // Cupo de la tanda, para que el agente sepa si puede prometer que sale en esta o en la siguiente.
+    tanda,
     actualizadoEn: d.actualizadoEn || null,
   });
 });
+
+// Cuenta cuantos pedidos siguen sin completar en el panel y los compara contra el limite.
+// Si algo falla, devuelve la tanda como NO llena: ante la duda se vende, no se frena.
+async function contarTanda(limiteConfigurado) {
+  const limite = Number(limiteConfigurado) > 0 ? Number(limiteConfigurado) : LIMITE_POR_TANDA_DEFAULT;
+  try {
+    const snap = await db.collection("pedidos").where("estado", "in", ESTADOS_SIN_COMPLETAR).get();
+    let ocupados = 0;
+    snap.forEach((doc) => {
+      const p = doc.data() || {};
+      // Los pedidos viejos no tienen tipoEnvio; se cuentan igual, ocupan lugar en la moto.
+      if (!p.tipoEnvio || TIPOS_QUE_OCUPAN_TANDA.includes(p.tipoEnvio)) ocupados += 1;
+    });
+    return { ocupados, limite, llena: ocupados >= limite, ok: true };
+  } catch (e) {
+    console.error("no se pudo contar la tanda:", e.message);
+    return { ocupados: 0, limite, llena: false, ok: false };
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 6. Cotización manual de Uber — cola de pedidos derivados
