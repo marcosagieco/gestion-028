@@ -5,7 +5,7 @@ import { initializeFirestore, getFirestore, collection, query, orderBy, onSnapsh
 import {
   ClipboardList, Plus, Clock, AlertTriangle, XCircle, CheckCircle, ChevronRight,
   ChevronDown, ChevronUp, History, Save, Moon, Sun, PartyPopper, Search, Trash2, Download,
-  Bike, Car, MapPin, Package, PackageCheck, Store, Archive, Pencil
+  Bike, Car, MapPin, PackageCheck, Store, Archive, Pencil
 } from 'lucide-react';
 import AddressAutocomplete from './reparto/AddressAutocomplete';
 import { ZONAS } from './reparto/zonas';
@@ -485,7 +485,7 @@ function exportarTransferenciasCSV(pedidos) {
   return filas.length;
 }
 
-const ENVIO_NOMBRE = { moto: 'Moto mensajeria', uber: 'Envio flash (Uber)', correo: 'Correo (Via Cargo)' };
+const ENVIO_NOMBRE = { moto: 'Moto mensajeria', uber: 'Envio flash (Uber)' };
 
 function DetalleComercial({ pedido, dm }) {
   const [abierto, setAbierto] = useState(false);
@@ -514,7 +514,7 @@ function DetalleComercial({ pedido, dm }) {
 
       {abierto && (
         <div className="px-4 pb-4 text-sm">
-          {fila('Tipo de envio', (ENVIO_NOMBRE[pedido.tipoEnvio] || pedido.tipoEnvio) + (dc ? (dc.aSucursal ? ' a sucursal' : ' a domicilio') : ''))}
+          {fila('Tipo de envio', dc ? `Correo (Via Cargo) a ${dc.aSucursal ? 'sucursal' : 'domicilio'}` : ENVIO_NOMBRE[pedido.tipoEnvio])}
           {dc ? fila('Valor del envio', `${$ars(dc.valor)} (lo paga al recibir)`) : fila('Valor del envio', pedido.valorEnvio != null ? $ars(pedido.valorEnvio) : null)}
           {pedido.envioSeguro && fila('Envio seguro', $ars(pedido.montoEnvioSeguro))}
           {pedido.montoDescuento > 0 && fila('Descuento efectivo', '-' + $ars(pedido.montoDescuento))}
@@ -1189,7 +1189,6 @@ export default function PedidosPage() {
   const pendientesMoto = useMemo(() => pendientesClasificados.filter(p => p.tipoEnvio === 'moto'), [pendientesClasificados]);
   const pendientesUber = useMemo(() => pendientesClasificados.filter(p => p.tipoEnvio === 'uber'), [pendientesClasificados]);
   const pendientesRetiro = useMemo(() => pendientesClasificados.filter(p => p.tipoEnvio === 'retiro'), [pendientesClasificados]);
-  const pendientesCorreo = useMemo(() => pendientesClasificados.filter(p => p.tipoEnvio === 'correo'), [pendientesClasificados]);
   // "Armado" en este tablero principal es el flujo de Uber y Retiro (y pedidos viejos sin
   // tipoEnvio, para no dejar huérfano nada que ya estuviera armado antes de este cambio) — los de
   // moto pasan a manejarse desde la pantalla de Reparto una vez armados, hasta que se entregan.
@@ -1225,7 +1224,6 @@ export default function PedidosPage() {
   const finalizadosMoto = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'moto'), [finalizadosFiltrados]);
   const finalizadosUber = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'uber'), [finalizadosFiltrados]);
   const finalizadosRetiro = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'retiro'), [finalizadosFiltrados]);
-  const finalizadosCorreo = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'correo'), [finalizadosFiltrados]);
   const finalizadosSinTipo = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio == null), [finalizadosFiltrados]);
   const cancelados = useMemo(() =>
     pedidos.filter(p => p.estado === 'cancelado').sort((a, b) => safeDateTime(b.canceladoAt || b.createdAt) - safeDateTime(a.canceladoAt || a.createdAt)),
@@ -1778,12 +1776,6 @@ export default function PedidosPage() {
                 focusId={focusPendienteId} onFocus={setFocusPendienteId}
                 onListoMoto={(p, direccion) => handleMarcarArmadoMoto(p, direccion)}
                 onListoUber={handleMarcarArmado} onCancel={setCancelTarget} />
-              {pendientesCorreo.length > 0 && (
-                <PendienteGrupo titulo="Correo" icon={Package} list={pendientesCorreo} dm={dm}
-                  focusId={focusPendienteId} onFocus={setFocusPendienteId}
-                  onListoMoto={(p, direccion) => handleMarcarArmadoMoto(p, direccion)}
-                  onListoUber={handleMarcarArmado} onCancel={setCancelTarget} />
-              )}
             </div>
           </>
         )}
@@ -1861,10 +1853,6 @@ export default function PedidosPage() {
                     expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
                   <FinalizadoGrupo titulo="Retiro" icon={Store} list={finalizadosRetiro} dm={dm}
                     expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
-                  {finalizadosCorreo.length > 0 && (
-                    <FinalizadoGrupo titulo="Correo" icon={Package} list={finalizadosCorreo} dm={dm}
-                      expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
-                  )}
                 </div>
 
                 <div className="hidden lg:grid lg:grid-cols-3 lg:gap-6 lg:items-start">
@@ -1874,10 +1862,6 @@ export default function PedidosPage() {
                     expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
                   <FinalizadoGrupo titulo="Retiro" icon={Store} list={finalizadosRetiro} dm={dm}
                     expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
-                  {finalizadosCorreo.length > 0 && (
-                    <FinalizadoGrupo titulo="Correo" icon={Package} list={finalizadosCorreo} dm={dm}
-                      expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
-                  )}
                 </div>
                 </>
                 )}

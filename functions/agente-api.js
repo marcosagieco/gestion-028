@@ -541,11 +541,14 @@ exports.agentPedido = conClave(async (req, res) => {
 
   if (preview) return res.json({ ok: true, preview: true, mensaje, total });
 
+  // El depósito maneja el correo como un retiro (arma el paquete y lo lleva a Vía Cargo), así que
+  // va a la columna Retiro del panel con una primera línea que lo deja claro, igual que lo cargan ellos.
+  const esCorreo = tipoEnvio === "correo";
   const pedidoRef = await db.collection("pedidos").add({
     // Campos que ya usaba el panel:
-    mensaje,
+    mensaje: esCorreo ? `📦 VÍA CARGO — ${correo.aSucursal ? "SUCURSAL" : "DOMICILIO"}\n\n${mensaje}` : mensaje,
     estado: "pendiente",
-    tipoEnvio,
+    tipoEnvio: esCorreo ? "retiro" : tipoEnvio,
     createdAt: new Date().toISOString(),
     // Estructurados del agente:
     telefono,

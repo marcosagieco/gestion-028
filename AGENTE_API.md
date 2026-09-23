@@ -79,6 +79,10 @@ El agente nunca manda precios.
 | `uber` | la última cotización del depósito para ese teléfono (vale 3 hs) | transferencia; envío seguro opcional ($1.990) |
 | `correo` | $19.000 sucursal / $29.000 domicilio, se le paga a Vía Cargo al recibir (no suma al total) | transferencia |
 
+El correo se guarda con `tipoEnvio: "retiro"`: el depósito lo maneja como un retiro (arma el paquete
+y lo lleva a Vía Cargo). El mensaje del panel arranca con `📦 VÍA CARGO — SUCURSAL` (o DOMICILIO) y
+el pedido trae `datosCorreo`.
+
 **Efectivo:** descuento sobre el subtotal de productos: $1.500 (hasta $50.000), $2.500 (desde
 $50.000), $5.000 (desde $100.000).
 
