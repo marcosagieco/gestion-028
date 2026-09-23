@@ -319,13 +319,13 @@ async function main() {
     const s2 = await salidaCon("2026-09-22T16:50:00", 3, { limitePorTanda: 3 });
     ok("salida: usa el límite por tanda del panel", s2 === "hoy 17:30", s2);
 
-    // La "próxima salida" del panel le gana a todo (cupo incluido) mientras no haya pasado.
+    // La "próxima salida" del panel le gana a todo (cupo incluido); si ya pasó, es la de mañana.
     const panel = [
       ["12:00 con próxima salida 13: sale 13:00", "2026-09-22T12:00:00", 0, "13", "hoy 13:00"],
       ["16:50 con 25 en cola y próxima salida 18:00: igual 18:00", "2026-09-22T16:50:00", 25, "18:00", "hoy 18:00"],
       ["próxima salida \"18.30\"", "2026-09-22T16:50:00", 0, "18.30", "hoy 18:30"],
       ["próxima salida \"18 hs\"", "2026-09-22T16:50:00", 0, "18 hs", "hoy 18:00"],
-      ["próxima salida que ya pasó: vuelve a lo normal", "2026-09-22T14:10:00", 0, "13:00", "hoy 14:30"],
+      ["próxima salida que ya pasó: mañana a esa hora", "2026-09-22T18:40:00", 0, "13:00", "mañana 13:00"],
       ["próxima salida ilegible: vuelve a lo normal", "2026-09-22T16:50:00", 0, "a la tarde", "hoy 17:00"],
       ["le gana incluso a \"hoy no sale más\"", "2026-09-22T15:00:00", 0, "18:00", "hoy 18:00", { situacion: "solo_manana" }],
     ];

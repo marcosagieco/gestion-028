@@ -29,7 +29,7 @@ Todo lo del día, en una sola llamada:
   y Uber sin completar en el panel: con la de las 17:00 llena, sale 17:30. Si hoy no entra, o el
   panel dice que hoy no sale nada más, sale mañana. La misma hora va en el resumen del pedido.
   Si el depósito carga una "próxima salida" en `/operativo` ("18", "18:00", "18 hs"), esa hora le gana
-  a todo (cupo incluido) hasta que pasa; después vuelve el cálculo normal.
+  a todo, cupo incluido (si ya pasó, es la de mañana), mientras esté cargada. Vacía = tandas.
 - `plantillas`: las 8 listas de `/operativo` (`STOCK_NICOTINA`, `PRECIOS_VAPES`, `STOCK_THC`,
   `PRECIOS_THC`, `PERFUMES`, `APPLE_ACCESORIOS`, `PRECIOS_MAYORISTA`, `OFERTAS`), el `ALIAS` activo
   y los textos fijos (`FORMAS_DE_ENTREGA`, `ENVIO_SEGURO`, `WEB`, `DESCUENTO_EFECTIVO`, `GRACIAS`,

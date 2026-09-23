@@ -385,12 +385,13 @@ function minutosDe(texto) {
 // En qué tanda sale un pedido tomado ahora. El bot atiende 24/7: cada tanda lleva hasta `limite`
 // pedidos, así que con `enCola` pedidos esperando, este sale tantas tandas después de la próxima.
 // Si hoy ya no entra (o el panel dice que hoy no sale nada más), sale mañana. La "próxima salida"
-// que carga el depósito le gana a todo mientras no haya pasado (ej. si vienen atrasados).
+// que carga el depósito le gana a todo (ej. si vienen atrasados): si esa hora ya pasó, es la de
+// mañana. Rige mientras esté cargada; borrarla vuelve a las tandas.
 function salida(fecha, { enCola, limite, soloManana, proximaSalida }) {
   const ahora = horaBuenosAires(fecha);
   const hhmm = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
   const delPanel = minutosDe(proximaSalida);
-  if (delPanel !== null && delPanel >= ahora.minutos) return { dia: "hoy", hora: hhmm(delPanel) };
+  if (delPanel !== null) return { dia: delPanel >= ahora.minutos ? "hoy" : "mañana", hora: hhmm(delPanel) };
   const hoy = soloManana ? [] : tandasDelDia(ahora.dia)
     .filter((m) => m >= ahora.minutos || (m === ULTIMA_TANDA && ahora.minutos < CORTE_DESPACHO));
   const saltear = Math.floor(enCola / limite);
