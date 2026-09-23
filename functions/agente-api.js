@@ -39,7 +39,9 @@ const TRAMOS_DESCUENTO_EFECTIVO = [
   { desde: 0, off: 1500 },
 ];
 const LIMITE_POR_TANDA = 10; // si el panel no tiene uno cargado
-const CORTE_DESPACHO = 20 * 60 + 15; // 20:15, última salida del día (moto y Uber por igual)
+const CADA_TANDA = 30; // minutos entre tandas (moto y Uber por igual)
+const ULTIMA_TANDA = 20 * 60; // 20:00
+const CORTE_DESPACHO = 20 * 60 + 15; // hasta las 20:15 todavía entra en la tanda de las 20:00
 const VIGENCIA_COTIZACION_UBER_MS = 3 * 60 * 60 * 1000;
 
 const DEMORAS = {
@@ -366,28 +368,39 @@ function horaBuenosAires(fecha) {
   return { dia: partes.weekday, minutos: Number(partes.hour) * 60 + Number(partes.minute) };
 }
 
-// Si un pedido tomado ahora sale hoy o mañana, y desde qué hora. El bot atiende 24/7: pasado el
-// corte se vende igual, solo que sale al día siguiente.
-function salida(fecha) {
-  const ahora = horaBuenosAires(fecha);
-  const saleHoy = ahora.minutos < CORTE_DESPACHO;
-  const { dia } = saleHoy ? ahora : horaBuenosAires(new Date(fecha.getTime() + 24 * 60 * 60 * 1000));
-  const primeraSalida = dia === "Sun" ? "17:00" : dia === "Wed" ? "14:00" : "13:30";
-  return { dia: saleHoy ? "hoy" : "mañana", primeraSalida, domingo: dia === "Sun" };
+// Las tandas salen cada 30 minutos hasta las 20:00, desde las 13:30 (miércoles 14:00, domingos 17:00).
+function tandasDelDia(dia) {
+  const tandas = [];
+  for (let m = dia === "Sun" ? 17 * 60 : dia === "Wed" ? 14 * 60 : 13 * 60 + 30; m <= ULTIMA_TANDA; m += CADA_TANDA) tandas.push(m);
+  return tandas;
 }
 
-// La tanda se llena con los pedidos de moto y Uber que siguen sin completar en el panel. Ante un
-// error se la da por no llena: nunca se frena una venta por esto.
-async function tandaLlena(limiteDelPanel) {
-  const limite = Number(limiteDelPanel) > 0 ? Number(limiteDelPanel) : LIMITE_POR_TANDA;
+// En qué tanda sale un pedido tomado ahora. El bot atiende 24/7: cada tanda lleva hasta `limite`
+// pedidos, así que con `enCola` pedidos esperando, este sale tantas tandas después de la próxima.
+// Si hoy ya no entra (o el panel dice que hoy no sale nada más), sale mañana.
+function salida(fecha, enCola, limite, soloManana) {
+  const ahora = horaBuenosAires(fecha);
+  const hoy = soloManana ? [] : tandasDelDia(ahora.dia)
+    .filter((m) => m >= ahora.minutos || (m === ULTIMA_TANDA && ahora.minutos < CORTE_DESPACHO));
+  const saltear = Math.floor(enCola / limite);
+  const hhmm = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
+  if (saltear < hoy.length) return { dia: "hoy", hora: hhmm(hoy[saltear]) };
+  const manana = tandasDelDia(horaBuenosAires(new Date(fecha.getTime() + 24 * 60 * 60 * 1000)).dia);
+  return { dia: "mañana", hora: hhmm(manana[Math.min(saltear - hoy.length, manana.length - 1)]) };
+}
+
+// La tanda de un pedido nuevo, contando los de moto y Uber que siguen sin completar en el panel.
+// Ante un error se cuenta la cola vacía: nunca se frena una venta por esto.
+async function salidaDeUnPedidoNuevo(op) {
+  const limite = Number(op.limitePorTanda) > 0 ? Number(op.limitePorTanda) : LIMITE_POR_TANDA;
+  let enCola = 0;
   try {
     const snap = await db.collection("pedidos").where("estado", "in", ["pendiente", "armado"]).get();
-    const ocupados = snap.docs.filter((d) => ["moto", "uber", undefined, null].includes(d.data().tipoEnvio)).length;
-    return ocupados >= limite;
+    enCola = snap.docs.filter((d) => ["moto", "uber", undefined, null].includes(d.data().tipoEnvio)).length;
   } catch (e) {
     console.error("[agente-api] no se pudo contar la tanda", e.message);
-    return false;
   }
+  return salida(new Date(), enCola, limite, op.situacion === "solo_manana");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -400,9 +413,8 @@ exports.agentEstadoOperativo = conClave(async (req, res) => {
   const proximaSalida = textoDe(op.proximaSalida);
   res.json({
     ok: true,
-    salida: salida(new Date()),
+    salida: await salidaDeUnPedidoNuevo(op),
     demora: (DEMORAS[op.situacion] || DEMORAS.sin_demora) + (proximaSalida ? ` (la próxima moto sale a las ${proximaSalida})` : ""),
-    tandaLlena: await tandaLlena(op.limitePorTanda),
     plantillas,
   });
 });
@@ -511,6 +523,7 @@ exports.agentPedido = conClave(async (req, res) => {
   const montoDescuento = efectivo ? descuentoEfectivo(subtotal) : 0;
   const total = subtotal + valorEnvio + montoEnvioSeguro - montoDescuento;
   const envioCorreo = tipoEnvio === "correo" ? CORREO[correo.aSucursal ? "sucursal" : "domicilio"] : 0;
+  const cuando = tipoEnvio === "correo" ? null : await salidaDeUnPedidoNuevo(op);
 
   const mensaje = [
     "🛒 PRODUCTOS",
@@ -527,6 +540,7 @@ exports.agentPedido = conClave(async (req, res) => {
     "📦 ENTREGA",
     ENVIO_LABEL[tipoEnvio] + (envioSeguro ? " — 🛡️ CON ENVÍO SEGURO" : "") +
       (tipoEnvio === "correo" ? (correo.aSucursal ? " a sucursal" : " a domicilio") : ""),
+    cuando ? `🕐 Sale ${cuando.dia} a las ${cuando.hora}` : null,
     dir.texto,
     ubicacion && ubicacion.zona ? `Zona ${ubicacion.zona}` : null,
     dir.referencias ? `Ref: ${dir.referencias}` : null,

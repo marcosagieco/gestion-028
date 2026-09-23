@@ -241,6 +241,7 @@ async function main() {
   {
     const r = await resumen({ tipoEnvio: "correo", datosCorreo: { aSucursal: false } });
     ok("correo: el envío no se suma al total, se paga a Vía Cargo", r.body.total === 26000 && /\$29\.000, se le paga a Vía Cargo/.test(r.body.mensaje), r.body);
+    ok("correo: no lleva hora de salida (no va en las tandas)", !/🕐/.test(r.body.mensaje), r.body.mensaje);
     const r2 = await resumen({ tipoEnvio: "correo", medioPago: "efectivo", datosCorreo: { aSucursal: true } });
     ok("correo: nunca en efectivo", r2.status === 400, r2.body);
     const r3 = await resumen({ tipoEnvio: "correo" });
@@ -278,19 +279,51 @@ async function main() {
   // ── estado operativo ──
   {
     const r = await conHora("2026-09-22T15:00:00", () => llamar(api.agentEstadoOperativo));
-    ok("estado: martes 15:00 sale hoy", r.body.salida.dia === "hoy" && r.body.salida.primeraSalida === "13:30", r.body.salida);
     ok("estado: manda el alias activo, nunca otro", r.body.plantillas.ALIAS.includes("CALMO.DURO.DIA") && r.body.plantillas.ALIAS.includes("CBU: 0000598201000000015014") && !/028import\.gal?2?/.test(r.body.plantillas.ALIAS), r.body.plantillas.ALIAS);
     ok("estado: manda las listas del panel", r.body.plantillas.PRECIOS_VAPES === LISTAS.preciosVapesTexto.trim(), null);
     ok("estado: demora del día con la próxima salida", /2 hs/.test(r.body.demora) && /16:00/.test(r.body.demora), r.body.demora);
-    ok("estado: tanda con lugar", r.body.tandaLlena === false, r.body);
-    const r2 = await conHora("2026-09-22T21:00:00", () => llamar(api.agentEstadoOperativo));
-    ok("estado: martes 21:00 sale mañana miércoles desde las 14:00", r2.body.salida.dia === "mañana" && r2.body.salida.primeraSalida === "14:00", r2.body.salida);
-    const r3 = await conHora("2026-09-26T22:00:00", () => llamar(api.agentEstadoOperativo));
-    ok("estado: sábado a la noche sale el domingo a las 17:00", r3.body.salida.dia === "mañana" && r3.body.salida.domingo && r3.body.salida.primeraSalida === "17:00", r3.body.salida);
-    store["pedidos/viejo1"] = { estado: "armado", tipoEnvio: "uber" };
-    store["settings/operativo"].limitePorTanda = 3;
-    const r4 = await llamar(api.agentEstadoOperativo); // 2 pedidos de moto pendientes + 1 Uber armado, límite 3
-    ok("estado: tanda llena con los pedidos sin completar", r4.body.tandaLlena === true, r4.body);
+  }
+
+  // ── salida: en qué tanda sale un pedido nuevo ──
+  {
+    // Depende de cuántos pedidos de moto/Uber hay sin completar: la cola se arma a mano.
+    const guardados = Object.entries(store).filter(([k]) => k.startsWith("pedidos/"));
+    const operativo = { ...store["settings/operativo"] };
+    const salidaCon = async (hora, enCola, extra = {}) => {
+      for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
+      for (let i = 0; i < enCola; i++) store[`pedidos/cola${i}`] = { estado: i % 2 ? "armado" : "pendiente", tipoEnvio: i % 3 ? "moto" : "uber" };
+      store["pedidos/unRetiro"] = { estado: "pendiente", tipoEnvio: "retiro" }; // retiro y correo no ocupan tanda
+      store["settings/operativo"] = { ...operativo, ...extra };
+      const x = await conHora(hora, () => llamar(api.agentEstadoOperativo));
+      return `${x.body.salida.dia} ${x.body.salida.hora}`;
+    };
+    const casos = [
+      ["martes 04:00: hoy en la primera tanda", "2026-09-22T04:00:00", 0, "hoy 13:30"],
+      ["miércoles 04:00: hoy 14:00", "2026-09-23T04:00:00", 0, "hoy 14:00"],
+      ["domingo 04:00: hoy 17:00", "2026-09-27T04:00:00", 0, "hoy 17:00"],
+      ["domingo 17:10: también cada 30 min", "2026-09-27T17:10:00", 0, "hoy 17:30"],
+      ["16:50 con 9 en cola: entra en la de las 17:00", "2026-09-22T16:50:00", 9, "hoy 17:00"],
+      ["16:50 con 10 en cola: tanda llena, sale 17:30", "2026-09-22T16:50:00", 10, "hoy 17:30"],
+      ["16:50 con 25 en cola: dos tandas llenas, sale 18:00", "2026-09-22T16:50:00", 25, "hoy 18:00"],
+      ["20:10: hasta las 20:15 entra en la de las 20:00", "2026-09-22T20:10:00", 0, "hoy 20:00"],
+      ["martes 21:00: mañana miércoles 14:00", "2026-09-22T21:00:00", 0, "mañana 14:00"],
+      ["sábado 22:00: mañana domingo 17:00", "2026-09-26T22:00:00", 0, "mañana 17:00"],
+      ["19:40 con 30 en cola: hoy no entra, mañana en la tercera", "2026-09-22T19:40:00", 30, "mañana 15:00"],
+    ];
+    for (const [nombre, hora, enCola, esperado] of casos) {
+      const s = await salidaCon(hora, enCola);
+      ok("salida: " + nombre, s === esperado, s);
+    }
+    const s1 = await salidaCon("2026-09-22T15:00:00", 0, { situacion: "solo_manana" });
+    ok("salida: si el panel dice que hoy no sale más, mañana", s1 === "mañana 14:00", s1);
+    const s2 = await salidaCon("2026-09-22T16:50:00", 3, { limitePorTanda: 3 });
+    ok("salida: usa el límite por tanda del panel", s2 === "hoy 17:30", s2);
+
+    for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
+    for (const [k, v] of guardados) store[k] = v;
+    store["settings/operativo"] = operativo;
+    const r = await conHora("2026-09-22T04:00:00", () => resumen());
+    ok("salida: el resumen de moto dice cuándo sale", /🕐 Sale hoy a las 13:30/.test(r.body.mensaje), r.body.mensaje);
   }
 
   // ── cotización de Uber confirmada en el panel ──
