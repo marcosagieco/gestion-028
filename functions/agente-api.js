@@ -54,7 +54,7 @@ const DEMORAS = {
 const ALIASES = {
   alias1: "dale te paso los datos\nLucio Felix Bunge\nCBU: 00701941-30004014092980\nAlias: 028import.gl (Banco Galicia)\nmandame el comprobante cuando lo hagas",
   alias2: "dale te paso los datos\nMarcos Agustin Gieco\nCBU: 0070181130004057764295\nAlias: 028import.gal2 (Banco Galicia)\nmandame el comprobante cuando lo hagas",
-  alias3: "dale te paso los datos\nTame Lake S.A.\nAlias: CALMO.DURO.DIA\nmandame el comprobante cuando lo hagas",
+  alias3: "dale te paso los datos\nTame Lake S.A.\nCBU: 0000598201000000015014\nAlias: CALMO.DURO.DIA\nmandame el comprobante cuando lo hagas",
 };
 
 const $ = (n) => `$${Number(n || 0).toLocaleString("es-AR")}`;

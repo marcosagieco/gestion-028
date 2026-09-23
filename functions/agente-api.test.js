@@ -279,7 +279,7 @@ async function main() {
   {
     const r = await conHora("2026-09-22T15:00:00", () => llamar(api.agentEstadoOperativo));
     ok("estado: martes 15:00 sale hoy", r.body.salida.dia === "hoy" && r.body.salida.primeraSalida === "13:30", r.body.salida);
-    ok("estado: manda el alias activo, nunca otro", r.body.plantillas.ALIAS.includes("CALMO.DURO.DIA") && !r.body.plantillas.ALIAS.includes("CBU"), r.body.plantillas.ALIAS);
+    ok("estado: manda el alias activo, nunca otro", r.body.plantillas.ALIAS.includes("CALMO.DURO.DIA") && r.body.plantillas.ALIAS.includes("CBU: 0000598201000000015014") && !/028import\.gal?2?/.test(r.body.plantillas.ALIAS), r.body.plantillas.ALIAS);
     ok("estado: manda las listas del panel", r.body.plantillas.PRECIOS_VAPES === LISTAS.preciosVapesTexto.trim(), null);
     ok("estado: demora del día con la próxima salida", /2 hs/.test(r.body.demora) && /16:00/.test(r.body.demora), r.body.demora);
     ok("estado: tanda con lugar", r.body.tandaLlena === false, r.body);
