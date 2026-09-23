@@ -72,7 +72,7 @@ function Login({ dm, onAuth }) {
 
 const DOC_REF = () => doc(db, 'settings', 'operativo');
 
-// Cada opcion mapea a una frase fija que usa el bot (ver 028_system_prompt.md).
+// Cada opcion mapea a una frase fija que usa el bot (DEMORAS en functions/agente-api.js).
 // El staff solo elige una — el bot nunca ve texto libre.
 const SITUACIONES = [
   { id: 'sin_demora',    label: 'Sin demora',          hint: 'los envios salen normal' },
@@ -309,7 +309,7 @@ export default function OperativoPage() {
           {/* Precios mayorista */}
           <div className={`rounded-2xl border p-5 ${card}`}>
             <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Precios mayorista — texto</label>
-            <p className={`text-[11px] mb-3 ${label}`}>Lista de precios por volumen para revendedores. El bot la manda tal cual cuando alguien pregunta por mayorista — solo deriva al equipo si piden algo que esta lista no cubre.</p>
+            <p className={`text-[11px] mb-3 ${label}`}>Lista de precios por volumen para revendedores. El bot la manda tal cual cuando alguien pregunta por mayorista; cuando quieren comprar, deriva al equipo.</p>
             <textarea value={form.preciosMayoristaTexto} onChange={(e) => set('preciosMayoristaTexto', e.target.value)}
               rows={8} placeholder={'LISTA MAYORISTA\n\nDesde 10 unidades: ...\nDesde 50 unidades: ...\n...'}
               className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors font-mono ${input}`} />
@@ -318,12 +318,12 @@ export default function OperativoPage() {
           {/* Ofertas temporales */}
           <div className={`rounded-2xl border p-5 ${card}`}>
             <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Ofertas temporales — texto</label>
-            <p className={`text-[11px] mb-3 ${label}`}>Promos puntuales (combos, 2x1, descuentos por tiempo limitado). El bot la menciona cuando viene al caso — no la manda de oficio en cada mensaje. <b>Dejalo vacío cuando no haya promo vigente</b> y el bot no la nombra nunca.</p>
+            <p className={`text-[11px] mb-3 ${label}`}>Promos puntuales. Escribí cada una con el nombre del producto como figura en las listas y el precio en formato <b>2x $45.000</b>: así el sistema la cobra solo. El bot la menciona cuando viene al caso. <b>Dejalo vacío cuando no haya promo vigente</b> y el bot no la nombra nunca.</p>
             <textarea value={form.ofertasTexto} onChange={(e) => set('ofertasTexto', e.target.value)}
               rows={8} placeholder={`✨ OFERTAS DE LA SEMANA
 
-2x1 en ...
-Hasta el domingo ...`}
+🔥 ELFBAR ICE KING 2x $45.000
+Hasta el domingo`}
               className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors font-mono ${input}`} />
           </div>
         </div>

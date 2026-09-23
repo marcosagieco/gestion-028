@@ -1,31 +1,14 @@
 /**
- * agente-api.js — endpoints HTTP para el agente conversacional de IA (n8n).
+ * agente-api.js — backend del agente de WhatsApp de 028 (lo llama n8n).
  *
- * TODO ES ADITIVO. No modifica nada del sistema existente:
- *  - Solo LEE de `pedidos` y `settings`.
- *  - ESCRIBE únicamente en `pedidos` (con los mismos campos que hoy + campos nuevos opcionales)
- *    y en colecciones nuevas: `clientes_bot`, `comprobantes_financiera`, `settings/operativo`.
- *  - No toca `sales`, la facturación, ni el parser de comandos del staff.
+ * Todo lo que es plata o logística se resuelve acá y no en el modelo: el precio de cada producto
+ * (sale de las listas que el depósito carga en /operativo), el envío, los descuentos, el total,
+ * la cobertura de la moto, dónde se admite efectivo, el cupo de la tanda y si el pedido sale hoy.
  *
- * Se engancha desde index.js con una sola línea al final:
- *    Object.assign(exports, require('./agente-api'));
- *
- * Endpoints (todos requieren header  X-Agent-Key: <AGENT_API_KEY>):
- *   GET  /agentCliente?telefono=
- *   GET  /agentCotizarEnvio?direccion=   (o  ?lat=&lng= )
- *   POST /agentPedido
- *   GET  /agentEstadoOperativo
- *   POST /agentCrearCotizacionUber
- *   GET  /agentCotizacionesUberPendientes
- *   POST /agentMarcarCotizacionUberProcesada
- *
- * Además, onCotizacionUberConfirmada es un trigger de Firestore (no HTTP,
- * no requiere X-Agent-Key en la entrada): se dispara solo cuando un doc de
- * cotizaciones_uber pasa a estado "cotizado", y le avisa al webhook de n8n
- * al instante para no depender solo del polling de respaldo.
- *
- * Contrato completo: ../AGENTE_API.md
+ * Se engancha desde index.js con una sola línea: Object.assign(exports, require("./agente-api"));
+ * Contrato de cada endpoint: ../AGENTE_API.md
  */
+"use strict";
 
 const functions = require("firebase-functions");
 const { onDocumentUpdated } = require("firebase-functions/v2/firestore");
@@ -35,344 +18,100 @@ const axios = require("axios");
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Config
-// ─────────────────────────────────────────────────────────────────────────────
 const AGENT_API_KEY = process.env.AGENT_API_KEY || "";
 const GOOGLE_MAPS_KEY = process.env.GOOGLE_MAPS_KEY || "";
 const N8N_COTIZACION_UBER_WEBHOOK = "https://n8n.bunge.agenticsia.agency/webhook/cotizacion-uber-confirmada";
-
-// Mismo bucket que usan las facturas. El comprobante NO se deja apuntando a Chatwoot: esa URL
-// muere el dia que se apague Chatwoot al migrar a Meta, y con ella los comprobantes de todos los
-// pedidos viejos. Se copia una vez, al cargar el pedido, y se sirve desde acá.
 const STORAGE_BUCKET = "gestion-028.firebasestorage.app";
 const SERVE_COMPROBANTE_BASE = "https://us-central1-gestion-028.cloudfunctions.net/serveComprobante";
-const MAX_COMPROBANTE_BYTES = 15 * 1024 * 1024;
 
-const EXT_POR_TIPO = {
-  "image/jpeg": "jpg",
-  "image/jpg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-  "image/heic": "heic",
-  "application/pdf": "pdf",
-};
-
-// Baja la imagen del comprobante y la guarda en Storage. Devuelve el path, o null si algo falló:
-// un comprobante que no se pudo copiar NUNCA hace fallar el pedido, solo queda sin foto.
-async function copiarComprobanteAStorage(url, pedidoId) {
-  try {
-    if (!/^https?:\/\//i.test(String(url || ""))) return null;
-    const resp = await axios.get(url, {
-      responseType: "arraybuffer",
-      timeout: 15000,
-      maxContentLength: MAX_COMPROBANTE_BYTES,
-      maxRedirects: 5,
-    });
-    const tipo = String(resp.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
-    const ext = EXT_POR_TIPO[tipo];
-    if (!ext) return null; // no es una imagen ni un PDF: no lo guardamos
-    const buf = Buffer.from(resp.data);
-    if (!buf.length || buf.length > MAX_COMPROBANTE_BYTES) return null;
-
-    const ahora = new Date();
-    const yyyy = ahora.getFullYear();
-    const mm = String(ahora.getMonth() + 1).padStart(2, "0");
-    const filePath = `comprobantes/${yyyy}/${mm}/${pedidoId}.${ext}`;
-    await admin.storage().bucket(STORAGE_BUCKET).file(filePath).save(buf, { contentType: tipo });
-    return { path: filePath, contentType: tipo, bytes: buf.length };
-  } catch (e) {
-    console.error("no se pudo copiar el comprobante:", e.message);
-    return null;
-  }
-}
-
-// Depósito — mismas coordenadas que src/reparto/zonas.js (DEPOSITO_ORIGEN).
-const DEPOSITO = { lat: -34.55359497285959, lng: -58.4523699884262 };
+// ─────────────────────────────────────────────────────────────────────────────
+// Reglas del negocio
+// ─────────────────────────────────────────────────────────────────────────────
+const DEPOSITO = { lat: -34.55359497285959, lng: -58.4523699884262 }; // Libertador 6299 (src/reparto/zonas.js)
 const TARIFA_POR_KM = 1000;
-// Envio seguro: adicional opcional que cubre reposicion ante robo/perdida. Solo se ofrece en
-// envio flash (Uber). El monto lo resuelve el backend, como todo el resto de la plata.
-const PRECIO_ENVIO_SEGURO = 1990;
-
-// Descuento por pagar en efectivo contra entrega. Los tramos se miden contra el SUBTOTAL de
-// productos, sin el envio: el descuento es por pagar la mercaderia en efectivo, no por el flete.
-// Hasta hoy el bot anunciaba este descuento con la plantilla DESCUENTO_EFECTIVO pero el total
-// salia sin aplicarlo, asi que el cliente esperaba pagar menos de lo que decia el pedido y el
-// que quedaba en el medio era el repartidor.
+const MINIMO_ENVIO = 3000;
+const PRECIO_ENVIO_SEGURO = 1990; // solo flash (Uber)
+const CORREO = { sucursal: 19000, domicilio: 29000 }; // lo paga el cliente a Vía Cargo al recibir
+// Descuento por pagar en efectivo, medido sobre el subtotal de productos (sin el envío).
 const TRAMOS_DESCUENTO_EFECTIVO = [
   { desde: 100000, off: 5000 },
   { desde: 50000, off: 2500 },
   { desde: 0, off: 1500 },
 ];
+const LIMITE_POR_TANDA = 10; // si el panel no tiene uno cargado
+const CORTE_DESPACHO = 20 * 60 + 15; // 20:15, última salida del día (moto y Uber por igual)
+const VIGENCIA_COTIZACION_UBER_MS = 3 * 60 * 60 * 1000;
 
-function descuentoEfectivo(subtotal) {
-  const s = Number(subtotal) || 0;
-  if (s <= 0) return 0;
-  const tramo = TRAMOS_DESCUENTO_EFECTIVO.find((t) => s >= t.desde);
-  return tramo ? tramo.off : 0;
-}
-const MINIMO_ENVIO = 3000;
+const DEMORAS = {
+  sin_demora: "los envíos están saliendo normal, sin demora",
+  normal: "sale con la demora habitual, más o menos 1:30 hs desde que sale la moto",
+  demora: "hoy estamos con una demora de alrededor de 2 hs en los envíos",
+  demora_fuerte: "hoy hay bastante demora, más de 3 hs; si lo necesita rápido le conviene el flash",
+  solo_manana: "por hoy ya no se despacha más: se toma el pedido y sale mañana",
+};
 
-const ALIAS_FINANCIERA = "alias3";
+// Los datos de cobro viven acá y no en el prompt: el modelo nunca ve un CBU, así que no lo puede tipear mal.
+const ALIASES = {
+  alias1: "dale te paso los datos\nLucio Felix Bunge\nCBU: 00701941-30004014092980\nAlias: 028import.gl (Banco Galicia)\nmandame el comprobante cuando lo hagas",
+  alias2: "dale te paso los datos\nMarcos Agustin Gieco\nCBU: 0070181130004057764295\nAlias: 028import.gal2 (Banco Galicia)\nmandame el comprobante cuando lo hagas",
+  alias3: "dale te paso los datos\nTame Lake S.A.\nAlias: CALMO.DURO.DIA\nmandame el comprobante cuando lo hagas",
+};
 
-// Cupo por tanda: el deposito despacha de a tandas y no puede con mas de N pedidos por vez.
-// Cuenta moto Y uber juntos (lo definio Lucio), sobre los pedidos que siguen SIN COMPLETAR en el
-// panel — no sobre los vendidos en la ultima media hora: lo que satura es la cola, no la venta.
-const LIMITE_POR_TANDA_DEFAULT = 10;
-const ESTADOS_SIN_COMPLETAR = ["pendiente", "armado"];
-const TIPOS_QUE_OCUPAN_TANDA = ["moto", "uber"];
+const $ = (n) => `$${Number(n || 0).toLocaleString("es-AR")}`;
 
-// Interruptor de pruebas. En PRODUCCIÓN va en `false`: TODOS los pedidos van a la colección real
-// `pedidos` y le llegan al panel del depósito, incluidos los de Gino.
-// En `true`, los pedidos de NUMERO_TEST se desvían a `pedidos_test`, invisible para el panel, para
-// que ningún pedido de prueba le aparezca a Jero/Bauti mientras trabajan de verdad.
-const DESVIAR_PEDIDOS_DE_PRUEBA = false;
-const NUMERO_TEST = "5492914643232";
+// Textos fijos del negocio que el agente manda tal cual con ⟦PLANTILLA:NOMBRE⟧.
+const PLANTILLAS_FIJAS = {
+  FORMAS_DE_ENTREGA: `🚚 FORMAS DE ENTREGA 🚚\n\n━━━━━━━━━━━━━\n\n⚡ FLASH — UBER ENVÍOS\n⏳ 13:30 hs a 20:00 hs\n🔥 Entrega en 30’ mins\n⚠️ Sin garantía\n💳 Pago previo - transferencia\n\n━━━━━━━━━━━━━\n\n🛵 MOTO MENSAJERÍA\n⏳ 13:30 hs - 🌙 20:00 hs\n🔒 Mayor seguridad en tu pedido\n⏱️ Demora aprox: 1:30 hs desde que sale la moto\n💸 Pago contra entrega\n💵 Abonando en efectivo tenés descuentos especiales según el monto de tu compra\n\n━━━━━━━━━━━━━\n\n📦 CORREO — 1 a 3 días\n🚚 Vía Cargo\n💸 Envío se abona al recibir\n\n📍 A sucursal → ${$(CORREO.sucursal)}\n🏠 A domicilio → ${$(CORREO.domicilio)}\n\n━━━━━━━━━━━━━\n\n🌐 https://028import.com`,
+  ENVIO_SEGURO: `🛡️ ¿QUERÉS AGREGAR ENVÍO SEGURO A TU PEDIDO?\n\n💰 Valor: solo ${$(PRECIO_ENVIO_SEGURO)}\n\nProtegé tu compra ante cualquier imprevisto durante el envío. Por solo ${$(PRECIO_ENVIO_SEGURO)} adicionales, evitás correr el riesgo de perder el valor completo de tu pedido.\n\n━━━━━━━━━━━━━━━\n\n🔒 ¿QUÉ CUBRE EL ENVÍO SEGURO?\n\n✅ Robo durante el envío\n✅ Pérdida o extravío\n✅ Inconvenientes durante el traslado que impidan la entrega\n✅ Si transcurren los 7 minutos de espera desde la llegada del Uber y el pedido no pudo ser entregado, queda cubierto por reposición.\n\nAnte cualquiera de estas situaciones cubiertas, 028 IMPORT vuelve a enviarte tu pedido sin que tengas que pagarlo nuevamente.\n\n━━━━━━━━━━━━━━━\n\n⚠️ ¿Y SI NO LO AGREGO?\n\nEl pedido se despacha igualmente, pero viaja sin cobertura de reposición.\n\nUna vez despachado correctamente a la dirección proporcionada, si ocurre un robo, pérdida, extravío o no se concreta la recepción dentro del tiempo de espera, 028 Import no cubre el valor ni la reposición del pedido.`,
+  WEB: "📦 CATÁLOGO Y STOCK ACTUALIZADO\n\n🌐 Entrá a nuestra web y mirá todos los productos disponibles, precios y stock actualizado:\n\n👉 https://028import.com\n\n📲 Si tenés alguna duda o querés una recomendación personalizada escribinos por WhatsApp.\n\n🚚 Envíos en CABA y a todo el país.\n📍 Belgrano, CABA.",
+  DESCUENTO_EFECTIVO: (([alto, medio, base]) =>
+    `pagando en efectivo tenés descuento: si es menos de ${$(medio.desde)} son ${$(base.off)} off, desde ${$(medio.desde)} son ${$(medio.off)} off, y desde ${$(alto.desde)} son ${$(alto.off)} off`)(TRAMOS_DESCUENTO_EFECTIVO),
+  GRACIAS: "gracias por tu compra ❤️\n028 Import ✈️ esperamos que disfrutes tu pedido, gracias por confiar en nosotros 🫶\ncomunidad de WhatsApp: https://chat.whatsapp.com/JYgkBHg7P4DLwv1V2HCZUZ\ninstagram: https://www.instagram.com/028.import\nweb: https://028import.com\nimportante: no hacemos devoluciones, solo cambios por falla de fábrica, y tenés 48 hs desde que lo recibís para avisarnos cualquier falla, pasado ese plazo ya no podemos gestionar el reclamo",
+  CONFIANZA: "🔒 Entendemos tu desconfianza\n\nEntendemos que al comprar por primera vez puedas tener dudas. 👍🏻\n\nPor eso te invitamos a conocer un poco más sobre 028 Import.\n\n📲 Instagram:\nhttps://www.instagram.com/028.import?igsh=a2pzbDNtNGFkcDNz&utm_source=qr\n\nAhí vas a encontrar:\n✅ Miles de seguidores.\n⭐ Referencias reales de clientes.\n🤝 Colaboraciones con influencers.\n🔥 Publicaciones e historias diarias.\n\nTrabajamos hace años y más de 4.000 clientes ya eligieron 028 Import.\n\nSi después de ver nuestro perfil te queda alguna duda, escribinos sin problema. Estamos para ayudarte. 💙",
+};
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers de texto — copiados de index.js (no se importan para no acoplar).
-// ─────────────────────────────────────────────────────────────────────────────
-// Saca tokens de capacidad tipo "35k"/"60k" (puffs) — son un dato aparte, nunca forman parte
-// del nombre real del producto en la base, pero el agente de IA a veces los pega al buscar
-// (los ve juntos en CONOCIMIENTO DE PRODUCTO, ej. "Elfbar Duke 35K").
-const normalizar = (texto) =>
-  String(texto || "")
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[^a-z0-9 ]/g, "")
-    .replace(/\b\d+k\b/g, "")
-    // Conectores ("&", "y", "and") no forman parte del nombre real — "Honor & Glory" y
-    // "Honor and Glory" tienen que ser lo mismo para el buscador.
-    .replace(/\b(y|and)\b/g, " ")
-    .replace(/ +/g, " ")
-    .trim();
+// Listas que carga el depósito en /operativo: nombre de la plantilla → campo de settings/operativo.
+const LISTAS_DEL_PANEL = {
+  STOCK_NICOTINA: "stockNicotinaTexto",
+  PRECIOS_VAPES: "preciosVapesTexto",
+  STOCK_THC: "stockThcTexto",
+  PRECIOS_THC: "preciosThcTexto",
+  PERFUMES: "perfumesTexto",
+  APPLE_ACCESORIOS: "appleTexto",
+  PRECIOS_MAYORISTA: "preciosMayoristaTexto",
+  OFERTAS: "ofertasTexto",
+};
+// Las que tienen precios minoristas (la mayorista está en USD y esas compras las cierra el equipo).
+const LISTAS_CON_PRECIO = ["preciosVapesTexto", "preciosThcTexto", "perfumesTexto", "appleTexto"];
 
-function distanciaLevenshtein(a, b) {
-  const m = [];
-  for (let i = 0; i <= b.length; i++) m[i] = [i];
-  for (let j = 0; j <= a.length; j++) m[0][j] = j;
-  for (let i = 1; i <= b.length; i++) {
-    for (let j = 1; j <= a.length; j++) {
-      m[i][j] =
-        b.charAt(i - 1) === a.charAt(j - 1)
-          ? m[i - 1][j - 1]
-          : Math.min(m[i - 1][j - 1] + 1, m[i][j - 1] + 1, m[i - 1][j] + 1);
-    }
-  }
-  return m[b.length][a.length];
-}
-
-function similitud(s1, s2) {
-  const larga = s1.length > s2.length ? s1 : s2;
-  const corta = s1.length > s2.length ? s2 : s1;
-  if (larga.length === 0) return 1;
-  return (larga.length - distanciaLevenshtein(larga, corta)) / larga.length;
-}
-
-function esParecido(userTxt, bdTxt) {
-  if (!userTxt) return true; // sin filtro
-  if (bdTxt.includes(userTxt)) return true;
-  // "elf bar" → "elfbar": comparar sin espacios (solo si la query tiene algo de largo).
-  const uJoin = userTxt.replace(/ /g, "");
-  if (uJoin.length >= 4 && bdTxt.replace(/ /g, "").includes(uJoin)) return true;
-
-  const pu = userTxt.split(" ").filter(Boolean);
-  const pb = bdTxt.split(" ").filter(Boolean);
-  if (pu.length === 0) return false;
-  const sinCeros = (s) => s.replace(/^0+/, "") || "0";
-  for (const w of pu) {
-    let ok = false;
-    for (const x of pb) {
-      const corto = w.length <= 2;
-      if (corto ? (w === x || (/^\d+$/.test(w) && /^\d+$/.test(x) && sinCeros(w) === sinCeros(x)))
-                : similitud(w, x) >= 0.75) {
-        ok = true;
-        break;
-      }
-    }
-    if (!ok) return false;
-  }
-  return true;
-}
-
-// Teléfono → formato canónico 549XXXXXXXXXX (mismo criterio que el webhook de index.js).
-function normalizarTelefono(tel) {
-  let n = String(tel || "").replace(/[^0-9]/g, "");
-  if (n.startsWith("54") && n.length === 12) n = "549" + n.slice(2); // 54 11... → 549 11...
-  if (!n.startsWith("54") && n.length === 10) n = "549" + n; // 11........ → 549 11........
-  return n;
-}
-
-// Haversine — km en línea recta. Igual que costoMotomensajeriaEstimado de src/reparto.
-function haversineKm(a, b) {
-  const R = 6371;
-  const toRad = (d) => (d * Math.PI) / 180;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(h));
-}
-
-const aplicarTarifa = (km) => Math.max(Math.round(km * TARIFA_POR_KM), MINIMO_ENVIO);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Precios: parseo de las listas de texto libre del panel
-//
-// El depósito pega las listas a mano en /operativo. Tienen una estructura regular:
-// bloques separados por una línea de guiones/rayas, cada bloque arranca con el nombre del
-// modelo y adentro trae líneas tipo "💰 1x $22.000" / "🔥 2x $40.000" / "🎁 5x $90.000".
-// Parsearlas permite resolver el precio de un pedido POR CÓDIGO en vez de confiar en que el
-// agente lea bien la tabla. OJO: "2x $40.000" es el precio TOTAL del combo de 2, no el unitario.
-// ─────────────────────────────────────────────────────────────────────────────
-function parsearListaPrecios(texto) {
-  const bloques = String(texto || "").split(/\n[ \t]*[⸻─-╿=_—–-]+[ \t]*\n/);
-  const out = [];
-  for (const b of bloques) {
-    const lineas = b.split("\n").map((l) => l.trim()).filter(Boolean);
-    if (!lineas.length) continue;
-    const precios = {};
-    for (const l of lineas) {
-      const m = l.match(/(\d+)\s*x\s*\$\s*([\d.,]+)/i);
-      if (!m) continue;
-      const cant = parseInt(m[1], 10);
-      const monto = parseInt(String(m[2]).replace(/[^\d]/g, ""), 10);
-      if (cant > 0 && monto > 0) precios[cant] = monto;
-    }
-    if (Object.keys(precios).length) out.push({ titulo: lineas[0], precios });
-  }
-  return out;
-}
-
-// Dado el nombre de un producto y una cantidad, devuelve el importe real de esa línea usando
-// los combos de la lista (el más grande que entre, y el resto al precio de a uno). Si el
-// producto no aparece en ninguna lista devuelve null, y el llamador cae al precio del agente.
-function resolverPrecioLinea(listas, producto, cantidad) {
-  const q = normalizar(producto);
-  if (!q) return null;
-
-  let mejor = null;
-  for (const l of listas) {
-    const t = normalizar(l.titulo);
-    if (!t) continue;
-    const score = coincideConTexto(q, t) ? 1 : fraccionDeCoincidencia(q, t);
-    if (score >= 0.6 && (!mejor || score > mejor.score)) mejor = { lista: l, score };
-  }
-  if (!mejor) return null;
-
-  const packs = mejor.lista.precios;
-  const tamanos = Object.keys(packs).map(Number).filter((n) => n > 0).sort((a, b) => b - a);
-  if (!tamanos.length) return null;
-
-  let restante = Math.max(1, Number(cantidad) || 1);
-  let importe = 0;
-  for (const t of tamanos) {
-    while (restante >= t) {
-      importe += packs[t];
-      restante -= t;
-    }
-  }
-  if (restante > 0) {
-    const masChico = tamanos[tamanos.length - 1];
-    const unitario = packs[1] || Math.round(packs[masChico] / masChico);
-    importe += unitario * restante;
-  }
-  return { importe, titulo: mejor.lista.titulo };
-}
-
-// Rubros que en el panel se cargan con un nombre genérico en `product` (Perfumes, Cápsulas,
-// Batería) y el nombre real de la marca/modelo vive en `variant`. Para estos, buscar por
-// "producto" tiene que mirar la variante — si no, preguntar por marca (ej. "rasasi", "028")
-// nunca encuentra nada, porque ningún item tiene esa palabra en el campo `product`.
-
-// Barrio → zona. Subconjunto del mapeo de src/reparto/zonas.js (solo barrios que caen enteros
-// en una zona). Sirve para sugerir cobertura; si no matchea, cubiertoMoto = false.
+// Barrio/localidad → zona del mapa de reparto (mismo mapeo que src/reparto/zonas.js). La zona B es
+// el Corredor Norte: la única parte de la cobertura que no es CABA.
 const BARRIO_A_ZONA = {
   belgrano: "A", nunez: "A", colegiales: "A", coghlan: "A", "las canitas": "A",
   "palermo chico": "A", "barrio parque": "A", "villa ortuzar": "A",
-  "vicente lopez": "B", olivos: "B", "la lucila": "B", martinez: "B",
-  palermo: "C1", "palermo hollywood": "C1", "palermo soho": "C1", "barrio norte": "C1",
+  "vicente lopez": "B", olivos: "B", "la lucila": "B", florida: "B", munro: "B", martinez: "B",
+  palermo: "C1", "palermo hollywood": "C1", "palermo soho": "C1", "palermo botanico": "C1",
+  "alto palermo": "C1", "barrio norte": "C1",
   recoleta: "C2", retiro: "C2", "san nicolas": "C2", tribunales: "C2", monserrat: "C2",
   "villa urquiza": "D", "parque chas": "D", chacarita: "D", agronomia: "D",
   "villa pueyrredon": "D", "villa del parque": "D",
   "villa crespo": "E", almagro: "E", caballito: "E",
-  "villa santa rita": "F", floresta: "F", liniers: "F", "velez sarsfield": "F",
-  "villa real": "F", versalles: "F", "monte castro": "F", "villa luro": "F", mataderos: "F",
+  "villa santa rita": "F", floresta: "F", liniers: "F", "velez sarsfield": "F", "villa real": "F",
+  versalles: "F", "monte castro": "F", "villa luro": "F", mataderos: "F",
   "san telmo": "G", constitucion: "G", barracas: "G", "la boca": "G",
   "parque patricios": "G", "nueva pompeya": "G",
 };
-// Resuelve la zona (A–G) a partir del texto de una dirección, con el mismo criterio que usa
-// agentCotizarEnvio cuando no hay address_components de Google: se parte por comas/guiones y se
-// busca cada pedazo en el mapa de barrios.
-function zonaDesdeTexto(texto) {
-  for (const w of String(texto || "").split(/[,-]/)) {
-    const z = BARRIO_A_ZONA[normalizar(w)];
-    if (z) return z;
-  }
-  return null;
-}
-
-// El efectivo contra entrega es solo para CABA. La única zona del mapa que NO es CABA es la B
-// (Corredor Norte). Si no matcheó ninguna zona tampoco se admite: no sabemos si es CABA.
-const zonaAdmiteEfectivo = (zona) => zona !== null && zona !== "B";
-
-// El agente tiende a mandar el NOMBRE del barrio ("Belgrano") donde va la zona ("A"), porque es
-// lo que escribio el cliente. Si lo que manda ya es una zona valida se respeta; si es un barrio
-// del mapa se traduce; si no se reconoce, queda null antes que ensuciar el recorrido de moto.
-function normalizarZona(z) {
-  const v = String(z || "").trim();
-  if (!v) return null;
-  if (ZONA_NOMBRE[v.toUpperCase()]) return v.toUpperCase();
-  return BARRIO_A_ZONA[normalizar(v)] || null;
-}
-
-// El mapa BARRIO_A_ZONA no cubre toda CABA (le faltan Flores, Balvanera, Boedo, Saavedra y
-// varios mas), asi que atar el efectivo SOLO a ese mapa se lo negaba a clientes de CABA por el
-// simple hecho de que su barrio no estaba escrito en la lista. Google ya sabe en que ciudad
-// cae la direccion: si dice CABA, hay efectivo, este o no el barrio mapeado.
-function esCABAporGoogle(addressComponents) {
-  for (const c of addressComponents || []) {
-    const n = normalizar(c.long_name) + " " + normalizar(c.short_name);
-    if (/ciudad autonoma de buenos aires|caba|capital federal/.test(n)) return true;
-  }
-  return false;
-}
-
-// Geocodifica una direccion y dice si cae en CABA. Devuelve null si no se pudo resolver.
-async function direccionEsCABA(texto) {
-  if (!GOOGLE_MAPS_KEY || !String(texto || "").trim()) return null;
-  try {
-    const geo = await axios.get("https://maps.googleapis.com/maps/api/geocode/json", {
-      params: { address: texto, key: GOOGLE_MAPS_KEY, region: "ar", components: "country:AR" },
-      timeout: 8000,
-    });
-    const r = geo.data.results && geo.data.results[0];
-    if (!r) return null;
-    return esCABAporGoogle(r.address_components);
-  } catch (e) {
-    console.error("no se pudo verificar si la direccion es CABA:", e.message);
-    return null;
-  }
-}
-
-const ZONA_NOMBRE = {
-  A: "Zona A — Núcleo", B: "Zona B — Corredor Norte", C1: "Zona C1 — Palermo extendido",
-  C2: "Zona C2 — Centro / Recoleta", D: "Zona D — Oeste cercano", E: "Zona E — Centro-oeste",
-  F: "Zona F — Oeste lejano", G: "Zona G — Sur",
-};
+// Solo estos componentes de Google nombran un barrio o localidad (una calle "Florida" en San
+// Nicolás no es la localidad de Florida).
+const TIPOS_DE_BARRIO = ["neighborhood", "sublocality", "sublocality_level_1", "locality", "administrative_area_level_2"];
+const NOMBRES_CABA = new Set(["ciudad autonoma de buenos aires", "caba", "capital federal"]);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Middleware de auth + wrapper
+// Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-function withAuth(handler) {
+function conClave(handler) {
   return functions.https.onRequest(async (req, res) => {
-    if (!AGENT_API_KEY) {
-      return res.status(500).json({ ok: false, error: "AGENT_API_KEY no configurada en el servidor" });
-    }
-    const key = req.get("X-Agent-Key");
-    if (key !== AGENT_API_KEY) {
+    if (!AGENT_API_KEY || req.get("X-Agent-Key") !== AGENT_API_KEY) {
       return res.status(401).json({ ok: false, error: "no autorizado" });
     }
     try {
@@ -384,318 +123,398 @@ function withAuth(handler) {
   });
 }
 
-// Coincide si CUALQUIERA de las dos direcciones matchea — cubre tanto "el query trae una
-// palabra de más" (ej. buscar "elfbar ice king" contra el lote "elfbar ice") como el caso
-// normal (buscar "elfbar duke" contra "elfbar duke").
-function coincideConTexto(a, b) {
-  if (!a || !b) return false;
-  return esParecido(a, b) || esParecido(b, a);
+const rechazar = (res, error) => res.status(400).json({ ok: false, error });
+
+// "Honor & Glory" → "honor glory". Saca tildes, emojis y la capacidad en puffs ("35K"), que el
+// agente a veces pega al nombre pero nunca forma parte de él.
+const normalizar = (texto) =>
+  String(texto || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[^a-z0-9 ]/g, "")
+    .replace(/\b\d+k\b/g, " ")
+    .replace(/\b(y|and)\b/g, " ")
+    .replace(/ +/g, " ")
+    .trim();
+
+const PALABRAS_VACIAS = new Set(["de", "del", "la", "el", "los", "las", "con", "a", "x"]);
+const palabras = (texto) => normalizar(texto).split(" ").filter((p) => p && !PALABRAS_VACIAS.has(p));
+
+// Teléfono → 549XXXXXXXXXX, igual que el webhook de index.js.
+function normalizarTelefono(tel) {
+  let n = String(tel || "").replace(/\D/g, "");
+  if (n.startsWith("54") && n.length === 12) n = "549" + n.slice(2);
+  if (!n.startsWith("54") && n.length === 10) n = "549" + n;
+  return n;
 }
 
-// Para la búsqueda floja (fallback): compara palabra por palabra con un umbral más tolerante
-// que esParecido, y NO exige que matcheen todas — devuelve qué fracción de las palabras del
-// query encontró algo parecido en el texto del catálogo. Comparar la frase entera (en vez de
-// palabra por palabra) penaliza mal cuando el query es más corto que el nombre real (ej. "hidn
-// hils" vs "Hidden Hills Club" sale mal en similitud de texto completo, pero bien acá).
-function fraccionDeCoincidencia(query, texto) {
-  const pw = query.split(" ").filter(Boolean);
-  const cw = texto.split(" ").filter(Boolean);
-  if (!pw.length || !cw.length) return 0;
-  let matched = 0;
-  for (const w of pw) {
-    if (w.length <= 2) { if (cw.includes(w)) matched++; continue; }
-    const mejor = Math.max(0, ...cw.map((x) => similitud(w, x)));
-    if (mejor >= 0.6) matched++;
+async function leerOperativo() {
+  const doc = await db.collection("settings").doc("operativo").get();
+  return doc.exists ? doc.data() : {};
+}
+
+const textoDe = (v) => (typeof v === "string" ? v.trim() : "");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Precios: las listas del panel son texto libre, con bloques como
+//     ✨ ELFBAR EB CREATE 40K        ← nombre (en mayúsculas)
+//     🚀 Modelo económico            ← descripción
+//     💰 1x $22.000                  ← precio por cantidad: "2x $40.000" es el combo de 2 entero
+// o precios sueltos ("💰 $75.000" = una unidad) y renglones con nombre y precio juntos
+// ("🔌 USB-C a Lightning → $13.000").
+// ─────────────────────────────────────────────────────────────────────────────
+const SEPARADOR_RE = /^[\s⸻━─—–=_-]+$/;
+const PRECIO_RE = /\$\s*([\d.,]+)/;
+const CANTIDAD_RE = /(\d+)\s*x\b/i;
+
+const sinEmojis = (linea) => linea.replace(/[^\p{L}\p{N}\s.,&'’%-]/gu, " ").replace(/\s+/g, " ").trim();
+
+function esNombre(linea) {
+  const letras = linea.match(/\p{L}/gu) || [];
+  const mayusculas = letras.filter((c) => c !== c.toLowerCase()).length;
+  return letras.length >= 2 && mayusculas / letras.length >= 0.6;
+}
+
+function parsearProductos(texto) {
+  const productos = [];
+  let nombres = [];
+  let detalles = [];
+  let actual = null; // el producto que está recibiendo renglones de precio
+  for (const cruda of String(texto || "").split("\n")) {
+    const linea = cruda.trim();
+    if (!linea) continue;
+    if (SEPARADOR_RE.test(linea)) {
+      nombres = [];
+      detalles = [];
+      actual = null;
+      continue;
+    }
+    const precio = linea.match(PRECIO_RE);
+    if (!precio) {
+      actual = null;
+      if (/lista|precio/i.test(linea)) continue; // encabezados: "LISTA DE PRECIOS", "PRECIO LIQUIDACIÓN"
+      (esNombre(linea) ? nombres : detalles).push(sinEmojis(linea));
+      continue;
+    }
+    const monto = parseInt(precio[1].replace(/\D/g, ""), 10);
+    if (!(monto > 0)) continue;
+    const antes = linea.slice(0, precio.index);
+    const cantidad = Number((antes.match(CANTIDAD_RE) || [])[1]) || 1;
+    const nombreEnLinea = sinEmojis(antes.replace(CANTIDAD_RE, " "));
+    if ((nombreEnLinea.match(/\p{L}/gu) || []).length >= 3) {
+      productos.push({ nombre: nombreEnLinea, detalle: [...nombres, ...detalles].join(" "), precios: { [cantidad]: monto } });
+      continue;
+    }
+    if (!actual) {
+      actual = { nombre: nombres.join(" ") || detalles[0] || "", detalle: detalles.join(" "), precios: {} };
+      productos.push(actual);
+      nombres = [];
+      detalles = [];
+    }
+    actual.precios[cantidad] = monto;
   }
-  return matched / pw.length;
+  return productos.filter((p) => p.nombre);
+}
+
+function distanciaLevenshtein(a, b) {
+  const fila = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let diagonal = fila[0];
+    fila[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const arriba = fila[j];
+      fila[j] = Math.min(fila[j] + 1, fila[j - 1] + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));
+      diagonal = arriba;
+    }
+  }
+  return fila[b.length];
+}
+
+// 1 si la palabra está tal cual, algo menos si está con un typo, 0 si no está. Las palabras cortas
+// y las que tienen números ("028", "v400", "35w") solo valen exactas.
+function coincidencia(palabra, lista) {
+  let mejor = 0;
+  for (const w of lista) {
+    if (w === palabra) return 1;
+    if (palabra.length > 3 && !/\d/.test(palabra)) {
+      const largo = Math.max(w.length, palabra.length);
+      mejor = Math.max(mejor, (largo - distanciaLevenshtein(palabra, w)) / largo);
+    }
+  }
+  return mejor >= 0.8 ? mejor : 0;
+}
+
+// Busca el producto que nombró el agente. Casi todas sus palabras tienen que estar en el producto,
+// al menos una en su nombre, y gana el nombre más parecido: "Ignite V400" no se confunde con
+// "Ignite V400 Mix". Si dos quedan empatados es ambiguo y no se elige ninguno.
+function buscarProducto(productos, nombre) {
+  const q = palabras(nombre);
+  if (!q.length) return null;
+  const candidatos = [];
+  for (const p of productos) {
+    const enNombre = palabras(p.nombre);
+    const enTodo = [...enNombre, ...palabras(p.detalle)];
+    const encontradas = q.filter((w) => coincidencia(w, enTodo) > 0).length;
+    const parecidoNombre = q.reduce((s, w) => s + coincidencia(w, enNombre), 0) / q.length;
+    if (encontradas / q.length < 2 / 3 || !parecidoNombre) continue;
+    const nombreCubierto = enNombre.filter((w) => coincidencia(w, q) > 0).length / enNombre.length;
+    candidatos.push({ p, puntaje: parecidoNombre + nombreCubierto });
+  }
+  candidatos.sort((a, b) => b.puntaje - a.puntaje);
+  if (!candidatos.length) return null;
+  if (candidatos[1] && candidatos[1].puntaje === candidatos[0].puntaje) {
+    return { ambiguo: [candidatos[0].p.nombre, candidatos[1].p.nombre] };
+  }
+  return { producto: candidatos[0].p };
+}
+
+// Importe de N unidades con los combos de la lista: el más grande que entre y después los más
+// chicos. null si esa cantidad no se puede armar (ej. gummies que solo se venden de a 2).
+function importePorCantidad(precios, cantidad) {
+  let resto = cantidad;
+  let importe = 0;
+  for (const n of Object.keys(precios).map(Number).sort((a, b) => b - a)) {
+    while (resto >= n) {
+      importe += precios[n];
+      resto -= n;
+    }
+  }
+  return resto === 0 ? importe : null;
+}
+
+// Devuelve { importe } o { error } para una línea del pedido. Las ofertas pisan los precios de la
+// lista para las cantidades que tengan cargadas.
+function precioDeLinea(listas, ofertas, item) {
+  const cantidad = Number(item.cantidad) || 1;
+  const regular = buscarProducto(listas, item.producto);
+  const oferta = buscarProducto(ofertas, item.producto);
+  const ambiguo = (regular && regular.ambiguo) || (oferta && oferta.ambiguo);
+  if (ambiguo) {
+    return { error: `"${item.producto}" coincide con más de un producto (${ambiguo.join(" / ")}): usá el nombre exacto de la lista` };
+  }
+  if (!(regular && regular.producto) && !(oferta && oferta.producto)) {
+    return { error: `no encontré "${item.producto}" en las listas de precios de hoy: usá el nombre tal cual figura en la lista` };
+  }
+  const precios = { ...(regular && regular.producto && regular.producto.precios), ...(oferta && oferta.producto && oferta.producto.precios) };
+  const importe = importePorCantidad(precios, cantidad);
+  if (importe === null) {
+    const opciones = Object.keys(precios).map((n) => `${n}x`).join(", ");
+    return { error: `"${item.producto}" no se vende de a ${cantidad} (opciones: ${opciones})` };
+  }
+  return { importe };
+}
+
+function descuentoEfectivo(subtotal) {
+  return TRAMOS_DESCUENTO_EFECTIVO.find((t) => subtotal >= t.desde).off;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 2. GET /agentCliente?telefono=
+// Direcciones
 // ─────────────────────────────────────────────────────────────────────────────
-exports.agentCliente = withAuth(async (req, res) => {
-  const tel = normalizarTelefono(req.query.telefono);
-  if (!tel) return res.status(400).json({ ok: false, error: "falta 'telefono'" });
+function haversineKm(a, b) {
+  const rad = (d) => (d * Math.PI) / 180;
+  const h =
+    Math.sin(rad(b.lat - a.lat) / 2) ** 2 +
+    Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(rad(b.lng - a.lng) / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(h));
+}
 
-  const botDoc = await db.collection("clientes_bot").doc(tel).get();
-  if (botDoc.exists) {
-    const d = botDoc.data();
-    return res.json({
-      ok: true,
-      telefono: tel,
-      nuevo: (d.cantidadPedidos || 0) === 0,
-      cantidadPedidos: d.cantidadPedidos || 0,
-      ultimoPedido: d.ultimoPedido || null,
-      origen: d.origen || null,
-    });
-  }
-
-  // Fallback: pedidos que ya tengan el teléfono estructurado.
-  const pedSnap = await db
-    .collection("pedidos")
-    .where("telefono", "==", tel)
-    .get()
-    .catch(() => ({ empty: true, size: 0, docs: [] }));
-
-  const cantidad = pedSnap.size || 0;
-  let ultimo = null;
-  pedSnap.docs.forEach((doc) => {
-    const c = doc.data().createdAt;
-    if (c && (!ultimo || c > ultimo)) ultimo = c;
+// Ubica la dirección y resuelve todo lo que depende de ella. La moto cubre CABA entera y el
+// Corredor Norte (zona B); el efectivo contra entrega es solo para CABA. null si Google no la ubica.
+async function ubicar(direccion) {
+  if (!String(direccion || "").trim()) return null;
+  const { data } = await axios.get("https://maps.googleapis.com/maps/api/geocode/json", {
+    params: { address: direccion, key: GOOGLE_MAPS_KEY, region: "ar", components: "country:AR" },
+    timeout: 8000,
   });
+  const r = data.results && data.results[0];
+  if (!r) return null;
+  const componentes = r.address_components || [];
+  const barrios = componentes
+    .filter((c) => c.types.some((t) => TIPOS_DE_BARRIO.includes(t)))
+    .flatMap((c) => [normalizar(c.long_name), normalizar(c.short_name)]);
+  const zona = barrios.map((b) => BARRIO_A_ZONA[b]).find(Boolean) || null;
+  const esCABA = componentes.some((c) => NOMBRES_CABA.has(normalizar(c.long_name)) || NOMBRES_CABA.has(normalizar(c.short_name)));
+  const { lat, lng } = r.geometry.location;
+  const km = Math.round(haversineKm(DEPOSITO, { lat, lng }) * 10) / 10;
+  return {
+    lat, lng, zona, km, esCABA,
+    cubiertoMoto: esCABA || zona === "B",
+    monto: Math.max(Math.round(km * TARIFA_POR_KM), MINIMO_ENVIO),
+  };
+}
 
-  return res.json({
+// La última cotización de Uber que cargó el depósito para este cliente, si sigue vigente.
+async function cotizacionUber(telefono) {
+  const snap = await db.collection("cotizaciones_uber").where("telefonoCliente", "==", telefono).get();
+  const desde = Date.now() - VIGENCIA_COTIZACION_UBER_MS;
+  return snap.docs
+    .map((d) => d.data())
+    .filter((c) => Number(c.montoUber) > 0 && Date.parse(c.resueltoEn) >= desde)
+    .sort((a, b) => Date.parse(b.resueltoEn) - Date.parse(a.resueltoEn))[0] || null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Salidas y tanda
+// ─────────────────────────────────────────────────────────────────────────────
+function horaBuenosAires(fecha) {
+  const partes = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Argentina/Buenos_Aires", weekday: "short", hour: "numeric", minute: "numeric", hourCycle: "h23",
+    }).formatToParts(fecha).map((p) => [p.type, p.value])
+  );
+  return { dia: partes.weekday, minutos: Number(partes.hour) * 60 + Number(partes.minute) };
+}
+
+// Si un pedido tomado ahora sale hoy o mañana, y desde qué hora. El bot atiende 24/7: pasado el
+// corte se vende igual, solo que sale al día siguiente.
+function salida(fecha) {
+  const ahora = horaBuenosAires(fecha);
+  const saleHoy = ahora.minutos < CORTE_DESPACHO;
+  const { dia } = saleHoy ? ahora : horaBuenosAires(new Date(fecha.getTime() + 24 * 60 * 60 * 1000));
+  const primeraSalida = dia === "Sun" ? "17:00" : dia === "Wed" ? "14:00" : "13:30";
+  return { dia: saleHoy ? "hoy" : "mañana", primeraSalida, domingo: dia === "Sun" };
+}
+
+// La tanda se llena con los pedidos de moto y Uber que siguen sin completar en el panel. Ante un
+// error se la da por no llena: nunca se frena una venta por esto.
+async function tandaLlena(limiteDelPanel) {
+  const limite = Number(limiteDelPanel) > 0 ? Number(limiteDelPanel) : LIMITE_POR_TANDA;
+  try {
+    const snap = await db.collection("pedidos").where("estado", "in", ["pendiente", "armado"]).get();
+    const ocupados = snap.docs.filter((d) => ["moto", "uber", undefined, null].includes(d.data().tipoEnvio)).length;
+    return ocupados >= limite;
+  } catch (e) {
+    console.error("[agente-api] no se pudo contar la tanda", e.message);
+    return false;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /agentEstadoOperativo — todo lo que el agente necesita saber del día
+// ─────────────────────────────────────────────────────────────────────────────
+exports.agentEstadoOperativo = conClave(async (req, res) => {
+  const op = await leerOperativo();
+  const plantillas = { ...PLANTILLAS_FIJAS, ALIAS: ALIASES[op.aliasActivo] || ALIASES.alias1 };
+  for (const [nombre, campo] of Object.entries(LISTAS_DEL_PANEL)) plantillas[nombre] = textoDe(op[campo]);
+  const proximaSalida = textoDe(op.proximaSalida);
+  res.json({
     ok: true,
-    telefono: tel,
-    nuevo: cantidad === 0,
-    cantidadPedidos: cantidad,
-    ultimoPedido: ultimo,
-    origen: null,
+    salida: salida(new Date()),
+    demora: (DEMORAS[op.situacion] || DEMORAS.sin_demora) + (proximaSalida ? ` (la próxima moto sale a las ${proximaSalida})` : ""),
+    tandaLlena: await tandaLlena(op.limitePorTanda),
+    plantillas,
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3. GET /agentCotizarEnvio?direccion=   (o ?lat=&lng=)
+// GET /agentCotizarEnvio?direccion= — cuánto sale la moto a esa dirección
 // ─────────────────────────────────────────────────────────────────────────────
-exports.agentCotizarEnvio = withAuth(async (req, res) => {
-  let lat = parseFloat(req.query.lat);
-  let lng = parseFloat(req.query.lng);
-  let texto = String(req.query.direccion || "").trim();
-  let zona = null;
-  // Lo resuelve Google cuando geocodifica; queda en null si vinieron lat/lng directos.
-  let esCABA = null;
-
-  if (isNaN(lat) || isNaN(lng)) {
-    if (!texto) return res.status(400).json({ ok: false, error: "falta 'direccion' o 'lat'+'lng'" });
-    if (!GOOGLE_MAPS_KEY) {
-      return res.status(200).json({
-        ok: true,
-        needsManualQuote: true,
-        mensaje: "sin geocoding configurado — cotizar el envío a mano",
-      });
-    }
-    // No se fuerza ", CABA, Argentina" en el texto: eso le puede hacer resolver mal una
-    // dirección genuinamente lejana si coincide con un lugar/monumento que también existe
-    // dentro de CABA (ej. "Pilar" solo, sin más datos, matcheaba con la Basílica del Pilar en
-    // Recoleta en vez del partido de Pilar, a 43km). Se deja que Google resuelva la dirección
-    // tal cual la escribió el cliente, solo acotado al país.
-    const geo = await axios.get("https://maps.googleapis.com/maps/api/geocode/json", {
-      params: {
-        address: texto,
-        key: GOOGLE_MAPS_KEY,
-        region: "ar",
-        components: "country:AR",
-      },
-    });
-    const r = geo.data.results && geo.data.results[0];
-    if (!r) return res.status(200).json({ ok: true, encontrada: false, mensaje: "no se pudo ubicar la dirección" });
-    lat = r.geometry.location.lat;
-    lng = r.geometry.location.lng;
-    texto = r.formatted_address;
-    for (const c of r.address_components || []) {
-      const z = BARRIO_A_ZONA[normalizar(c.long_name)] || BARRIO_A_ZONA[normalizar(c.short_name)];
-      if (z) { zona = z; break; }
-    }
-    esCABA = esCABAporGoogle(r.address_components);
-  } else if (texto) {
-    zona = zonaDesdeTexto(texto);
-  }
-
-  const km = haversineKm(DEPOSITO, { lat, lng });
-  const monto = aplicarTarifa(km);
-  // Cobertura: si el barrio matcheó una zona conocida (A–G) está cubierto; si no matcheó ninguna,
-  // se cubre solo si cae razonablemente cerca (~13 km en línea recta desde el depósito).
-  // Nunca cubierto más allá de 20 km. La Boca es un caso a confirmar con Lucio (ver PROYECTO_028).
-  const cubiertoMoto = km <= 20 && (zona !== null || km <= 13);
-
-  return res.json({
+exports.agentCotizarEnvio = conClave(async (req, res) => {
+  const u = await ubicar(req.query.direccion);
+  if (!u) return res.json({ ok: true, encontrada: false });
+  res.json({
     ok: true,
     encontrada: true,
-    direccion: { texto, lat, lng, zona },
-    zonaNombre: zona ? ZONA_NOMBRE[zona] : null,
-    km: Math.round(km * 10) / 10,
-    monto,
-    cubiertoMoto,
-    // El pago en efectivo contra entrega es solo para CABA. La única zona del mapa que NO es
-    // CABA es la B (Corredor Norte: Vicente López, Olivos, La Lucila, Martínez). Si no matcheó
-    // ninguna zona, tampoco se ofrece: no sabemos si es CABA.
-    // CABA confirmada por Google gana sobre el mapa de barrios; si Google no opino, se cae al mapa.
-    admiteEfectivo: esCABA === true ? true : (esCABA === false ? false : zonaAdmiteEfectivo(zona)),
-    estimado: true, // línea recta — la medición real por calle la hace el panel de moto al entregar
+    cubiertoMoto: u.cubiertoMoto,
+    monto: u.cubiertoMoto ? u.monto : null,
+    km: u.km,
+    zona: u.zona,
+    admiteEfectivo: u.esCABA,
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 4. POST /agentPedido
+// POST /agentPedido — calcula el resumen (preview: true) o carga el pedido
 // ─────────────────────────────────────────────────────────────────────────────
-exports.agentPedido = withAuth(async (req, res) => {
-  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "usar POST" });
+const ENVIO_LABEL = { moto: "🛵 Moto mensajería", uber: "⚡ Envío flash (Uber)", correo: "📦 Correo (Vía Cargo)" };
+
+// El agente a veces manda la dirección como texto y a veces partida en campos (calle, altura,
+// barrio, piso…): se arma siempre entera, para cotizar bien y para que el depósito la vea completa.
+function armarDireccion(d) {
+  if (typeof d === "string") return { texto: d.trim(), referencias: null };
+  const dir = d || {};
+  let texto = String(dir.texto || dir.calle || "").trim();
+  if (dir.altura && !texto.includes(String(dir.altura))) texto += ` ${dir.altura}`;
+  const piso = dir.piso && `piso ${dir.piso}`;
+  const depto = dir.depto && dir.depto !== dir.piso && `depto ${dir.depto}`;
+  for (const parte of [dir.barrio, dir.localidad, piso, depto]) {
+    if (parte && !texto.toLowerCase().includes(String(parte).toLowerCase())) texto += `, ${parte}`;
+  }
+  return { texto: texto.trim(), referencias: dir.referencias || null };
+}
+
+exports.agentPedido = conClave(async (req, res) => {
   const b = req.body || {};
+  const preview = b.preview === true || b.preview === "true";
+  const telefono = normalizarTelefono(b.telefono);
+  const tipoEnvio = b.tipoEnvio;
+  const medioPago = String(b.medioPago || "").trim();
+  const efectivo = /efectivo/i.test(medioPago);
+  const dir = armarDireccion(b.direccion);
+  const correo = b.datosCorreo || {};
+  const items = Array.isArray(b.items) ? b.items : [];
 
-  const tel = normalizarTelefono(b.telefono);
-  if (!tel) return res.status(400).json({ ok: false, error: "falta 'telefono'" });
-  if (!Array.isArray(b.items) || b.items.length === 0) {
-    return res.status(400).json({ ok: false, error: "falta 'items'" });
-  }
-  const tipoEnvio = ["moto", "uber", "correo", "retiro"].includes(b.tipoEnvio) ? b.tipoEnvio : null;
-  if (!tipoEnvio) {
-    return res.status(400).json({ ok: false, error: "'tipoEnvio' debe ser moto|uber|correo|retiro" });
-  }
+  if (!["moto", "uber", "correo"].includes(tipoEnvio)) return rechazar(res, "tipoEnvio tiene que ser moto, uber o correo");
+  if (efectivo && tipoEnvio !== "moto") return rechazar(res, "el efectivo contra entrega es solo con moto; en Uber y correo se paga por transferencia antes");
 
-  const esPreview = b.preview === true || b.preview === "true";
-  // El efectivo es contra entrega; cualquier otro medio (transferencia, dólares, USDT, el alias
-  // de la financiera) es pago previo y tiene que venir con su comprobante.
-  const esEfectivo = /efectivo/i.test(String(b.medioPago || ""));
-
-  // ── Datos obligatorios para CARGAR el pedido ────────────────────────────────
-  // No es una lista fija: primero se define el tipo de envío y el medio de pago, y recién esos
-  // dos deciden qué más es obligatorio. Un pedido a moto sin dirección llega al depósito
-  // imposible de despachar, y una transferencia sin comprobante es un pedido sin cobrar.
-  // El preview (tool armar_resumen) corre ANTES del pago, así que ahí todavía no se exige nada.
-  if (!esPreview) {
-    const medioPago = String(b.medioPago || "").trim();
-    const tieneComprobante =
-      !!b.comprobante && typeof b.comprobante === "object" && Object.keys(b.comprobante).length > 0;
-
-    const faltan = [];
-    if (!String(b.cliente || "").trim()) faltan.push("el nombre del cliente");
-    if (!medioPago) faltan.push("el medio de pago");
-    // El correo necesita datos que la moto no: sin DNI, localidad y CP no se puede despachar.
-    // El agente ya se los pide al cliente (ver Paso 4 del prompt), asi que tienen que llegar.
+  // Lo que falta para calcular el resumen y, si no es preview, para cargar el pedido.
+  const faltan = [];
+  if (!telefono) faltan.push("el teléfono");
+  if (!items.length) faltan.push("los productos");
+  if (!String(dir.texto || "").trim()) faltan.push("la dirección");
+  if (!medioPago) faltan.push("el medio de pago");
+  if (tipoEnvio === "correo" && typeof correo.aSucursal !== "boolean") faltan.push("si el correo va a sucursal o a domicilio");
+  if (!preview) {
+    if (!String(b.cliente || "").trim()) faltan.push("a nombre de quién va el pedido");
+    const hayComprobante = !!b.comprobanteUrl || Object.values(b.comprobante || {}).some((v) => String(v || "").trim());
+    if (!efectivo && !hayComprobante) faltan.push("el comprobante de pago");
     if (tipoEnvio === "correo") {
-      const dc = b.datosCorreo || {};
-      if (!String(dc.dni || "").trim()) faltan.push("el DNI (hace falta para el correo)");
-      if (!String(dc.localidad || "").trim()) faltan.push("la localidad (hace falta para el correo)");
-      if (!String(dc.cp || "").trim()) faltan.push("el codigo postal (hace falta para el correo)");
-    }
-    // Retiro es el único tipo de envío que no necesita dirección.
-    if (tipoEnvio !== "retiro" && !String((b.direccion || {}).texto || "").trim()) {
-      faltan.push("la dirección de entrega");
-    }
-    // El comprobante solo es obligatorio cuando el pago es PREVIO. No lo es con efectivo contra
-    // entrega ni con correo, que se abona al recibir. Si igual viene un comprobante, se guarda.
-    const pagoContraEntrega = esEfectivo || tipoEnvio === "correo";
-    if (medioPago && !pagoContraEntrega && !tieneComprobante) faltan.push("el comprobante de pago");
-    // valorEnvio tiene que venir siempre que haya envio. Se acepta 0 (envio bonificado), pero no
-    // que falte: si no, un pedido se carga con el envio sin cobrar y nadie se entera.
-    if (tipoEnvio !== "retiro" && (b.valorEnvio === undefined || b.valorEnvio === null || b.valorEnvio === "")) {
-      faltan.push("el valor del envío (poné 0 si se lo bonificás)");
-    }
-
-    // El efectivo contra entrega solo vale donde el cotizador lo habría ofrecido. Se revalida
-    // acá y no se confía en el agente: la zona que mandó se usa si viene, y si no se recalcula
-    // del texto de la dirección con el mismo mapa de barrios que usa agentCotizarEnvio.
-    if (esEfectivo && tipoEnvio === "moto") {
-      const zonaPedido = (b.direccion || {}).zona || zonaDesdeTexto((b.direccion || {}).texto);
-      let admite = zonaAdmiteEfectivo(zonaPedido);
-      // El mapa de barrios no cubre toda CABA. Antes de rechazar, se le pregunta a Google: asi
-      // un cliente de Flores o de Once no se queda sin efectivo solo porque su barrio no figura
-      // en la lista. Solo se llama en este caso, que es el raro, para no sumar latencia al resto.
-      if (!admite) {
-        const caba = await direccionEsCABA((b.direccion || {}).texto);
-        if (caba === true) admite = true;
-      }
-      if (!admite) {
-        return res.status(400).json({
-          ok: false,
-          error:
-            "NO se cargó el pedido: esa dirección no admite pago en efectivo contra entrega " +
-            "(el efectivo es solo para CABA). Ofrecele transferencia y volvé a intentar.",
-        });
+      for (const [campo, label] of [["dni", "el DNI"], ["localidad", "la localidad"], ["cp", "el código postal"]]) {
+        if (!String(correo[campo] || "").trim()) faltan.push(label);
       }
     }
+  }
+  if (faltan.length) return rechazar(res, `falta ${faltan.join(", ")}: pedíselo al cliente antes de volver a intentar`);
 
-    // El Uber es siempre pago previo por transferencia: nunca puede cerrarse en efectivo.
-    if (esEfectivo && tipoEnvio === "uber") {
-      return res.status(400).json({
-        ok: false,
-        error:
-          "NO se cargó el pedido: el envío flash (Uber) se paga siempre por transferencia previa, " +
-          "nunca en efectivo. Confirmá con el cliente cómo va a pagar antes de volver a intentar.",
-      });
-    }
-
-    if (faltan.length) {
-      return res.status(400).json({
-        ok: false,
-        error:
-          `NO se cargó el pedido porque falta ${faltan.join(", falta ")}. ` +
-          "Pedíselo al cliente en tu próxima respuesta y recién después volvé a llamar a crear_pedido.",
-        faltan,
-      });
-    }
+  // Envío: la moto se cotiza con la dirección y el Uber con lo que cargó el depósito. Nunca con un
+  // número que mande el agente.
+  let valorEnvio = 0;
+  let ubicacion = null;
+  if (tipoEnvio === "moto") {
+    ubicacion = await ubicar(dir.texto);
+    if (!ubicacion) return rechazar(res, "no pude ubicar la dirección: pedile calle, altura y barrio");
+    if (!ubicacion.cubiertoMoto) return rechazar(res, "esa dirección no entra en moto: ofrecele Uber o correo");
+    if (efectivo && !ubicacion.esCABA) return rechazar(res, "esa dirección no admite efectivo (es solo para CABA): ofrecele transferencia");
+    valorEnvio = ubicacion.monto;
+  } else if (tipoEnvio === "uber") {
+    const cot = await cotizacionUber(telefono);
+    if (!cot) return rechazar(res, "todavía no hay una cotización de Uber vigente para este cliente: derivá con motivo cotizar_uber");
+    valorEnvio = Number(cot.montoUber);
   }
 
-  // ── PRECIOS: no se confía en lo que dijo el modelo ──────────────────────────
-  // Se leen las listas del día y se resuelve el importe de cada línea por código. El precio
-  // que mandó el agente solo se usa de respaldo, si ese producto no figura en ninguna lista.
-  const opDocPrecios = await db.collection("settings").doc("operativo").get();
-  const opPrecios = opDocPrecios.exists ? opDocPrecios.data() : {};
-  const listasPrecios = [
-    ...parsearListaPrecios(opPrecios.preciosVapesTexto),
-    ...parsearListaPrecios(opPrecios.preciosThcTexto),
-    ...parsearListaPrecios(opPrecios.perfumesTexto),
-    ...parsearListaPrecios(opPrecios.appleTexto),
-  ];
-
-  const $ = (n) => `$${Number(n || 0).toLocaleString("es-AR")}`;
-  const lineas = b.items.map((it) => {
-    const cantidad = Math.max(1, Number(it.cantidad) || 1);
-    const resuelto = resolverPrecioLinea(listasPrecios, it.producto, cantidad);
-    const importeAgente = (Number(it.precioUnitario) || 0) * cantidad;
-    const importe = resuelto ? resuelto.importe : importeAgente;
-    return {
-      producto: it.producto,
-      variante: it.variante,
-      cantidad,
-      importe,
-      unitario: Math.round(importe / cantidad),
-      fuente: resuelto ? "lista" : "agente",
-      difiere: !!(resuelto && importeAgente && importeAgente !== resuelto.importe),
-    };
-  });
-
-  // ── Ninguna linea puede quedar en $0 ────────────────────────────────────────
-  // Si el producto no figura en las listas del dia y el agente tampoco mando un precio, el
-  // importe daba 0 y el pedido se cargaba GRATIS, sin que nadie se enterara. Es la falla mas
-  // cara posible, asi que corta el pedido antes de calcular nada.
-  const sinPrecio = lineas.filter((l) => !l.importe || l.importe <= 0);
-  if (sinPrecio.length) {
-    const nombres = sinPrecio.map((l) => `"${l.producto}"`).join(", ");
-    return res.status(400).json({
-      ok: false,
-      error:
-        `NO se cargó el pedido: no pude resolver el precio de ${nombres}. ` +
-        "Ese producto no figura en las listas de hoy con ese nombre. Confirmá con el cliente " +
-        "cuál es exactamente, buscándolo en la plantilla de su categoría, y volvé a intentar.",
-      sinPrecio: sinPrecio.map((l) => l.producto),
-    });
+  // Precios: siempre de las listas del día.
+  const op = await leerOperativo();
+  const listas = LISTAS_CON_PRECIO.flatMap((campo) => parsearProductos(op[campo]));
+  const ofertas = parsearProductos(op.ofertasTexto);
+  const lineas = [];
+  for (const it of items) {
+    const cantidad = Number(it.cantidad) || 1;
+    const r = precioDeLinea(listas, ofertas, { ...it, cantidad });
+    if (r.error) return rechazar(res, r.error);
+    lineas.push({ producto: String(it.producto), variante: String(it.variante || ""), cantidad, importe: r.importe });
   }
 
-  const lineasItems = lineas.map(
-    (l) => `* ${l.cantidad}x ${l.producto}${l.variante ? " - " + l.variante : ""}` +
-      (l.unitario ? ` (${$(l.unitario)} c/u)` : "")
-  );
   const subtotal = lineas.reduce((s, l) => s + l.importe, 0);
-  const valorEnvio = Number(b.valorEnvio) || 0;
-  // El envio seguro es solo para el flash: si viene marcado en otro tipo de envio, se ignora.
-  const envioSeguro = (b.envioSeguro === true || b.envioSeguro === "true") && tipoEnvio === "uber";
+  const envioSeguro = tipoEnvio === "uber" && (b.envioSeguro === true || b.envioSeguro === "true");
   const montoEnvioSeguro = envioSeguro ? PRECIO_ENVIO_SEGURO : 0;
-  // El descuento por efectivo solo corre si realmente paga en efectivo contra entrega.
-  const montoDescuento = esEfectivo ? descuentoEfectivo(subtotal) : 0;
+  const montoDescuento = efectivo ? descuentoEfectivo(subtotal) : 0;
   const total = subtotal + valorEnvio + montoEnvioSeguro - montoDescuento;
-  const dir = b.direccion || {};
-  const zonaPedidoNormalizada = normalizarZona(dir.zona);
-  const ENVIO_LABEL = {
-    moto: "🛵 Moto mensajería",
-    uber: "⚡ Envío flash (Uber)",
-    correo: "📮 Correo (Cargo)",
-    retiro: "🏠 Retiro",
-  };
+  const envioCorreo = tipoEnvio === "correo" ? CORREO[correo.aSucursal ? "sucursal" : "domicilio"] : 0;
 
   const mensaje = [
     "🛒 PRODUCTOS",
-    ...lineasItems,
+    ...lineas.map((l) => `* ${l.cantidad}x ${l.producto}${l.variante ? " - " + l.variante : ""}: ${$(l.importe)}`),
     "",
     "💰 TOTALES",
     `Subtotal: ${$(subtotal)}`,
@@ -703,307 +522,131 @@ exports.agentPedido = withAuth(async (req, res) => {
     envioSeguro ? `🛡️ Envío seguro: ${$(montoEnvioSeguro)}` : null,
     montoDescuento ? `💵 Descuento por efectivo: -${$(montoDescuento)}` : null,
     `TOTAL A PAGAR: ${$(total)}`,
+    envioCorreo ? `(el envío por correo, ${$(envioCorreo)}, se le paga a Vía Cargo al recibir)` : null,
     "",
     "📦 ENTREGA",
-    ENVIO_LABEL[tipoEnvio] + (envioSeguro ? "  —  🛡️ CON ENVÍO SEGURO" : ""),
-    dir.texto ? dir.texto : null,
-    zonaPedidoNormalizada ? `Zona ${zonaPedidoNormalizada}` : null,
+    ENVIO_LABEL[tipoEnvio] + (envioSeguro ? " — 🛡️ CON ENVÍO SEGURO" : "") +
+      (tipoEnvio === "correo" ? (correo.aSucursal ? " a sucursal" : " a domicilio") : ""),
+    dir.texto,
+    ubicacion && ubicacion.zona ? `Zona ${ubicacion.zona}` : null,
     dir.referencias ? `Ref: ${dir.referencias}` : null,
-    tipoEnvio === "correo" && b.datosCorreo ? `DNI: ${b.datosCorreo.dni || "-"}` : null,
-    tipoEnvio === "correo" && b.datosCorreo ? `${b.datosCorreo.localidad || "-"} (CP ${b.datosCorreo.cp || "-"})` : null,
+    tipoEnvio === "correo" && correo.dni ? `DNI: ${correo.dni} — ${correo.localidad} (CP ${correo.cp})` : null,
     "",
     "👤 CLIENTE",
-    `${b.cliente || "-"} — ${tel}`,
-    b.origen === "publicidad" ? "📣 Viene de un anuncio (Ads) — tildar en \"Finalizar pedido\"" : null,
+    `${b.cliente || "-"} — ${telefono}`,
     "",
-    b.medioPago ? `💳 ${b.medioPago}` : null,
+    `💳 ${medioPago}`,
     b.comprobante && b.comprobante.numero ? `Comprobante: ${b.comprobante.numero}` : null,
-    b.notas ? `📝 ${b.notas}` : null,
-  ]
-    .filter((l) => l !== null)
-    .join("\n");
+  ].filter((l) => l !== null).join("\n");
 
-  // ── preview: solo devuelve el resumen ya calculado, NO escribe nada ─────────
-  // Lo usa la tool armar_resumen, para que el resumen que ve el cliente antes de pagar salga
-  // de la misma cuenta que el pedido final y el agente no tenga que sumar nada.
-  if (esPreview) {
-    return res.json({
-      ok: true,
-      preview: true,
-      mensaje,
-      subtotal,
-      valorEnvio,
-      envioSeguro,
-      montoEnvioSeguro,
-      montoDescuento,
-      total,
-      lineas: lineas.map((l) => ({
-        producto: l.producto, variante: l.variante, cantidad: l.cantidad,
-        unitario: l.unitario, importe: l.importe, fuente: l.fuente, difiere: l.difiere,
-      })),
-    });
-  }
+  if (preview) return res.json({ ok: true, preview: true, mensaje, total });
 
-  const coleccionPedidos =
-    DESVIAR_PEDIDOS_DE_PRUEBA && tel === NUMERO_TEST ? "pedidos_test" : "pedidos";
-
-  // 1) Pedido — MISMOS campos base que hoy + estructurados nuevos. Con el interruptor de pruebas
-  // apagado (producción) esto siempre escribe en `pedidos` y le llega al panel del depósito.
-  const pedidoRef = await db.collection(coleccionPedidos).add({
+  const pedidoRef = await db.collection("pedidos").add({
+    // Campos que ya usaba el panel:
     mensaje,
     estado: "pendiente",
     tipoEnvio,
     createdAt: new Date().toISOString(),
-    // nuevos (opcionales — no rompen nada que lea pedidos):
-    telefono: tel,
-    cliente: b.cliente || "",
-    direccion: dir.texto
-      ? {
-          texto: dir.texto,
-          lat: typeof dir.lat === "number" ? dir.lat : null,
-          lng: typeof dir.lng === "number" ? dir.lng : null,
-          // La zona SOLO puede ser una de las del mapa. Si el barrio no esta mapeado,
-          // cotizar_envio devuelve null y el agente tiende a inventarla con el nombre del
-          // barrio ("Flores"), que despues rompe el agrupado por zona del recorrido de moto.
-          zona: zonaPedidoNormalizada,
-          referencias: dir.referencias || null,
-        }
-      : null,
+    // Estructurados del agente:
+    telefono,
+    cliente: String(b.cliente).trim(),
+    direccion: {
+      texto: dir.texto,
+      referencias: dir.referencias || null,
+      lat: ubicacion ? ubicacion.lat : null,
+      lng: ubicacion ? ubicacion.lng : null,
+      zona: ubicacion ? ubicacion.zona : null,
+    },
+    items: lineas,
     valorEnvio,
     envioSeguro,
     montoEnvioSeguro,
     montoDescuento,
-    // Solo para correo: DNI, localidad y CP. En los demas envios queda null.
-    datosCorreo:
-      tipoEnvio === "correo" && b.datosCorreo
-        ? {
-            dni: String(b.datosCorreo.dni || "").trim(),
-            localidad: String(b.datosCorreo.localidad || "").trim(),
-            cp: String(b.datosCorreo.cp || "").trim(),
-          }
-        : null,
-    medioPago: b.medioPago || null,
+    total,
+    medioPago,
+    cuentaCobro: efectivo ? null : (ALIASES[op.aliasActivo] ? op.aliasActivo : "alias1"),
     comprobante: b.comprobante || null,
-    comprobanteImagen: null, // se completa abajo si el agente mandó la foto
-    origen: b.origen || null,   // publicidad / organico / null — atribución CTWA
-    items: b.items,
+    comprobanteImagen: null,
+    datosCorreo: tipoEnvio === "correo"
+      ? { dni: String(correo.dni).trim(), localidad: String(correo.localidad).trim(), cp: String(correo.cp).trim(), aSucursal: correo.aSucursal, valor: envioCorreo }
+      : null,
   });
 
-  // 1b) Comprobante: se copia la foto a Storage y el pedido guarda una URL propia, no la de
-  // Chatwoot. Si la copia falla, el pedido queda cargado igual pero sin foto — nunca se pierde
-  // una venta porque no se pudo bajar una imagen.
+  // La foto del comprobante se copia a Storage para no depender de la URL de Chatwoot. Si falla,
+  // el pedido queda cargado igual, sin foto.
   if (b.comprobanteUrl) {
-    const guardado = await copiarComprobanteAStorage(b.comprobanteUrl, pedidoRef.id);
-    if (guardado) {
-      await pedidoRef.update({
-        comprobanteImagen: {
-          url: `${SERVE_COMPROBANTE_BASE}?pedido=${pedidoRef.id}`,
-          path: guardado.path,
-          contentType: guardado.contentType,
-        },
-      });
-    }
+    const imagen = await copiarComprobante(b.comprobanteUrl, pedidoRef.id);
+    if (imagen) await pedidoRef.update({ comprobanteImagen: imagen });
   }
 
-  // 2) clientes_bot — registra/incrementa. primerContacto y origen solo se setean la 1ª vez.
-  const clienteRef = db.collection("clientes_bot").doc(tel);
-  const nowISO = new Date().toISOString();
-  await db.runTransaction(async (t) => {
-    const snap = await t.get(clienteRef);
-    const patch = {
-      cantidadPedidos: admin.firestore.FieldValue.increment(1),
-      ultimoPedido: nowISO,
-    };
-    if (!snap.exists) {
-      patch.primerContacto = nowISO;
-      if (b.origen) patch.origen = b.origen;
-    } else if (b.origen && !snap.data().origen) {
-      patch.origen = b.origen;
-    }
-    t.set(clienteRef, patch, { merge: true });
-  });
-
-  // 3) ultimo_pedido_whatsapp — para que el "cancelar" por WhatsApp que ya existe siga andando.
-  await db
-    .collection("ultimo_pedido_whatsapp")
-    .doc(tel)
-    .set({ pedidoId: pedidoRef.id, createdAt: new Date().toISOString() });
-
-  // 4) Alias financiera → registra el comprobante aparte (lo pidió Lucio explícito).
-  // Quién cobró lo decide el alias activo del día en settings/operativo, NO lo que el agente
-  // haya escrito en medioPago: el modelo manda "transferencia", nunca el nombre interno del
-  // alias, así que con la comparación vieja esto no se disparaba nunca. Se sigue aceptando
-  // medioPago === "alias3" por si alguien lo manda explícito.
-  const aliasActivo = ALIASES_VALIDOS.includes(opPrecios.aliasActivo) ? opPrecios.aliasActivo : "alias1";
-  const cobroFinanciera = aliasActivo === ALIAS_FINANCIERA || b.medioPago === ALIAS_FINANCIERA;
-  if (cobroFinanciera && !esEfectivo && b.comprobante) {
-    await db.collection("comprobantes_financiera").add({
-      pedidoId: pedidoRef.id,
-      numero: b.comprobante.numero || "",
-      monto: Number(b.comprobante.monto) || total,
-      nombre: b.comprobante.nombre || b.cliente || "",
-      telefono: tel,
-      createdAt: new Date().toISOString(),
-    });
-  }
-
-  return res.json({ ok: true, pedidoId: pedidoRef.id, estado: "pendiente", mensaje });
+  res.json({ ok: true, pedidoId: pedidoRef.id, mensaje, total });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 5. GET /agentEstadoOperativo
-// ─────────────────────────────────────────────────────────────────────────────
-// El staff setea esto desde /operativo en el dashboard. Solo campos estructurados (nada de
-// texto libre) para que el bot no se confunda: la frase la arma el prompt segun `situacion`.
-const SITUACIONES_VALIDAS = ["sin_demora", "normal", "demora", "demora_fuerte", "solo_manana"];
-const ALIASES_VALIDOS = ["alias1", "alias2", "alias3"];
+const EXTENSIONES = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic", "application/pdf": "pdf" };
 
-exports.agentEstadoOperativo = withAuth(async (req, res) => {
-  const doc = await db.collection("settings").doc("operativo").get();
-  const d = doc.exists ? doc.data() : {};
-  const situacion = SITUACIONES_VALIDAS.includes(d.situacion) ? d.situacion : "sin_demora";
-  const aliasActivo = ALIASES_VALIDOS.includes(d.aliasActivo) ? d.aliasActivo : "alias1";
-  const tanda = await contarTanda(d.limitePorTanda);
-  return res.json({
-    ok: true,
-    situacion,                    // sin_demora | normal | demora | demora_fuerte | solo_manana
-    proximaSalida: d.proximaSalida || null,
-    aliasActivo,                  // alias1 | alias2 | alias3 — cual usar hoy
-    // Textos libres que le llegan al bot: los pega el staff a mano en /operativo (sección
-    // "Agente IA"), se mandan tal cual como plantillas protegidas (ver PLANTILLAS en el prompt).
-    stockNicotinaTexto: typeof d.stockNicotinaTexto === "string" ? d.stockNicotinaTexto.trim().slice(0, 10000) : "",
-    stockThcTexto: typeof d.stockThcTexto === "string" ? d.stockThcTexto.trim().slice(0, 10000) : "",
-    preciosVapesTexto: typeof d.preciosVapesTexto === "string" ? d.preciosVapesTexto.trim().slice(0, 10000) : "",
-    preciosThcTexto: typeof d.preciosThcTexto === "string" ? d.preciosThcTexto.trim().slice(0, 10000) : "",
-    perfumesTexto: typeof d.perfumesTexto === "string" ? d.perfumesTexto.trim().slice(0, 10000) : "",
-    appleTexto: typeof d.appleTexto === "string" ? d.appleTexto.trim().slice(0, 10000) : "",
-    preciosMayoristaTexto: typeof d.preciosMayoristaTexto === "string" ? d.preciosMayoristaTexto.trim().slice(0, 10000) : "",
-    // Ofertas temporales: promo puntual de la semana. Vacío la mayor parte del tiempo.
-    ofertasTexto: typeof d.ofertasTexto === "string" ? d.ofertasTexto.trim().slice(0, 10000) : "",
-    // Cupo de la tanda, para que el agente sepa si puede prometer que sale en esta o en la siguiente.
-    tanda,
-    actualizadoEn: d.actualizadoEn || null,
-  });
-});
-
-// Cuenta cuantos pedidos siguen sin completar en el panel y los compara contra el limite.
-// Si algo falla, devuelve la tanda como NO llena: ante la duda se vende, no se frena.
-async function contarTanda(limiteConfigurado) {
-  const limite = Number(limiteConfigurado) > 0 ? Number(limiteConfigurado) : LIMITE_POR_TANDA_DEFAULT;
+async function copiarComprobante(url, pedidoId) {
   try {
-    const snap = await db.collection("pedidos").where("estado", "in", ESTADOS_SIN_COMPLETAR).get();
-    let ocupados = 0;
-    snap.forEach((doc) => {
-      const p = doc.data() || {};
-      // Los pedidos viejos no tienen tipoEnvio; se cuentan igual, ocupan lugar en la moto.
-      if (!p.tipoEnvio || TIPOS_QUE_OCUPAN_TANDA.includes(p.tipoEnvio)) ocupados += 1;
-    });
-    return { ocupados, limite, llena: ocupados >= limite, ok: true };
+    const resp = await axios.get(url, { responseType: "arraybuffer", timeout: 15000, maxContentLength: 15 * 1024 * 1024 });
+    const tipo = String(resp.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+    if (!EXTENSIONES[tipo]) return null;
+    const path = `comprobantes/${new Date().toISOString().slice(0, 7).replace("-", "/")}/${pedidoId}.${EXTENSIONES[tipo]}`;
+    await admin.storage().bucket(STORAGE_BUCKET).file(path).save(Buffer.from(resp.data), { contentType: tipo });
+    return { url: `${SERVE_COMPROBANTE_BASE}?pedido=${pedidoId}`, path, contentType: tipo };
   } catch (e) {
-    console.error("no se pudo contar la tanda:", e.message);
-    return { ocupados: 0, limite, llena: false, ok: false };
+    console.error("[agente-api] no se pudo copiar el comprobante", e.message);
+    return null;
   }
 }
 
+// GET /serveComprobante?pedido= — la foto del comprobante para el panel. Sin clave a propósito,
+// igual que servePdf: el panel la muestra con un <img>. La "clave" es el id aleatorio del pedido.
+exports.serveComprobante = functions.https.onRequest(async (req, res) => {
+  const pedidoId = String(req.query.pedido || "").trim();
+  const snap = pedidoId ? await db.collection("pedidos").doc(pedidoId).get() : null;
+  const img = snap && snap.exists && snap.data().comprobanteImagen;
+  if (!img || !img.path) return res.status(404).send("ese pedido no tiene comprobante guardado");
+  res.setHeader("Content-Type", img.contentType);
+  res.setHeader("Cache-Control", "private, max-age=3600");
+  admin.storage().bucket(STORAGE_BUCKET).file(img.path).createReadStream()
+    .on("error", () => res.status(404).end())
+    .pipe(res);
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
-// 6. Cotización manual de Uber — cola de pedidos derivados
-//
-// El bot no puede cotizar Uber (el precio no sale de una fórmula), así que cuando
-// lo necesita llama a avisar_al_equipo con motivo "cotizar_uber". Esa derivación
-// crea un registro acá con POST /agentCrearCotizacionUber. El equipo lo resuelve
-// desde /cotizar-uber en el panel (carga el monto ahí mismo, estado pasa a
-// "cotizado"). Un workflow de n8n hace polling con GET
-// /agentCotizacionesUberPendientes, manda el WhatsApp al cliente, reactiva la
-// conversación pausada, y marca el registro como "procesado" con POST
-// /agentMarcarCotizacionUberProcesada para no reenviarlo.
+// Cotización de Uber: el agente deriva → el depósito carga el monto en /cotizar-uber → este
+// trigger le avisa a n8n, que le manda el precio al cliente y reactiva el bot.
 // ─────────────────────────────────────────────────────────────────────────────
-exports.agentCrearCotizacionUber = withAuth(async (req, res) => {
+exports.agentCrearCotizacionUber = conClave(async (req, res) => {
   const b = req.body || {};
   const idConversacion = String(b.idConversacion || "").trim();
-  const telefonoCliente = String(b.telefonoCliente || "").trim();
-  if (!idConversacion || !telefonoCliente) {
-    return res.status(400).json({ ok: false, error: "faltan 'idConversacion' o 'telefonoCliente'" });
-  }
+  const telefonoCliente = normalizarTelefono(b.telefonoCliente);
+  if (!idConversacion || !telefonoCliente) return rechazar(res, "faltan idConversacion o telefonoCliente");
   const ref = await db.collection("cotizaciones_uber").add({
     idConversacion,
     telefonoCliente,
     nombreCliente: String(b.nombreCliente || "").trim(),
     direccion: String(b.direccion || "").trim(),
     explicacionCaso: String(b.explicacionCaso || "").trim(),
-    estado: "pendiente", // pendiente -> cotizado (staff cargó el monto) -> procesado (n8n ya avisó)
+    estado: "pendiente", // pendiente → cotizado (el depósito cargó el monto) → procesado (n8n ya avisó)
     montoUber: null,
     createdAt: new Date().toISOString(),
   });
-  return res.json({ ok: true, id: ref.id });
+  res.json({ ok: true, id: ref.id });
 });
 
-exports.agentCotizacionesUberPendientes = withAuth(async (req, res) => {
-  const snap = await db.collection("cotizaciones_uber").where("estado", "==", "cotizado").get();
-  const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  return res.json({ ok: true, items });
-});
-
-exports.agentMarcarCotizacionUberProcesada = withAuth(async (req, res) => {
-  const id = String((req.body || {}).id || "").trim();
-  if (!id) return res.status(400).json({ ok: false, error: "falta 'id'" });
-  await db.collection("cotizaciones_uber").doc(id).update({
-    estado: "procesado",
-    procesadoEn: new Date().toISOString(),
-  });
-  return res.json({ ok: true });
-});
-
-// Se dispara solo cuando el panel (CotizarUberPage.jsx) pasa un doc a
-// estado "cotizado". Avisa al workflow de n8n al instante en vez de esperar
-// a que el polling de respaldo (cada varios minutos) lo encuentre — el
-// workflow de n8n vuelve a llamar a agentCotizacionesUberPendientes igual
-// que en el polling normal, esto solo lo despierta antes.
 exports.onCotizacionUberConfirmada = onDocumentUpdated("cotizaciones_uber/{id}", async (event) => {
-  const before = event.data.before.data() || {};
-  const after = event.data.after.data() || {};
-  if (after.estado !== "cotizado" || before.estado === "cotizado") return;
+  const antes = event.data.before.data() || {};
+  const cot = event.data.after.data() || {};
+  if (cot.estado !== "cotizado" || antes.estado === "cotizado") return;
   try {
-    await axios.post(N8N_COTIZACION_UBER_WEBHOOK, { id: event.params.id }, {
-      headers: { "X-Agent-Key": AGENT_API_KEY },
-      timeout: 5000,
-    });
+    await axios.post(
+      N8N_COTIZACION_UBER_WEBHOOK,
+      { idConversacion: cot.idConversacion, montoUber: cot.montoUber },
+      { headers: { "X-Agent-Key": AGENT_API_KEY }, timeout: 10000 }
+    );
+    await event.data.after.ref.update({ estado: "procesado", procesadoEn: new Date().toISOString() });
   } catch (e) {
-    console.error("[agente-api] no se pudo avisar a n8n de la cotizacion confirmada, el polling de respaldo la va a agarrar igual", e.message);
+    // Queda en "cotizado" y el panel lo sigue mostrando como "Enviando al cliente…".
+    console.error("[agente-api] no se pudo avisar a n8n de la cotización", event.params.id, e.message);
   }
-});
-
-// ──────────────────────────────────────────────────────────────────────
-// 9. GET /serveComprobante?pedido=<id>
-// Sirve la foto del comprobante guardada en Storage. Sin X-Agent-Key a propósito, igual que
-// servePdf: el panel la muestra con un <img>, donde no se pueden mandar headers. La "clave" es
-// el id de Firestore, aleatorio de 20 caracteres.
-// ──────────────────────────────────────────────────────────────────────
-exports.serveComprobante = functions.https.onRequest(async (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  if (req.method === "OPTIONS") return res.status(204).send("");
-
-  const pedidoId = String(req.query.pedido || "").trim();
-  if (!pedidoId) return res.status(400).send("falta 'pedido'");
-
-  // El pedido puede estar en cualquiera de las dos colecciones.
-  let data = null;
-  for (const col of ["pedidos", "pedidos_test"]) {
-    const snap = await db.collection(col).doc(pedidoId).get();
-    if (snap.exists) { data = snap.data(); break; }
-  }
-  if (!data) return res.status(404).send("pedido no encontrado");
-
-  const img = data.comprobanteImagen;
-  if (!img || !img.path) return res.status(404).send("ese pedido no tiene comprobante guardado");
-
-  const file = admin.storage().bucket(STORAGE_BUCKET).file(img.path);
-  const [existe] = await file.exists();
-  if (!existe) return res.status(404).send("el archivo no está en Storage");
-
-  res.setHeader("Content-Type", img.contentType || "image/jpeg");
-  res.setHeader("Cache-Control", "private, max-age=3600");
-  file.createReadStream()
-    .on("error", (err) => { console.error("stream comprobante:", err); res.status(500).end(); })
-    .pipe(res);
 });

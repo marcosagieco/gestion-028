@@ -1,211 +1,106 @@
-# API para el Agente de IA — contrato
+# API del agente de WhatsApp — contrato
 
-Endpoints HTTP (Cloud Functions) que consume el agente conversacional de WhatsApp desde n8n.
-Todo lo que el agente necesita leer/escribir de `gestion-028` pasa por acá — **no** toca Firestore
-directo.
-
-## Convenciones
+Cloud Functions que usa el agente de n8n (`functions/agente-api.js`). Todo lo que es plata o
+logística se resuelve acá, nunca en el modelo.
 
 - **Base:** `https://us-central1-gestion-028.cloudfunctions.net/`
-- **Auth:** header `X-Agent-Key: <AGENT_API_KEY>` en todos los endpoints. La clave vive en la
-  config de Functions (`functions.config()` / env) y en una credencial de n8n. Mismo criterio que
-  `FACTURA_WEB_KEY` / `VERIFY_TOKEN` que ya usan.
-- **Errores:** siempre `{ "ok": false, "error": "<motivo>" }` con status 4xx/5xx. Nunca 200 con error.
-- Fuzzy match de producto/variante: reusar `normalizarParaComparar` de `index.js`.
+- **Auth:** header `X-Agent-Key: <AGENT_API_KEY>` (en `functions/.env` y en la credencial
+  "028 Agent API" de n8n). Sin la clave: `401`.
+- **Errores:** `{ ok: false, error }` con status 4xx. El texto de `error` está escrito para el
+  agente: le dice qué le falta pedirle al cliente.
+- **Tests:** `node functions/agente-api.test.js` (sin Firestore ni Google reales).
 
----
+## GET `/agentEstadoOperativo`
 
-## 1. `GET /agentStock` — consultar stock
-
-Query params:
-| param | req | ejemplo |
-|---|---|---|
-| `producto` | sí | `elfbar ice king` |
-| `variante` | no | `dragon strawnana` |
-
-Lógica: recorre `batches` (ordenado por `createdAt`, salteando los que tienen `finalizedAt`),
-matchea `items[]` por `product` (+ `variant` si vino), suma `currentStock`.
-
-- Con `variante` → devuelve esa variante.
-- Sin `variante` → devuelve todas las variantes del producto con su stock.
+Todo lo del día, en una sola llamada:
 
 ```json
 {
   "ok": true,
-  "matches": [
-    { "product": "Elfbar Ice King", "variant": "Dragon Strawnana", "stock": 8 },
-    { "product": "Elfbar Ice King", "variant": "Blue Razz Ice", "stock": 20 }
-  ],
-  "totalStock": 28
+  "salida": { "dia": "hoy", "primeraSalida": "13:30", "domingo": false },
+  "demora": "hoy estamos con una demora de alrededor de 2 hs en los envíos (la próxima moto sale a las 16:00)",
+  "tandaLlena": false,
+  "plantillas": { "STOCK_NICOTINA": "…", "PRECIOS_VAPES": "…", "ALIAS": "…", "FORMAS_DE_ENTREGA": "…" }
 }
 ```
 
-Sin match → `{ "ok": true, "matches": [], "totalStock": 0 }`.
+- `salida`: si un pedido tomado ahora sale hoy o mañana. Corte 20:15; primera salida 13:30,
+  miércoles 14:00, domingos 17:00 (y 20:00).
+- `tandaLlena`: pedidos de moto y Uber sin completar en el panel ≥ límite de `/operativo`.
+- `plantillas`: las 8 listas de `/operativo` (`STOCK_NICOTINA`, `PRECIOS_VAPES`, `STOCK_THC`,
+  `PRECIOS_THC`, `PERFUMES`, `APPLE_ACCESORIOS`, `PRECIOS_MAYORISTA`, `OFERTAS`), el `ALIAS` activo
+  y los textos fijos (`FORMAS_DE_ENTREGA`, `ENVIO_SEGURO`, `WEB`, `DESCUENTO_EFECTIVO`, `GRACIAS`,
+  `CONFIANZA`). Una lista vacía llega como `""`.
 
----
-
-## 2. `GET /agentCliente` — nuevo vs. recurrente
-
-Query: `telefono` (req) — normalizado a `549...` (como hace `numeroRemitente` en `index.js`).
-
-Lógica:
-1. Lee `clientes_bot/{telefono}` (colección nueva que mantiene el agente).
-2. Fallback: si no existe, cuenta `pedidos` con `telefono == X`.
-3. Si no hay nada → nuevo.
+## GET `/agentCotizarEnvio?direccion=`
 
 ```json
-{
-  "ok": true,
-  "telefono": "5491158696086",
-  "nuevo": true,
-  "cantidadPedidos": 0,
-  "ultimoPedido": null,
-  "origen": null
-}
+{ "ok": true, "encontrada": true, "cubiertoMoto": true, "monto": 5467, "km": 5.5, "zona": "C1", "admiteEfectivo": true }
 ```
 
-> Nota: clientes que llegan por IG/orgánico y nunca compraron por acá se leen como `nuevo` la
-> primera vez — aceptado por el cliente en el onboarding.
+- Cobertura de moto: CABA entera + Corredor Norte (zona B: Vicente López, Olivos, La Lucila,
+  Florida, Munro, Martínez). Fuera de eso `cubiertoMoto: false` y `monto: null`.
+- Precio: $1.000 por km en línea recta desde el depósito, mínimo $3.000.
+- `admiteEfectivo`: solo CABA.
 
----
+## POST `/agentPedido`
 
-## 3. `GET /agentCotizarEnvio` — valor de envío en moto
-
-Query: `direccion` (texto libre) **o** `lat` + `lng`.
-
-Lógica (reusar `src/reparto/`):
-1. Geocodificar `direccion` (Geocoding API) → `lat/lng` + `address_components`.
-2. Zona: `sugerirZonaPorComponentesDireccion(...)` de `zonas.js`.
-3. Km real: `getDrivingDistanceKm(DEPOSITO_ORIGEN, {lat,lng})` de `routesApi.js`.
-4. Monto: `Math.max(km * 1000, 3000)` (`aplicarTarifa` de `motomensajeria.js`).
-5. Cobertura (`cubiertoMoto`): `true` si el barrio matcheó una zona conocida (A–G), **o** si cae
-   a ≤13 km en línea recta del depósito. Nunca `true` a más de 20 km. Fuera → el agente ofrece
-   Uber o correo. (La Boca: caso a confirmar con Lucio — ver `PROYECTO_028.md`.)
-
-Sin `GOOGLE_MAPS_KEY` seteada el endpoint devuelve `{ ok: true, needsManualQuote: true }` y el
-agente cotiza el envío a mano vía `avisar_al_equipo`.
+Calcula el resumen (`preview: true`, no guarda nada) o carga el pedido en `pedidos`.
 
 ```json
 {
-  "ok": true,
-  "encontrada": true,
-  "direccion": { "texto": "Sánchez de Bustamante 1623, CABA", "lat": -34.61, "lng": -58.41, "zona": "E" },
-  "zonaNombre": "Zona E — Centro-oeste",
-  "km": 4.2,
-  "monto": 4200,
-  "cubiertoMoto": true,
-  "estimado": true
-}
-```
-
----
-
-## 4. `POST /agentPedido` — crear el pedido
-
-Body:
-```json
-{
-  "telefono": "5491158696086",
+  "preview": false,
+  "telefono": "+5491158696086",
   "cliente": "Uma Bach",
-  "items": [
-    { "producto": "Elfbar Ice King", "variante": "Dragon Strawnana", "cantidad": 1, "precioUnitario": 26000 }
-  ],
+  "items": [{ "producto": "Elfbar Ice King", "variante": "Peach", "cantidad": 2 }],
   "tipoEnvio": "moto",
-  "direccion": {
-    "texto": "Sánchez de Bustamante 1623",
-    "lat": -34.61, "lng": -58.41, "zona": "E",
-    "referencias": "3ºB, timbre negro"
-  },
-  "valorEnvio": 4200,
-  "medioPago": "alias1",
-  "comprobante": { "numero": "0001234", "monto": 30200, "nombre": "Uma Bach" },
-  "origen": "publicidad",
-  "notas": ""
+  "direccion": { "texto": "Cabildo 2000, Belgrano", "referencias": "3B, timbre negro" },
+  "medioPago": "transferencia",
+  "comprobante": { "numero": "0012345", "monto": 52000, "nombre": "Uma Bach" },
+  "comprobanteUrl": "https://…",
+  "envioSeguro": false,
+  "datosCorreo": { "aSucursal": true, "dni": "…", "localidad": "…", "cp": "…" }
 }
 ```
 
-- `tipoEnvio`: `moto` | `uber` | `retiro`.
-- `medioPago`: `alias1` (Lucio) | `alias2` (Marcos) | `alias3` (financiera) | `efectivo`.
-- `direccion` completa solo para `moto`. `uber` → `texto` + `zona`/barrio + `referencias`.
-  `retiro` → sin dirección.
-- `comprobante` solo si ya lo mandó el cliente.
-- `origen` (opcional): `publicidad` | `organico` — atribución CTWA. Lo pasa n8n desde el
-  `referral` del primer mensaje (todavía no cableado). Se guarda en el pedido y, la **primera vez**
-  que se ve ese teléfono, en `clientes_bot`.
+Respuesta: `{ ok, mensaje, total }` (+ `pedidoId` si se cargó). `mensaje` es el resumen que se le
+manda al cliente tal cual y el que ve el depósito en el panel.
 
-Lógica:
-1. Crea `pedidos` doc — **mismos campos que hoy** (`mensaje`, `estado: 'pendiente'`, `tipoEnvio`,
-   `createdAt`) **+ campos estructurados nuevos**: `telefono`, `cliente`, `direccion` (objeto
-   completo, así el depósito no lo recarga a mano), `valorEnvio`, `medioPago`, `comprobante`,
-   `origen`, `origen: 'agente-ia'` interno. El `mensaje` se arma con emojis igual que la
-   "cotización" que pidió Lucio: `🛒 PRODUCTOS` / `💰 TOTALES` (Subtotal · Envío · TOTAL A PAGAR) /
-   `📦 ENTREGA` (tipo + dirección + zona + Ref) / `👤 CLIENTE` (**nombre — teléfono siempre**) /
-   `💳 medioPago`.
-2. `clientes_bot/{telefono}` (transacción): incrementa `cantidadPedidos`, setea `ultimoPedido`;
-   `primerContacto` y `origen` solo se escriben si el doc no existía todavía.
-3. `ultimo_pedido_whatsapp/{telefono}`: `{ pedidoId, createdAt }` (para que el "cancelar" por
-   WhatsApp que ya existe siga funcionando).
-4. Si `medioPago === 'alias3'` → además registra en el Sheet (pestaña financiera): nº comprobante,
-   monto, nombre, fecha/hora. (El cliente lo pidió explícito para la financiera.)
-5. **NO** descuenta stock ni crea `sales` — eso lo hace el depósito al confirmar, igual que hoy.
-   (Si más adelante se quiere, se agrega `registrarVenta: true` que llame a `procesarVenta`.)
+**Precios:** salen de las listas de `/operativo` (vapes, THC, perfumes, Apple), con sus combos
+(`2x $49.000` es el combo de 2 entero). Las `OFERTAS` escritas con el mismo formato pisan esos
+precios. Si un producto no está, es ambiguo o esa cantidad no se vende, el pedido no se calcula.
+El agente nunca manda precios.
 
-```json
-{ "ok": true, "pedidoId": "abc123", "estado": "pendiente" }
-```
+**Envío:**
 
----
+| tipoEnvio | Envío | Pago |
+|---|---|---|
+| `moto` | lo calcula el backend con la dirección | transferencia, o efectivo solo en CABA |
+| `uber` | la última cotización del depósito para ese teléfono (vale 3 hs) | transferencia; envío seguro opcional ($1.990) |
+| `correo` | $19.000 sucursal / $29.000 domicilio, se le paga a Vía Cargo al recibir (no suma al total) | transferencia |
 
-## 5. `GET /agentEstadoOperativo` — estado del día
+**Efectivo:** descuento sobre el subtotal de productos: $1.500 (hasta $50.000), $2.500 (desde
+$50.000), $5.000 (desde $100.000).
 
-Sin params. Lee `settings/operativo`. **Solo campos estructurados** — nada de texto libre, para
-que el bot no se confunda; la frase la arma el prompt según `situacion`.
+**Obligatorio para cargar:** nombre, productos, dirección, medio de pago, comprobante (salvo
+efectivo) y, para correo, sucursal/domicilio, DNI, localidad y CP.
 
-```json
-{
-  "ok": true,
-  "situacion": "demora",
-  "proximaSalida": "16:00",
-  "actualizadoEn": "2026-09-10T18:30:00.000Z"
-}
-```
+**Qué guarda en el pedido**, además de los campos de siempre (`mensaje`, `estado: "pendiente"`,
+`tipoEnvio`, `createdAt`): `telefono`, `cliente`, `direccion {texto, referencias, lat, lng, zona}`,
+`items`, `valorEnvio`, `envioSeguro`, `montoEnvioSeguro`, `montoDescuento`, `total`, `medioPago`,
+`cuentaCobro` (el alias activo al cargarlo, para el CSV por cuenta), `comprobante`,
+`comprobanteImagen` (la foto copiada a Storage) y `datosCorreo`. No descuenta stock ni crea la
+venta: eso lo sigue haciendo el depósito.
 
-`situacion` ∈ `sin_demora` | `normal` | `demora` | `demora_fuerte` | `solo_manana`.
-El bot toma pedidos siempre — no hay estado "cerrado". `solo_manana` = "hoy ya no se despacha".
+## Cotización de Uber
 
-> Lo setea el staff desde **`/operativo`** en el dashboard (pantalla `src/OperativoPage.jsx`):
-> un botón para la demora del día + próxima salida opcional. 1 toque.
+1. El agente deriva con motivo `cotizar_uber` → n8n llama a POST `/agentCrearCotizacionUber`
+   `{ idConversacion, telefonoCliente, nombreCliente, direccion, explicacionCaso }`.
+2. El depósito carga el monto en `/cotizar-uber` (estado `cotizado`).
+3. El trigger `onCotizacionUberConfirmada` manda `{ idConversacion, montoUber }` al webhook
+   `cotizacion-uber-confirmada` de n8n (con `X-Agent-Key`) y marca la cotización `procesado`.
+   n8n le manda el precio al cliente y reactiva el bot.
 
----
+## GET `/serveComprobante?pedido=<id>`
 
-## Fuera de la API (lo hace n8n)
-
-- **Derivación a humano:** el agente manda un WhatsApp con el resumen de la conversación a los
-  números de escalación (Jero, Bauti, Marcos, Lucio) y se pausa. No necesita endpoint.
-- **Notificación de entrega:** cuando el depósito toca "ya llegué / entregado" en el panel de
-  moto, hay que avisarle al cliente. Opciones: (a) el panel llama a un webhook de n8n al cambiar
-  el estado, o (b) n8n escucha cambios en `pedidos`. A confirmar si entra en esta fase.
-
-## Colecciones nuevas que introduce el agente
-
-- `clientes_bot/{telefono}` — `{ cantidadPedidos, ultimoPedido, primerContacto, origen }`.
-- `comprobantes_financiera` — un doc por comprobante de la alias financiera (`alias3`):
-  `{ pedidoId, numero, monto, nombre, telefono, createdAt }`.
-- `settings/operativo` — estado del día (lo setea el staff desde `/operativo`):
-  `{ situacion: string, proximaSalida: string, actualizadoEn: string }`.
-
-## Implementación y deploy
-
-- Código: `functions/agente-api.js` (archivo nuevo). Se engancha desde `index.js` con **una
-  línea** al final: `Object.assign(exports, require("./agente-api"))`. Nada más de `index.js`
-  se toca.
-- Env vars (agregar al `.env` de `functions/`, junto a los `AFIP_*` y `ADMIN_SECRET` que ya
-  están):
-  - `AGENT_API_KEY` — secreto compartido con n8n. **Obligatorio.**
-  - `GOOGLE_MAPS_KEY` — para geocodificar direcciones en `agentCotizarEnvio`. Opcional: sin
-    esta key el endpoint devuelve `needsManualQuote: true` y el agente cotiza el envío a mano
-    (avisando al depósito, igual que el flujo de Uber).
-- Deploy: `firebase deploy --only functions` desde `gestion-028/`. Solo agrega las 5 funciones
-  nuevas; no redeploya ni toca las existentes salvo `webhook`/etc. que comparten `index.js`
-  (mismo código, se redeploya idéntico).
-- URLs resultantes: `https://us-central1-gestion-028.cloudfunctions.net/agentStock`, etc.
+La foto del comprobante de un pedido, para el panel. Sin clave, igual que `servePdf`.

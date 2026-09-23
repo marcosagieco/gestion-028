@@ -45,35 +45,17 @@ try {
 } catch { db = getFirestore(fbApp); }
 if (!db) db = getFirestore(fbApp);
 
-// Avisa al agente de IA (n8n) que un pedido cambio de estado en el reparto, para que le escriba
-// al cliente ("tu pedido llego" / "fue entregado"). Fire-and-forget: nunca bloquea ni rompe el
-// flujo del repartidor.
-//
-// La URL va con fallback hardcodeado a proposito: durante meses esto no funciono porque
-// VITE_N8N_ENTREGA_WEBHOOK nunca se cargo en Vercel y la funcion salia sin hacer nada, en
-// silencio. Poner la URL aca no expone nada nuevo: las variables VITE_ se inyectan en el bundle
-// al buildear, asi que terminan igual de publicas que esta constante. Si algun dia se define la
-// variable en Vercel, esa gana (util para apuntar a otro n8n sin tocar el codigo).
-const N8N_ENTREGA_WEBHOOK =
-  import.meta.env.VITE_N8N_ENTREGA_WEBHOOK ||
-  'https://n8n.bunge.agenticsia.agency/webhook/entrega-cliente';
+// Avisa al agente de IA (n8n) que el repartidor llegó o entregó el pedido, para que le escriba al
+// cliente. Fire-and-forget: nunca bloquea ni rompe el flujo del repartidor.
+const N8N_ENTREGA_WEBHOOK = 'https://n8n.bunge.agenticsia.agency/webhook/entrega-cliente';
 function notificarEntregaAgente(pedido, evento) {
-  if (!N8N_ENTREGA_WEBHOOK || !pedido?.telefono) return;
-  try {
-    fetch(N8N_ENTREGA_WEBHOOK, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        pedidoId: pedido.id,
-        telefono: pedido.telefono,
-        cliente: pedido.cliente || null,
-        evento, // 'entregado' | 'llegue'
-        direccion: pedido.direccion?.texto || null,
-        ts: new Date().toISOString(),
-      }),
-      keepalive: true,
-    }).catch(() => {});
-  } catch { /* noop */ }
+  if (!pedido?.telefono) return; // solo los pedidos del bot tienen el teléfono del cliente
+  fetch(N8N_ENTREGA_WEBHOOK, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ telefono: pedido.telefono, evento }), // evento: 'llegue' | 'entregado'
+    keepalive: true,
+  }).catch(() => {});
 }
 
 const AUTH_KEY = '028_user';

@@ -1877,11 +1877,3 @@ function esParecido(usuarioTexto, bdTexto) {
 
 // --- Endpoints del agente de IA (ver agente-api.js - todo aditivo, no toca nada de arriba) ---
 Object.assign(exports, require("./agente-api"));
-
-// (Acá vivieron varios endpoints de migración de una sola vez, todos ya borrados (mismo
-// criterio que sincronizarBilleteras): tempMigrarPrecios/2/3/4 completaron `precioVenta` en 424
-// items de `batches`; se decidió después que el precio viva en la colección `catalogo` en vez
-// de en Lotes, así que tempRevertirPrecios deshizo esa migración (vuelta a precioVenta: null,
-// sin tocar stock); y tempSeedCatalogo cargó los ~40 productos iniciales en `catalogo`, usados
-// hoy por la pantalla "Catálogo" del panel. (agentStock también los leía, pero se borró: el
-// agente nunca lo llamó, el stock y los precios le llegan por las plantillas del panel.))

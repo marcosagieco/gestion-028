@@ -5,7 +5,7 @@ import { initializeFirestore, getFirestore, collection, query, orderBy, onSnapsh
 import {
   ClipboardList, Plus, Clock, AlertTriangle, XCircle, CheckCircle, ChevronRight,
   ChevronDown, ChevronUp, History, Save, Moon, Sun, PartyPopper, Search, Trash2, Download,
-  Bike, Car, MapPin, PackageCheck, Store, Archive, Pencil
+  Bike, Car, MapPin, Package, PackageCheck, Store, Archive, Pencil
 } from 'lucide-react';
 import AddressAutocomplete from './reparto/AddressAutocomplete';
 import { ZONAS } from './reparto/zonas';
@@ -440,52 +440,38 @@ function EditableMensaje({ pedido, dm, textClassName }) {
   );
 }
 
-// Dirección de un pedido de moto con edición inline — hoy se carga una sola vez al pasar a
-// "armado" y de ahí no había forma de tocarla desde /pedidos: si el cliente pasa el piso o el
-// timbre después de armado, o quedó mal escrita, no quedaba otra que cancelar el pedido y pedirlo
-// de nuevo. Mismo patrón que EditableMensaje (lápiz → edición → confirmar con mini cartel), pero
-// reutilizando los mismos tres campos que ya carga MotoPendienteCard la primera vez: dirección con
-// autocompletado de Google (nunca a mano), referencias y zona.
-// Desplegable con todo lo comercial del pedido: envio, pago, comprobante y datos de facturacion.
-// Son datos que el bot ya venia guardando pero que no se veian en ningun lado. La foto del
-// comprobante la copia el backend a Storage al cargar el pedido y se sirve por serveComprobante,
-// asi no depende de que Chatwoot siga vivo.
+// Desplegable con lo comercial de los pedidos del bot: envío, pago, total y la foto del
+// comprobante (el backend la copia a Storage y la sirve por serveComprobante).
 const $ars = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
 
-// Que cuenta corresponde a cada alias. El bot guarda el alias que uso, no el titular.
+// La cuenta que cobró cada pedido por transferencia: el bot guarda el alias activo al cargarlo.
 const CUENTA_POR_ALIAS = {
   alias1: 'Lucio Felix Bunge (Galicia)',
   alias2: 'Marcos Agustin Gieco (Galicia)',
   alias3: 'Tame Lake S.A. (financiera)',
 };
 
-// Exporta las transferencias a CSV para conciliar contra el banco, separadas por cuenta.
-// Se deja afuera el efectivo y el contra reembolso: no son transferencias, no hay nada que
-// conciliar. Se abre con Excel directamente (separador ; y BOM, que es lo que espera Excel en es-AR).
+// Exporta los pedidos del bot pagados por transferencia a CSV, con la cuenta que cobró cada uno,
+// para conciliar contra el banco (incluido el registro aparte de la financiera). Separador ; y
+// BOM, que es lo que espera Excel en es-AR.
 function exportarTransferenciasCSV(pedidos) {
-  const esTransferencia = (p) => {
-    const mp = String(p.medioPago || '').toLowerCase();
-    return mp && !/efectivo|reembolso/.test(mp);
-  };
   const filas = (pedidos || [])
-    .filter(esTransferencia)
+    .filter((p) => p.cuentaCobro)
     .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
 
   const esc = (v) => {
     const t = String(v == null ? '' : v).replace(/"/g, '""');
     return /[";\n]/.test(t) ? `"${t}"` : t;
   };
-  const cab = ['Fecha', 'Cliente', 'Telefono', 'Cuenta', 'Alias', 'Comprobante', 'Monto informado', 'Total del pedido', 'Envio', 'Estado'];
+  const cab = ['Fecha', 'Cliente', 'Telefono', 'Cuenta', 'Comprobante', 'Monto informado', 'Total del pedido', 'Estado'];
   const cuerpo = filas.map((p) => [
     (p.createdAt || '').slice(0, 10),
     p.cliente || '',
     p.telefono || '',
-    CUENTA_POR_ALIAS[p.medioPago] || p.medioPago || '',
-    p.medioPago || '',
+    CUENTA_POR_ALIAS[p.cuentaCobro] || p.cuentaCobro,
     (p.comprobante && p.comprobante.numero) || '',
     (p.comprobante && p.comprobante.monto) || '',
     p.total != null ? p.total : '',
-    p.valorEnvio != null ? p.valorEnvio : '',
     p.estado || '',
   ].map(esc).join(';'));
 
@@ -499,7 +485,7 @@ function exportarTransferenciasCSV(pedidos) {
   return filas.length;
 }
 
-const ENVIO_NOMBRE = { moto: 'Moto mensajeria', uber: 'Envio flash (Uber)', correo: 'Correo (Cargo)', retiro: 'Retiro' };
+const ENVIO_NOMBRE = { moto: 'Moto mensajeria', uber: 'Envio flash (Uber)', correo: 'Correo (Via Cargo)' };
 
 function DetalleComercial({ pedido, dm }) {
   const [abierto, setAbierto] = useState(false);
@@ -508,9 +494,8 @@ function DetalleComercial({ pedido, dm }) {
   const img = pedido.comprobanteImagen;
   const comp = pedido.comprobante;
   const dc = pedido.datosCorreo;
-  // Si el pedido es viejo y no tiene ninguno de estos datos, no tiene sentido mostrar el bloque.
-  const hayAlgo = pedido.valorEnvio != null || pedido.medioPago || comp || img || dc;
-  if (!hayAlgo) return null;
+  // Los pedidos cargados a mano no tienen nada de esto: no se muestra el bloque.
+  if (pedido.total == null && !pedido.medioPago && !img) return null;
 
   const fila = (label, valor) => valor == null || valor === '' ? null : (
     <div className="flex justify-between gap-3 py-1">
@@ -529,15 +514,18 @@ function DetalleComercial({ pedido, dm }) {
 
       {abierto && (
         <div className="px-4 pb-4 text-sm">
-          {fila('Tipo de envio', ENVIO_NOMBRE[pedido.tipoEnvio] || pedido.tipoEnvio)}
-          {fila('Valor del envio', pedido.valorEnvio != null ? $ars(pedido.valorEnvio) : null)}
-          {pedido.envioSeguro && fila('Envio seguro', $ars(pedido.montoEnvioSeguro || 1990))}
+          {fila('Tipo de envio', (ENVIO_NOMBRE[pedido.tipoEnvio] || pedido.tipoEnvio) + (dc ? (dc.aSucursal ? ' a sucursal' : ' a domicilio') : ''))}
+          {dc ? fila('Valor del envio', `${$ars(dc.valor)} (lo paga al recibir)`) : fila('Valor del envio', pedido.valorEnvio != null ? $ars(pedido.valorEnvio) : null)}
+          {pedido.envioSeguro && fila('Envio seguro', $ars(pedido.montoEnvioSeguro))}
+          {pedido.montoDescuento > 0 && fila('Descuento efectivo', '-' + $ars(pedido.montoDescuento))}
+          {fila('Total', pedido.total != null ? $ars(pedido.total) : null)}
           {fila('Medio de pago', pedido.medioPago)}
+          {fila('Cobro en', CUENTA_POR_ALIAS[pedido.cuentaCobro])}
           {comp && fila('Comprobante N°', comp.numero)}
           {comp && fila('Monto informado', comp.monto ? $ars(comp.monto) : null)}
           {comp && fila('A nombre de', comp.nombre)}
           {dc && fila('DNI', dc.dni)}
-          {dc && fila('Localidad', dc.localidad ? `${dc.localidad} (CP ${dc.cp || '-'})` : null)}
+          {dc && fila('Localidad', `${dc.localidad} (CP ${dc.cp})`)}
 
           {img && img.url && (
             <button onClick={() => setZoom(true)} className="block w-full mt-3" title="Ver en grande">
@@ -558,6 +546,12 @@ function DetalleComercial({ pedido, dm }) {
   );
 }
 
+// Dirección de un pedido de moto con edición inline — hoy se carga una sola vez al pasar a
+// "armado" y de ahí no había forma de tocarla desde /pedidos: si el cliente pasa el piso o el
+// timbre después de armado, o quedó mal escrita, no quedaba otra que cancelar el pedido y pedirlo
+// de nuevo. Mismo patrón que EditableMensaje (lápiz → edición → confirmar con mini cartel), pero
+// reutilizando los mismos tres campos que ya carga MotoPendienteCard la primera vez: dirección con
+// autocompletado de Google (nunca a mano), referencias y zona.
 function EditableDireccion({ pedido, dm }) {
   const [editing, setEditing] = useState(false);
   const [direccionTexto, setDireccionTexto] = useState(pedido.direccion?.texto || '');
@@ -1195,6 +1189,7 @@ export default function PedidosPage() {
   const pendientesMoto = useMemo(() => pendientesClasificados.filter(p => p.tipoEnvio === 'moto'), [pendientesClasificados]);
   const pendientesUber = useMemo(() => pendientesClasificados.filter(p => p.tipoEnvio === 'uber'), [pendientesClasificados]);
   const pendientesRetiro = useMemo(() => pendientesClasificados.filter(p => p.tipoEnvio === 'retiro'), [pendientesClasificados]);
+  const pendientesCorreo = useMemo(() => pendientesClasificados.filter(p => p.tipoEnvio === 'correo'), [pendientesClasificados]);
   // "Armado" en este tablero principal es el flujo de Uber y Retiro (y pedidos viejos sin
   // tipoEnvio, para no dejar huérfano nada que ya estuviera armado antes de este cambio) — los de
   // moto pasan a manejarse desde la pantalla de Reparto una vez armados, hasta que se entregan.
@@ -1230,6 +1225,7 @@ export default function PedidosPage() {
   const finalizadosMoto = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'moto'), [finalizadosFiltrados]);
   const finalizadosUber = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'uber'), [finalizadosFiltrados]);
   const finalizadosRetiro = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'retiro'), [finalizadosFiltrados]);
+  const finalizadosCorreo = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'correo'), [finalizadosFiltrados]);
   const finalizadosSinTipo = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio == null), [finalizadosFiltrados]);
   const cancelados = useMemo(() =>
     pedidos.filter(p => p.estado === 'cancelado').sort((a, b) => safeDateTime(b.canceladoAt || b.createdAt) - safeDateTime(a.canceladoAt || a.createdAt)),
@@ -1353,10 +1349,7 @@ export default function PedidosPage() {
   };
 
   const handleAbrirFinalizar = (pedido) => {
-    // Si el bot detectó que el cliente vino de un anuncio, precargamos el tipo de cliente
-    // (el vendedor lo puede cambiar si no corresponde) — así no depende de que se acuerde solo.
-    const tipoClienteSugerido = pedido?.origen === 'publicidad' ? 'Nuevo - Publicidad' : '';
-    setFinalizarForm({ tipoCliente: tipoClienteSugerido, vendedor: '', envioCliente: '', costoEnvio: '', fecha: getTodayDate() });
+    setFinalizarForm({ tipoCliente: '', vendedor: '', envioCliente: '', costoEnvio: '', fecha: getTodayDate() });
     setFinalizarItems([nuevaLineaProducto()]);
     setFinalizarPagos([nuevoPago()]);
     setFinalizarTarget(pedido);
@@ -1785,6 +1778,12 @@ export default function PedidosPage() {
                 focusId={focusPendienteId} onFocus={setFocusPendienteId}
                 onListoMoto={(p, direccion) => handleMarcarArmadoMoto(p, direccion)}
                 onListoUber={handleMarcarArmado} onCancel={setCancelTarget} />
+              {pendientesCorreo.length > 0 && (
+                <PendienteGrupo titulo="Correo" icon={Package} list={pendientesCorreo} dm={dm}
+                  focusId={focusPendienteId} onFocus={setFocusPendienteId}
+                  onListoMoto={(p, direccion) => handleMarcarArmadoMoto(p, direccion)}
+                  onListoUber={handleMarcarArmado} onCancel={setCancelTarget} />
+              )}
             </div>
           </>
         )}
@@ -1862,6 +1861,10 @@ export default function PedidosPage() {
                     expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
                   <FinalizadoGrupo titulo="Retiro" icon={Store} list={finalizadosRetiro} dm={dm}
                     expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                  {finalizadosCorreo.length > 0 && (
+                    <FinalizadoGrupo titulo="Correo" icon={Package} list={finalizadosCorreo} dm={dm}
+                      expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                  )}
                 </div>
 
                 <div className="hidden lg:grid lg:grid-cols-3 lg:gap-6 lg:items-start">
@@ -1871,6 +1874,10 @@ export default function PedidosPage() {
                     expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
                   <FinalizadoGrupo titulo="Retiro" icon={Store} list={finalizadosRetiro} dm={dm}
                     expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                  {finalizadosCorreo.length > 0 && (
+                    <FinalizadoGrupo titulo="Correo" icon={Package} list={finalizadosCorreo} dm={dm}
+                      expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                  )}
                 </div>
                 </>
                 )}
