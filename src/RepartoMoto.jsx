@@ -777,7 +777,8 @@ export default function RepartoMoto() {
                 className="w-full h-16 rounded-2xl font-black text-lg text-white transition-all active:scale-[0.97] bg-[#6366f1] hover:bg-[#4f46e5] flex items-center justify-center gap-2">
                 <Navigation size={22}/> Cómo llegar
               </a>
-              <button onClick={() => handleYaLlegue(proxima)} disabled={avisadosLlegue.includes(proxima.id)}
+              {/* Solo los pedidos del bot tienen el teléfono del cliente: sin él no hay a quién avisar. */}
+              {proxima.telefono && <button onClick={() => handleYaLlegue(proxima)} disabled={avisadosLlegue.includes(proxima.id)}
                 className={`w-full h-14 rounded-2xl font-black text-base transition-all active:scale-[0.97] flex items-center justify-center gap-2 ${
                   avisadosLlegue.includes(proxima.id)
                     ? (dm ? 'bg-white/[0.06] text-zinc-500' : 'bg-zinc-100 text-zinc-400')
@@ -785,7 +786,7 @@ export default function RepartoMoto() {
                 {avisadosLlegue.includes(proxima.id)
                   ? <><CheckCircle2 size={18}/> Cliente avisado</>
                   : <><Navigation size={18}/> Ya llegue, avisarle al cliente</>}
-              </button>
+              </button>}
               <button onClick={() => setConfirmEntregaPedido(proxima)} disabled={entregandoId === proxima.id}
                 className="w-full h-16 rounded-2xl font-black text-lg text-white transition-all active:scale-[0.97] bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 flex items-center justify-center gap-2">
                 {entregandoId === proxima.id ? <Loader2 size={22} className="animate-spin"/> : <CheckCircle2 size={22}/>}

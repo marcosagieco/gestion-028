@@ -443,6 +443,7 @@ function EditableMensaje({ pedido, dm, textClassName }) {
 // Desplegable con lo comercial de los pedidos del bot: envío, pago, total y la foto del
 // comprobante (el backend la copia a Storage y la sirve por serveComprobante).
 const $ars = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
+const IMAGEN_WEB = ['image/jpeg', 'image/png', 'image/webp'];
 
 // La cuenta que cobró cada pedido por transferencia: el bot guarda el alias activo al cargarlo.
 const CUENTA_POR_ALIAS = {
@@ -527,12 +528,18 @@ function DetalleComercial({ pedido, dm }) {
           {dc && fila('DNI', dc.dni)}
           {dc && fila('Localidad', `${dc.localidad} (CP ${dc.cp})`)}
 
-          {img && img.url && (
+          {/* Un PDF (o una foto HEIC) no se puede mostrar con <img>: se abre en otra pestaña. */}
+          {img && img.url && (IMAGEN_WEB.includes(img.contentType) ? (
             <button onClick={() => setZoom(true)} className="block w-full mt-3" title="Ver en grande">
               <img src={img.url} alt="Comprobante de pago" loading="lazy"
                 className="w-full max-h-64 object-contain rounded-xl bg-black/20" />
             </button>
-          )}
+          ) : (
+            <a href={img.url} target="_blank" rel="noopener noreferrer"
+              className={`block w-full mt-3 py-2.5 rounded-xl text-center font-bold ${dm ? 'bg-white/[0.06] text-zinc-200' : 'bg-zinc-100 text-zinc-800'}`}>
+              {img.contentType === 'application/pdf' ? 'Ver comprobante (PDF)' : 'Ver comprobante'}
+            </a>
+          ))}
         </div>
       )}
 
@@ -1040,6 +1047,7 @@ function FinalizadoCard({ p, dm, isExpanded, onToggleExpand, onEliminar }) {
           <div className={`flex justify-between gap-3 pt-2 mt-1 border-t ${dm ? 'border-white/[0.06]' : 'border-zinc-200'}`}><span className="opacity-60">Finalizado</span><span className="font-bold">{safeDateStr(p.finalizadoAt, { day: '2-digit', month: 'short' })} · {safeTimeStr(p.finalizadoAt)}</span></div>
         </div>
       )}
+      {isExpanded && <div className="mt-2"><DetalleComercial pedido={p} dm={dm} /></div>}
     </div>
   );
 }
