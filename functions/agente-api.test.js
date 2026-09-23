@@ -281,7 +281,7 @@ async function main() {
     const r = await conHora("2026-09-22T15:00:00", () => llamar(api.agentEstadoOperativo));
     ok("estado: manda el alias activo, nunca otro", r.body.plantillas.ALIAS.includes("CALMO.DURO.DIA") && r.body.plantillas.ALIAS.includes("CBU: 0000598201000000015014") && !/028import\.gal?2?/.test(r.body.plantillas.ALIAS), r.body.plantillas.ALIAS);
     ok("estado: manda las listas del panel", r.body.plantillas.PRECIOS_VAPES === LISTAS.preciosVapesTexto.trim(), null);
-    ok("estado: demora del día con la próxima salida", /2 hs/.test(r.body.demora) && /16:00/.test(r.body.demora), r.body.demora);
+    ok("estado: demora del día (la hora va aparte, en salida)", /2 hs/.test(r.body.demora) && !/16:00/.test(r.body.demora) && r.body.salida.hora === "16:00", r.body);
   }
 
   // ── salida: en qué tanda sale un pedido nuevo ──
@@ -293,7 +293,7 @@ async function main() {
       for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
       for (let i = 0; i < enCola; i++) store[`pedidos/cola${i}`] = { estado: i % 2 ? "armado" : "pendiente", tipoEnvio: i % 3 ? "moto" : "uber" };
       store["pedidos/unRetiro"] = { estado: "pendiente", tipoEnvio: "retiro" }; // retiro y correo no ocupan tanda
-      store["settings/operativo"] = { ...operativo, ...extra };
+      store["settings/operativo"] = { ...operativo, proximaSalida: "", ...extra };
       const x = await conHora(hora, () => llamar(api.agentEstadoOperativo));
       return `${x.body.salida.dia} ${x.body.salida.hora}`;
     };
@@ -319,11 +319,26 @@ async function main() {
     const s2 = await salidaCon("2026-09-22T16:50:00", 3, { limitePorTanda: 3 });
     ok("salida: usa el límite por tanda del panel", s2 === "hoy 17:30", s2);
 
+    // La "próxima salida" del panel le gana a todo (cupo incluido) mientras no haya pasado.
+    const panel = [
+      ["12:00 con próxima salida 13: sale 13:00", "2026-09-22T12:00:00", 0, "13", "hoy 13:00"],
+      ["16:50 con 25 en cola y próxima salida 18:00: igual 18:00", "2026-09-22T16:50:00", 25, "18:00", "hoy 18:00"],
+      ["próxima salida \"18.30\"", "2026-09-22T16:50:00", 0, "18.30", "hoy 18:30"],
+      ["próxima salida \"18 hs\"", "2026-09-22T16:50:00", 0, "18 hs", "hoy 18:00"],
+      ["próxima salida que ya pasó: vuelve a lo normal", "2026-09-22T14:10:00", 0, "13:00", "hoy 14:30"],
+      ["próxima salida ilegible: vuelve a lo normal", "2026-09-22T16:50:00", 0, "a la tarde", "hoy 17:00"],
+      ["le gana incluso a \"hoy no sale más\"", "2026-09-22T15:00:00", 0, "18:00", "hoy 18:00", { situacion: "solo_manana" }],
+    ];
+    for (const [nombre, hora, enCola, proximaSalida, esperado, extra] of panel) {
+      const s = await salidaCon(hora, enCola, { proximaSalida, ...extra });
+      ok("salida: " + nombre, s === esperado, s);
+    }
+
     for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
     for (const [k, v] of guardados) store[k] = v;
-    store["settings/operativo"] = operativo;
+    store["settings/operativo"] = operativo; // tiene próxima salida 16:00
     const r = await conHora("2026-09-22T04:00:00", () => resumen());
-    ok("salida: el resumen de moto dice cuándo sale", /🕐 Sale hoy a las 13:30/.test(r.body.mensaje), r.body.mensaje);
+    ok("salida: el resumen dice cuándo sale (con la hora del panel)", /🕐 Sale hoy a las 16:00/.test(r.body.mensaje), r.body.mensaje);
   }
 
   // ── cotización de Uber confirmada en el panel ──

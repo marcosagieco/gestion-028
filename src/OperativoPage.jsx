@@ -211,7 +211,7 @@ export default function OperativoPage() {
           {/* Proxima salida */}
           <div className={`rounded-2xl border p-5 ${card}`}>
             <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Proxima salida de moto <span className="normal-case font-normal">(opcional)</span></label>
-            <p className={`text-[11px] mb-3 ${label}`}>Hora a la que sale la proxima tanda de envios. El bot la usa si el cliente pregunta cuando le llega.</p>
+            <p className={`text-[11px] mb-3 ${label}`}>Si la cargas (ej. 18:00), el bot le dice a todos los clientes que su pedido sale a esa hora, sin importar el cupo. Cuando pasa esa hora vuelve solo a las tandas normales. Vacio = tandas normales.</p>
             <input value={form.proximaSalida} onChange={(e) => set('proximaSalida', e.target.value)}
               placeholder="16:00"
               className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors ${input}`} />

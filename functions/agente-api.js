@@ -375,15 +375,25 @@ function tandasDelDia(dia) {
   return tandas;
 }
 
+// "13", "13:00", "13.30" o "13 hs" → minutos del día; cualquier otra cosa → null.
+function minutosDe(texto) {
+  const m = String(texto || "").trim().match(/^(\d{1,2})(?:[:.](\d{2}))?\s*(?:h|hs|hrs)?\.?$/i);
+  if (!m || Number(m[1]) > 23 || Number(m[2] || 0) > 59) return null;
+  return Number(m[1]) * 60 + Number(m[2] || 0);
+}
+
 // En qué tanda sale un pedido tomado ahora. El bot atiende 24/7: cada tanda lleva hasta `limite`
 // pedidos, así que con `enCola` pedidos esperando, este sale tantas tandas después de la próxima.
-// Si hoy ya no entra (o el panel dice que hoy no sale nada más), sale mañana.
-function salida(fecha, enCola, limite, soloManana) {
+// Si hoy ya no entra (o el panel dice que hoy no sale nada más), sale mañana. La "próxima salida"
+// que carga el depósito le gana a todo mientras no haya pasado (ej. si vienen atrasados).
+function salida(fecha, { enCola, limite, soloManana, proximaSalida }) {
   const ahora = horaBuenosAires(fecha);
+  const hhmm = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
+  const delPanel = minutosDe(proximaSalida);
+  if (delPanel !== null && delPanel >= ahora.minutos) return { dia: "hoy", hora: hhmm(delPanel) };
   const hoy = soloManana ? [] : tandasDelDia(ahora.dia)
     .filter((m) => m >= ahora.minutos || (m === ULTIMA_TANDA && ahora.minutos < CORTE_DESPACHO));
   const saltear = Math.floor(enCola / limite);
-  const hhmm = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
   if (saltear < hoy.length) return { dia: "hoy", hora: hhmm(hoy[saltear]) };
   const manana = tandasDelDia(horaBuenosAires(new Date(fecha.getTime() + 24 * 60 * 60 * 1000)).dia);
   return { dia: "mañana", hora: hhmm(manana[Math.min(saltear - hoy.length, manana.length - 1)]) };
@@ -400,7 +410,7 @@ async function salidaDeUnPedidoNuevo(op) {
   } catch (e) {
     console.error("[agente-api] no se pudo contar la tanda", e.message);
   }
-  return salida(new Date(), enCola, limite, op.situacion === "solo_manana");
+  return salida(new Date(), { enCola, limite, soloManana: op.situacion === "solo_manana", proximaSalida: op.proximaSalida });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -410,11 +420,10 @@ exports.agentEstadoOperativo = conClave(async (req, res) => {
   const op = await leerOperativo();
   const plantillas = { ...PLANTILLAS_FIJAS, ALIAS: ALIASES[op.aliasActivo] || ALIASES.alias1 };
   for (const [nombre, campo] of Object.entries(LISTAS_DEL_PANEL)) plantillas[nombre] = textoDe(op[campo]);
-  const proximaSalida = textoDe(op.proximaSalida);
   res.json({
     ok: true,
     salida: await salidaDeUnPedidoNuevo(op),
-    demora: (DEMORAS[op.situacion] || DEMORAS.sin_demora) + (proximaSalida ? ` (la próxima moto sale a las ${proximaSalida})` : ""),
+    demora: DEMORAS[op.situacion] || DEMORAS.sin_demora,
     plantillas,
   });
 });
