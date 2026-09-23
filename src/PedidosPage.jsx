@@ -522,7 +522,7 @@ function DetalleComercial({ pedido, dm }) {
           {fila('Medio de pago', pedido.medioPago)}
           {fila('Cobro en', CUENTA_POR_ALIAS[pedido.cuentaCobro])}
           {comp && fila('Comprobante N°', comp.numero)}
-          {comp && fila('Monto informado', comp.monto ? $ars(comp.monto) : null)}
+          {comp && fila('Monto informado', typeof comp.monto === 'number' ? $ars(comp.monto) : comp.monto)}
           {comp && fila('A nombre de', comp.nombre)}
           {dc && fila('DNI', dc.dni)}
           {dc && fila('Localidad', `${dc.localidad} (CP ${dc.cp})`)}
@@ -801,6 +801,8 @@ function MotoPendienteCard({ pedido, dm, onListo, onCancel }) {
 
       <EditableMensaje pedido={pedido} dm={dm}
         textClassName={`text-lg leading-snug whitespace-pre-wrap font-bold ${dm ? 'text-zinc-50' : 'text-zinc-900'}`} />
+
+      <DetalleComercial pedido={pedido} dm={dm} />
 
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-1.5">
