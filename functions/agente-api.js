@@ -401,18 +401,22 @@ function salida(fecha, { enCola, limite, soloManana, proximaSalida }) {
   return { dia: "mañana", hora: hhmm(manana[Math.min(saltear - hoy.length, manana.length - 1)]) };
 }
 
-// La tanda de un pedido nuevo, contando los de moto y Uber que siguen sin completar en el panel.
+// Los pedidos de moto y Uber que siguen sin completar en el panel: son los que ocupan las tandas.
 // Ante un error se cuenta la cola vacía: nunca se frena una venta por esto.
-async function salidaDeUnPedidoNuevo(op) {
-  const limite = Number(op.limitePorTanda) > 0 ? Number(op.limitePorTanda) : LIMITE_POR_TANDA;
-  let enCola = 0;
+async function pedidosEnCola() {
   try {
     const snap = await db.collection("pedidos").where("estado", "in", ["pendiente", "armado"]).get();
-    enCola = snap.docs.filter((d) => ["moto", "uber", undefined, null].includes(d.data().tipoEnvio)).length;
+    return snap.docs.filter((d) => ["moto", "uber", undefined, null].includes(d.data().tipoEnvio)).length;
   } catch (e) {
     console.error("[agente-api] no se pudo contar la tanda", e.message);
+    return 0;
   }
-  return salida(new Date(), { enCola, limite, soloManana: op.situacion === "solo_manana", proximaSalida: op.proximaSalida });
+}
+
+// La "próxima salida" del panel es solo para la moto: el Uber sale siempre por tandas.
+function salidaDeUnPedidoNuevo(op, tipoEnvio, enCola) {
+  const limite = Number(op.limitePorTanda) > 0 ? Number(op.limitePorTanda) : LIMITE_POR_TANDA;
+  return salida(new Date(), { enCola, limite, soloManana: op.situacion === "solo_manana", proximaSalida: tipoEnvio === "moto" ? op.proximaSalida : "" });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -422,9 +426,11 @@ exports.agentEstadoOperativo = conClave(async (req, res) => {
   const op = await leerOperativo();
   const plantillas = { ...PLANTILLAS_FIJAS, ALIAS: ALIASES[op.aliasActivo] || ALIASES.alias1 };
   for (const [nombre, campo] of Object.entries(LISTAS_DEL_PANEL)) plantillas[nombre] = textoDe(op[campo]);
+  const enCola = await pedidosEnCola();
   res.json({
     ok: true,
-    salida: await salidaDeUnPedidoNuevo(op),
+    salida: salidaDeUnPedidoNuevo(op, "moto", enCola),
+    salidaUber: salidaDeUnPedidoNuevo(op, "uber", enCola),
     demora: DEMORAS[op.situacion] || DEMORAS.sin_demora,
     plantillas,
   });
@@ -534,7 +540,7 @@ exports.agentPedido = conClave(async (req, res) => {
   const montoDescuento = efectivo ? descuentoEfectivo(subtotal) : 0;
   const total = subtotal + valorEnvio + montoEnvioSeguro - montoDescuento;
   const envioCorreo = tipoEnvio === "correo" ? CORREO[correo.aSucursal ? "sucursal" : "domicilio"] : 0;
-  const cuando = tipoEnvio === "correo" ? null : await salidaDeUnPedidoNuevo(op);
+  const cuando = tipoEnvio === "correo" ? null : salidaDeUnPedidoNuevo(op, tipoEnvio, await pedidosEnCola());
 
   const mensaje = [
     "🛒 PRODUCTOS",

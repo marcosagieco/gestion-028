@@ -289,13 +289,13 @@ async function main() {
     // Depende de cuántos pedidos de moto/Uber hay sin completar: la cola se arma a mano.
     const guardados = Object.entries(store).filter(([k]) => k.startsWith("pedidos/"));
     const operativo = { ...store["settings/operativo"] };
-    const salidaCon = async (hora, enCola, extra = {}) => {
+    const salidaCon = async (hora, enCola, extra = {}, campo = "salida") => {
       for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
       for (let i = 0; i < enCola; i++) store[`pedidos/cola${i}`] = { estado: i % 2 ? "armado" : "pendiente", tipoEnvio: i % 3 ? "moto" : "uber" };
       store["pedidos/unRetiro"] = { estado: "pendiente", tipoEnvio: "retiro" }; // retiro y correo no ocupan tanda
       store["settings/operativo"] = { ...operativo, proximaSalida: "", ...extra };
       const x = await conHora(hora, () => llamar(api.agentEstadoOperativo));
-      return `${x.body.salida.dia} ${x.body.salida.hora}`;
+      return `${x.body[campo].dia} ${x.body[campo].hora}`;
     };
     const casos = [
       ["martes 04:00: hoy en la primera tanda", "2026-09-22T04:00:00", 0, "hoy 13:30"],
@@ -333,6 +333,13 @@ async function main() {
       const s = await salidaCon(hora, enCola, { proximaSalida, ...extra });
       ok("salida: " + nombre, s === esperado, s);
     }
+    // La próxima salida es de la moto: el Uber sigue saliendo por tandas (con su cupo).
+    const u1 = await salidaCon("2026-09-22T16:50:00", 0, { proximaSalida: "18:00" }, "salidaUber");
+    ok("salida: el Uber no usa la próxima salida de moto", u1 === "hoy 17:00", u1);
+    const u2 = await salidaCon("2026-09-22T16:50:00", 10, { proximaSalida: "18:00" }, "salidaUber");
+    ok("salida: el Uber respeta el cupo de la tanda", u2 === "hoy 17:30", u2);
+    const u3 = await salidaCon("2026-09-22T20:10:00", 0, {}, "salidaUber");
+    ok("salida: el Uber hasta las 20:15 entra en la de las 20:00", u3 === "hoy 20:00", u3);
 
     for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
     for (const [k, v] of guardados) store[k] = v;

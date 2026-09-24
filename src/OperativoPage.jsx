@@ -211,7 +211,7 @@ export default function OperativoPage() {
           {/* Proxima salida */}
           <div className={`rounded-2xl border p-5 ${card}`}>
             <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Proxima salida de moto <span className="normal-case font-normal">(opcional)</span></label>
-            <p className={`text-[11px] mb-3 ${label}`}>Si la cargas (ej. 18:00), el bot le dice a todos los clientes que su pedido sale a esa hora, sin importar el cupo (si esa hora ya paso, dice que sale manana a esa hora). Borrala cuando se normalice: vacio = tandas normales.</p>
+            <p className={`text-[11px] mb-3 ${label}`}>Solo para moto. Si la cargas (ej. 18:00), el bot le dice a todos los pedidos de moto que salen a esa hora, sin importar el cupo (el Uber sigue saliendo cada 30 min) (si esa hora ya paso, dice que sale manana a esa hora). Borrala cuando se normalice: vacio = tandas normales.</p>
             <input value={form.proximaSalida} onChange={(e) => set('proximaSalida', e.target.value)}
               placeholder="16:00"
               className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors ${input}`} />
