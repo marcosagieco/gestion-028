@@ -63,6 +63,17 @@ const isForeignAcc = (acc) => FOREIGN_ACCOUNTS.includes(acc);
 const formatByAcc = (acc, val) => isForeignAcc(acc) ? formatUsd(val) : formatMoney(val);
 const BATCH_CATEGORIES = ['THC', 'APPLE', 'PERFUMES', 'NICOTINA'];
 
+// Clave del panel de Gestión 028 — la única pantalla donde están los números del negocio (ventas,
+// ganancias, billeteras, deudas, sueldos). Antes era la clave 1717 guardada bajo '028_user', la
+// MISMA que pedían Agente IA, Cotizar Uber, Pedidos y Reparto: quien entraba a cualquiera de esas
+// pantallas quedaba habilitado acá también con solo escribir la dirección del panel. Ahora esas
+// pantallas no piden nada (las usa el depósito y los repartidores desde el celular) y esta guarda
+// su permiso aparte, bajo su propia llave: nada de lo que se toque allá abre esto. La llave es
+// distinta a la anterior a propósito — los celulares que ya tenían '028_user' guardado de antes no
+// heredan el acceso y tienen que escribir la clave nueva.
+const ADMIN_AUTH_KEY = '028_admin';
+const ADMIN_AUTH_PWD = '171728';
+
 // --- Proyección del Negocio (Inicio): horizonte hasta fin de año, elegible por el usuario en la tarjeta acumulada ---
 const PROJECTION_YEAR_END_DATE = '2026-12-31';
 
@@ -3188,7 +3199,7 @@ function useTabGatedMemo(factory, deps, active) {
 
 // --- APP PRINCIPAL ---
 export default function App() {
-  const [user, setUser] = useState(() => localStorage.getItem('028_user') || null);
+  const [user, setUser] = useState(() => localStorage.getItem(ADMIN_AUTH_KEY) || null);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('028_dark_mode') === 'true');
   // Barra lateral retraída (solo iconos, sin texto) — se acuerda entre sesiones igual que el modo oscuro.
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('028_sidebar_collapsed') === 'true');
@@ -8079,7 +8090,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
   const handleLogin = (e) => { 
     e.preventDefault(); 
     const val = e.target.password.value; 
-    if(val === '1717') { localStorage.setItem('028_user', 'Admin'); setUser('Admin'); showToast('Bienvenido', 'success'); } 
+    if(val === ADMIN_AUTH_PWD) { localStorage.setItem(ADMIN_AUTH_KEY, 'Admin'); setUser('Admin'); showToast('Bienvenido', 'success'); } 
     else showToast('Contraseña incorrecta', 'error');
   };
 
@@ -8452,7 +8463,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
             {sidebarCollapsed ? (
                 <div className={`flex flex-col items-center gap-2 p-2.5 rounded-xl border ${darkMode ? 'bg-white/[0.03] border-white/[0.06]' : 'bg-zinc-50 border-zinc-200/80'}`}>
                     <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs text-white flex-shrink-0" style={{background:'#6366f1'}} title={user}>{user?.charAt(0)?.toUpperCase()}</div>
-                    <button onClick={() => { localStorage.removeItem('028_user'); setUser(null); }} className={`p-1.5 rounded-lg transition-colors ${darkMode ? 'text-zinc-600 hover:bg-red-500/10 hover:text-red-400' : 'text-zinc-400 hover:bg-red-50 hover:text-red-600'}`} title="Cerrar sesión">
+                    <button onClick={() => { localStorage.removeItem(ADMIN_AUTH_KEY); setUser(null); }} className={`p-1.5 rounded-lg transition-colors ${darkMode ? 'text-zinc-600 hover:bg-red-500/10 hover:text-red-400' : 'text-zinc-400 hover:bg-red-50 hover:text-red-600'}`} title="Cerrar sesión">
                         <LogOut size={14} />
                     </button>
                 </div>
@@ -8465,7 +8476,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             <span className="text-[10px] text-zinc-500">Admin</span>
                         </div>
                     </div>
-                    <button onClick={() => { localStorage.removeItem('028_user'); setUser(null); }} className={`p-1.5 rounded-lg transition-colors flex-shrink-0 ${darkMode ? 'text-zinc-600 hover:bg-red-500/10 hover:text-red-400' : 'text-zinc-400 hover:bg-red-50 hover:text-red-600'}`} title="Cerrar sesión">
+                    <button onClick={() => { localStorage.removeItem(ADMIN_AUTH_KEY); setUser(null); }} className={`p-1.5 rounded-lg transition-colors flex-shrink-0 ${darkMode ? 'text-zinc-600 hover:bg-red-500/10 hover:text-red-400' : 'text-zinc-400 hover:bg-red-50 hover:text-red-600'}`} title="Cerrar sesión">
                         <LogOut size={14} />
                     </button>
                 </div>

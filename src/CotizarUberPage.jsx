@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   initializeFirestore, getFirestore, collection, query, where, onSnapshot, doc, updateDoc,
   persistentLocalCache, persistentMultipleTabManager,
 } from 'firebase/firestore';
-import { Car, Moon, Sun, ArrowLeft, Check, Clock, User, MapPin } from 'lucide-react';
+import { Car, Moon, Sun, Check, Clock, User, MapPin } from 'lucide-react';
 
 // --- Firebase: mismo patron que OperativoPage.jsx (pagina 100% independiente). ---
 const firebaseConfig = {
@@ -28,47 +27,11 @@ try {
 }
 if (!db) db = getFirestore(fbApp);
 
-// Mismo login que el resto del sistema (clave 1717).
-const AUTH_KEY = '028_user';
-const AUTH_PWD = '1717';
-
-function Login({ dm, onAuth }) {
-  const [pwd, setPwd] = useState('');
-  const [err, setErr] = useState(false);
-  const submit = (e) => {
-    e.preventDefault();
-    if (pwd === AUTH_PWD) { localStorage.setItem(AUTH_KEY, 'Admin'); onAuth(); }
-    else { setErr(true); setPwd(''); }
-  };
-  return (
-    <div className={`min-h-screen flex items-center justify-center px-4 ${dm ? 'bg-[#050505]' : 'bg-slate-50'}`}
-      style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
-      <div className={`w-full max-w-sm rounded-2xl border p-8 shadow-xl ${dm ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
-        <div className="flex items-center gap-3 mb-7">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#6366f1' }}>
-            <Car size={17} className="text-white" />
-          </div>
-          <div>
-            <p className={`text-xs font-bold uppercase tracking-widest ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>028 Import</p>
-            <h1 className={`text-sm font-black leading-tight ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>Cotizar Uber</h1>
-          </div>
-        </div>
-        <form onSubmit={submit} className="space-y-4">
-          <div>
-            <label className={`block text-xs font-semibold mb-1.5 ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>Clave de seguridad</label>
-            <input type="password" value={pwd} autoFocus
-              onChange={(e) => { setPwd(e.target.value); setErr(false); }}
-              className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors ${dm ? 'bg-[#0a0a0a] border-white/10 text-zinc-100 focus:border-indigo-500' : 'bg-white border-zinc-300 text-zinc-900 focus:border-indigo-500'}`} />
-            {err && <p className="text-xs text-red-500 mt-1.5">Clave incorrecta</p>}
-          </div>
-          <button type="submit" className="w-full rounded-xl py-2.5 text-sm font-bold text-white transition-opacity hover:opacity-90" style={{ background: '#6366f1' }}>
-            Entrar
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-}
+// Sin clave a proposito: esta pantalla la usa el equipo desde el celular y no muestra ningun numero
+// del negocio (ventas, ganancias, billeteras, sueldos). Antes pedia la clave 1717 y la guardaba bajo
+// la llave '028_user', la MISMA que usaba el panel de Gestion 028: quien entraba aca quedaba
+// habilitado alla tambien con solo escribir la direccion del panel. El panel ahora tiene clave y
+// llave propias (ver ADMIN_AUTH_KEY en App.jsx), y de aca se saco el link "Volver" que llevaba a el.
 
 function tiempoDesde(iso) {
   if (!iso) return '';
@@ -81,7 +44,6 @@ function tiempoDesde(iso) {
 
 export default function CotizarUberPage() {
   const [dm, setDm] = useState(() => localStorage.getItem('028_dark_mode') === 'true');
-  const [authed, setAuthed] = useState(() => !!localStorage.getItem(AUTH_KEY));
   const [pendientes, setPendientes] = useState([]);
   const [resueltas, setResueltas] = useState([]);
   const [montos, setMontos] = useState({});
@@ -91,7 +53,6 @@ export default function CotizarUberPage() {
   useEffect(() => { localStorage.setItem('028_dark_mode', dm); }, [dm]);
 
   useEffect(() => {
-    if (!authed) return;
     const unsubPend = onSnapshot(
       query(collection(db, 'cotizaciones_uber'), where('estado', '==', 'pendiente')),
       (snap) => {
@@ -112,7 +73,7 @@ export default function CotizarUberPage() {
       () => {}
     );
     return () => { unsubPend(); unsubRes(); };
-  }, [authed]);
+  }, []);
 
   const confirmar = async (item) => {
     const raw = montos[item.id];
@@ -132,7 +93,6 @@ export default function CotizarUberPage() {
     }
   };
 
-  if (!authed) return <Login dm={dm} onAuth={() => setAuthed(true)} />;
 
   const card = dm ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200';
   const label = dm ? 'text-zinc-400' : 'text-zinc-600';
@@ -147,10 +107,7 @@ export default function CotizarUberPage() {
       style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       <div className="max-w-[900px] mx-auto px-4 md:px-8 py-6">
 
-        <div className="flex items-center justify-between mb-6">
-          <Link to="/" className={`flex items-center gap-1.5 text-xs font-semibold ${label} hover:opacity-80`}>
-            <ArrowLeft size={14} /> Volver
-          </Link>
+        <div className="flex items-center justify-end mb-6">
           <button onClick={() => setDm((v) => !v)} className={`p-2 rounded-lg ${dm ? 'hover:bg-white/5' : 'hover:bg-zinc-100'}`}>
             {dm ? <Sun size={15} /> : <Moon size={15} />}
           </button>

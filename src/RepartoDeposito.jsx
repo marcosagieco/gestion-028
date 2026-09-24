@@ -45,8 +45,11 @@ try {
 } catch { db = getFirestore(fbApp); }
 if (!db) db = getFirestore(fbApp);
 
-const AUTH_KEY = '028_user';
-const AUTH_PWD = '1717';
+// Sin clave a proposito: la usa el deposito desde el celular. Aca vivia un login (clave 1717,
+// guardada bajo la llave '028_user') que
+// esta pantalla nunca llego a mostrar — codigo muerto que ademas escribia la misma llave con la que
+// se abria el panel de Gestion 028. El panel ahora tiene clave y llave propias (ver ADMIN_AUTH_KEY
+// en App.jsx), asi que desde aca no se puede llegar a los numeros del negocio.
 
 // Tamaño normal vs. tamaño al pasar el mouse por la fila correspondiente en la lista — la animación
 // interpola entre ambos a mano con requestAnimationFrame (los Marker clásicos de Google Maps no
@@ -126,38 +129,6 @@ const formatHora = (dateStr) => {
   const d = new Date(dateStr);
   return isNaN(d.getTime()) ? '' : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 };
-
-function LoginReparto({ dm, onAuth }) {
-  const [pwd, setPwd] = useState('');
-  const [err, setErr] = useState(false);
-  const submit = e => {
-    e.preventDefault();
-    if (pwd === AUTH_PWD) { localStorage.setItem(AUTH_KEY, 'Admin'); onAuth(); }
-    else { setErr(true); setPwd(''); }
-  };
-  return (
-    <div className={`min-h-screen flex items-center justify-center px-4 ${dm ? 'bg-[#050505]' : 'bg-slate-50'}`} style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
-      <div className={`w-full max-w-sm rounded-2xl border p-8 shadow-xl ${dm ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
-        <div className="flex items-center gap-3 mb-7">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#6366f1' }}><Bike size={17} className="text-white" /></div>
-          <div>
-            <p className={`text-xs font-bold uppercase tracking-widest ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>028 Import</p>
-            <h1 className={`text-sm font-black leading-tight ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>Reparto en Moto</h1>
-          </div>
-        </div>
-        <form onSubmit={submit} className="space-y-4">
-          <div>
-            <label className={`block text-xs font-semibold mb-1.5 ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>Clave de seguridad</label>
-            <input type="password" value={pwd} autoFocus onChange={e => { setPwd(e.target.value); setErr(false); }} placeholder="••••••••••••"
-              className={`w-full px-3 py-3 text-base rounded-xl border outline-none transition-all focus:ring-2 focus:ring-indigo-500/30 ${err ? 'border-red-500/60 bg-red-500/5' : dm ? 'bg-[#1a1a1a] border-white/[0.08] text-zinc-100 placeholder-zinc-600' : 'bg-white border-zinc-200 text-zinc-900 placeholder-zinc-400'}`} />
-            {err && <p className="text-xs text-red-400 mt-1.5 font-medium">Clave incorrecta</p>}
-          </div>
-          <button type="submit" className="w-full h-12 rounded-xl text-sm font-bold text-white transition-all hover:opacity-90 active:scale-[0.98]" style={{ background: '#6366f1' }}>Ingresar</button>
-        </form>
-      </div>
-    </div>
-  );
-}
 
 // Una parada arrastrable de la lista. La posición 1 se vuelve no-arrastrable (disabled en
 // useSortable) cuando el repartidor ya salió — dnd-kit se encarga de que no reaccione al drag,
@@ -322,7 +293,6 @@ function StopRow({ dm, pedido, index, locked, expanded, onToggleExpand, onBorrar
 
 export default function RepartoDeposito() {
   const [dm, setDm] = useState(() => localStorage.getItem('028_dark_mode') === 'true');
-  const [auth, setAuth] = useState(() => !!localStorage.getItem(AUTH_KEY));
   const [pedidos, setPedidos] = useState([]);
   const [recorrido, setRecorrido] = useState(null);
   const [repartidorActivo, setRepartidorActivo] = useState(true);
@@ -492,13 +462,13 @@ export default function RepartoDeposito() {
 
   // Trigger 1: abrir el panel — recalcula una vez al montar si hay paradas.
   useEffect(() => {
-    if (!auth || !firstLoadRef.current) return;
+    if (!firstLoadRef.current) return;
     if (stopsRaw.length === 0) return;
     firstLoadRef.current = false;
     seenIdsRef.current = new Set(stopsRaw.map(p => p.id));
     recalcularYGuardar(stopsRaw);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth, stopsRaw.length]);
+  }, [stopsRaw.length]);
 
   // Trigger 2: entra un pedido nuevo al recorrido — recalcula solo cuando aparece un id que no
   // había visto antes (no cuando uno desaparece por haberse entregado: eso lo recalcula y persiste

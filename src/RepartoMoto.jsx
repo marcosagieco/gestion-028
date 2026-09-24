@@ -58,40 +58,11 @@ function notificarEntregaAgente(pedido, evento) {
   }).catch(() => {});
 }
 
-const AUTH_KEY = '028_user';
-const AUTH_PWD = '1717';
-
-function LoginMoto({ dm, onAuth }) {
-  const [pwd, setPwd] = useState('');
-  const [err, setErr] = useState(false);
-  const submit = e => {
-    e.preventDefault();
-    if (pwd === AUTH_PWD) { localStorage.setItem(AUTH_KEY, 'Admin'); onAuth(); }
-    else { setErr(true); setPwd(''); }
-  };
-  return (
-    <div className={`min-h-screen flex items-center justify-center px-4 ${dm ? 'bg-[#050505]' : 'bg-slate-50'}`} style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
-      <div className={`w-full max-w-sm rounded-2xl border p-8 shadow-xl ${dm ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
-        <div className="flex items-center gap-3 mb-7">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#6366f1' }}><Bike size={17} className="text-white" /></div>
-          <div>
-            <p className={`text-xs font-bold uppercase tracking-widest ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>028 Import</p>
-            <h1 className={`text-sm font-black leading-tight ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>Mi Recorrido</h1>
-          </div>
-        </div>
-        <form onSubmit={submit} className="space-y-4">
-          <div>
-            <label className={`block text-xs font-semibold mb-1.5 ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>Clave de seguridad</label>
-            <input type="password" value={pwd} autoFocus onChange={e => { setPwd(e.target.value); setErr(false); }} placeholder="••••••••••••"
-              className={`w-full px-3 py-3 text-base rounded-xl border outline-none transition-all focus:ring-2 focus:ring-indigo-500/30 ${err ? 'border-red-500/60 bg-red-500/5' : dm ? 'bg-[#1a1a1a] border-white/[0.08] text-zinc-100 placeholder-zinc-600' : 'bg-white border-zinc-200 text-zinc-900 placeholder-zinc-400'}`} />
-            {err && <p className="text-xs text-red-400 mt-1.5 font-medium">Clave incorrecta</p>}
-          </div>
-          <button type="submit" className="w-full h-14 rounded-xl text-base font-bold text-white transition-all hover:opacity-90 active:scale-[0.98]" style={{ background: '#6366f1' }}>Ingresar</button>
-        </form>
-      </div>
-    </div>
-  );
-}
+// Sin clave a proposito: la usa el repartidor en la calle. Aca vivia un login (clave 1717,
+// guardada bajo la llave '028_user') que
+// esta pantalla nunca llego a mostrar — codigo muerto que ademas escribia la misma llave con la que
+// se abria el panel de Gestion 028. El panel ahora tiene clave y llave propias (ver ADMIN_AUTH_KEY
+// en App.jsx), asi que desde aca no se puede llegar a los numeros del negocio.
 
 const comoLlegarUrl = (destino) => `https://www.google.com/maps/dir/?api=1&destination=${destino.lat},${destino.lng}&travelmode=driving`;
 
