@@ -27,7 +27,7 @@ Todo lo del día, en una sola llamada:
 - `salida` (moto) y `salidaUber`: en qué tanda sale un pedido tomado ahora. Salen tandas cada 30 min
   hasta las 20:00, desde las 13:30 (miércoles 14:00, domingos 17:00); hasta las 20:15 todavía entra
   en la de las 20:00. Cada tanda lleva hasta el límite de `/operativo`, contando los pedidos de moto
-  y Uber sin completar en el panel: con la de las 17:00 llena, sale 17:30. Si hoy no entra, o el
+  y Uber "para armar" (los armados ya salieron y no cuentan): con la de las 17:00 llena, sale 17:30. Si hoy no entra, o el
   panel dice que hoy no sale nada más, sale mañana. La misma hora va en el resumen del pedido.
   Si el depósito carga una "próxima salida" de moto en `/operativo` ("18", "18:00", "18 hs"), esa hora
   le gana a todo para la moto, cupo incluido (si ya pasó, es la de mañana), mientras esté cargada.

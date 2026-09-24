@@ -291,7 +291,8 @@ async function main() {
     const operativo = { ...store["settings/operativo"] };
     const salidaCon = async (hora, enCola, extra = {}, campo = "salida") => {
       for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
-      for (let i = 0; i < enCola; i++) store[`pedidos/cola${i}`] = { estado: i % 2 ? "armado" : "pendiente", tipoEnvio: i % 3 ? "moto" : "uber" };
+      for (let i = 0; i < enCola; i++) store[`pedidos/cola${i}`] = { estado: "pendiente", tipoEnvio: i % 3 ? "moto" : "uber" };
+      for (let i = 0; i < 30; i++) store[`pedidos/armado${i}`] = { estado: "armado", tipoEnvio: "uber" }; // ya salieron: no ocupan lugar
       store["pedidos/unRetiro"] = { estado: "pendiente", tipoEnvio: "retiro" }; // retiro y correo no ocupan tanda
       store["settings/operativo"] = { ...operativo, proximaSalida: "", ...extra };
       const x = await conHora(hora, () => llamar(api.agentEstadoOperativo));

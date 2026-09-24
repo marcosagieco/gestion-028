@@ -401,11 +401,11 @@ function salida(fecha, { enCola, limite, soloManana, proximaSalida }) {
   return { dia: "mañana", hora: hhmm(manana[Math.min(saltear - hoy.length, manana.length - 1)]) };
 }
 
-// Los pedidos de moto y Uber que siguen sin completar en el panel: son los que ocupan las tandas.
+// Los pedidos de moto y Uber "para armar" (pendientes) ocupan las tandas; los armados ya salieron.
 // Ante un error se cuenta la cola vacía: nunca se frena una venta por esto.
 async function pedidosEnCola() {
   try {
-    const snap = await db.collection("pedidos").where("estado", "in", ["pendiente", "armado"]).get();
+    const snap = await db.collection("pedidos").where("estado", "==", "pendiente").get();
     return snap.docs.filter((d) => ["moto", "uber", undefined, null].includes(d.data().tipoEnvio)).length;
   } catch (e) {
     console.error("[agente-api] no se pudo contar la tanda", e.message);
