@@ -186,7 +186,7 @@ async function main() {
   }
   {
     const r = await resumen({ direccion: { texto: "Maipú 1000, Olivos" }, medioPago: "efectivo" });
-    ok("moto: Corredor Norte entra pero sin efectivo", r.status === 400 && /solo para CABA/.test(r.body.error), r.body);
+    ok("moto: Corredor Norte también admite efectivo", r.body.ok && /Descuento por efectivo/.test(r.body.mensaje), r.body);
     const r2 = await resumen({ direccion: { texto: "Maipú 1000, Olivos" } });
     ok("moto: Corredor Norte con transferencia sí", r2.body.ok, r2.body);
   }
@@ -198,7 +198,7 @@ async function main() {
   }
   {
     const r = await llamar(api.agentCotizarEnvio, { query: { direccion: "Maipú 1000, Olivos" } });
-    ok("cotizar_envio: Olivos cubierto, sin efectivo, con monto", r.body.cubiertoMoto && !r.body.admiteEfectivo && r.body.monto >= 3000, r.body);
+    ok("cotizar_envio: Olivos cubierto, con efectivo y con monto", r.body.cubiertoMoto && r.body.admiteEfectivo && r.body.monto >= 3000, r.body);
     const r2 = await llamar(api.agentCotizarEnvio, { query: { direccion: "Centenario 500, San Isidro" } });
     ok("cotizar_envio: San Isidro no cubierto y sin monto", r2.body.cubiertoMoto === false && r2.body.monto === null, r2.body);
     const r3 = await llamar(api.agentCotizarEnvio, { query: { direccion: "Calle Inventada 123" } });
@@ -274,6 +274,23 @@ async function main() {
     const r = await pedido({ medioPago: "efectivo", comprobanteUrl: undefined });
     const p = store[`pedidos/${r.body.pedidoId}`];
     ok("pedido: en efectivo no pide comprobante ni asigna cuenta", r.body.ok && p.cuentaCobro === null, r.body);
+  }
+  {
+    // Moto: al recibir (efectivo o transferencia cuando llega) y mitad y mitad.
+    const r = await pedido({ medioPago: "al recibir", comprobanteUrl: undefined });
+    const p = store[`pedidos/${r.body.pedidoId}`];
+    ok("pedido: al recibir no pide comprobante, sin descuento ni cuenta", r.body.ok && p.cuentaCobro === null && p.montoDescuento === 0 && /al recibir \(efectivo o transferencia\)/.test(p.mensaje), r.body);
+    const r2 = await pedido({ medioPago: "mitad y mitad", comprobanteUrl: undefined });
+    ok("pedido: mitad y mitad pide el comprobante de la mitad", r2.status === 400 && /comprobante/.test(r2.body.error), r2.body);
+    const r3 = await pedido({ medioPago: "mitad transferencia mitad efectivo" });
+    const p3 = store[`pedidos/${r3.body.pedidoId}`];
+    ok("pedido: mitad y mitad divide el total y asigna la cuenta, sin descuento",
+      r3.body.ok && p3.montoDescuento === 0 && p3.montoTransferencia === Math.ceil(p3.total / 2) && p3.cuentaCobro === "alias3"
+      && /A transferir ahora/.test(p3.mensaje) && /En efectivo al recibir/.test(p3.mensaje), p3);
+    const r4 = await resumen({ tipoEnvio: "uber", medioPago: "al recibir" });
+    ok("uber: nunca al recibir", r4.status === 400 && /solo por transferencia/.test(r4.body.error), r4.body);
+    const r5 = await resumen({ tipoEnvio: "correo", medioPago: "mitad y mitad", datosCorreo: { aSucursal: true } });
+    ok("correo: nunca mitad y mitad", r5.status === 400, r5.body);
   }
 
   // ── estado operativo ──

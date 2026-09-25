@@ -46,7 +46,7 @@ Todo lo del día, en una sola llamada:
 - Cobertura de moto: CABA entera + Corredor Norte (zona B: Vicente López, Olivos, La Lucila,
   Florida, Munro, Martínez). Fuera de eso `cubiertoMoto: false` y `monto: null`.
 - Precio: $1.000 por km en línea recta desde el depósito, mínimo $3.000.
-- `admiteEfectivo`: solo CABA.
+- `admiteEfectivo`: en toda la zona de moto (CABA y Corredor Norte).
 
 ## POST `/agentPedido`
 
@@ -80,7 +80,7 @@ El agente nunca manda precios.
 
 | tipoEnvio | Envío | Pago |
 |---|---|---|
-| `moto` | lo calcula el backend con la dirección | transferencia, o efectivo solo en CABA |
+| `moto` | lo calcula el backend con la dirección | transferencia antes, efectivo, al recibir (efectivo o transferencia) o mitad y mitad |
 | `uber` | la última cotización del depósito para ese teléfono (vale 3 hs) | transferencia; envío seguro opcional ($1.990) |
 | `correo` | $19.000 sucursal / $29.000 domicilio, se le paga a Vía Cargo al recibir (no suma al total) | transferencia |
 
@@ -88,11 +88,17 @@ El correo se guarda con `tipoEnvio: "retiro"`: el depósito lo maneja como un re
 y lo lleva a Vía Cargo). El mensaje del panel arranca con `📦 VÍA CARGO — SUCURSAL` (o DOMICILIO) y
 el pedido trae `datosCorreo`.
 
+**Formas de pago** (`medioPago`): `transferencia` (antes, con comprobante), `efectivo` (al recibir,
+con descuento), `al recibir` (efectivo o transferencia cuando llega, sin comprobante ni descuento) y
+`mitad y mitad` (mitad por transferencia antes, con comprobante, y mitad en efectivo al recibir, sin
+descuento; el resumen muestra los dos montos y el pedido guarda `montoTransferencia`). Uber y correo:
+solo `transferencia`.
+
 **Efectivo:** descuento sobre el subtotal de productos: $1.500 (hasta $50.000), $2.500 (desde
 $50.000), $5.000 (desde $100.000).
 
-**Obligatorio para cargar:** nombre, productos, dirección, medio de pago, comprobante (salvo
-efectivo) y, para correo, sucursal/domicilio, DNI, localidad y CP.
+**Obligatorio para cargar:** nombre, productos, dirección, medio de pago, comprobante (en
+transferencia y mitad y mitad) y, para correo, sucursal/domicilio, DNI, localidad y CP.
 
 **Qué guarda en el pedido**, además de los campos de siempre (`mensaje`, `estado: "pendiente"`,
 `tipoEnvio`, `createdAt`): `telefono`, `cliente`, `direccion {texto, referencias, lat, lng, zona}`,

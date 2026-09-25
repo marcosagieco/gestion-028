@@ -61,9 +61,27 @@ const ALIASES = {
 
 const $ = (n) => `$${Number(n || 0).toLocaleString("es-AR")}`;
 
+// Formas de pago. Uber y correo: solo transferencia antes. La moto además acepta efectivo (con
+// descuento), al recibir (efectivo o transferencia cuando llega, sin comprobante) y mitad y mitad
+// (mitad por transferencia antes, con comprobante, y mitad en efectivo al recibir, sin descuento).
+const PAGO_LABEL = {
+  transferencia: "transferencia",
+  efectivo: "efectivo al recibir",
+  "al recibir": "al recibir (efectivo o transferencia)",
+  "mitad y mitad": "mitad transferencia antes, mitad efectivo al recibir",
+};
+function formaDePago(texto) {
+  const t = normalizar(texto);
+  if (!t) return "";
+  if (t.includes("mitad")) return "mitad y mitad";
+  if (t.includes("recibir") || t.includes("contra entrega")) return "al recibir";
+  if (t.includes("efectivo")) return "efectivo";
+  return "transferencia";
+}
+
 // Textos fijos del negocio que el agente manda tal cual con ⟦PLANTILLA:NOMBRE⟧.
 const PLANTILLAS_FIJAS = {
-  FORMAS_DE_ENTREGA: `🚚 FORMAS DE ENTREGA 🚚\n\n━━━━━━━━━━━━━\n\n⚡ FLASH — UBER ENVÍOS\n⏳ 13:30 hs a 20:00 hs\n🔥 Entrega en 30’ mins\n⚠️ Sin garantía\n💳 Pago previo - transferencia\n\n━━━━━━━━━━━━━\n\n🛵 MOTO MENSAJERÍA\n⏳ 13:30 hs - 🌙 20:00 hs\n🔒 Mayor seguridad en tu pedido\n⏱️ Demora aprox: 1:30 hs desde que sale la moto\n💸 Pago contra entrega\n💵 Abonando en efectivo tenés descuentos especiales según el monto de tu compra\n\n━━━━━━━━━━━━━\n\n📦 CORREO — 1 a 3 días\n🚚 Vía Cargo\n💳 Productos: pago previo por transferencia\n💸 Envío: se abona a Vía Cargo al recibir\n\n📍 A sucursal → ${$(CORREO.sucursal)}\n🏠 A domicilio → ${$(CORREO.domicilio)}\n\n━━━━━━━━━━━━━\n\n🌐 https://028import.com`,
+  FORMAS_DE_ENTREGA: `🚚 FORMAS DE ENTREGA 🚚\n\n━━━━━━━━━━━━━\n\n⚡ FLASH — UBER ENVÍOS\n⏳ 13:30 hs a 20:00 hs\n🔥 Entrega en 30’ mins\n⚠️ Sin garantía\n💳 Pago previo - transferencia\n\n━━━━━━━━━━━━━\n\n🛵 MOTO MENSAJERÍA\n⏳ 13:30 hs - 🌙 20:00 hs\n🔒 Mayor seguridad en tu pedido\n⏱️ Demora aprox: 1:30 hs desde que sale la moto\n💸 Pagás al recibir (efectivo o transferencia), por transferencia antes o mitad y mitad\n💵 Abonando en efectivo tenés descuentos especiales según el monto de tu compra\n\n━━━━━━━━━━━━━\n\n📦 CORREO — 1 a 3 días\n🚚 Vía Cargo\n💳 Productos: pago previo por transferencia\n💸 Envío: se abona a Vía Cargo al recibir\n\n📍 A sucursal → ${$(CORREO.sucursal)}\n🏠 A domicilio → ${$(CORREO.domicilio)}\n\n━━━━━━━━━━━━━\n\n🌐 https://028import.com`,
   ENVIO_SEGURO: `🛡️ ¿QUERÉS AGREGAR ENVÍO SEGURO A TU PEDIDO?\n\n💰 Valor: solo ${$(PRECIO_ENVIO_SEGURO)}\n\nProtegé tu compra ante cualquier imprevisto durante el envío. Por solo ${$(PRECIO_ENVIO_SEGURO)} adicionales, evitás correr el riesgo de perder el valor completo de tu pedido.\n\n━━━━━━━━━━━━━━━\n\n🔒 ¿QUÉ CUBRE EL ENVÍO SEGURO?\n\n✅ Robo durante el envío\n✅ Pérdida o extravío\n✅ Inconvenientes durante el traslado que impidan la entrega\n✅ Si transcurren los 7 minutos de espera desde la llegada del Uber y el pedido no pudo ser entregado, queda cubierto por reposición.\n\nAnte cualquiera de estas situaciones cubiertas, 028 IMPORT vuelve a enviarte tu pedido sin que tengas que pagarlo nuevamente.\n\n━━━━━━━━━━━━━━━\n\n⚠️ ¿Y SI NO LO AGREGO?\n\nEl pedido se despacha igualmente, pero viaja sin cobertura de reposición.\n\nUna vez despachado correctamente a la dirección proporcionada, si ocurre un robo, pérdida, extravío o no se concreta la recepción dentro del tiempo de espera, 028 Import no cubre el valor ni la reposición del pedido.`,
   WEB: "📦 CATÁLOGO Y STOCK ACTUALIZADO\n\n🌐 Entrá a nuestra web y mirá todos los productos disponibles, precios y stock actualizado:\n\n👉 https://028import.com\n\n📲 Si tenés alguna duda o querés una recomendación personalizada escribinos por WhatsApp.\n\n🚚 Envíos en CABA y a todo el país.\n📍 Belgrano, CABA.",
   DESCUENTO_EFECTIVO: (([alto, medio, base]) =>
@@ -323,7 +341,7 @@ function haversineKm(a, b) {
 }
 
 // Ubica la dirección y resuelve todo lo que depende de ella. La moto cubre CABA entera y el
-// Corredor Norte (zona B); el efectivo contra entrega es solo para CABA. null si Google no la ubica.
+// Corredor Norte (zona B); en toda esa zona se puede pagar al recibir. null si Google no la ubica.
 async function ubicar(direccion) {
   if (!String(direccion || "").trim()) return null;
   const { data } = await axios.get("https://maps.googleapis.com/maps/api/geocode/json", {
@@ -449,7 +467,7 @@ exports.agentCotizarEnvio = conClave(async (req, res) => {
     monto: u.cubiertoMoto ? u.monto : null,
     km: u.km,
     zona: u.zona,
-    admiteEfectivo: u.esCABA,
+    admiteEfectivo: u.cubiertoMoto,
   });
 });
 
@@ -478,26 +496,27 @@ exports.agentPedido = conClave(async (req, res) => {
   const preview = b.preview === true || b.preview === "true";
   const telefono = normalizarTelefono(b.telefono);
   const tipoEnvio = b.tipoEnvio;
-  const medioPago = String(b.medioPago || "").trim();
-  const efectivo = /efectivo/i.test(medioPago);
+  const medioPago = formaDePago(b.medioPago);
+  const efectivo = medioPago === "efectivo";
+  const conComprobante = medioPago === "transferencia" || medioPago === "mitad y mitad";
   const dir = armarDireccion(b.direccion);
   const correo = b.datosCorreo || {};
   const items = Array.isArray(b.items) ? b.items : [];
 
   if (!["moto", "uber", "correo"].includes(tipoEnvio)) return rechazar(res, "tipoEnvio tiene que ser moto, uber o correo");
-  if (efectivo && tipoEnvio !== "moto") return rechazar(res, "el efectivo contra entrega es solo con moto; en Uber y correo se paga por transferencia antes");
+  if (medioPago && medioPago !== "transferencia" && tipoEnvio !== "moto") return rechazar(res, "en Uber y correo se paga solo por transferencia antes; efectivo, al recibir y mitad y mitad son solo con moto");
 
   // Lo que falta para calcular el resumen y, si no es preview, para cargar el pedido.
   const faltan = [];
   if (!telefono) faltan.push("el teléfono");
   if (!items.length) faltan.push("los productos");
   if (!String(dir.texto || "").trim()) faltan.push("la dirección");
-  if (!medioPago) faltan.push("el medio de pago");
+  if (!medioPago) faltan.push("el medio de pago (transferencia, efectivo, al recibir o mitad y mitad)");
   if (tipoEnvio === "correo" && typeof correo.aSucursal !== "boolean") faltan.push("si el correo va a sucursal o a domicilio");
   if (!preview) {
     if (!String(b.cliente || "").trim()) faltan.push("a nombre de quién va el pedido");
     const hayComprobante = !!b.comprobanteUrl || Object.values(b.comprobante || {}).some((v) => String(v || "").trim());
-    if (!efectivo && !hayComprobante) faltan.push("el comprobante de pago");
+    if (conComprobante && !hayComprobante) faltan.push("el comprobante de pago");
     if (tipoEnvio === "correo") {
       for (const [campo, label] of [["dni", "el DNI"], ["localidad", "la localidad"], ["cp", "el código postal"]]) {
         if (!String(correo[campo] || "").trim()) faltan.push(label);
@@ -514,7 +533,6 @@ exports.agentPedido = conClave(async (req, res) => {
     ubicacion = await ubicar(dir.texto);
     if (!ubicacion) return rechazar(res, "no pude ubicar la dirección: pedile calle, altura y barrio");
     if (!ubicacion.cubiertoMoto) return rechazar(res, "esa dirección no entra en moto: ofrecele Uber o correo");
-    if (efectivo && !ubicacion.esCABA) return rechazar(res, "esa dirección no admite efectivo (es solo para CABA): ofrecele transferencia");
     valorEnvio = ubicacion.monto;
   } else if (tipoEnvio === "uber") {
     const cot = await cotizacionUber(telefono);
@@ -540,6 +558,7 @@ exports.agentPedido = conClave(async (req, res) => {
   const montoDescuento = efectivo ? descuentoEfectivo(subtotal) : 0;
   const total = subtotal + valorEnvio + montoEnvioSeguro - montoDescuento;
   const envioCorreo = tipoEnvio === "correo" ? CORREO[correo.aSucursal ? "sucursal" : "domicilio"] : 0;
+  const aTransferir = medioPago === "mitad y mitad" ? Math.ceil(total / 2) : 0;
   const cuando = tipoEnvio === "correo" ? null : salidaDeUnPedidoNuevo(op, tipoEnvio, await pedidosEnCola());
 
   const mensaje = [
@@ -566,7 +585,9 @@ exports.agentPedido = conClave(async (req, res) => {
     "👤 CLIENTE",
     `${b.cliente || "-"} — ${telefono}`,
     "",
-    `💳 ${medioPago}`,
+    `💳 ${PAGO_LABEL[medioPago]}`,
+    aTransferir ? `A transferir ahora: ${$(aTransferir)}` : null,
+    aTransferir ? `En efectivo al recibir: ${$(total - aTransferir)}` : null,
     b.comprobante && b.comprobante.numero ? `Comprobante: ${b.comprobante.numero}` : null,
   ].filter((l) => l !== null).join("\n");
 
@@ -598,7 +619,8 @@ exports.agentPedido = conClave(async (req, res) => {
     montoDescuento,
     total,
     medioPago,
-    cuentaCobro: efectivo ? null : (ALIASES[op.aliasActivo] ? op.aliasActivo : "alias1"),
+    montoTransferencia: aTransferir || null,
+    cuentaCobro: conComprobante ? (ALIASES[op.aliasActivo] ? op.aliasActivo : "alias1") : null,
     comprobante: b.comprobante || null,
     comprobanteImagen: null,
     datosCorreo: tipoEnvio === "correo"
