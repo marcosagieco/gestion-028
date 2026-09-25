@@ -630,7 +630,7 @@ exports.agentPedido = conClave(async (req, res) => {
 
   // La foto del comprobante se copia a Storage para no depender de la URL de Chatwoot. Si falla,
   // el pedido queda cargado igual, sin foto.
-  if (b.comprobanteUrl) {
+  if (b.comprobanteUrl && conComprobante) {
     const imagen = await copiarComprobante(b.comprobanteUrl, pedidoRef.id);
     if (imagen) await pedidoRef.update({ comprobanteImagen: imagen });
   }
