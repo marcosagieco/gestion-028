@@ -74,6 +74,96 @@ const BATCH_CATEGORIES = ['THC', 'APPLE', 'PERFUMES', 'NICOTINA'];
 const ADMIN_AUTH_KEY = '028_admin';
 const ADMIN_AUTH_PWD = '171728';
 
+// --- COMPROBANTES DE PAGO (pestaña propia) ---
+// Cada pedido que carga el bot guarda el comprobante que mandó el cliente: los datos que informó
+// (número, monto, a nombre de quién) en pedido.comprobante, y la foto o PDF en pedido.comprobanteImagen
+// —el backend la copia a Storage y la sirve por la Cloud Function serveComprobante, así que el link no
+// vence—. En /pedidos se ve uno por uno y solo mientras el pedido sigue en pantalla; esta pestaña los
+// junta todos, mes por mes, para poder controlarlos y bajarlos sin sacar capturas.
+const CUENTA_COBRO_LABELS = {
+  alias1: 'Lucio Felix Bunge (Galicia)',
+  alias2: 'Marcos Agustin Gieco (Galicia)',
+  alias3: 'Tame Lake S.A. (financiera)',
+};
+// Lo que el navegador puede mostrar con <img>. Un PDF (o una foto de iPhone en HEIC) se abre aparte.
+const COMPROBANTE_IMAGEN_WEB = ['image/jpeg', 'image/png', 'image/webp'];
+const COMPROBANTE_EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic', 'application/pdf': 'pdf' };
+// Un pedido entra en la pestaña si tiene la foto guardada o si el cliente informó algún dato del
+// comprobante. Los pedidos en efectivo y los cargados a mano no tienen nada de esto y quedan afuera.
+const tieneComprobante = (p) => !!(p?.comprobanteImagen || (p?.comprobante && (p.comprobante.numero || p.comprobante.monto || p.comprobante.nombre)));
+// El monto informado lo escribe el cliente, así que puede llegar como número o como texto
+// ("$52.000", "52000 pesos"). Se intenta leer como número para poder sumarlo; si no se puede, se
+// muestra tal cual vino y no suma.
+const montoInformadoDe = (p) => {
+  const m = p?.comprobante?.monto;
+  if (typeof m === 'number') return Number.isFinite(m) ? m : null;
+  if (!m) return null;
+  const limpio = String(m).replace(/[^\d.,-]/g, '').replace(/\.(?=\d{3}\b)/g, '').replace(',', '.');
+  const n = parseFloat(limpio);
+  return Number.isFinite(n) ? n : null;
+};
+const nombreArchivoComprobante = (p) => {
+  const fecha = (p.createdAt || '').slice(0, 10) || 'sin-fecha';
+  const quien = String(p.cliente || p.telefono || p.id).replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').slice(0, 40);
+  const nro = p.comprobante?.numero ? `-${String(p.comprobante.numero).replace(/[^\w-]/g, '')}` : '';
+  return `${fecha}-${quien}${nro}.${COMPROBANTE_EXT[p.comprobanteImagen?.contentType] || 'jpg'}`;
+};
+
+// Excel de los comprobantes que se están viendo (respeta el mes y el día elegidos). xlsx y jszip se
+// importan recién acá, cuando se toca el botón: son librerías pesadas y no tienen por qué estar en
+// el paquete que se descarga al abrir el panel.
+async function exportarComprobantesExcel(lista) {
+  const XLSX = await import('xlsx');
+  const filas = lista.map((p) => ({
+    'Fecha': (p.createdAt || '').slice(0, 10),
+    'Hora': p.createdAt ? new Date(p.createdAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : '',
+    'Cliente': p.cliente || '',
+    'Teléfono': p.telefono || '',
+    'N° de comprobante': p.comprobante?.numero || '',
+    'A nombre de': p.comprobante?.nombre || '',
+    'Monto informado': montoInformadoDe(p) ?? (p.comprobante?.monto || ''),
+    'Total del pedido': p.total != null ? p.total : '',
+    'Cuenta que cobró': CUENTA_COBRO_LABELS[p.cuentaCobro] || p.cuentaCobro || '',
+    'Tipo de envío': p.tipoEnvio || '',
+    'Estado del pedido': p.estado || '',
+    'Link al comprobante': p.comprobanteImagen?.url || '',
+  }));
+  const ws = XLSX.utils.json_to_sheet(filas);
+  ws['!cols'] = [{ wch: 11 }, { wch: 7 }, { wch: 26 }, { wch: 16 }, { wch: 20 }, { wch: 24 }, { wch: 16 }, { wch: 16 }, { wch: 28 }, { wch: 14 }, { wch: 14 }, { wch: 70 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Comprobantes');
+  XLSX.writeFile(wb, `comprobantes-028-${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+// ZIP con las fotos/PDF de los comprobantes que se están viendo. Devuelve cuántas entraron y
+// cuántas fallaron; si no entró ninguna, avisa para arriba con un error (el que llama lo explica).
+async function descargarComprobantesZIP(lista) {
+  const { default: JSZip } = await import('jszip');
+  const conFoto = lista.filter((p) => p.comprobanteImagen?.url);
+  if (conFoto.length === 0) throw new Error('ninguno de estos comprobantes tiene la foto guardada');
+  const zip = new JSZip();
+  let guardados = 0;
+  await Promise.all(conFoto.map(async (p) => {
+    try {
+      const res = await fetch(p.comprobanteImagen.url);
+      if (!res.ok) return;
+      zip.file(nombreArchivoComprobante(p), await res.blob());
+      guardados++;
+    } catch { /* si falla uno, el ZIP sigue con el resto */ }
+  }));
+  if (guardados === 0) throw new Error('el navegador no pudo bajar las fotos');
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `comprobantes-028-${new Date().toISOString().slice(0, 10)}.zip`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  return { guardados, fallados: conFoto.length - guardados };
+}
+
 // --- Proyección del Negocio (Inicio): horizonte hasta fin de año, elegible por el usuario en la tarjeta acumulada ---
 const PROJECTION_YEAR_END_DATE = '2026-12-31';
 
@@ -3331,6 +3421,20 @@ export default function App() {
   // del período que se está mirando en vez de quedar siempre pegadas al período Base.
   const [compareViewIndex, setCompareViewIndex] = useState(0);
 
+  // --- Pestaña Comprobantes ---
+  // Los pedidos se traen por mes con un getDocs puntual (no con un onSnapshot permanente): son
+  // muchos y crecen para siempre, así que no tiene sentido tenerlos todos escuchando en vivo solo
+  // para mirar comprobantes. Cada mes que se abre queda guardado en comprobantesCacheRef para no
+  // volver a pedirlo al cambiar de mes y volver; el botón de refrescar es el que lo vuelve a pedir.
+  const [comprobantesMes, setComprobantesMes] = useState(() => toDateKey(new Date()).slice(0, 7));
+  const [comprobantesDia, setComprobantesDia] = useState('todos');
+  const [comprobantesBusqueda, setComprobantesBusqueda] = useState('');
+  const [comprobantesDelMes, setComprobantesDelMes] = useState([]);
+  const [comprobantesLoading, setComprobantesLoading] = useState(false);
+  const [comprobantesZipLoading, setComprobantesZipLoading] = useState(false);
+  const [comprobanteZoom, setComprobanteZoom] = useState(null);
+  const comprobantesCacheRef = useRef({});
+
   const [newBatchName, setNewBatchName] = useState('');
   // Sin cuenta por defecto a propósito: antes arrancaba en LEMON y, si nadie lo cambiaba a mano,
   // cualquier lote terminaba descontándose de esa billetera aunque se hubiera pagado con otra
@@ -3538,6 +3642,91 @@ export default function App() {
   useEffect(() => {
     if (activeTab === 'expenses') asegurarHistoricoCompleto('cashFlow');
   }, [activeTab, asegurarHistoricoCompleto]);
+
+  // Comprobantes del mes elegido. El rango se arma con fechas LOCALES (new Date(año, mes, 1)) y se
+  // pasa a ISO recién ahí: createdAt se guarda en UTC, y acá estamos 3 horas atrás, así que un
+  // pedido de las 22 hs del 30 tiene un createdAt del día 1 del mes siguiente. Comparando contra el
+  // instante UTC del primer día local a las 00:00, cada comprobante cae en el mes en que se cargó
+  // de verdad.
+  const traerComprobantesDelMes = useCallback(async (mes, { refrescar = false } = {}) => {
+    if (!/^\d{4}-\d{2}$/.test(mes)) return;
+    if (!refrescar && comprobantesCacheRef.current[mes]) {
+      setComprobantesDelMes(comprobantesCacheRef.current[mes]);
+      return;
+    }
+    const [y, m] = mes.split('-').map(Number);
+    const desde = new Date(y, m - 1, 1, 0, 0, 0).toISOString();
+    const hasta = new Date(y, m, 1, 0, 0, 0).toISOString();
+    setComprobantesLoading(true);
+    try {
+      const snap = await getDocs(query(collection(db, 'pedidos'), where('createdAt', '>=', desde), where('createdAt', '<', hasta)));
+      const lista = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(tieneComprobante)
+        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      comprobantesCacheRef.current[mes] = lista;
+      setComprobantesDelMes(lista);
+    } catch (e) {
+      setComprobantesDelMes([]);
+      showToast('No se pudieron traer los comprobantes: ' + e.message, 'error');
+    } finally {
+      setComprobantesLoading(false);
+    }
+    // showToast es estable (no depende de nada que cambie), así que no hace falta como dependencia.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'comprobantes') return;
+    traerComprobantesDelMes(comprobantesMes);
+  }, [activeTab, comprobantesMes, traerComprobantesDelMes]);
+
+  // Días del mes que tienen al menos un comprobante — son los botoncitos para filtrar por día.
+  const comprobantesDias = useMemo(() => {
+    const dias = new Set();
+    comprobantesDelMes.forEach(p => { if (p.createdAt) dias.add(toDateKey(new Date(p.createdAt))); });
+    return Array.from(dias).sort((a, b) => b.localeCompare(a));
+  }, [comprobantesDelMes]);
+
+  // Si se cambia de mes, el día que estaba elegido ya no existe: se vuelve solo a "Todos" en vez de
+  // dejar la lista vacía sin explicación.
+  useEffect(() => {
+    if (comprobantesDia !== 'todos' && !comprobantesDias.includes(comprobantesDia)) setComprobantesDia('todos');
+  }, [comprobantesDias, comprobantesDia]);
+
+  const comprobantesFiltrados = useMemo(() => {
+    const texto = comprobantesBusqueda.trim().toLowerCase();
+    return comprobantesDelMes.filter(p => {
+      if (comprobantesDia !== 'todos' && (!p.createdAt || toDateKey(new Date(p.createdAt)) !== comprobantesDia)) return false;
+      if (!texto) return true;
+      return [p.cliente, p.telefono, p.comprobante?.numero, p.comprobante?.nombre, p.comprobante?.monto, p.total]
+        .some(v => String(v ?? '').toLowerCase().includes(texto));
+    });
+  }, [comprobantesDelMes, comprobantesDia, comprobantesBusqueda]);
+
+  // Totales de lo que se está viendo: cuántos comprobantes, cuánto informaron los clientes (solo lo
+  // que se pudo leer como número) y cuánto suman esos pedidos según el sistema. Si los dos totales no
+  // coinciden, hay algo para revisar.
+  const comprobantesTotales = useMemo(() => comprobantesFiltrados.reduce((acc, p) => {
+    const informado = montoInformadoDe(p);
+    if (informado != null) acc.informado += informado; else acc.sinLeer++;
+    acc.pedidos += p.total || 0;
+    if (p.comprobanteImagen?.url) acc.conFoto++;
+    return acc;
+  }, { informado: 0, pedidos: 0, sinLeer: 0, conFoto: 0 }), [comprobantesFiltrados]);
+
+  const handleDescargarComprobantesZip = async () => {
+    if (comprobantesZipLoading) return;
+    setComprobantesZipLoading(true);
+    try {
+      const { guardados, fallados } = await descargarComprobantesZIP(comprobantesFiltrados);
+      showToast(fallados > 0 ? `${guardados} comprobantes descargados, ${fallados} no se pudieron bajar` : `${guardados} comprobantes descargados`, fallados > 0 ? 'error' : 'success');
+    } catch (e) {
+      showToast('No se pudo armar el ZIP: ' + e.message, 'error');
+    } finally {
+      setComprobantesZipLoading(false);
+    }
+  };
 
   // Nombres de grupo ya usados antes (ej. "Bauti"), para autocompletar y no terminar con "Bauti" y
   // "bauti" separados por una letra distinta al tipear.
@@ -8325,6 +8514,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       { id: 'consignment', icon: Users, label: 'Consignación' },
       { id: 'analysis', icon: BarChart3, label: 'Análisis' }, 
       { id: 'expenses', icon: Wallet, label: 'Gastos' },
+      { id: 'comprobantes', icon: Receipt, label: 'Comprobantes' },
       { id: 'metaads', icon: Target, label: 'Meta Ads' },
       { id: 'team', icon: UserCog, label: 'Equipo 028', shortLabel: 'Equipo' },
   ];
@@ -12825,6 +13015,192 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                   );
                 })()}
 
+              </div>
+            )}
+
+            {/* --- PESTAÑA COMPROBANTES (los comprobantes de pago que manda el cliente al bot) --- */}
+            {activeTab === 'comprobantes' && (
+              <div className="space-y-5 animate-in fade-in duration-300">
+
+                <div className="flex items-end justify-between flex-wrap gap-3">
+                  <div>
+                    <h2 className="text-xl font-black tracking-tight">Comprobantes de pago</h2>
+                    <p className={`text-xs mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                      Todos los comprobantes que los clientes le mandaron al bot, mes por mes. Los pedidos en efectivo no tienen comprobante.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <input type="month" value={comprobantesMes} onChange={e => setComprobantesMes(e.target.value)}
+                      className={`h-10 px-3 rounded-xl border text-sm font-semibold outline-none ${darkMode ? 'bg-[#141414] border-white/[0.07] text-zinc-100' : 'bg-white border-zinc-200 text-zinc-900'}`} />
+                    <button onClick={() => traerComprobantesDelMes(comprobantesMes, { refrescar: true })} disabled={comprobantesLoading}
+                      title="Volver a pedir los comprobantes de este mes"
+                      className={`h-10 px-3 rounded-xl border text-sm font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50 ${darkMode ? 'border-white/[0.07] text-zinc-300 hover:bg-white/[0.06]' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}>
+                      <RefreshCw size={14} className={comprobantesLoading ? 'animate-spin' : ''}/> Actualizar
+                    </button>
+                    <button onClick={() => exportarComprobantesExcel(comprobantesFiltrados).catch(e => showToast('No se pudo generar el Excel: ' + e.message, 'error'))}
+                      disabled={comprobantesFiltrados.length === 0}
+                      className="h-10 px-3.5 rounded-xl text-sm font-bold text-white flex items-center gap-1.5 transition-opacity hover:opacity-90 disabled:opacity-40"
+                      style={{ background: '#16a34a' }}>
+                      <Download size={14}/> Excel
+                    </button>
+                    <button onClick={handleDescargarComprobantesZip}
+                      disabled={comprobantesZipLoading || comprobantesTotales.conFoto === 0}
+                      title="Descarga las fotos de los comprobantes que estás viendo"
+                      className="h-10 px-3.5 rounded-xl text-sm font-bold text-white flex items-center gap-1.5 transition-opacity hover:opacity-90 disabled:opacity-40"
+                      style={{ background: '#6366f1' }}>
+                      <Download size={14}/> {comprobantesZipLoading ? 'Armando ZIP...' : 'Fotos (ZIP)'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Buscador: cliente, teléfono, número de comprobante, a nombre de quién, montos */}
+                <div className="relative">
+                  <Search size={15} className={`absolute left-3 top-1/2 -translate-y-1/2 ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}/>
+                  <input value={comprobantesBusqueda} onChange={e => setComprobantesBusqueda(e.target.value)}
+                    placeholder="Buscar por cliente, teléfono, número de comprobante o monto..."
+                    className={`w-full h-11 pl-9 pr-3 rounded-xl border text-sm outline-none ${darkMode ? 'bg-[#141414] border-white/[0.07] text-zinc-100 placeholder-zinc-600' : 'bg-white border-zinc-200 text-zinc-900'}`} />
+                </div>
+
+                {/* Días del mes que tienen comprobantes */}
+                {comprobantesDias.length > 0 && (
+                  <div className="flex gap-2 overflow-x-auto scrollbar-none pb-1">
+                    <button onClick={() => setComprobantesDia('todos')}
+                      className={`flex-shrink-0 h-8 px-3.5 rounded-full text-xs font-bold transition-colors ${comprobantesDia === 'todos' ? 'bg-indigo-500 text-white' : (darkMode ? 'bg-white/[0.06] text-zinc-300' : 'bg-zinc-100 text-zinc-600')}`}>
+                      Todo el mes
+                    </button>
+                    {comprobantesDias.map(d => (
+                      <button key={d} onClick={() => setComprobantesDia(d)}
+                        className={`flex-shrink-0 h-8 px-3.5 rounded-full text-xs font-bold transition-colors ${comprobantesDia === d ? 'bg-indigo-500 text-white' : (darkMode ? 'bg-white/[0.06] text-zinc-300' : 'bg-zinc-100 text-zinc-600')}`}>
+                        {d.slice(8)}/{d.slice(5, 7)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Totales de lo que se está viendo */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  {[
+                    { label: 'Comprobantes', valor: String(comprobantesFiltrados.length), color: 'text-indigo-400' },
+                    { label: 'Con foto guardada', valor: String(comprobantesTotales.conFoto), color: 'text-sky-400' },
+                    { label: 'Total informado por los clientes', valor: formatMoney(comprobantesTotales.informado), color: 'text-emerald-400' },
+                    { label: 'Total de esos pedidos', valor: formatMoney(comprobantesTotales.pedidos), color: darkMode ? 'text-zinc-200' : 'text-zinc-800' },
+                  ].map(t => (
+                    <div key={t.label} className={`rounded-2xl border p-4 ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}
+                      style={darkMode ? { background: 'linear-gradient(145deg,#121212,#1A1A1A)' } : {}}>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 leading-tight">{t.label}</p>
+                      <p className={`text-xl font-black mt-1.5 tracking-tight ${t.color}`}>{t.valor}</p>
+                    </div>
+                  ))}
+                </div>
+                {comprobantesTotales.sinLeer > 0 && (
+                  <p className={`text-xs ${darkMode ? 'text-amber-400' : 'text-amber-600'}`}>
+                    {comprobantesTotales.sinLeer === 1
+                      ? 'En 1 comprobante el monto no se pudo leer como número (el cliente lo escribió a mano), así que no suma en el total informado.'
+                      : `En ${comprobantesTotales.sinLeer} comprobantes el monto no se pudo leer como número (los clientes los escribieron a mano), así que no suman en el total informado.`}
+                  </p>
+                )}
+
+                {/* Listado */}
+                {comprobantesLoading ? (
+                  <div className={`rounded-3xl border-2 border-dashed p-12 flex flex-col items-center gap-3 ${darkMode ? 'border-white/[0.08]' : 'border-zinc-200 bg-zinc-50'}`}>
+                    <RefreshCw size={28} className="animate-spin text-zinc-500"/>
+                    <p className="text-sm font-semibold text-zinc-500">Buscando los comprobantes del mes...</p>
+                  </div>
+                ) : comprobantesFiltrados.length === 0 ? (
+                  <div className={`rounded-3xl border-2 border-dashed p-12 flex flex-col items-center gap-3 text-center ${darkMode ? 'border-white/[0.08]' : 'border-zinc-200 bg-zinc-50'}`}>
+                    <Receipt size={28} className={darkMode ? 'text-zinc-600' : 'text-zinc-300'}/>
+                    <p className="text-sm font-semibold text-zinc-500">
+                      {comprobantesDelMes.length === 0 ? 'No hay comprobantes cargados en este mes.' : 'Ningún comprobante coincide con lo que buscaste.'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {comprobantesFiltrados.map(p => {
+                      const img = p.comprobanteImagen;
+                      const informado = montoInformadoDe(p);
+                      const esFoto = img && COMPROBANTE_IMAGEN_WEB.includes(img.contentType);
+                      return (
+                        <div key={p.id} className={`rounded-2xl border p-4 flex gap-4 ${darkMode ? 'border-white/[0.07] bg-[#121212]' : 'bg-white border-zinc-200'}`}>
+                          {/* Miniatura: se toca y se ve en grande. Un PDF se abre en otra pestaña. */}
+                          {img?.url ? (
+                            esFoto ? (
+                              <button onClick={() => setComprobanteZoom(p)} title="Ver en grande"
+                                className="w-20 h-20 md:w-24 md:h-24 rounded-xl overflow-hidden flex-shrink-0 bg-black/20">
+                                <img src={img.url} alt={`Comprobante de ${p.cliente || 'cliente'}`} loading="lazy" className="w-full h-full object-cover"/>
+                              </button>
+                            ) : (
+                              <a href={img.url} target="_blank" rel="noopener noreferrer" title="Abrir el comprobante"
+                                className={`w-20 h-20 md:w-24 md:h-24 rounded-xl flex-shrink-0 flex flex-col items-center justify-center gap-1 ${darkMode ? 'bg-white/[0.06] text-zinc-300' : 'bg-zinc-100 text-zinc-600'}`}>
+                                <Receipt size={20}/>
+                                <span className="text-[10px] font-bold uppercase">{COMPROBANTE_EXT[img.contentType] || 'archivo'}</span>
+                              </a>
+                            )
+                          ) : (
+                            <div className={`w-20 h-20 md:w-24 md:h-24 rounded-xl flex-shrink-0 flex items-center justify-center text-center px-1 ${darkMode ? 'bg-white/[0.03] text-zinc-600' : 'bg-zinc-50 text-zinc-400'}`}>
+                              <span className="text-[10px] font-bold leading-tight">Sin foto guardada</span>
+                            </div>
+                          )}
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-3 flex-wrap">
+                              <div className="min-w-0">
+                                <p className="font-bold truncate">{p.cliente || 'Sin nombre'}</p>
+                                <p className={`text-xs ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                                  {p.telefono || 'sin teléfono'} · {p.createdAt ? new Date(p.createdAt).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'sin fecha'}
+                                </p>
+                              </div>
+                              <div className="text-right flex-shrink-0">
+                                <p className="text-lg font-black text-emerald-500 leading-tight">
+                                  {informado != null ? formatMoney(informado) : (p.comprobante?.monto || '—')}
+                                </p>
+                                <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">informado</p>
+                              </div>
+                            </div>
+
+                            <div className={`mt-2.5 grid sm:grid-cols-2 gap-x-4 gap-y-1 text-xs ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                              {p.comprobante?.numero && <p><span className="text-zinc-500">N°: </span><span className="font-semibold">{p.comprobante.numero}</span></p>}
+                              {p.comprobante?.nombre && <p><span className="text-zinc-500">A nombre de: </span><span className="font-semibold">{p.comprobante.nombre}</span></p>}
+                              {p.total != null && <p><span className="text-zinc-500">Total del pedido: </span><span className="font-semibold">{formatMoney(p.total)}</span></p>}
+                              {p.cuentaCobro && <p><span className="text-zinc-500">Cobró: </span><span className="font-semibold">{CUENTA_COBRO_LABELS[p.cuentaCobro] || p.cuentaCobro}</span></p>}
+                            </div>
+
+                            {/* Si el cliente informó un monto distinto al total del pedido, se avisa acá
+                                mismo: es justamente lo que hay que mirar de un comprobante. */}
+                            {informado != null && p.total != null && Math.abs(informado - p.total) >= 1 && (
+                              <p className={`mt-2 text-xs font-bold ${darkMode ? 'text-amber-400' : 'text-amber-600'}`}>
+                                ⚠ Informó {formatMoney(informado)} y el pedido es de {formatMoney(p.total)} ({informado > p.total ? 'pagó de más' : 'falta'} {formatMoney(Math.abs(informado - p.total))})
+                              </p>
+                            )}
+
+                            <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+                              <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${darkMode ? 'bg-white/[0.06] text-zinc-400' : 'bg-zinc-100 text-zinc-600'}`}>{p.estado || 'sin estado'}</span>
+                              {p.tipoEnvio && <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${darkMode ? 'bg-white/[0.06] text-zinc-400' : 'bg-zinc-100 text-zinc-600'}`}>{p.tipoEnvio}</span>}
+                              {img?.url && (
+                                <a href={img.url} target="_blank" rel="noopener noreferrer"
+                                  className={`text-[11px] font-bold ${darkMode ? 'text-indigo-400 hover:text-indigo-300' : 'text-indigo-600 hover:text-indigo-500'}`}>
+                                  Abrir en otra pestaña
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Comprobante en grande */}
+                {comprobanteZoom?.comprobanteImagen?.url && (
+                  <div onClick={() => setComprobanteZoom(null)}
+                    className="fixed inset-0 z-[100] bg-black/90 flex flex-col items-center justify-center p-4 cursor-zoom-out">
+                    <img src={comprobanteZoom.comprobanteImagen.url} alt="Comprobante de pago" className="max-w-full max-h-[85vh] object-contain rounded-xl"/>
+                    <p className="text-white text-sm font-semibold mt-3 text-center">
+                      {comprobanteZoom.cliente || 'Sin nombre'}
+                      {comprobanteZoom.comprobante?.numero ? ` · N° ${comprobanteZoom.comprobante.numero}` : ''}
+                      {comprobanteZoom.createdAt ? ` · ${new Date(comprobanteZoom.createdAt).toLocaleString('es-AR')}` : ''}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 

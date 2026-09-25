@@ -640,6 +640,10 @@ exports.serveComprobante = functions.https.onRequest(async (req, res) => {
   const img = snap && snap.exists && snap.data().comprobanteImagen;
   if (!img || !img.path) return res.status(404).send("ese pedido no tiene comprobante guardado");
   res.setHeader("Content-Type", img.contentType);
+  // Sin este header el panel puede MOSTRAR la foto (un <img> no necesita permiso) pero no puede
+  // BAJARLA con fetch: el navegador bloquea la respuesta por ser de otro dominio. La pestaña
+  // Comprobantes de Gestión 028 la baja así para armar el ZIP con todos los comprobantes del mes.
+  res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "private, max-age=3600");
   admin.storage().bucket(STORAGE_BUCKET).file(img.path).createReadStream()
     .on("error", () => res.status(404).end())
