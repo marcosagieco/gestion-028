@@ -104,6 +104,8 @@ const LISTAS_DEL_PANEL = {
 };
 // Las que tienen precios minoristas (la mayorista está en USD y esas compras las cierra el equipo).
 const LISTAS_CON_PRECIO = ["preciosVapesTexto", "preciosThcTexto", "perfumesTexto", "appleTexto"];
+// La lista de stock de cada lista de precios (perfumes y Apple no tienen).
+const STOCK_DE = { preciosVapesTexto: "stockNicotinaTexto", preciosThcTexto: "stockThcTexto" };
 
 // Barrio/localidad → zona del mapa de reparto (mismo mapeo que src/reparto/zonas.js). La zona B es
 // el Corredor Norte: la única parte de la cobertura que no es CABA.
@@ -322,7 +324,55 @@ function precioDeLinea(listas, ofertas, item) {
     const opciones = Object.keys(precios).map((n) => `${n}x`).join(", ");
     return { error: `"${item.producto}" no se vende de a ${cantidad} (opciones: ${opciones})` };
   }
-  return { importe };
+  return { importe, producto: regular && regular.producto };
+}
+
+// Stock: las listas de stock del panel tienen un título por modelo (en mayúsculas) y debajo sus sabores,
+// en nicotina con la cantidad entre paréntesis ("Miami Mint 🌴🌿❄️ (3)"). Un modelo sin stock no aparece.
+function parsearStock(texto) {
+  const modelos = [];
+  for (const cruda of String(texto || "").split("\n")) {
+    const linea = cruda.trim();
+    if (!linea || SEPARADOR_RE.test(linea) || /stock|lista/i.test(linea)) continue;
+    if (esNombre(linea)) {
+      // Un título sin sabores seguido de otro título es de sección ("DESCARTABLES THC"), no un modelo.
+      if (modelos.length && !modelos[modelos.length - 1].sabores.length) modelos.pop();
+      modelos.push({ nombre: sinEmojis(linea), detalle: "", sabores: [] });
+    } else if (modelos.length) {
+      const cantidad = linea.match(/\((\d+)\)\s*$/);
+      modelos[modelos.length - 1].sabores.push({ texto: sinEmojis(linea.replace(/\(\d+\)\s*$/, "")), cantidad: cantidad ? Number(cantidad[1]) : null });
+    }
+  }
+  return modelos;
+}
+
+// null si hay stock; si no, el error para el agente. Sin lista de stock cargada no se frena la venta.
+function faltaStock(textoStock, producto, variante, cantidad) {
+  if (!String(textoStock || "").trim()) return null;
+  const modelos = parsearStock(textoStock);
+  let hallado = buscarProducto(modelos, producto);
+  if (!hallado || !hallado.producto) {
+    // En precios el nombre a veces arrastra el título de la sección ("DESCARTABLES THC DOZO LIVE ROSIN"):
+    // vale el modelo de stock cuyo nombre entero esté dentro del nombre de precios.
+    const buscadas = palabras(producto);
+    const contenido = modelos.filter((m) => palabras(m.nombre).every((w) => coincidencia(w, buscadas) > 0))
+      .sort((a, b) => palabras(b.nombre).length - palabras(a.nombre).length)[0];
+    if (contenido) hallado = { producto: contenido };
+  }
+  if (!hallado || !hallado.producto) return `no hay stock de ${producto}: ofrecele otro de la lista de stock`;
+  const { sabores } = hallado.producto;
+  if (!sabores.length) return null;
+  const conStock = sabores.filter((s) => s.cantidad !== 0);
+  const listado = conStock.map((s) => s.texto + (s.cantidad ? ` (${s.cantidad})` : "")).join(", ");
+  const pedidas = palabras(variante);
+  if (!pedidas.length) return `falta el sabor de ${producto}; con stock hay: ${listado}`;
+  const sabor = sabores
+    .map((s) => ({ s, puntaje: pedidas.filter((w) => coincidencia(w, palabras(s.texto)) > 0).length / pedidas.length }))
+    .filter((x) => x.puntaje >= 2 / 3)
+    .sort((a, b) => b.puntaje - a.puntaje || palabras(a.s.texto).length - palabras(b.s.texto).length)[0];
+  if (!sabor || sabor.s.cantidad === 0) return `no hay stock de ${producto} ${variante}; con stock hay: ${listado}`;
+  if (sabor.s.cantidad !== null && sabor.s.cantidad < cantidad) return `de ${producto} ${sabor.s.texto} hay solo ${sabor.s.cantidad}`;
+  return null;
 }
 
 function descuentoEfectivo(subtotal) {
@@ -542,13 +592,15 @@ exports.agentPedido = conClave(async (req, res) => {
 
   // Precios: siempre de las listas del día.
   const op = await leerOperativo();
-  const listas = LISTAS_CON_PRECIO.flatMap((campo) => parsearProductos(op[campo]));
+  const listas = LISTAS_CON_PRECIO.flatMap((campo) => parsearProductos(op[campo]).map((p) => ({ ...p, lista: campo })));
   const ofertas = parsearProductos(op.ofertasTexto);
   const lineas = [];
   for (const it of items) {
     const cantidad = Number(it.cantidad) || 1;
     const r = precioDeLinea(listas, ofertas, { ...it, cantidad });
     if (r.error) return rechazar(res, r.error);
+    const sinStock = r.producto && STOCK_DE[r.producto.lista] && faltaStock(op[STOCK_DE[r.producto.lista]], r.producto.nombre, it.variante, cantidad);
+    if (sinStock) return rechazar(res, sinStock);
     lineas.push({ producto: String(it.producto), variante: String(it.variante || ""), cantidad, importe: r.importe });
   }
 

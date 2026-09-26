@@ -293,6 +293,34 @@ async function main() {
     ok("correo: nunca mitad y mitad", r5.status === 400, r5.body);
   }
 
+  // ── stock: se vende solo lo que está en las listas de stock del panel ──
+  {
+    const operativo = { ...store["settings/operativo"] };
+    store["settings/operativo"] = { ...operativo,
+      stockNicotinaTexto: "STOCK ACTUALIZADO VAPES\n\n⸻\n\n👑 ELFBAR ICE KING 40K\n\nPeach 🍑 (3)\nStrawberry Ice 🍓🧊 (0)\n\n⸻\n\n⚡ IGNITE V400 40K\n\nStrawberry Kiwi 🍓🥝 (5)\nStrawberry 🍓 (1)",
+      stockThcTexto: "🔥 STOCK COMPLETO THC\n\n━━━━━━━━━━━━━━━\n\n💨 DESCARTABLES THC\n\n😠 DOZO LIVE ROSIN 2.5G\nAir Headz → ⚡ Sativa\n\n━━━━━━━━━━━━━━━\n\n🆕🍬 BUZZ GUMMIES THC" };
+    const conStock = (item) => resumen({ items: [item] });
+    const r1 = await conStock({ producto: "Elfbar Ice King", variante: "Peach", cantidad: 2 });
+    ok("stock: con stock se vende", r1.body.ok, r1.body);
+    const r2 = await conStock({ producto: "Elfbar Ice King", variante: "Peach", cantidad: 4 });
+    ok("stock: no vende más de lo que hay", r2.status === 400 && /hay solo 3/.test(r2.body.error), r2.body);
+    const r3 = await conStock({ producto: "Elfbar Ice King", variante: "Strawberry Ice", cantidad: 1 });
+    ok("stock: un sabor en (0) no se vende", r3.status === 400 && /no hay stock/.test(r3.body.error), r3.body);
+    const r4 = await conStock({ producto: "Elfbar Duke", variante: "Grape Ice", cantidad: 1 });
+    ok("stock: un modelo que no está en el stock no se vende", r4.status === 400 && /no hay stock de ELFBAR DUKE/.test(r4.body.error), r4.body);
+    const r5 = await conStock({ producto: "Cápsulas 028", variante: "", cantidad: 1 });
+    ok("stock: cápsulas sin stock de THC no se venden", r5.status === 400 && /no hay stock/.test(r5.body.error), r5.body);
+    const r6 = await conStock({ producto: "Dozo Live Rosin", variante: "Air Headz", cantidad: 1 });
+    ok("stock: el Dozo (título pegado a la sección en precios) sí se vende", r6.body.ok, r6.body);
+    const r7 = await conStock({ producto: "Buzz Gummies", variante: "", cantidad: 2 });
+    ok("stock: un modelo sin sabores listados se vende", r7.body.ok, r7.body);
+    const r8 = await conStock({ producto: "Ignite V400", variante: "Strawberry", cantidad: 2 });
+    ok("stock: toma el sabor exacto (Strawberry, no Strawberry Kiwi)", r8.status === 400 && /hay solo 1/.test(r8.body.error), r8.body);
+    const r9 = await conStock({ producto: "Eclaire Lattafa", variante: "", cantidad: 1 });
+    ok("stock: los perfumes no tienen lista de stock y se venden", r9.body.ok, r9.body);
+    store["settings/operativo"] = operativo;
+  }
+
   // ── estado operativo ──
   {
     const r = await conHora("2026-09-22T15:00:00", () => llamar(api.agentEstadoOperativo));

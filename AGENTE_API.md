@@ -76,6 +76,11 @@ manda al cliente tal cual y el que ve el depósito en el panel.
 precios. Si un producto no está, es ambiguo o esa cantidad no se vende, el pedido no se calcula.
 El agente nunca manda precios.
 
+**Stock:** vapes y THC se controlan contra `STOCK_NICOTINA` y `STOCK_THC` de `/operativo`. Si el
+modelo no figura, el sabor no está o está en `(0)`, o se pide más de lo que dice el `(n)`, el pedido
+no se calcula y el error lista los sabores con stock. Perfumes y Apple no tienen lista de stock.
+Con la lista de stock vacía no se frena la venta.
+
 **Envío:**
 
 | tipoEnvio | Envío | Pago |
