@@ -42,6 +42,9 @@ const LIMITE_POR_TANDA = 10; // si el panel no tiene uno cargado
 const CADA_TANDA = 30; // minutos entre tandas (moto y Uber por igual)
 const ULTIMA_TANDA = 20 * 60; // 20:00
 const CORTE_DESPACHO = 20 * 60 + 15; // hasta las 20:15 todavía entra en la tanda de las 20:00
+// Días sin despacho (feriados, domingos que no se trabaja): lo que se pide sale el próximo día hábil.
+// Provisorio: la idea es que lo cargue el depósito desde el panel.
+const DIAS_SIN_DESPACHO = ["2026-09-27"];
 const VIGENCIA_COTIZACION_UBER_MS = 3 * 60 * 60 * 1000;
 
 const DEMORAS = {
@@ -432,9 +435,10 @@ function horaBuenosAires(fecha) {
   const partes = Object.fromEntries(
     new Intl.DateTimeFormat("en-US", {
       timeZone: "America/Argentina/Buenos_Aires", weekday: "short", hour: "numeric", minute: "numeric", hourCycle: "h23",
+      year: "numeric", month: "2-digit", day: "2-digit",
     }).formatToParts(fecha).map((p) => [p.type, p.value])
   );
-  return { dia: partes.weekday, minutos: Number(partes.hour) * 60 + Number(partes.minute) };
+  return { dia: partes.weekday, fecha: `${partes.year}-${partes.month}-${partes.day}`, minutos: Number(partes.hour) * 60 + Number(partes.minute) };
 }
 
 // Las tandas salen cada 30 minutos hasta las 20:00, desde las 13:30 (miércoles 14:00, domingos 17:00).
@@ -456,17 +460,33 @@ function minutosDe(texto) {
 // Si hoy ya no entra (o el panel dice que hoy no sale nada más), sale mañana. La "próxima salida"
 // que carga el depósito le gana a todo (ej. si vienen atrasados): si esa hora ya pasó, es la de
 // mañana. Rige mientras esté cargada; borrarla vuelve a las tandas.
+const DIAS_SEMANA = { Sun: "domingo", Mon: "lunes", Tue: "martes", Wed: "miércoles", Thu: "jueves", Fri: "viernes", Sat: "sábado" };
+
+// El próximo día con despacho a partir de mañana: { dia (hora de BA), etiqueta ("mañana", "el lunes") }.
+function proximoDiaHabil(fecha) {
+  for (let n = 1; n <= 14; n++) {
+    const d = horaBuenosAires(new Date(fecha.getTime() + n * 24 * 60 * 60 * 1000));
+    if (!DIAS_SIN_DESPACHO.includes(d.fecha)) return { d, etiqueta: n === 1 ? "mañana" : `el ${DIAS_SEMANA[d.dia]}` };
+  }
+  return { d: horaBuenosAires(new Date(fecha.getTime() + 24 * 60 * 60 * 1000)), etiqueta: "mañana" };
+}
+
 function salida(fecha, { enCola, limite, soloManana, proximaSalida }) {
   const ahora = horaBuenosAires(fecha);
   const hhmm = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
+  const hoyNoSeDespacha = soloManana || DIAS_SIN_DESPACHO.includes(ahora.fecha);
+  const siguiente = proximoDiaHabil(fecha);
   const delPanel = minutosDe(proximaSalida);
-  if (delPanel !== null) return { dia: delPanel >= ahora.minutos ? "hoy" : "mañana", hora: hhmm(delPanel) };
-  const hoy = soloManana ? [] : tandasDelDia(ahora.dia)
+  if (delPanel !== null) {
+    return delPanel >= ahora.minutos && !DIAS_SIN_DESPACHO.includes(ahora.fecha)
+      ? { dia: "hoy", hora: hhmm(delPanel) } : { dia: siguiente.etiqueta, hora: hhmm(delPanel) };
+  }
+  const hoy = hoyNoSeDespacha ? [] : tandasDelDia(ahora.dia)
     .filter((m) => m >= ahora.minutos || (m === ULTIMA_TANDA && ahora.minutos < CORTE_DESPACHO));
   const saltear = Math.floor(enCola / limite);
   if (saltear < hoy.length) return { dia: "hoy", hora: hhmm(hoy[saltear]) };
-  const manana = tandasDelDia(horaBuenosAires(new Date(fecha.getTime() + 24 * 60 * 60 * 1000)).dia);
-  return { dia: "mañana", hora: hhmm(manana[Math.min(saltear - hoy.length, manana.length - 1)]) };
+  const tandas = tandasDelDia(siguiente.d.dia);
+  return { dia: siguiente.etiqueta, hora: hhmm(tandas[Math.min(saltear - hoy.length, tandas.length - 1)]) };
 }
 
 // Los pedidos de moto y Uber "para armar" (pendientes) ocupan las tandas; los armados ya salieron.

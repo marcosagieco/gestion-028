@@ -346,15 +346,18 @@ async function main() {
     const casos = [
       ["martes 04:00: hoy en la primera tanda", "2026-09-22T04:00:00", 0, "hoy 13:30"],
       ["miércoles 04:00: hoy 14:00", "2026-09-23T04:00:00", 0, "hoy 14:00"],
-      ["domingo 04:00: hoy 17:00", "2026-09-27T04:00:00", 0, "hoy 17:00"],
-      ["domingo 17:10: también cada 30 min", "2026-09-27T17:10:00", 0, "hoy 17:30"],
+      ["domingo 04:00: hoy 17:00", "2026-10-04T04:00:00", 0, "hoy 17:00"],
+      ["domingo 17:10: también cada 30 min", "2026-10-04T17:10:00", 0, "hoy 17:30"],
       ["16:50 con 9 en cola: entra en la de las 17:00", "2026-09-22T16:50:00", 9, "hoy 17:00"],
       ["16:50 con 10 en cola: tanda llena, sale 17:30", "2026-09-22T16:50:00", 10, "hoy 17:30"],
       ["16:50 con 25 en cola: dos tandas llenas, sale 18:00", "2026-09-22T16:50:00", 25, "hoy 18:00"],
       ["20:10: hasta las 20:15 entra en la de las 20:00", "2026-09-22T20:10:00", 0, "hoy 20:00"],
       ["martes 21:00: mañana miércoles 14:00", "2026-09-22T21:00:00", 0, "mañana 14:00"],
-      ["sábado 22:00: mañana domingo 17:00", "2026-09-26T22:00:00", 0, "mañana 17:00"],
+      ["sábado 22:00: mañana domingo 17:00", "2026-10-03T22:00:00", 0, "mañana 17:00"],
       ["19:40 con 30 en cola: hoy no entra, mañana en la tercera", "2026-09-22T19:40:00", 30, "mañana 15:00"],
+      ["domingo 27/9 sin despacho: sábado 22:00 sale el lunes", "2026-09-26T22:00:00", 0, "el lunes 13:30"],
+      ["domingo 27/9 sin despacho: el domingo al mediodía sale mañana (lunes)", "2026-09-27T12:00:00", 0, "mañana 13:30"],
+      ["sábado 26/9 a la tarde sale hoy igual", "2026-09-26T15:10:00", 0, "hoy 15:30"],
     ];
     for (const [nombre, hora, enCola, esperado] of casos) {
       const s = await salidaCon(hora, enCola);
