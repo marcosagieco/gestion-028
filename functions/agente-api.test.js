@@ -293,6 +293,23 @@ async function main() {
     ok("correo: nunca mitad y mitad", r5.status === 400, r5.body);
   }
 
+  // ── combos por modelo, mezclando sabores ──
+  {
+    const r = await resumen({ items: [{ producto: "Elfbar EB Create", variante: "Golden Berry", cantidad: 1 }, { producto: "Elfbar EB Create", variante: "Pink Lemonade", cantidad: 1 }] });
+    ok("combo: 2 EB Create de sabores distintos = 2x $40.000", r.body.ok && r.body.mensaje.includes("Subtotal: $40.000"), r.body.mensaje);
+    const r2 = await resumen({ items: [{ producto: "Buzz Gummies", variante: "Sandía", cantidad: 1 }, { producto: "Buzz Gummies", variante: "Uva", cantidad: 1 }] });
+    ok("combo: 1 + 1 gummies de sabores distintos arman el pack de 2", r2.body.ok && r2.body.mensaje.includes("Subtotal: $25.000"), r2.body);
+    const r3 = await resumen({ items: [{ producto: "Elfbar Ice King", variante: "Peach", cantidad: 2 }, { producto: "Elfbar EB Create", variante: "Golden Berry", cantidad: 1 }] });
+    ok("combo: modelos distintos no se mezclan", r3.body.ok && r3.body.mensaje.includes("Subtotal: $71.000"), r3.body.mensaje);
+  }
+  // ── si no sale hoy, el resumen lo avisa arriba de todo ──
+  {
+    const r = await conHora("2026-09-22T21:00:00", () => resumen());
+    ok("resumen: si no sale hoy lo avisa en la primera línea", r.body.ok && /^⚠️ OJO: SALE MAÑANA A LAS/.test(r.body.mensaje), r.body.mensaje.slice(0, 80));
+    const r2 = await conHora("2026-09-22T12:00:00", () => resumen());
+    ok("resumen: si sale hoy no agrega el aviso", r2.body.ok && /^🛒 PRODUCTOS/.test(r2.body.mensaje), r2.body.mensaje.slice(0, 80));
+  }
+
   // ── stock: se vende solo lo que está en las listas de stock del panel ──
   {
     const operativo = { ...store["settings/operativo"] };

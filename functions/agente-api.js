@@ -308,10 +308,9 @@ function importePorCantidad(precios, cantidad) {
   return resto === 0 ? importe : null;
 }
 
-// Devuelve { importe } o { error } para una línea del pedido. Las ofertas pisan los precios de la
-// lista para las cantidades que tengan cargadas.
-function precioDeLinea(listas, ofertas, item) {
-  const cantidad = Number(item.cantidad) || 1;
+// Devuelve { producto, precios } o { error } para una línea del pedido. Las ofertas pisan los precios
+// de la lista para las cantidades que tengan cargadas.
+function productoDeLinea(listas, ofertas, item) {
   const regular = buscarProducto(listas, item.producto);
   const oferta = buscarProducto(ofertas, item.producto);
   const ambiguo = (regular && regular.ambiguo) || (oferta && oferta.ambiguo);
@@ -322,12 +321,7 @@ function precioDeLinea(listas, ofertas, item) {
     return { error: `no encontré "${item.producto}" en las listas de precios de hoy: usá el nombre tal cual figura en la lista` };
   }
   const precios = { ...(regular && regular.producto && regular.producto.precios), ...(oferta && oferta.producto && oferta.producto.precios) };
-  const importe = importePorCantidad(precios, cantidad);
-  if (importe === null) {
-    const opciones = Object.keys(precios).map((n) => `${n}x`).join(", ");
-    return { error: `"${item.producto}" no se vende de a ${cantidad} (opciones: ${opciones})` };
-  }
-  return { importe, producto: regular && regular.producto };
+  return { producto: (regular && regular.producto) || oferta.producto, precios };
 }
 
 // Stock: las listas de stock del panel tienen un título por modelo (en mayúsculas) y debajo sus sabores,
@@ -614,14 +608,33 @@ exports.agentPedido = conClave(async (req, res) => {
   const op = await leerOperativo();
   const listas = LISTAS_CON_PRECIO.flatMap((campo) => parsearProductos(op[campo]).map((p) => ({ ...p, lista: campo })));
   const ofertas = parsearProductos(op.ofertasTexto);
+  // Los combos valen por modelo, mezclando sabores: "2x $40.000" de EB Create es 1 Golden Berry + 1 Pink
+  // Lemonade. Se suma la cantidad de cada modelo, se calcula con los combos y se reparte entre sus renglones.
   const lineas = [];
+  const modelos = new Map();
   for (const it of items) {
     const cantidad = Number(it.cantidad) || 1;
-    const r = precioDeLinea(listas, ofertas, { ...it, cantidad });
+    const r = productoDeLinea(listas, ofertas, it);
     if (r.error) return rechazar(res, r.error);
-    const sinStock = r.producto && STOCK_DE[r.producto.lista] && faltaStock(op[STOCK_DE[r.producto.lista]], r.producto.nombre, it.variante, cantidad);
+    const sinStock = STOCK_DE[r.producto.lista] && faltaStock(op[STOCK_DE[r.producto.lista]], r.producto.nombre, it.variante, cantidad);
     if (sinStock) return rechazar(res, sinStock);
-    lineas.push({ producto: String(it.producto), variante: String(it.variante || ""), cantidad, importe: r.importe });
+    const linea = { producto: String(it.producto), variante: String(it.variante || ""), cantidad, importe: 0 };
+    lineas.push(linea);
+    const m = modelos.get(r.producto.nombre) || { precios: r.precios, cantidad: 0, lineas: [] };
+    m.cantidad += cantidad;
+    m.lineas.push(linea);
+    modelos.set(r.producto.nombre, m);
+  }
+  for (const [nombre, m] of modelos) {
+    const importe = importePorCantidad(m.precios, m.cantidad);
+    if (importe === null) {
+      return rechazar(res, `"${nombre}" no se vende de a ${m.cantidad} (opciones: ${Object.keys(m.precios).map((n) => `${n}x`).join(", ")})`);
+    }
+    let resto = importe;
+    m.lineas.forEach((l, i) => {
+      l.importe = i === m.lineas.length - 1 ? resto : Math.round((importe * l.cantidad) / m.cantidad);
+      resto -= l.importe;
+    });
   }
 
   const subtotal = lineas.reduce((s, l) => s + l.importe, 0);
@@ -633,7 +646,11 @@ exports.agentPedido = conClave(async (req, res) => {
   const aTransferir = medioPago === "mitad y mitad" ? Math.ceil(total / 2) : 0;
   const cuando = tipoEnvio === "correo" ? null : salidaDeUnPedidoNuevo(op, tipoEnvio, await pedidosEnCola());
 
+  // Si no sale hoy, va arriba de todo: la gente no lee el detalle y después se queja.
+  const noSaleHoy = cuando && cuando.dia !== "hoy";
   const mensaje = [
+    noSaleHoy ? `⚠️ OJO: SALE ${cuando.dia.toUpperCase()} A LAS ${cuando.hora}` : null,
+    noSaleHoy ? "" : null,
     "🛒 PRODUCTOS",
     ...lineas.map((l) => `* ${l.cantidad}x ${l.producto}${l.variante ? " - " + l.variante : ""}: ${$(l.importe)}`),
     "",
