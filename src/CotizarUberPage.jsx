@@ -4,7 +4,7 @@ import {
   initializeFirestore, getFirestore, collection, query, where, onSnapshot, doc, updateDoc,
   persistentLocalCache, persistentMultipleTabManager,
 } from 'firebase/firestore';
-import { Car, Moon, Sun, Check, Clock, User, MapPin } from 'lucide-react';
+import { Car, Moon, Sun, Check, X, Clock, User, MapPin } from 'lucide-react';
 
 // --- Firebase: mismo patron que OperativoPage.jsx (pagina 100% independiente). ---
 const firebaseConfig = {
@@ -62,7 +62,7 @@ export default function CotizarUberPage() {
       () => setLoaded(true)
     );
     const unsubRes = onSnapshot(
-      query(collection(db, 'cotizaciones_uber'), where('estado', 'in', ['cotizado', 'procesado'])),
+      query(collection(db, 'cotizaciones_uber'), where('estado', 'in', ['cotizado', 'no_llegamos', 'procesado'])),
       (snap) => {
         setResueltas(
           snap.docs.map((d) => ({ id: d.id, ...d.data() }))
@@ -94,13 +94,29 @@ export default function CotizarUberPage() {
   };
 
 
+  const noLlegamos = async (item) => {
+    if (!window.confirm(`¿Avisarle a ${item.nombreCliente || item.telefonoCliente} que hoy por Uber no llegamos?`)) return;
+    setEnviando((e) => ({ ...e, [item.id]: true }));
+    try {
+      await updateDoc(doc(db, 'cotizaciones_uber', item.id), {
+        estado: 'no_llegamos',
+        noLlegamos: true,
+        resueltoEn: new Date().toISOString(),
+      });
+    } catch (e) {
+      alert('Error al avisar: ' + e.message);
+    } finally {
+      setEnviando((en) => ({ ...en, [item.id]: false }));
+    }
+  };
+
   const card = dm ? 'bg-[#101010] border-white/[0.06]' : 'bg-white border-zinc-200';
   const label = dm ? 'text-zinc-400' : 'text-zinc-600';
   const input = dm
     ? 'bg-[#0a0a0a] border-white/10 text-zinc-100 focus:border-indigo-500'
     : 'bg-white border-zinc-300 text-zinc-900 focus:border-indigo-500';
 
-  const ESTADO_LABEL = { cotizado: 'Enviando al cliente…', procesado: 'Ya avisado' };
+  const ESTADO_LABEL = { cotizado: 'Enviando al cliente…', no_llegamos: 'Enviando al cliente…', procesado: 'Ya avisado' };
 
   return (
     <div className={`min-h-screen ${dm ? 'bg-[#050505] text-zinc-100' : 'bg-slate-50 text-zinc-900'}`}
@@ -126,7 +142,7 @@ export default function CotizarUberPage() {
         <p className={`text-sm mb-6 ${label}`}>
           Pedidos que el bot derivó porque el cliente eligió envío Flash/Uber. Fijate la dirección
           en la app de Uber, cargá acá el precio, y confirmá — el bot le avisa al cliente solo y
-          sigue la conversación.
+          sigue la conversación. Si hoy no llegan, tocá "No llegamos" y el bot se lo avisa.
         </p>
 
         <div className="space-y-3 mb-8">
@@ -172,6 +188,13 @@ export default function CotizarUberPage() {
                 >
                   <Check size={15} /> Confirmar
                 </button>
+                <button
+                  onClick={() => noLlegamos(item)}
+                  disabled={enviando[item.id]}
+                  className={`px-4 py-2.5 rounded-xl font-bold text-sm transition-opacity hover:opacity-90 disabled:opacity-50 flex items-center gap-1.5 border ${dm ? 'border-red-500/40 text-red-400' : 'border-red-300 text-red-600'}`}
+                >
+                  <X size={15} /> No llegamos
+                </button>
               </div>
             </div>
           ))}
@@ -184,7 +207,7 @@ export default function CotizarUberPage() {
               {resueltas.map((item) => (
                 <div key={item.id} className={`px-4 py-3 text-sm flex items-center justify-between border-b last:border-b-0 ${dm ? 'border-white/[0.04]' : 'border-zinc-100'}`}>
                   <span>{item.nombreCliente || item.telefonoCliente}</span>
-                  <span className={label}>{item.montoUber != null ? `$${Number(item.montoUber).toLocaleString('es-AR')}` : '—'}</span>
+                  <span className={label}>{item.noLlegamos ? 'No llegamos' : item.montoUber != null ? `${Number(item.montoUber).toLocaleString('es-AR')}` : '—'}</span>
                   <span className={`text-xs ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>{ESTADO_LABEL[item.estado] || item.estado}</span>
                 </div>
               ))}

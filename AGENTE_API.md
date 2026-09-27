@@ -120,6 +120,9 @@ venta: eso lo sigue haciendo el depósito.
 3. El trigger `onCotizacionUberConfirmada` manda `{ idConversacion, montoUber }` al webhook
    `cotizacion-uber-confirmada` de n8n (con `X-Agent-Key`) y marca la cotización `procesado`.
    n8n le manda el precio al cliente y reactiva el bot.
+4. Si el Uber no llega, el depósito toca "No llegamos" (estado `no_llegamos`): el trigger manda
+   `{ idConversacion, noLlegamos: true }` al mismo webhook y n8n le avisa al cliente solo eso
+   ("hoy por Uber no llegamos") y reactiva el bot.
 
 ## GET `/serveComprobante?pedido=<id>`
 

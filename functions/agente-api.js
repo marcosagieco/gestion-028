@@ -786,11 +786,15 @@ exports.agentCrearCotizacionUber = conClave(async (req, res) => {
 exports.onCotizacionUberConfirmada = onDocumentUpdated("cotizaciones_uber/{id}", async (event) => {
   const antes = event.data.before.data() || {};
   const cot = event.data.after.data() || {};
-  if (cot.estado !== "cotizado" || antes.estado === "cotizado") return;
+  // "no_llegamos": el depósito avisa que hoy el Uber no llega; n8n se lo dice al cliente y nada más.
+  if (!["cotizado", "no_llegamos"].includes(cot.estado) || antes.estado === cot.estado) return;
+  const noLlegamos = cot.estado === "no_llegamos";
   try {
     await axios.post(
       N8N_COTIZACION_UBER_WEBHOOK,
-      { idConversacion: cot.idConversacion, montoUber: cot.montoUber },
+      noLlegamos
+        ? { idConversacion: cot.idConversacion, noLlegamos: true }
+        : { idConversacion: cot.idConversacion, montoUber: cot.montoUber },
       { headers: { "X-Agent-Key": AGENT_API_KEY }, timeout: 10000 }
     );
     await event.data.after.ref.update({ estado: "procesado", procesadoEn: new Date().toISOString() });

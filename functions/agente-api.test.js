@@ -424,6 +424,9 @@ async function main() {
     ok("uber confirmado: queda procesado", store[idCot].estado === "procesado", store[idCot]);
     await api.onCotizacionUberConfirmada(evento({ estado: "cotizado" }, { estado: "procesado" }));
     ok("uber confirmado: no vuelve a avisar", postsAN8n.length === 1, postsAN8n);
+    await api.onCotizacionUberConfirmada(evento({ estado: "pendiente" }, { estado: "no_llegamos", idConversacion: "78", noLlegamos: true }));
+    ok("uber no llegamos: avisa a n8n sin monto", postsAN8n.length === 2 && postsAN8n[1].body.noLlegamos === true && postsAN8n[1].body.idConversacion === "78" && !("montoUber" in postsAN8n[1].body), postsAN8n);
+    ok("uber no llegamos: queda procesado", store[idCot].estado === "procesado", store[idCot]);
   }
 
   // ── comprobante ──
