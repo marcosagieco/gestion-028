@@ -32,6 +32,9 @@ Todo lo del día, en una sola llamada:
   Si el depósito carga una "próxima salida" de moto en `/operativo` ("18", "18:00", "18 hs"), esa hora
   le gana a todo para la moto, cupo incluido (si ya pasó, es la de mañana), mientras esté cargada.
   El Uber no la usa: sale siempre por tandas. Vacía = tandas.
+  Los días sin despacho (feriados, domingos que no se trabaja) se cargan en `/operativo`
+  (`diasSinDespacho`, fechas `AAAA-MM-DD`): ese día no sale nada y lo que se pide sale el próximo
+  día con despacho (`"dia": "el lunes"`).
 - `plantillas`: las 8 listas de `/operativo` (`STOCK_NICOTINA`, `PRECIOS_VAPES`, `STOCK_THC`,
   `PRECIOS_THC`, `PERFUMES`, `APPLE_ACCESORIOS`, `PRECIOS_MAYORISTA`, `OFERTAS`), el `ALIAS` activo
   y los textos fijos (`FORMAS_DE_ENTREGA`, `ENVIO_SEGURO`, `WEB`, `DESCUENTO_EFECTIVO`, `GRACIAS`,

@@ -4,7 +4,7 @@ import {
   initializeFirestore, getFirestore, doc, onSnapshot, setDoc,
   persistentLocalCache, persistentMultipleTabManager,
 } from 'firebase/firestore';
-import { Bot, Moon, Sun, Save, Check } from 'lucide-react';
+import { Bot, Moon, Sun, Save, Check, X, Plus } from 'lucide-react';
 
 // --- Firebase: mismo patron que PedidosPage.jsx / FacturasPage.jsx (pagina 100% independiente). ---
 const firebaseConfig = {
@@ -53,8 +53,13 @@ const ALIASES = [
   { id: 'alias3', label: 'Alias 3 — Financiera (CALMO.DURO.DIA)' },
 ];
 
+// Fechas "AAAA-MM-DD" en hora de Buenos Aires (las mismas que usa el backend).
+const hoyBA = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).format(new Date());
+const DIAS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+const fechaLinda = (f) => { const [a, m, d] = f.split('-').map(Number); return `${DIAS[new Date(a, m - 1, d).getDay()]} ${d}/${m}`; };
+
 const DEFAULTS = {
-  situacion: 'sin_demora', proximaSalida: '', aliasActivo: 'alias1', limitePorTanda: 10,
+  situacion: 'sin_demora', proximaSalida: '', aliasActivo: 'alias1', limitePorTanda: 10, diasSinDespacho: [],
   stockNicotinaTexto: '', stockThcTexto: '',
   preciosVapesTexto: '', preciosThcTexto: '', perfumesTexto: '', appleTexto: '',
   preciosMayoristaTexto: '', ofertasTexto: '',
@@ -66,6 +71,7 @@ export default function OperativoPage() {
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
+  const [nuevoDia, setNuevoDia] = useState('');
 
   useEffect(() => { localStorage.setItem('028_dark_mode', dm); }, [dm]);
 
@@ -79,6 +85,14 @@ export default function OperativoPage() {
 
   const set = (k, v) => { setForm((f) => ({ ...f, [k]: v })); setSavedAt(null); };
 
+  // Los días que ya pasaron no se muestran ni se guardan.
+  const diasSinDespacho = (form.diasSinDespacho || []).filter((d) => d >= hoyBA()).sort();
+  const agregarDia = () => {
+    if (!nuevoDia || nuevoDia < hoyBA() || diasSinDespacho.includes(nuevoDia)) return;
+    set('diasSinDespacho', [...diasSinDespacho, nuevoDia].sort());
+    setNuevoDia('');
+  };
+
   const guardar = async () => {
     setSaving(true);
     try {
@@ -86,6 +100,7 @@ export default function OperativoPage() {
         situacion: SITUACIONES.some((s) => s.id === form.situacion) ? form.situacion : 'sin_demora',
         proximaSalida: (form.proximaSalida || '').trim(),
         limitePorTanda: Number(form.limitePorTanda) > 0 ? Number(form.limitePorTanda) : 10,
+        diasSinDespacho,
         aliasActivo: ALIASES.some((a) => a.id === form.aliasActivo) ? form.aliasActivo : 'alias1',
         stockNicotinaTexto: (form.stockNicotinaTexto || '').trim(),
         stockThcTexto: (form.stockThcTexto || '').trim(),
@@ -181,6 +196,36 @@ export default function OperativoPage() {
             <input type="number" min="1" max="99" value={form.limitePorTanda}
               onChange={(e) => set('limitePorTanda', e.target.value)}
               className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors ${input}`} />
+          </div>
+
+          {/* Dias sin despacho */}
+          <div className={`rounded-2xl border p-5 ${card}`}>
+            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Dias sin despacho</label>
+            <p className={`text-[11px] mb-3 ${label}`}>Feriados o dias que no se trabaja. Ese dia el bot sigue vendiendo, pero avisa que sale el proximo dia con despacho (ej. "sale el lunes"). Agregalo y toca Guardar. Los dias que ya pasaron se borran solos.</p>
+            <div className="flex gap-2 mb-3">
+              <input type="date" value={nuevoDia} min={hoyBA()} onChange={(e) => setNuevoDia(e.target.value)}
+                className={`flex-1 min-w-0 rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors ${input}`} />
+              <button onClick={agregarDia} disabled={!nuevoDia}
+                className="px-3.5 rounded-xl font-bold text-sm text-white flex items-center gap-1 disabled:opacity-50"
+                style={{ background: '#6366f1' }}>
+                <Plus size={15} /> Agregar
+              </button>
+            </div>
+            {diasSinDespacho.length === 0
+              ? <p className={`text-xs ${label}`}>Ninguno: se despacha todos los dias.</p>
+              : (
+                <div className="space-y-2">
+                  {diasSinDespacho.map((d) => (
+                    <div key={d} className={`rounded-xl border px-4 py-2 flex items-center justify-between text-sm ${dm ? 'border-white/[0.08]' : 'border-zinc-200'}`}>
+                      <span className="font-bold capitalize">{fechaLinda(d)}</span>
+                      <button onClick={() => set('diasSinDespacho', diasSinDespacho.filter((x) => x !== d))}
+                        className={`p-1 rounded-lg ${dm ? 'hover:bg-white/5 text-zinc-400' : 'hover:bg-zinc-100 text-zinc-500'}`} title="Quitar">
+                        <X size={15} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
           </div>
 
           {/* Alias activo */}

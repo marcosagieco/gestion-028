@@ -352,6 +352,7 @@ async function main() {
     const guardados = Object.entries(store).filter(([k]) => k.startsWith("pedidos/"));
     const operativo = { ...store["settings/operativo"] };
     const salidaCon = async (hora, enCola, extra = {}, campo = "salida") => {
+      extra = { diasSinDespacho: ["2026-09-27"], ...extra }; // el domingo 27/9 cargado en el panel
       for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
       for (let i = 0; i < enCola; i++) store[`pedidos/cola${i}`] = { estado: "pendiente", tipoEnvio: i % 3 ? "moto" : "uber" };
       for (let i = 0; i < 30; i++) store[`pedidos/armado${i}`] = { estado: "armado", tipoEnvio: "uber" }; // ya salieron: no ocupan lugar
@@ -380,6 +381,14 @@ async function main() {
       const s = await salidaCon(hora, enCola);
       ok("salida: " + nombre, s === esperado, s);
     }
+    const d1 = await salidaCon("2026-09-26T22:00:00", 0, { diasSinDespacho: [] });
+    ok("salida: sin días cargados en el panel, el domingo sale normal", d1 === "mañana 17:00", d1);
+    const d2 = await salidaCon("2026-09-26T22:00:00", 0, { diasSinDespacho: ["2026-09-27", "2026-09-28"] });
+    ok("salida: dos días seguidos sin despacho, sale el martes", d2 === "el martes 13:30", d2);
+    const d3 = await salidaCon("2026-09-26T22:00:00", 0, { diasSinDespacho: ["27/9", 5, null] });
+    ok("salida: fechas mal cargadas se ignoran", d3 === "mañana 17:00", d3);
+    const d4 = await salidaCon("2026-09-27T12:00:00", 0, { proximaSalida: "16:00" }, "salida");
+    ok("salida: un día sin despacho, la próxima salida del panel es la del lunes", d4 === "mañana 16:00", d4);
     const s1 = await salidaCon("2026-09-22T15:00:00", 0, { situacion: "solo_manana" });
     ok("salida: si el panel dice que hoy no sale más, mañana", s1 === "mañana 14:00", s1);
     const s2 = await salidaCon("2026-09-22T16:50:00", 3, { limitePorTanda: 3 });

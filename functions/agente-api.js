@@ -42,9 +42,6 @@ const LIMITE_POR_TANDA = 10; // si el panel no tiene uno cargado
 const CADA_TANDA = 30; // minutos entre tandas (moto y Uber por igual)
 const ULTIMA_TANDA = 20 * 60; // 20:00
 const CORTE_DESPACHO = 20 * 60 + 15; // hasta las 20:15 todavía entra en la tanda de las 20:00
-// Días sin despacho (feriados, domingos que no se trabaja): lo que se pide sale el próximo día hábil.
-// Provisorio: la idea es que lo cargue el depósito desde el panel.
-const DIAS_SIN_DESPACHO = ["2026-09-27"];
 const VIGENCIA_COTIZACION_UBER_MS = 3 * 60 * 60 * 1000;
 
 const DEMORAS = {
@@ -456,23 +453,29 @@ function minutosDe(texto) {
 // mañana. Rige mientras esté cargada; borrarla vuelve a las tandas.
 const DIAS_SEMANA = { Sun: "domingo", Mon: "lunes", Tue: "martes", Wed: "miércoles", Thu: "jueves", Fri: "viernes", Sat: "sábado" };
 
+// Los días sin despacho (feriados, domingos que no se trabaja) los carga el depósito en /operativo
+// como "AAAA-MM-DD": lo que se pide ese día, o antes para ese día, sale el próximo día con despacho.
+function diasSinDespachoDe(op) {
+  return Array.isArray(op.diasSinDespacho) ? op.diasSinDespacho.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)) : [];
+}
+
 // El próximo día con despacho a partir de mañana: { dia (hora de BA), etiqueta ("mañana", "el lunes") }.
-function proximoDiaHabil(fecha) {
+function proximoDiaHabil(fecha, sinDespacho) {
   for (let n = 1; n <= 14; n++) {
     const d = horaBuenosAires(new Date(fecha.getTime() + n * 24 * 60 * 60 * 1000));
-    if (!DIAS_SIN_DESPACHO.includes(d.fecha)) return { d, etiqueta: n === 1 ? "mañana" : `el ${DIAS_SEMANA[d.dia]}` };
+    if (!sinDespacho.includes(d.fecha)) return { d, etiqueta: n === 1 ? "mañana" : `el ${DIAS_SEMANA[d.dia]}` };
   }
   return { d: horaBuenosAires(new Date(fecha.getTime() + 24 * 60 * 60 * 1000)), etiqueta: "mañana" };
 }
 
-function salida(fecha, { enCola, limite, soloManana, proximaSalida }) {
+function salida(fecha, { enCola, limite, soloManana, proximaSalida, sinDespacho = [] }) {
   const ahora = horaBuenosAires(fecha);
   const hhmm = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
-  const hoyNoSeDespacha = soloManana || DIAS_SIN_DESPACHO.includes(ahora.fecha);
-  const siguiente = proximoDiaHabil(fecha);
+  const hoyNoSeDespacha = soloManana || sinDespacho.includes(ahora.fecha);
+  const siguiente = proximoDiaHabil(fecha, sinDespacho);
   const delPanel = minutosDe(proximaSalida);
   if (delPanel !== null) {
-    return delPanel >= ahora.minutos && !DIAS_SIN_DESPACHO.includes(ahora.fecha)
+    return delPanel >= ahora.minutos && !sinDespacho.includes(ahora.fecha)
       ? { dia: "hoy", hora: hhmm(delPanel) } : { dia: siguiente.etiqueta, hora: hhmm(delPanel) };
   }
   const hoy = hoyNoSeDespacha ? [] : tandasDelDia(ahora.dia)
@@ -498,7 +501,7 @@ async function pedidosEnCola() {
 // La "próxima salida" del panel es solo para la moto: el Uber sale siempre por tandas.
 function salidaDeUnPedidoNuevo(op, tipoEnvio, enCola) {
   const limite = Number(op.limitePorTanda) > 0 ? Number(op.limitePorTanda) : LIMITE_POR_TANDA;
-  return salida(new Date(), { enCola, limite, soloManana: op.situacion === "solo_manana", proximaSalida: tipoEnvio === "moto" ? op.proximaSalida : "" });
+  return salida(new Date(), { enCola, limite, soloManana: op.situacion === "solo_manana", proximaSalida: tipoEnvio === "moto" ? op.proximaSalida : "", sinDespacho: diasSinDespachoDe(op) });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
