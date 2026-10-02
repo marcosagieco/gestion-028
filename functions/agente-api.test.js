@@ -223,10 +223,21 @@ async function main() {
     await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "77", telefonoCliente: "+54 9 11 5869-6086" } });
     const [idCot] = Object.keys(store).filter((k) => k.startsWith("cotizaciones_uber/"));
     ok("uber: la cotización guarda el teléfono normalizado", store[idCot].telefonoCliente === "5491158696086", store[idCot]);
+    const rPend = await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "77b", telefonoCliente: "+54 9 11 5869-6086" } });
+    ok("uber: si ya hay cotización pendiente no crea otra", rPend.body.yaPendiente && Object.keys(store).filter((k) => k.startsWith("cotizaciones_uber/")).length === 1, rPend.body);
     store[idCot] = { ...store[idCot], estado: "cotizado", montoUber: 8500, resueltoEn: new Date(Date.now() - 4 * 3600e3).toISOString() };
     const r2 = await resumen({ tipoEnvio: "uber" });
     ok("uber: una cotización de hace 4 hs ya no vale", r2.status === 400, r2.body);
     store[idCot].resueltoEn = new Date().toISOString();
+    const rVig = await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "77c", telefonoCliente: "+54 9 11 5869-6086" } });
+    ok("uber: si ya hay cotización reciente devuelve el monto y no recotiza", rVig.body.yaCotizado && rVig.body.montoUber === 8500 && /Usá ese monto/.test(rVig.body.mensaje), rVig.body);
+    const rOld = await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "88", telefonoCliente: "+54 9 11 2222-3333", direccion: "Cabildo 2000, Belgrano" } });
+    store[`cotizaciones_uber/${rOld.body.id}`].createdAt = new Date(Date.now() - 31 * 60 * 1000).toISOString();
+    const rOld2 = await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "88b", telefonoCliente: "+54 9 11 2222-3333", direccion: "Cabildo 2000, Belgrano" } });
+    ok("uber: después de 30 min permite recotizar la misma dirección", rOld2.body.ok && !rOld2.body.yaPendiente && rOld2.body.id !== rOld.body.id, rOld2.body);
+    const rDir = await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "99", telefonoCliente: "+54 9 11 3333-4444", direccion: "Cabildo 2000, Belgrano" } });
+    const rDir2 = await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "99b", telefonoCliente: "+54 9 11 3333-4444", direccion: "Lacroze 2542, Colegiales" } });
+    ok("uber: si cambia la dirección permite una nueva cotización aunque sea reciente", rDir2.body.ok && !rDir2.body.yaPendiente && rDir2.body.id !== rDir.body.id, rDir2.body);
     const r3 = await resumen({ tipoEnvio: "uber", envioSeguro: true });
     ok("uber: usa el monto que cargó el depósito + envío seguro", r3.body.total === 26000 + 8500 + 1990, r3.body);
     const r4 = await resumen({ tipoEnvio: "uber", medioPago: "efectivo" });
@@ -292,6 +303,32 @@ async function main() {
     const r5 = await resumen({ tipoEnvio: "correo", medioPago: "mitad y mitad", datosCorreo: { aSucursal: true } });
     ok("correo: nunca mitad y mitad", r5.status === 400, r5.body);
   }
+  {
+    const guardados = Object.entries(store).filter(([k]) => k.startsWith("pedidos/"));
+    for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
+    const datos = {
+      idConversacion: "485",
+      idMensajeOrigen: "18106",
+      comprobante: { numero: "182025450674" },
+    };
+    const r1 = await pedido(datos);
+    const r2 = await pedido(datos);
+    const pedidosGuardados = Object.keys(store).filter((k) => k.startsWith("pedidos/"));
+    const p = store[`pedidos/${r1.body.pedidoId}`];
+    ok("pedido: el mismo mensaje no crea duplicados", r1.body.ok && r2.body.reutilizado === true && r1.body.pedidoId === r2.body.pedidoId && pedidosGuardados.length === 1, { r1: r1.body, r2: r2.body });
+    ok("pedido: guarda trazabilidad de Chatwoot", p.idConversacion === "485" && p.idMensajeOrigen === "18106" && p.origen === "bot_n8n" && p.schemaVersion === 2, p);
+
+    const estadoPendiente = await llamar(api.agentEstadoOperativo, { query: { telefono: "+54 9 11 5869-6086" } });
+    ok("estado: un pedido pendiente nunca figura en camino", estadoPendiente.body.pedidoActual?.estado === "pendiente" && /todavía no figura como despachado/.test(estadoPendiente.body.pedidoActual.descripcion) && !estadoPendiente.body.pedidoActual.puedeAfirmarEnCamino, estadoPendiente.body.pedidoActual);
+    store[`pedidos/${r1.body.pedidoId}`].estado = "armado";
+    store["recorridos/activo"] = { estado: "en_calle", salidaEn: new Date().toISOString() };
+    const estadoEnCalle = await llamar(api.agentEstadoOperativo, { query: { telefono: "5491158696086" } });
+    ok("estado: moto solo puede decir en camino si el reparto salió", estadoEnCalle.body.pedidoActual?.puedeAfirmarEnCamino === true && /reparto ya está en la calle/.test(estadoEnCalle.body.pedidoActual.descripcion), estadoEnCalle.body.pedidoActual);
+
+    delete store["recorridos/activo"];
+    for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
+    for (const [k, v] of guardados) store[k] = v;
+  }
 
   // ── combos por modelo, mezclando sabores ──
   {
@@ -302,12 +339,15 @@ async function main() {
     const r3 = await resumen({ items: [{ producto: "Elfbar Ice King", variante: "Peach", cantidad: 2 }, { producto: "Elfbar EB Create", variante: "Golden Berry", cantidad: 1 }] });
     ok("combo: modelos distintos no se mezclan", r3.body.ok && r3.body.mensaje.includes("Subtotal: $71.000"), r3.body.mensaje);
   }
-  // ── si no sale hoy, el resumen lo avisa arriba de todo ──
+  // ── preview: cotiza, pero no promete despacho hasta que el pedido quede cargado ──
   {
     const r = await conHora("2026-09-22T21:00:00", () => resumen());
-    ok("resumen: si no sale hoy lo avisa en la primera línea", r.body.ok && /^⚠️ OJO: SALE MAÑANA A LAS/.test(r.body.mensaje), r.body.mensaje.slice(0, 80));
+    ok("preview: si no sale hoy lo avisa como condicional", r.body.ok && /^⚠️ OJO: SI CONFIRMÁS AHORA, SALE MAÑANA A LAS/.test(r.body.mensaje), r.body.mensaje.slice(0, 100));
     const r2 = await conHora("2026-09-22T12:00:00", () => resumen());
-    ok("resumen: si sale hoy no agrega el aviso", r2.body.ok && /^🛒 PRODUCTOS/.test(r2.body.mensaje), r2.body.mensaje.slice(0, 80));
+    ok("preview: aclara que el pedido todavía no está registrado", r2.body.ok && /^⚠️ Todavía no está registrado para despacho/.test(r2.body.mensaje), r2.body.mensaje.slice(0, 120));
+    ok("preview: la hora de salida queda condicionada a confirmar", /Si confirmás el pedido ahora, sale hoy a las/.test(r2.body.mensaje) && !/🕐 Sale hoy/.test(r2.body.mensaje), r2.body.mensaje);
+    const r3 = await conHora("2026-09-22T12:00:00", () => pedido({ comprobante: { numero: "0099999" } }));
+    ok("pedido cargado: con comprobante sí promete salida", r3.body.ok && /🕐 Sale hoy a las/.test(r3.body.mensaje), r3.body.mensaje);
   }
 
   // ── stock: se vende solo lo que está en las listas de stock del panel ──
@@ -340,10 +380,28 @@ async function main() {
 
   // ── estado operativo ──
   {
+    const guardados = Object.entries(store).filter(([k]) => k.startsWith("pedidos/"));
+    for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
+    store["settings/operativo"] = { ...store["settings/operativo"], situacion: "demora" };
     const r = await conHora("2026-09-22T15:00:00", () => llamar(api.agentEstadoOperativo));
     ok("estado: manda el alias activo, nunca otro", r.body.plantillas.ALIAS.includes("CALMO.DURO.DIA") && r.body.plantillas.ALIAS.includes("CBU: 0000598201000000015014") && !/028import\.gal?2?/.test(r.body.plantillas.ALIAS), r.body.plantillas.ALIAS);
     ok("estado: manda las listas del panel", r.body.plantillas.PRECIOS_VAPES === LISTAS.preciosVapesTexto.trim(), null);
     ok("estado: demora del día (la hora va aparte, en salida)", /2 hs/.test(r.body.demora) && !/16:00/.test(r.body.demora) && r.body.salida.hora === "16:00", r.body);
+    ok("estado: manda comunidad y regla de Secpaynet", /COMUNIDAD 028 IMPORT/.test(r.body.plantillas.COMUNIDAD) && /Secpaynet/.test(r.body.plantillas.COMPROBANTES_VALIDOS), r.body.plantillas);
+
+    const cola = async (n, extra = {}) => {
+      for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
+      for (let i = 0; i < n; i++) store[`pedidos/demora${i}`] = { estado: "pendiente", tipoEnvio: "moto" };
+      store["settings/operativo"] = { ...store["settings/operativo"], situacion: "sin_demora", ...extra };
+      return (await conHora("2026-09-22T15:00:00", () => llamar(api.agentEstadoOperativo))).body.demora;
+    };
+    ok("estado: con 5 pedidos la demora sube a 2 hs", /2 hs/.test(await cola(5)), null);
+    ok("estado: con 8 pedidos la demora sube a 2:30 hs", /2:30 hs/.test(await cola(8)), null);
+    ok("estado: con 11 pedidos la demora sube a más de 3 hs", /más de 3 hs/.test(await cola(11)), null);
+    ok("estado: solo mañana le gana a la demora automática", /sale mañana/.test(await cola(11, { situacion: "solo_manana" })), null);
+    for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
+    for (const [k, v] of guardados) store[k] = v;
+    store["settings/operativo"] = { ...store["settings/operativo"], situacion: "demora" };
   }
 
   // ── salida: en qué tanda sale un pedido nuevo ──
@@ -369,7 +427,8 @@ async function main() {
       ["16:50 con 9 en cola: entra en la de las 17:00", "2026-09-22T16:50:00", 9, "hoy 17:00"],
       ["16:50 con 10 en cola: tanda llena, sale 17:30", "2026-09-22T16:50:00", 10, "hoy 17:30"],
       ["16:50 con 25 en cola: dos tandas llenas, sale 18:00", "2026-09-22T16:50:00", 25, "hoy 18:00"],
-      ["20:10: hasta las 20:15 entra en la de las 20:00", "2026-09-22T20:10:00", 0, "hoy 20:00"],
+      ["20:09: todavía entra en la de las 20:00", "2026-09-22T20:09:00", 0, "hoy 20:00"],
+      ["20:10: ya sale mañana", "2026-09-22T20:10:00", 0, "mañana 14:00"],
       ["martes 21:00: mañana miércoles 14:00", "2026-09-22T21:00:00", 0, "mañana 14:00"],
       ["sábado 22:00: mañana domingo 17:00", "2026-10-03T22:00:00", 0, "mañana 17:00"],
       ["19:40 con 30 en cola: hoy no entra, mañana en la tercera", "2026-09-22T19:40:00", 30, "mañana 15:00"],
@@ -414,13 +473,13 @@ async function main() {
     const u2 = await salidaCon("2026-09-22T16:50:00", 10, { proximaSalida: "18:00" }, "salidaUber");
     ok("salida: el Uber respeta el cupo de la tanda", u2 === "hoy 17:30", u2);
     const u3 = await salidaCon("2026-09-22T20:10:00", 0, {}, "salidaUber");
-    ok("salida: el Uber hasta las 20:15 entra en la de las 20:00", u3 === "hoy 20:00", u3);
+    ok("salida: el Uber desde las 20:10 sale mañana", u3 === "mañana 14:00", u3);
 
     for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
     for (const [k, v] of guardados) store[k] = v;
     store["settings/operativo"] = operativo; // tiene próxima salida 16:00
-    const r = await conHora("2026-09-22T04:00:00", () => resumen());
-    ok("salida: el resumen dice cuándo sale (con la hora del panel)", /🕐 Sale hoy a las 16:00/.test(r.body.mensaje), r.body.mensaje);
+    const r = await conHora("2026-09-22T04:00:00", () => pedido({ comprobante: { numero: "0012345" } }));
+    ok("salida: el pedido cargado dice cuándo sale (con la hora del panel)", /🕐 Sale hoy a las 16:00/.test(r.body.mensaje), r.body.mensaje);
   }
 
   // ── cotización de Uber confirmada en el panel ──

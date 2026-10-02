@@ -10,7 +10,7 @@ logística se resuelve acá, nunca en el modelo.
   agente: le dice qué le falta pedirle al cliente.
 - **Tests:** `node functions/agente-api.test.js` (sin Firestore ni Google reales).
 
-## GET `/agentEstadoOperativo`
+## GET `/agentEstadoOperativo?telefono=`
 
 Todo lo del día, en una sola llamada:
 
@@ -19,14 +19,23 @@ Todo lo del día, en una sola llamada:
   "ok": true,
   "salida": { "dia": "hoy", "hora": "18:00" },
   "salidaUber": { "dia": "hoy", "hora": "17:30" },
+  "pedidosEnCola": 8,
   "demora": "hoy estamos con una demora de alrededor de 2 hs en los envíos",
+  "pedidoActual": {
+    "id": "…",
+    "estado": "pendiente",
+    "tipoEnvio": "uber",
+    "descripcion": "el pedido está registrado y pendiente de armado; todavía no figura como despachado",
+    "puedeAfirmarEnCamino": false,
+    "puedeAfirmarEntregado": false
+  },
   "plantillas": { "STOCK_NICOTINA": "…", "PRECIOS_VAPES": "…", "ALIAS": "…", "FORMAS_DE_ENTREGA": "…" }
 }
 ```
 
 - `salida` (moto) y `salidaUber`: en qué tanda sale un pedido tomado ahora. Salen tandas cada 30 min
-  hasta las 20:00, desde las 13:30 (miércoles 14:00, domingos 17:00); hasta las 20:15 todavía entra
-  en la de las 20:00. Cada tanda lleva hasta el límite de `/operativo`, contando los pedidos de moto
+  hasta las 20:00, desde las 13:30 (miércoles 14:00, domingos 17:00); hasta antes de las 20:10 todavía entra
+  en la de las 20:00, desde las 20:10 sale el próximo día con despacho. Cada tanda lleva hasta el límite de `/operativo`, contando los pedidos de moto
   y Uber "para armar" (los armados ya salieron y no cuentan): con la de las 17:00 llena, sale 17:30. Si hoy no entra, o el
   panel dice que hoy no sale nada más, sale mañana. La misma hora va en el resumen del pedido.
   Si el depósito carga una "próxima salida" de moto en `/operativo` ("18", "18:00", "18 hs"), esa hora
@@ -35,10 +44,20 @@ Todo lo del día, en una sola llamada:
   Los días sin despacho (feriados, domingos que no se trabaja) se cargan en `/operativo`
   (`diasSinDespacho`, fechas `AAAA-MM-DD`): ese día no sale nada y lo que se pide sale el próximo
   día con despacho (`"dia": "el lunes"`).
+- `demora`: se ajusta automáticamente por cantidad de pedidos pendientes de moto/Uber: desde 5
+  pedidos informa aprox. 2 hs, desde 8 informa aprox. 2:30 hs, y con más de 10 informa más de 3 hs.
+  Si `/operativo` está en `solo_manana`, esa regla le gana a todo y dice que sale mañana.
+- `pedidoActual`: último pedido estructurado de ese teléfono, con una descripción segura del estado.
+  El agente usa este campo para seguimiento y nunca infiere que salió. Un pedido `pendiente` todavía
+  no salió; una moto `armada` solo puede figurar en camino si el recorrido global está `en_calle`.
+  Si no hay un pedido estructurado para ese teléfono, llega `null`.
 - `plantillas`: las 8 listas de `/operativo` (`STOCK_NICOTINA`, `PRECIOS_VAPES`, `STOCK_THC`,
   `PRECIOS_THC`, `PERFUMES`, `APPLE_ACCESORIOS`, `PRECIOS_MAYORISTA`, `OFERTAS`), el `ALIAS` activo
   y los textos fijos (`FORMAS_DE_ENTREGA`, `ENVIO_SEGURO`, `WEB`, `DESCUENTO_EFECTIVO`, `GRACIAS`,
-  `CONFIANZA`). Una lista vacía llega como `""`.
+  `CONFIANZA`, `COMUNIDAD`, `COMPROBANTES_VALIDOS`). Una lista vacía llega como `""`.
+  `COMUNIDAD` se usa cuando piden aviso de reingreso/stock nuevo/ofertas, y también como cierre
+  liviano cuando el cliente confirma que llegó todo bien. `COMPROBANTES_VALIDOS` es regla interna:
+  Tame Lake S.A. / Secpaynet es esperado para alias3 y no debe derivarse solo por ese texto.
 
 ## GET `/agentCotizarEnvio?direccion=`
 
@@ -59,6 +78,8 @@ Calcula el resumen (`preview: true`, no guarda nada) o carga el pedido en `pedid
 {
   "preview": false,
   "telefono": "+5491158696086",
+  "idConversacion": "485",
+  "idMensajeOrigen": "18106",
   "cliente": "Uma Bach",
   "items": [{ "producto": "Elfbar Ice King", "variante": "Peach", "cantidad": 2 }],
   "tipoEnvio": "moto",
@@ -71,8 +92,17 @@ Calcula el resumen (`preview: true`, no guarda nada) o carga el pedido en `pedid
 }
 ```
 
-Respuesta: `{ ok, mensaje, total }` (+ `pedidoId` si se cargó). `mensaje` es el resumen que se le
-manda al cliente tal cual y el que ve el depósito en el panel.
+Respuesta: `{ ok, mensaje, total }` (+ `pedidoId` y `reutilizado` si se cargó). `mensaje` es el resumen que se le
+manda al cliente tal cual y el que ve el depósito en el panel. Con `preview: true`, el resumen
+aclara que el pedido todavía no está registrado para despacho y la salida aparece como condicional
+("si confirmás..."). Solo la llamada definitiva (`preview: false`) con los datos obligatorios
+devuelve un pedido registrado y puede informar la salida prevista. El seguimiento real depende del
+estado persistido en `pedidoActual`.
+
+La carga definitiva es idempotente. n8n manda `idConversacion` e `idMensajeOrigen`; si reintenta el
+mismo mensaje, la API devuelve el pedido existente con `reutilizado: true` y no crea un duplicado.
+Como respaldo, una transferencia con el mismo teléfono y número de comprobante también reutiliza el
+pedido. Los documentos nuevos guardan esos identificadores, `origen: "bot_n8n"` y `schemaVersion: 2`.
 
 **Precios:** salen de las listas de `/operativo` (vapes, THC, perfumes, Apple), con sus combos
 (`2x $49.000` es el combo de 2 entero). Las `OFERTAS` escritas con el mismo formato pisan esos
@@ -109,7 +139,8 @@ $50.000), $5.000 (desde $100.000).
 transferencia y mitad y mitad) y, para correo, sucursal/domicilio, DNI, localidad y CP.
 
 **Qué guarda en el pedido**, además de los campos de siempre (`mensaje`, `estado: "pendiente"`,
-`tipoEnvio`, `createdAt`): `telefono`, `cliente`, `direccion {texto, referencias, lat, lng, zona}`,
+`tipoEnvio`, `createdAt`): `telefono`, `idConversacion`, `idMensajeOrigen`, `origen`, `schemaVersion`,
+`cliente`, `direccion {texto, referencias, lat, lng, zona}`,
 `items`, `valorEnvio`, `envioSeguro`, `montoEnvioSeguro`, `montoDescuento`, `total`, `medioPago`,
 `cuentaCobro` (el alias activo al cargarlo, para el CSV por cuenta), `comprobante`,
 `comprobanteImagen` (la foto copiada a Storage) y `datosCorreo`. No descuenta stock ni crea la
@@ -119,6 +150,11 @@ venta: eso lo sigue haciendo el depósito.
 
 1. El agente deriva con motivo `cotizar_uber` → n8n llama a POST `/agentCrearCotizacionUber`
    `{ idConversacion, telefonoCliente, nombreCliente, direccion, explicacionCaso }`.
+   Si ya existe una cotización reciente para ese teléfono y esa misma dirección (menos de 30 min),
+   responde `{ ok: true, yaCotizado: true, montoUber, mensaje }`: usá ese monto y no vuelvas a pedir
+   cotización. Si ya hay una pendiente reciente para esa misma dirección, responde
+   `{ ok: true, yaPendiente: true, id, mensaje }`: no crees otra ni le digas al cliente que vas a
+   cotizar de nuevo. Si pasaron más de 30 min o cambió la dirección, puede crear una nueva.
 2. El depósito carga el monto en `/cotizar-uber` (estado `cotizado`).
 3. El trigger `onCotizacionUberConfirmada` manda `{ idConversacion, montoUber }` al webhook
    `cotizacion-uber-confirmada` de n8n (con `X-Agent-Key`) y marca la cotización `procesado`.

@@ -1,0 +1,1188 @@
+{
+  "name": "028 - Puente YCloud-Chatwoot",
+  "active": true,
+  "nodes": [
+    {
+      "id": "981acfaa-7590-4186-9b12-161a09526988",
+      "name": "YCloud: mensaje entrante",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ycloud-028-94e91278abb2",
+        "options": {}
+      }
+    },
+    {
+      "id": "91ca7100-b2fc-474c-936e-d2933f8bb21a",
+      "name": "Chatwoot: eventos de la bandeja",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        700
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chatwoot-028-94e91278abb2",
+        "options": {}
+      }
+    },
+    {
+      "id": "219095bb-3986-40ce-adca-72275b231680",
+      "name": "¿Es un mensaje para 028?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.body.type }}",
+              "rightValue": "whatsapp.inbound_message.received",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "c2",
+              "leftValue": "={{ String($json.body.whatsappInboundMessage?.to || '').replace(/\\D/g, '') }}",
+              "rightValue": "5491153412358",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "c3",
+              "leftValue": "={{ ['text', 'image', 'audio', 'document', 'video', 'location', 'button', 'interactive'].includes($json.body.whatsappInboundMessage?.type) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "c73c77c6-2e55-4008-9cbf-3cb141a9f84e",
+      "name": "Marcar mensaje (Redis)",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "operation": "incr",
+        "key": "=yc028:msg:{{ $json.body.whatsappInboundMessage.id }}",
+        "expire": true,
+        "ttl": 3600
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "b7b1d5c2-3b65-41ee-99aa-da7392229957",
+      "name": "¿Llega por primera vez?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c4",
+              "leftValue": "={{ Object.values($json).find(v => typeof v === 'number') === 1 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "1c6abec2-0dd5-42b3-8ba6-dd42258b55d3",
+      "name": "Datos del mensaje",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s1",
+              "name": "telefono",
+              "value": "={{ '+' + String($('YCloud: mensaje entrante').item.json.body.whatsappInboundMessage.from || '').replace(/\\D/g, '') }}",
+              "type": "string"
+            },
+            {
+              "id": "s2",
+              "name": "digitos",
+              "value": "={{ String($('YCloud: mensaje entrante').item.json.body.whatsappInboundMessage.from || '').replace(/\\D/g, '') }}",
+              "type": "string"
+            },
+            {
+              "id": "s3",
+              "name": "nombre",
+              "value": "={{ $('YCloud: mensaje entrante').item.json.body.whatsappInboundMessage.customerProfile?.name || ('+' + String($('YCloud: mensaje entrante').item.json.body.whatsappInboundMessage.from || '').replace(/\\D/g, '')) }}",
+              "type": "string"
+            },
+            {
+              "id": "s4",
+              "name": "texto",
+              "value": "={{ $('YCloud: mensaje entrante').item.json.body.whatsappInboundMessage.text?.body || $('YCloud: mensaje entrante').item.json.body.whatsappInboundMessage.image?.caption || $('YCloud: mensaje entrante').item.json.body.whatsappInboundMessage.video?.caption || $('YCloud: mensaje entrante').item.json.body.whatsappInboundMessage.document?.caption || $('YCloud: mensaje entrante').item.json.body.whatsappInboundMessage.button?.text || $('YCloud: mensaje entrante').item.json.body.whatsappInboundMessage.interactive?.button_reply?.title || $('YCloud: mensaje entrante').item.json.body.whatsappInboundMessage.interactive?.list_reply?.title || ($('YCloud: mensaje entrante').item.json.body.whatsappInboundMessage.location ? '📍 Ubicación: https://maps.google.com/?q=' + $('YCloud: mensaje entrante').item.json.body.whatsappInboundMessage.location.latitude + ',' + $('YCloud: mensaje entrante').item.json.body.whatsappInboundMessage.location.longitude : '') }}",
+              "type": "string"
+            },
+            {
+              "id": "s5",
+              "name": "adjunto",
+              "value": "={{ ($('YCloud: mensaje entrante').item.json.body.whatsappInboundMessage.image || $('YCloud: mensaje entrante').item.json.body.whatsappInboundMessage.audio || $('YCloud: mensaje entrante').item.json.body.whatsappInboundMessage.document || $('YCloud: mensaje entrante').item.json.body.whatsappInboundMessage.video || {}).link || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d223cba9-e007-476b-97bb-c66a2cc0caa0",
+      "name": "Marcar mensaje en curso (Redis)",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "operation": "incr",
+        "key": "=yc028:curso:{{ $json.digitos }}",
+        "expire": true,
+        "ttl": 15
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "7c2b1ac3-86d6-4e3e-b6c9-dffd1aacdbbd",
+      "name": "¿Hay otro mensaje suyo en curso?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c5",
+              "leftValue": "={{ Object.values($json).find(v => typeof v === 'number') > 1 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "d15865a9-a9a5-4dc1-9f1c-68cbd6ca83a7",
+      "name": "Esperar al anterior",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        -140
+      ],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": "={{ Math.min((Object.values($json).find(v => typeof v === 'number') - 1) * 3, 12) }}",
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "307d79e5-ff65-4878-94cf-62fb8f9eb5a5",
+      "name": "Buscar contacto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://chatwoot.bunge.agenticsia.agency/api/v1/accounts/1/contacts/search?q={{ $('Datos del mensaje').item.json.digitos }}",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Chatwoot API (completar token)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "54605512-3f15-4f63-a236-8ae27b5354e2",
+      "name": "¿Ya existe el contacto?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c6",
+              "leftValue": "={{ ($json.payload || []).some(c => String(c.phone_number || '').replace(/\\D/g, '') === $('Datos del mensaje').item.json.digitos) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "d9888c4b-e61f-4b2f-8281-b7f960aaffbc",
+      "name": "Crear contacto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2200,
+        140
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://chatwoot.bunge.agenticsia.agency/api/v1/accounts/1/contacts",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $('Datos del mensaje').item.json.nombre, phone_number: $('Datos del mensaje').item.json.telefono }) }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Chatwoot API (completar token)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "78cfe9d6-6275-47ab-823f-2b31f234476e",
+      "name": "Contacto",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2420,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s1",
+              "name": "id",
+              "value": "={{ $json.payload?.contact?.id ?? ($json.payload || []).find(c => String(c.phone_number || '').replace(/\\D/g, '') === $('Datos del mensaje').item.json.digitos)?.id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "eb412967-0110-4131-b6f4-723bb3f92550",
+      "name": "Buscar sus conversaciones",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2640,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://chatwoot.bunge.agenticsia.agency/api/v1/accounts/1/contacts/{{ $json.id }}/conversations",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Chatwoot API (completar token)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "1849a708-cf94-4438-b251-697282727e44",
+      "name": "¿Tiene una conversación abierta?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2860,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c7",
+              "leftValue": "={{ ($json.payload || []).some(c => c.inbox_id === 3 && c.status !== 'resolved') }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "5c35a640-0eb6-4d9e-b2c8-290b0bb150cf",
+      "name": "Crear conversación",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        3080,
+        140
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://chatwoot.bunge.agenticsia.agency/api/v1/accounts/1/conversations",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contact_id: $('Contacto').item.json.id, inbox_id: 3, assignee_id: 1 }) }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Chatwoot API (completar token)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "f18c8433-9acf-4597-a36f-ef593bd90e76",
+      "name": "Conversación",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3300,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s1",
+              "name": "id",
+              "value": "={{ $json.id ?? ($json.payload || []).filter(c => c.inbox_id === 3 && c.status !== 'resolved').sort((a, b) => b.id - a.id)[0]?.id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "223a7ee4-9cc4-43a9-a35b-35194019984d",
+      "name": "¿Trae un archivo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3520,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c8",
+              "leftValue": "={{ !!$('Datos del mensaje').item.json.adjunto }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "c9cb9b37-183b-4790-ac15-2377c71448d0",
+      "name": "Descargar archivo (YCloud)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        3740,
+        -140
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Datos del mensaje').item.json.adjunto }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "YCloud API"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "e272c3ba-6c82-41ee-bd4a-ebe4c61d00d9",
+      "name": "¿Se descargó?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3960,
+        -140
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c9",
+              "leftValue": "={{ !$json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "c95fc6a2-7ae2-4b16-a275-14ddd1ab3cba",
+      "name": "Crear mensaje con archivo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        4180,
+        -220
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chatwoot.bunge.agenticsia.agency/api/v1/accounts/1/conversations/{{ $('Conversación').item.json.id }}/messages",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "content",
+              "value": "={{ $('Datos del mensaje').item.json.texto }}"
+            },
+            {
+              "name": "message_type",
+              "value": "incoming"
+            },
+            {
+              "name": "attachments[]",
+              "parameterType": "formBinaryData",
+              "inputDataFieldName": "data"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Chatwoot API (completar token)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "8fe96991-13dc-4356-a1ac-a417b7113e21",
+      "name": "Crear mensaje de texto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        4180,
+        60
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chatwoot.bunge.agenticsia.agency/api/v1/accounts/1/conversations/{{ $('Conversación').item.json.id }}/messages",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: $('Datos del mensaje').item.json.texto || '[Llegó un archivo que no se pudo descargar: revisalo en el WhatsApp de 028]', message_type: 'incoming' }) }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Chatwoot API (completar token)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "f4e71d71-e8f7-4161-a6ea-c44d9bcc27be",
+      "name": "¿Es una respuesta para el cliente?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        220,
+        620
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c10",
+              "leftValue": "={{ $json.body.event }}",
+              "rightValue": "message_created",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "c11",
+              "leftValue": "={{ $json.body.message_type }}",
+              "rightValue": "outgoing",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "c12",
+              "leftValue": "={{ $json.body.private !== true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "c13",
+              "leftValue": "={{ !!($json.body.content || ($json.body.attachments || []).length) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "069a70ce-dfb4-4c2f-846d-25cd92a615da",
+      "name": "Enviar por WhatsApp (YCloud)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        620
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.ycloud.com/v2/whatsapp/messages/sendDirectly",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify(Object.assign(\n      { from: '+5491153412358', to: '+' + String($json.body.conversation?.meta?.sender?.phone_number || '').replace(/\\D/g, '') },\n      ($json.body.attachments || [])[0]\n        ? (a => a.file_type === 'image' ? { type: 'image', image: Object.assign({ link: a.data_url }, $json.body.content ? { caption: $json.body.content } : {}) }\n          : a.file_type === 'audio' ? { type: 'audio', audio: { link: a.data_url } }\n          : a.file_type === 'video' ? { type: 'video', video: Object.assign({ link: a.data_url }, $json.body.content ? { caption: $json.body.content } : {}) }\n          : { type: 'document', document: Object.assign({ link: a.data_url, filename: decodeURIComponent(String(a.data_url).split('?')[0].split('/').pop() || 'archivo') }, $json.body.content ? { caption: $json.body.content } : {}) })($json.body.attachments[0])\n        : { type: 'text', text: { body: $json.body.content } }\n    )) }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "YCloud API"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "6151a0bf-a848-4470-9b7d-455a1d2e219a",
+      "name": "¿No se pudo enviar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        660,
+        620
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c14",
+              "leftValue": "={{ !!$json.error || $json.status === 'failed' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "3f877bcd-508f-47ab-8be3-9bab2e63f407",
+      "name": "Avisar en Chatwoot que no salió",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        880,
+        540
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chatwoot.bunge.agenticsia.agency/api/v1/accounts/1/conversations/{{ $('Chatwoot: eventos de la bandeja').item.json.body.conversation.id }}/messages",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: '⚠️ Este mensaje no le llegó al cliente por WhatsApp: ' + ($json.error?.message || $json.errorMessage || $json.whatsappApiError?.message || 'error desconocido'), message_type: 'outgoing', private: true }) }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Chatwoot API (completar token)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "9612dea3-fff5-4a71-9ebf-31f1bb44da19",
+      "name": "¿Es un mensaje del cliente?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        220,
+        840
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c15",
+              "leftValue": "={{ $json.body.event }}",
+              "rightValue": "message_created",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "c16",
+              "leftValue": "={{ $json.body.message_type }}",
+              "rightValue": "incoming",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "3826e30e-2cf2-4fab-a069-b930e55542ec",
+      "name": "Pasar al bot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        840
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://n8n.bunge.agenticsia.agency/webhook/mensaje-recibido",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "YCloud: mensaje entrante": {
+      "main": [
+        [
+          {
+            "node": "¿Es un mensaje para 028?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Es un mensaje para 028?": {
+      "main": [
+        [
+          {
+            "node": "Marcar mensaje (Redis)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar mensaje (Redis)": {
+      "main": [
+        [
+          {
+            "node": "¿Llega por primera vez?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Llega por primera vez?": {
+      "main": [
+        [
+          {
+            "node": "Datos del mensaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datos del mensaje": {
+      "main": [
+        [
+          {
+            "node": "Marcar mensaje en curso (Redis)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar mensaje en curso (Redis)": {
+      "main": [
+        [
+          {
+            "node": "¿Hay otro mensaje suyo en curso?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Hay otro mensaje suyo en curso?": {
+      "main": [
+        [
+          {
+            "node": "Esperar al anterior",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Buscar contacto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Esperar al anterior": {
+      "main": [
+        [
+          {
+            "node": "Buscar contacto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar contacto": {
+      "main": [
+        [
+          {
+            "node": "¿Ya existe el contacto?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Ya existe el contacto?": {
+      "main": [
+        [
+          {
+            "node": "Contacto",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Crear contacto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear contacto": {
+      "main": [
+        [
+          {
+            "node": "Contacto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contacto": {
+      "main": [
+        [
+          {
+            "node": "Buscar sus conversaciones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar sus conversaciones": {
+      "main": [
+        [
+          {
+            "node": "¿Tiene una conversación abierta?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Tiene una conversación abierta?": {
+      "main": [
+        [
+          {
+            "node": "Conversación",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Crear conversación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear conversación": {
+      "main": [
+        [
+          {
+            "node": "Conversación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conversación": {
+      "main": [
+        [
+          {
+            "node": "¿Trae un archivo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Trae un archivo?": {
+      "main": [
+        [
+          {
+            "node": "Descargar archivo (YCloud)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Crear mensaje de texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descargar archivo (YCloud)": {
+      "main": [
+        [
+          {
+            "node": "¿Se descargó?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Se descargó?": {
+      "main": [
+        [
+          {
+            "node": "Crear mensaje con archivo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Crear mensaje de texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chatwoot: eventos de la bandeja": {
+      "main": [
+        [
+          {
+            "node": "¿Es una respuesta para el cliente?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "¿Es un mensaje del cliente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Es una respuesta para el cliente?": {
+      "main": [
+        [
+          {
+            "node": "Enviar por WhatsApp (YCloud)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar por WhatsApp (YCloud)": {
+      "main": [
+        [
+          {
+            "node": "¿No se pudo enviar?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿No se pudo enviar?": {
+      "main": [
+        [
+          {
+            "node": "Avisar en Chatwoot que no salió",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Es un mensaje del cliente?": {
+      "main": [
+        [
+          {
+            "node": "Pasar al bot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  }
+}

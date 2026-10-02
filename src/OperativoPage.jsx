@@ -159,6 +159,7 @@ export default function OperativoPage() {
           {/* Demora del dia */}
           <div className={`rounded-2xl border p-5 ${card}`}>
             <label className={`block text-xs font-bold uppercase tracking-wide mb-3 ${label}`}>Demora de hoy</label>
+            <p className={`text-[11px] mb-3 ${label}`}>Esta es la demora base. El bot la sube solo segun la cola: desde 5 pedidos dice 2 hs, desde 8 dice 2:30 hs, y con mas de 10 dice mas de 3 hs.</p>
             <div className="space-y-2">
               {SITUACIONES.map((s) => {
                 const sel = form.situacion === s.id;

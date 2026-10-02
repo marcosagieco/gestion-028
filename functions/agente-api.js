@@ -14,6 +14,7 @@ const functions = require("firebase-functions");
 const { onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const admin = require("firebase-admin");
 const axios = require("axios");
+const crypto = require("crypto");
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -41,13 +42,15 @@ const TRAMOS_DESCUENTO_EFECTIVO = [
 const LIMITE_POR_TANDA = 10; // si el panel no tiene uno cargado
 const CADA_TANDA = 30; // minutos entre tandas (moto y Uber por igual)
 const ULTIMA_TANDA = 20 * 60; // 20:00
-const CORTE_DESPACHO = 20 * 60 + 15; // hasta las 20:15 todavía entra en la tanda de las 20:00
+const CORTE_DESPACHO = 20 * 60 + 10; // desde las 20:10 ya no entra en la tanda de las 20:00
 const VIGENCIA_COTIZACION_UBER_MS = 3 * 60 * 60 * 1000;
+const RECOTIZACION_UBER_MS = 30 * 60 * 1000;
 
 const DEMORAS = {
   sin_demora: "los envíos están saliendo normal, sin demora",
   normal: "sale con la demora habitual, más o menos 1:30 hs desde que sale la moto",
   demora: "hoy estamos con una demora de alrededor de 2 hs en los envíos",
+  demora_media: "hoy estamos con una demora de alrededor de 2:30 hs en los envíos",
   demora_fuerte: "hoy hay bastante demora, más de 3 hs; si lo necesita rápido le conviene el flash",
   solo_manana: "por hoy ya no se despacha más: se toma el pedido y sale mañana",
 };
@@ -60,6 +63,7 @@ const ALIASES = {
 };
 
 const $ = (n) => `$${Number(n || 0).toLocaleString("es-AR")}`;
+const COMUNIDAD_028 = "ℹ️ COMUNIDAD 028 IMPORT\n\nhttps://chat.whatsapp.com/JYgkBHg7P4DLwv1V2HCZUZ\n\n💭 ¿Para qué sirve?\nEnterate del stock nuevo, ofertas ÚNICAS, stock y precios mayoristas.";
 
 // Formas de pago. Uber y correo: solo transferencia antes. La moto además acepta efectivo (con
 // descuento), al recibir (efectivo o transferencia cuando llega, sin comprobante) y mitad y mitad
@@ -86,6 +90,8 @@ const PLANTILLAS_FIJAS = {
   WEB: "📦 CATÁLOGO Y STOCK ACTUALIZADO\n\n🌐 Entrá a nuestra web y mirá todos los productos disponibles, precios y stock actualizado:\n\n👉 https://028import.com\n\n📲 Si tenés alguna duda o querés una recomendación personalizada escribinos por WhatsApp.\n\n🚚 Envíos en CABA y a todo el país.\n📍 Belgrano, CABA.",
   DESCUENTO_EFECTIVO: (([alto, medio, base]) =>
     `pagando en efectivo tenés descuento: si es menos de ${$(medio.desde)} son ${$(base.off)} off, desde ${$(medio.desde)} son ${$(medio.off)} off, y desde ${$(alto.desde)} son ${$(alto.off)} off`)(TRAMOS_DESCUENTO_EFECTIVO),
+  COMUNIDAD: COMUNIDAD_028,
+  COMPROBANTES_VALIDOS: "Regla interna: si el comprobante coincide con el alias activo y figura como Tame Lake S.A., Tame Lake S A o Secpaynet, es válido para alias3/CALMO.DURO.DIA. No derives solo por ver Secpaynet.",
   // Uber y correo: al cargar el pedido (ya pagó). Moto: la manda "aviso de entrega" al entregarlo.
   GRACIAS: "❤️ ¡GRACIAS POR TU COMPRA!\n✈️ 028 IMPORT\n\nEsperamos que disfrutes tu pedido. ¡Gracias por confiar en nosotros! 🫶\n\n🔥 SUMATE A NUESTRA COMUNIDAD DE WHATSAPP\n\nEs donde primero avisamos:\n✅ Promociones exclusivas\n✅ Liquidaciones\n✅ Reingresos de stock\n✅ Nuevos productos\n✅ Sorteos\n✅ Ofertas que no publicamos en otros lados\n\n🔗 https://chat.whatsapp.com/JYgkBHg7P4DLwv1V2HCZUZ\n\n━━━━━━━━━━━━━\n\n📲 SEGUINOS EN INSTAGRAM\n\n🔗 https://www.instagram.com/028.import\n\n⭐ Si te gustó la experiencia, recomendanos a tus amigos o compartí tu compra en Instagram y etiquetanos @028.import.\n\n━━━━━━━━━━━━━\n\n🌐 WEB OFICIAL\n\nConsultá el catálogo actualizado con todos los productos, precios y stock disponible.\n\n🔗 https://028import.com\n\n━━━━━━━━━━━━━\n\n⚠️ IMPORTANTE\n\n• No realizamos devoluciones.\n• Únicamente realizamos cambios por fallas de fábrica.\n• El plazo para informar una falla es de 48 horas desde la recepción del producto.\n• Pasado ese plazo no podremos gestionar reclamos.\n\n🙏 ¡Gracias por elegir 028 Import!",
   CONFIANZA: "🔒 Entendemos tu desconfianza\n\nEntendemos que al comprar por primera vez puedas tener dudas. 👍🏻\n\nPor eso te invitamos a conocer un poco más sobre 028 Import.\n\n📲 Instagram:\nhttps://www.instagram.com/028.import?igsh=a2pzbDNtNGFkcDNz&utm_source=qr\n\nAhí vas a encontrar:\n✅ Miles de seguidores.\n⭐ Referencias reales de clientes.\n🤝 Colaboraciones con influencers.\n🔥 Publicaciones e historias diarias.\n\nTrabajamos hace años y más de 4.000 clientes ya eligieron 028 Import.\n\nSi después de ver nuestro perfil te queda alguna duda, escribinos sin problema. Estamos para ayudarte. 💙",
@@ -169,6 +175,56 @@ function normalizarTelefono(tel) {
   if (n.startsWith("54") && n.length === 12) n = "549" + n.slice(2);
   if (!n.startsWith("54") && n.length === 10) n = "549" + n;
   return n;
+}
+
+const hashCorto = (valor) => crypto.createHash("sha256").update(String(valor)).digest("hex").slice(0, 32);
+
+// Último pedido cargado por el agente para este teléfono. El estado se devuelve ya explicado para
+// que el modelo no tenga que inferir si salió o no. Los pedidos manuales viejos no tienen teléfono
+// estructurado y, por seguridad, no se adivinan leyendo texto libre.
+async function ultimoPedidoDelCliente(telefono) {
+  const tel = normalizarTelefono(telefono);
+  if (!tel) return null;
+  try {
+    const snap = await db.collection("pedidos").where("telefono", "==", tel).get();
+    const docs = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0));
+    const pedido = docs[0];
+    if (!pedido) return null;
+
+    const tipoEnvio = pedido.datosCorreo ? "correo" : pedido.tipoEnvio;
+    let recorridoEnCalle = false;
+    if (tipoEnvio === "moto" && pedido.estado === "armado") {
+      const recorrido = await db.collection("recorridos").doc("activo").get();
+      recorridoEnCalle = recorrido.exists && recorrido.data().estado === "en_calle";
+    }
+
+    const textos = {
+      pendiente: "el pedido está registrado y pendiente de armado; todavía no figura como despachado",
+      armado: tipoEnvio === "moto" && recorridoEnCalle
+        ? "el pedido está armado y el reparto ya está en la calle; no hay una hora exacta ni seguimiento individual cargado"
+        : "el pedido está armado, pero todavía no figura como entregado ni tiene seguimiento cargado",
+      entregado: "el pedido figura como entregado",
+      finalizado: "el pedido figura finalizado y entregado",
+      cancelado: "el pedido figura cancelado",
+    };
+
+    return {
+      id: pedido.id,
+      estado: pedido.estado || "sin_estado",
+      tipoEnvio: tipoEnvio || null,
+      creadoEn: pedido.createdAt || null,
+      armadoEn: pedido.armadoAt || null,
+      entregadoEn: pedido.entregadoEn || null,
+      descripcion: textos[pedido.estado] || "el pedido existe, pero su estado no está reconocido; no afirmes que salió",
+      puedeAfirmarEnCamino: tipoEnvio === "moto" && pedido.estado === "armado" && recorridoEnCalle,
+      puedeAfirmarEntregado: ["entregado", "finalizado"].includes(pedido.estado),
+    };
+  } catch (e) {
+    console.error("[agente-api] no se pudo leer el último pedido", e.message);
+    return null;
+  }
 }
 
 async function leerOperativo() {
@@ -419,6 +475,18 @@ async function cotizacionUber(telefono) {
     .sort((a, b) => Date.parse(b.resueltoEn) - Date.parse(a.resueltoEn))[0] || null;
 }
 
+const normalizarDireccionCotizacion = (direccion) => normalizar(direccion).replace(/\b(caba|capital federal|ciudad autonoma de buenos aires)\b/g, "").trim();
+const tiempoCotizacionUber = (c) => Math.max(
+  Date.parse(c.createdAt) || 0,
+  Date.parse(c.resueltoEn) || 0,
+  Date.parse(c.procesadoEn) || 0
+);
+function mismaDireccionCotizacion(a, b) {
+  const na = normalizarDireccionCotizacion(a);
+  const nb = normalizarDireccionCotizacion(b);
+  return !na || !nb || na === nb;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Salidas y tanda
 // ─────────────────────────────────────────────────────────────────────────────
@@ -498,6 +566,16 @@ async function pedidosEnCola() {
   }
 }
 
+// Demora operativa escalonada por cola real: si el panel marcó "solo mañana", eso manda; si no,
+// la cantidad de pedidos pendientes ajusta el texto automáticamente.
+function demoraOperativa(op, enCola) {
+  if (op.situacion === "solo_manana") return DEMORAS.solo_manana;
+  if (enCola > 10) return DEMORAS.demora_fuerte;
+  if (enCola >= 8) return DEMORAS.demora_media;
+  if (enCola >= 5) return DEMORAS.demora;
+  return DEMORAS[op.situacion] || DEMORAS.sin_demora;
+}
+
 // La "próxima salida" del panel es solo para la moto: el Uber sale siempre por tandas.
 function salidaDeUnPedidoNuevo(op, tipoEnvio, enCola) {
   const limite = Number(op.limitePorTanda) > 0 ? Number(op.limitePorTanda) : LIMITE_POR_TANDA;
@@ -511,12 +589,17 @@ exports.agentEstadoOperativo = conClave(async (req, res) => {
   const op = await leerOperativo();
   const plantillas = { ...PLANTILLAS_FIJAS, ALIAS: ALIASES[op.aliasActivo] || ALIASES.alias1 };
   for (const [nombre, campo] of Object.entries(LISTAS_DEL_PANEL)) plantillas[nombre] = textoDe(op[campo]);
-  const enCola = await pedidosEnCola();
+  const [enCola, pedidoActual] = await Promise.all([
+    pedidosEnCola(),
+    ultimoPedidoDelCliente(req.query.telefono),
+  ]);
   res.json({
     ok: true,
     salida: salidaDeUnPedidoNuevo(op, "moto", enCola),
     salidaUber: salidaDeUnPedidoNuevo(op, "uber", enCola),
-    demora: DEMORAS[op.situacion] || DEMORAS.sin_demora,
+    pedidosEnCola: enCola,
+    demora: demoraOperativa(op, enCola),
+    pedidoActual,
     plantillas,
   });
 });
@@ -651,9 +734,26 @@ exports.agentPedido = conClave(async (req, res) => {
 
   // Si no sale hoy, va arriba de todo: la gente no lee el detalle y después se queja.
   const noSaleHoy = cuando && cuando.dia !== "hoy";
+  const avisoNoRegistrado = preview
+    ? conComprobante
+      ? "⚠️ Todavía no está registrado para despacho. Para registrarlo, mandá el comprobante de pago."
+      : "⚠️ Todavía no está registrado para despacho. Para registrarlo, confirmame el pedido."
+    : null;
+  const avisoSalida = noSaleHoy
+    ? preview
+      ? `⚠️ OJO: SI CONFIRMÁS AHORA, SALE ${cuando.dia.toUpperCase()} A LAS ${cuando.hora}`
+      : `⚠️ OJO: SALE ${cuando.dia.toUpperCase()} A LAS ${cuando.hora}`
+    : null;
+  const lineaSalida = cuando
+    ? preview
+      ? `🕐 Si confirmás el pedido ahora, sale ${cuando.dia} a las ${cuando.hora}`
+      : `🕐 Sale ${cuando.dia} a las ${cuando.hora}`
+    : null;
   const mensaje = [
-    noSaleHoy ? `⚠️ OJO: SALE ${cuando.dia.toUpperCase()} A LAS ${cuando.hora}` : null,
-    noSaleHoy ? "" : null,
+    avisoSalida,
+    avisoSalida ? "" : null,
+    avisoNoRegistrado,
+    avisoNoRegistrado ? "" : null,
     "🛒 PRODUCTOS",
     ...lineas.map((l) => `* ${l.cantidad}x ${l.producto}${l.variante ? " - " + l.variante : ""}: ${$(l.importe)}`),
     "",
@@ -668,7 +768,7 @@ exports.agentPedido = conClave(async (req, res) => {
     "📦 ENTREGA",
     ENVIO_LABEL[tipoEnvio] + (envioSeguro ? " — 🛡️ CON ENVÍO SEGURO" : "") +
       (tipoEnvio === "correo" ? (correo.aSucursal ? " a sucursal" : " a domicilio") : ""),
-    cuando ? `🕐 Sale ${cuando.dia} a las ${cuando.hora}` : null,
+    lineaSalida,
     dir.texto,
     ubicacion && ubicacion.zona ? `Zona ${ubicacion.zona}` : null,
     dir.referencias ? `Ref: ${dir.referencias}` : null,
@@ -688,7 +788,32 @@ exports.agentPedido = conClave(async (req, res) => {
   // El depósito maneja el correo como un retiro (arma el paquete y lo lleva a Vía Cargo), así que
   // va a la columna Retiro del panel con una primera línea que lo deja claro, igual que lo cargan ellos.
   const esCorreo = tipoEnvio === "correo";
-  const pedidoRef = await db.collection("pedidos").add({
+  const idConversacion = String(b.idConversacion || "").trim();
+  const idMensajeOrigen = String(b.idMensajeOrigen || "").trim();
+  const numeroComprobante = String(b.comprobante?.numero || "").replace(/\D/g, "");
+  const idempotenciaOrigen = idConversacion && idMensajeOrigen
+    ? `chatwoot:${idConversacion}:${idMensajeOrigen}`
+    : numeroComprobante
+      ? `comprobante:${telefono}:${numeroComprobante}`
+      : "";
+  const idempotencia = idempotenciaOrigen ? hashCorto(idempotenciaOrigen) : null;
+  const pedidos = db.collection("pedidos");
+  const pedidoRef = idempotencia ? pedidos.doc(`bot-${idempotencia}`) : null;
+  if (pedidoRef) {
+    const existente = await pedidoRef.get();
+    if (existente.exists) {
+      const data = existente.data();
+      return res.json({
+        ok: true,
+        pedidoId: pedidoRef.id,
+        mensaje: data.mensaje,
+        total: data.total,
+        reutilizado: true,
+      });
+    }
+  }
+
+  const pedidoData = {
     // Campos que ya usaba el panel:
     mensaje: esCorreo ? `📦 VÍA CARGO — ${correo.aSucursal ? "SUCURSAL" : "DOMICILIO"}\n\n${mensaje}` : mensaje,
     estado: "pendiente",
@@ -696,6 +821,11 @@ exports.agentPedido = conClave(async (req, res) => {
     createdAt: new Date().toISOString(),
     // Estructurados del agente:
     telefono,
+    idConversacion: idConversacion || null,
+    idMensajeOrigen: idMensajeOrigen || null,
+    origen: "bot_n8n",
+    schemaVersion: 2,
+    idempotencia,
     cliente: String(b.cliente).trim(),
     direccion: {
       texto: dir.texto,
@@ -718,16 +848,18 @@ exports.agentPedido = conClave(async (req, res) => {
     datosCorreo: tipoEnvio === "correo"
       ? { dni: String(correo.dni).trim(), localidad: String(correo.localidad).trim(), cp: String(correo.cp).trim(), aSucursal: correo.aSucursal, valor: envioCorreo }
       : null,
-  });
+  };
+  const pedidoGuardado = pedidoRef || await pedidos.add(pedidoData);
+  if (pedidoRef) await pedidoRef.set(pedidoData);
 
   // La foto del comprobante se copia a Storage para no depender de la URL de Chatwoot. Si falla,
   // el pedido queda cargado igual, sin foto.
   if (b.comprobanteUrl && conComprobante) {
-    const imagen = await copiarComprobante(b.comprobanteUrl, pedidoRef.id);
-    if (imagen) await pedidoRef.update({ comprobanteImagen: imagen });
+    const imagen = await copiarComprobante(b.comprobanteUrl, pedidoGuardado.id);
+    if (imagen) await pedidoGuardado.update({ comprobanteImagen: imagen });
   }
 
-  res.json({ ok: true, pedidoId: pedidoRef.id, mensaje, total });
+  res.json({ ok: true, pedidoId: pedidoGuardado.id, mensaje, total, reutilizado: false });
 });
 
 const EXTENSIONES = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic", "application/pdf": "pdf" };
@@ -773,11 +905,35 @@ exports.agentCrearCotizacionUber = conClave(async (req, res) => {
   const idConversacion = String(b.idConversacion || "").trim();
   const telefonoCliente = normalizarTelefono(b.telefonoCliente);
   if (!idConversacion || !telefonoCliente) return rechazar(res, "faltan idConversacion o telefonoCliente");
+  const direccion = String(b.direccion || "").trim();
+  const snap = await db.collection("cotizaciones_uber").where("telefonoCliente", "==", telefonoCliente).get();
+  const reciente = snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((c) => Date.now() - tiempoCotizacionUber(c) < RECOTIZACION_UBER_MS)
+    .filter((c) => mismaDireccionCotizacion(c.direccion, direccion))
+    .sort((a, b) => tiempoCotizacionUber(b) - tiempoCotizacionUber(a))[0];
+  if (reciente && Number(reciente.montoUber) > 0) {
+    return res.json({
+      ok: true,
+      yaCotizado: true,
+      montoUber: Number(reciente.montoUber),
+      mensaje: `ya hay una cotización de Uber reciente para esta misma dirección: ${$(reciente.montoUber)}. Usá ese monto; si pasaron más de 30 minutos o cambió la dirección, recién ahí pedí una nueva cotización.`,
+    });
+  }
+  if (reciente && reciente.estado === "pendiente") {
+    return res.json({
+      ok: true,
+      yaPendiente: true,
+      id: reciente.id,
+      mensaje: "ya hay una cotización de Uber pendiente para esta misma dirección. No crees otra ni repitas que vas a cotizar: esperá la respuesta del depósito. Si pasaron más de 30 minutos o cambió la dirección, podés pedir una nueva.",
+    });
+  }
+
   const ref = await db.collection("cotizaciones_uber").add({
     idConversacion,
     telefonoCliente,
     nombreCliente: String(b.nombreCliente || "").trim(),
-    direccion: String(b.direccion || "").trim(),
+    direccion,
     explicacionCaso: String(b.explicacionCaso || "").trim(),
     estado: "pendiente", // pendiente → cotizado (el depósito cargó el monto) → procesado (n8n ya avisó)
     montoUber: null,

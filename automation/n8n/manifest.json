@@ -1,0 +1,30 @@
+{
+  "exportedAt": "2026-10-02T17:47:18.761Z",
+  "workflows": [
+    {
+      "name": "028 - avisar al equipo",
+      "active": true,
+      "nodes": 12
+    },
+    {
+      "name": "028 - aviso de entrega al cliente",
+      "active": true,
+      "nodes": 6
+    },
+    {
+      "name": "028 - Puente YCloud-Chatwoot",
+      "active": true,
+      "nodes": 28
+    },
+    {
+      "name": "028 Import - Agente WhatsApp",
+      "active": true,
+      "nodes": 53
+    },
+    {
+      "name": "028 - Resolver cotizaciones Uber",
+      "active": true,
+      "nodes": 7
+    }
+  ]
+}

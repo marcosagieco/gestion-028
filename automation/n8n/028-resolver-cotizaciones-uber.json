@@ -1,0 +1,242 @@
+{
+  "name": "028 - Resolver cotizaciones Uber",
+  "active": true,
+  "nodes": [
+    {
+      "id": "eac1aa31-341e-4dfd-8901-14bd16f7dbf1",
+      "name": "Webhook cotización confirmada",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cotizacion-uber-confirmada",
+        "options": {},
+        "authentication": "headerAuth"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "028 Agent API (X-Agent-Key)"
+        }
+      }
+    },
+    {
+      "id": "0162e440-f6ed-4369-b1bd-758d5c71cac1",
+      "name": "Avisar al cliente",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chatwoot.bunge.agenticsia.agency/api/v1/accounts/1/conversations/{{ $('Webhook cotización confirmada').item.json.body.idConversacion }}/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: 'ya tenemos el precio del envío 🛵\\nel Uber a tu dirección sale $' + Number($('Webhook cotización confirmada').item.json.body.montoUber).toLocaleString('es-AR') + '\\nlo confirmamos ?', message_type: 'outgoing', private: false }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Chatwoot API (completar token)"
+        }
+      }
+    },
+    {
+      "id": "bba0d916-5cbb-4ae3-a291-bc44a3ba790b",
+      "name": "Guardar cotización",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "operation": "set",
+        "key": "=uber-cotizado-{{ $('Webhook cotización confirmada').item.json.body.idConversacion }}",
+        "value": "={{ String($('Webhook cotización confirmada').item.json.body.montoUber) }}",
+        "expire": true,
+        "ttl": 10800,
+        "keyType": "string"
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "a764011d-a102-491f-858a-b8892c62b727",
+      "name": "Reactivar bot",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "operation": "delete",
+        "key": "=pausa-{{ $('Webhook cotización confirmada').item.json.body.idConversacion }}"
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "59cdd6ee-2bcf-4106-b2c2-a0ddc7ed5fe4",
+      "name": "Nota",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        60
+      ],
+      "parameters": {
+        "width": 880,
+        "height": 400,
+        "content": "## Cotización de Uber\nCuando el depósito carga el monto en /cotizar-uber, el backend llama a este webhook (con X-Agent-Key) con la conversación y el monto. Se le avisa al cliente, se guarda el monto para el agente (3 hs) y se saca la pausa para que el bot siga."
+      }
+    },
+    {
+      "id": "8010282b-9ae1-44fe-ad81-3e6d74a992a4",
+      "name": "¿No llegamos?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        110,
+        520
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "nl1",
+              "leftValue": "={{ $('Webhook cotización confirmada').item.json.body.noLlegamos }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "443a5188-d5cd-404c-9254-ed21fabae59e",
+      "name": "Avisar que no llegamos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        330,
+        520
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chatwoot.bunge.agenticsia.agency/api/v1/accounts/1/conversations/{{ $('Webhook cotización confirmada').item.json.body.idConversacion }}/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: 'te aviso que hoy por Uber no llegamos 🙏', message_type: 'outgoing', private: false }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Chatwoot API (completar token)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Avisar al cliente": {
+      "main": [
+        [
+          {
+            "node": "Guardar cotización",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar cotización": {
+      "main": [
+        [
+          {
+            "node": "Reactivar bot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook cotización confirmada": {
+      "main": [
+        [
+          {
+            "node": "¿No llegamos?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿No llegamos?": {
+      "main": [
+        [
+          {
+            "node": "Avisar que no llegamos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Avisar al cliente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Avisar que no llegamos": {
+      "main": [
+        [
+          {
+            "node": "Reactivar bot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  }
+}

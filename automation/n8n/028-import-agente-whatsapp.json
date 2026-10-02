@@ -1,0 +1,2061 @@
+{
+  "name": "028 Import - Agente WhatsApp",
+  "active": true,
+  "nodes": [
+    {
+      "id": "5de81337-4c9c-473b-850f-87ad6ccc3607",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -2032,
+        288
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mensaje-recibido",
+        "options": {}
+      }
+    },
+    {
+      "id": "5f9dc2f3-2c2c-4a86-9581-fb352cd70afa",
+      "name": "Filtrar mensaje",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        -1824,
+        288
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.body.event }}",
+              "rightValue": "message_created",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.body.message_type }}",
+              "rightValue": "incoming",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "c3",
+              "leftValue": "={{ !$json.body.private }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "c4",
+              "leftValue": "={{ !$json.body.conversation?.meta?.assignee || $json.body.conversation.meta.assignee.id === 1 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "c6",
+              "leftValue": "={{ !($json.body.attachments?.[0]?.data_url || '').endsWith('.webp') }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "c7",
+              "leftValue": "={{ !!$json.body.content || $json.body.attachments?.length > 0 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "ce8c0066-85c5-4dba-94a2-2013afd626d3",
+      "name": "Datos del mensaje",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1632,
+        288
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f1",
+              "name": "conversacion",
+              "value": "={{ String($json.body.conversation.id) }}",
+              "type": "string"
+            },
+            {
+              "id": "f2",
+              "name": "mensajeId",
+              "value": "={{ $json.body.id }}",
+              "type": "number"
+            },
+            {
+              "id": "f3",
+              "name": "telefono",
+              "value": "={{ $json.body.sender.phone_number || $json.body.sender.identifier }}",
+              "type": "string"
+            },
+            {
+              "id": "f4",
+              "name": "nombre",
+              "value": "={{ $json.body.sender.name }}",
+              "type": "string"
+            },
+            {
+              "id": "f5",
+              "name": "texto",
+              "value": "={{ $json.body.content || '[mandó un archivo]' }}",
+              "type": "string"
+            },
+            {
+              "id": "f6",
+              "name": "adjuntoTipo",
+              "value": "={{ $json.body.attachments?.[0]?.content_type || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "f7",
+              "name": "adjuntoUrl",
+              "value": "={{ $json.body.attachments?.[0]?.data_url || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "cda30622-8e52-4fd1-873e-911d3e34f649",
+      "name": "¿Es /reset?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1424,
+        288
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c8",
+              "leftValue": "={{ $json.texto.trim().toLowerCase() === '/reset' && ['+5492914643232', '+5491125600028'].includes($json.telefono) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "af596ec6-ba1d-4e29-8c1d-6fc41f073338",
+      "name": "Borrar memoria",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        -1104,
+        112
+      ],
+      "parameters": {
+        "operation": "delete",
+        "key": "=chat-{{ $('Datos del mensaje').item.json.conversacion }}"
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "e11e4d44-558a-4f89-a81f-83d2f20f8623",
+      "name": "Borrar pausa",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        -896,
+        112
+      ],
+      "parameters": {
+        "operation": "delete",
+        "key": "=pausa-{{ $('Datos del mensaje').item.json.conversacion }}"
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "bee99cfb-53e1-458e-9cad-9935f78b26b3",
+      "name": "Borrar cotización Uber",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        -704,
+        112
+      ],
+      "parameters": {
+        "operation": "delete",
+        "key": "=uber-cotizado-{{ $('Datos del mensaje').item.json.conversacion }}"
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "d01bf409-50fa-4568-8847-f96e8952b81f",
+      "name": "Confirmar reset",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        48,
+        112
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chatwoot.bunge.agenticsia.agency/api/v1/accounts/1/conversations/{{ $('Datos del mensaje').item.json.conversacion }}/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: \"🔄 memoria borrada, arrancamos de cero\", message_type: \"outgoing\", private: false }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Chatwoot API (completar token)"
+        }
+      }
+    },
+    {
+      "id": "26453d33-b6e8-4c7a-bb1e-2952894f52eb",
+      "name": "¿Tiene adjunto?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -944,
+        432
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c9",
+              "leftValue": "={{ $json.adjuntoTipo }}",
+              "rightValue": "image/",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              }
+            },
+            {
+              "id": "c10",
+              "leftValue": "={{ $json.adjuntoTipo }}",
+              "rightValue": "audio/",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              }
+            },
+            {
+              "id": "c11",
+              "leftValue": "={{ $json.adjuntoTipo }}",
+              "rightValue": "application/pdf",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "86af237d-6585-4150-9498-f3a57c0dfb5c",
+      "name": "Descargar adjunto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "position": [
+        944,
+        336
+      ],
+      "parameters": {
+        "url": "={{ $('Datos del mensaje').item.json.adjuntoUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "a3898145-1b6a-4933-a8d5-f50019163805",
+      "name": "Pasar a base64",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        1136,
+        336
+      ],
+      "parameters": {
+        "operation": "binaryToPropery",
+        "options": {}
+      }
+    },
+    {
+      "id": "f125c3b6-0d7f-42c1-a596-01c1c49f305a",
+      "name": "¿Qué adjunto es?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1344,
+        320
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "c12",
+                    "leftValue": "={{ $('Datos del mensaje').item.json.adjuntoTipo }}",
+                    "rightValue": "image/",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Imagen"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "c13",
+                    "leftValue": "={{ $('Datos del mensaje').item.json.adjuntoTipo }}",
+                    "rightValue": "application/pdf",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "PDF"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "c14",
+                    "leftValue": "={{ $('Datos del mensaje').item.json.adjuntoTipo }}",
+                    "rightValue": "audio/",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Audio"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "eb2835e2-31ba-458f-b04e-00a45c45058e",
+      "name": "Leer imagen (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput",
+      "position": [
+        1648,
+        80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openRouterApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.5-flash', max_tokens: 500, messages: [{ role: 'user', content: [{ type: 'text', text: 'Es una imagen que mandó un cliente de 028 Import (vapes). Si es un comprobante de pago, extraé monto, banco o app, número de operación, titular, destinatario y fecha, tal cual aparecen. Si es un producto, decí qué modelo parece, el texto visible y si el conector parece rosca 510. Si es otra cosa, describila en una frase. Solo la descripción.' }, { type: 'image_url', image_url: { url: 'data:' + $('Datos del mensaje').item.json.adjuntoTipo + ';base64,' + $json.data } }] }] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter (028)"
+        }
+      }
+    },
+    {
+      "id": "3eb13f6a-909a-4a3d-8152-3e88901f391a",
+      "name": "Leer PDF (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput",
+      "position": [
+        1648,
+        336
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openRouterApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.5-flash', max_tokens: 500, messages: [{ role: 'user', content: [{ type: 'text', text: 'Es un PDF que mandó un cliente de 028 Import (vapes). Si es un comprobante de pago, extraé monto, banco o app, número de operación, titular, destinatario y fecha, tal cual aparecen. Si es un producto, decí qué modelo parece, el texto visible y si el conector parece rosca 510. Si es otra cosa, describila en una frase. Solo la descripción.' }, { type: 'file', file: { filename: 'comprobante.pdf', file_data: 'data:application/pdf;base64,' + $json.data } }] }] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter (028)"
+        }
+      }
+    },
+    {
+      "id": "6b9fdc5f-a333-4da3-9a64-d3ee3a931eca",
+      "name": "Transcribir audio (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput",
+      "position": [
+        1648,
+        560
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openRouterApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.5-flash', max_tokens: 500, messages: [{ role: 'user', content: [{ type: 'text', text: 'Transcribí este audio de un cliente, palabra por palabra. Solo la transcripción.' }, { type: 'input_audio', input_audio: { data: $json.data, format: $('Datos del mensaje').item.json.adjuntoTipo.includes('mpeg') ? 'mp3' : $('Datos del mensaje').item.json.adjuntoTipo.includes('mp4') ? 'm4a' : 'ogg' } }] }] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter (028)"
+        }
+      }
+    },
+    {
+      "id": "5c33777f-2405-49df-b927-abfa58d32fe2",
+      "name": "Mensaje con adjunto",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1936,
+        336
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f8",
+              "name": "texto",
+              "value": "=[Adjunto: {{ $json.choices?.[0]?.message?.content?.trim() || 'no se pudo leer' }}] [Link de la url fuente: {{ $('Datos del mensaje').item.json.adjuntoUrl }}] {{ $('Webhook').item.json.body.content || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "3e428f0c-663b-4955-b30b-da45ac31659b",
+      "name": "Guardar conversación",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        2208,
+        480
+      ],
+      "parameters": {
+        "operation": "set",
+        "key": "=conv:{{ $('Datos del mensaje').item.json.telefono.replace(/\\D/g, '') }}",
+        "value": "={{ $('Datos del mensaje').item.json.conversacion }}",
+        "keyType": "string",
+        "expire": true,
+        "ttl": 2592000
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "51f253e7-c119-4da6-8707-d0ac5763d648",
+      "name": "Guardar en la lista",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        2432,
+        480
+      ],
+      "parameters": {
+        "operation": "push",
+        "list": "=buf-{{ $('Datos del mensaje').item.json.conversacion }}",
+        "messageData": "={{ JSON.stringify({ id: $('Datos del mensaje').item.json.mensajeId, texto: $json.texto }) }}",
+        "tail": true
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "9d81f5ea-8425-4b31-a8ee-482d8c765efb",
+      "name": "Esperar 20 seg",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2640,
+        480
+      ],
+      "parameters": {
+        "amount": 20
+      }
+    },
+    {
+      "id": "aac54741-983c-41c1-ad5a-87b1cdd1feaa",
+      "name": "Leer la lista",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        2864,
+        480
+      ],
+      "parameters": {
+        "operation": "get",
+        "propertyName": "lista",
+        "key": "=buf-{{ $('Datos del mensaje').item.json.conversacion }}",
+        "keyType": "list",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "4a95c70a-bc77-434f-934f-a60bba1966cd",
+      "name": "¿Es el último mensaje?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3088,
+        480
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c15",
+              "leftValue": "={{ JSON.parse($json.lista.last()).id == $('Datos del mensaje').item.json.mensajeId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "a29abe80-6729-45a7-832b-68336ac75f3f",
+      "name": "Juntar mensajes",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3312,
+        400
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f9",
+              "name": "mensaje",
+              "value": "={{ $json.lista.map(m => JSON.parse(m)).sort((a, b) => a.id - b.id).map(m => m.texto).join('\\n') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "61cd1bb2-8cb9-4ccc-a7bd-df1185a8dc7f",
+      "name": "Borrar la lista",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        3520,
+        400
+      ],
+      "parameters": {
+        "operation": "delete",
+        "key": "=buf-{{ $('Datos del mensaje').item.json.conversacion }}"
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "4e2082d1-62f3-4258-93e0-805d24d8051a",
+      "name": "Chequear pausa",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        3744,
+        400
+      ],
+      "parameters": {
+        "operation": "get",
+        "propertyName": "pausa",
+        "key": "=pausa-{{ $('Datos del mensaje').item.json.conversacion }}",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "a8c8fecd-8ab8-47a7-aa4a-5fb9f58ee28b",
+      "name": "¿Sigue sin derivar?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        3968,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c16",
+              "leftValue": "={{ $json.pausa }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notExists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "4f56e8a6-f5d1-4b29-9c2c-a69230de2192",
+      "name": "Leer cotización Uber",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        5392,
+        416
+      ],
+      "parameters": {
+        "operation": "get",
+        "propertyName": "cotizacionUber",
+        "key": "=uber-cotizado-{{ $('Datos del mensaje').item.json.conversacion }}",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "3cbcf716-799d-49e6-9ecd-b2b1cd806a91",
+      "name": "Estado del día",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "position": [
+        5840,
+        416
+      ],
+      "parameters": {
+        "url": "https://us-central1-gestion-028.cloudfunctions.net/agentEstadoOperativo",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "telefono",
+              "value": "={{ $('Datos del mensaje').item.json.telefono }}"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "028 Agent API (X-Agent-Key)"
+        }
+      }
+    },
+    {
+      "id": "f1be9ae9-32fc-4cd3-a88c-34932a0048d6",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        6240,
+        368
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Juntar mensajes').item.json.mensaje }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "=Sos la atención por WhatsApp de 028 Import, de Belgrano (CABA): vapes de nicotina y THC, cápsulas, baterías, gummies, accesorios Apple y perfumes árabes. No hay local ni showroom: se vende por WhatsApp con envío en moto, Uber o correo. Te presentás como 028 Import, nunca como un bot; si te preguntan si sos un bot, seguís atendiendo con naturalidad, sin confirmarlo ni negarlo. Solo hablás de 028 y sus productos.\n\nCÓMO RESPONDÉS\nTu respuesta es una lista de mensajes (\"mensajes\"): cada elemento sale como un mensaje de WhatsApp aparte. Mandá uno, dos si hace falta, nunca más de tres (sin contar plantillas). Muchas respuestas son de 1 a 5 palabras.\nEscribís como un pibe del equipo de 028 por WhatsApp: argentino, voseo, directo, canchero.\n- Nada de párrafos, listas, viñetas, flechas ni negritas.\n- Sin signos de apertura (¿ ¡), sin punto final, con un espacio antes de ? y ! (\"dale !\", \"te lo mando ?\"). El ? va solo en preguntas de verdad, nunca en un pedido o una indicación (\"mandame el comprobante\", no \"mandame el comprobante ?\"). Muchos mensajes arrancan en minúscula.\n- Alargá vocales en saludos y confirmaciones: holaa, daleee, siii.\n- Muletillas: dale, joya, perfe, de una, obvio, sisi, olvidate, tranqui. Disculpas: mala mía, perdón. A un hombre a veces amigo, rey, capo; a una mujer, por su nombre.\n- Emojis con moderación, no en cada mensaje: 🫡 👌 🔥 🥲 🫠 ❤️ 🫶 🛵. Nunca 😊 🙂 ✅ ❌ 👋 🙌 🤝.\n- Nunca \"usted\", nunca tuteo español, nunca corporativo (\"estimado\", \"lamentamos\", \"en qué puedo ayudarte\").\n- Recomendás con seguridad (\"te tiraría por el Blue Razz Ice\") y das precios secos (\"26.000\").\n- Saludás solo si es el primer mensaje de la conversación.\nEjemplo, en vez de \"Hola, te comento que tenemos stock del Elfbar Ice en mango y sale 26.000\":\n[\"sii tengo mango\", \"26.000\", \"te lo mando por moto ?\"]\n\nREGLAS QUE NUNCA SE ROMPEN\n1. No inventás nada: stock, sabores, precios, fechas, compatibilidad ni % de THC. Todo sale del CATÁLOGO DE HOY. Antes de decir que algo no hay, mirá la lista de esa categoría. Los modelos y sabores se nombran como figuran en la lista, sin traducirlos (Watermelon Ice, no \"sandía\").\n2. No hacés cuentas de plata: el envío, los descuentos y el total los calculan las tools.\n3. Nunca escribís un alias, un CBU ni un dato bancario: para eso está PLANTILLA:ALIAS.\n4. Nunca decís \"ya te confirmo\", \"dejame ver\" ni nada que el cliente tenga que esperar: no existe un mensaje de seguimiento. Si te falta un dato, llamá a la tool ahora. Si necesitás algo del cliente, cerrá con esa pregunta; si no (por ejemplo, está haciendo la transferencia), no agregues nada.\n5. Si pregunta dos cosas, respondés las dos. No repetís información ni preguntás lo que ya sabés.\n\nPLANTILLAS\nSon textos del negocio que salen tal cual. Para mandar una, poné como mensaje solo su nombre: \"PLANTILLA:FORMAS_DE_ENTREGA\". Nunca copies, resumas ni reescribas una plantilla; lo tuyo va en otro mensaje.\n- Catálogo: si pregunta por vapes de nicotina, mandá las dos: PLANTILLA:STOCK_NICOTINA y PLANTILLA:PRECIOS_VAPES. THC, solo si el cliente lo nombra: PLANTILLA:STOCK_THC y PLANTILLA:PRECIOS_THC. Perfumes: PLANTILLA:PERFUMES. Apple y accesorios: PLANTILLA:APPLE_ACCESORIOS. Mayorista: PLANTILLA:PRECIOS_MAYORISTA. Si una lista figura vacía hoy, no la mandes.\n- PLANTILLA:WEB: si pregunta por la web, o si quiere comprar sin decir qué.\n- PLANTILLA:FORMAS_DE_ENTREGA: solo si el cliente todavía no dijo cómo lo quiere recibir, y una sola vez por charla.\n- PLANTILLA:ENVIO_SEGURO: solo cuando elige Uber.\n- PLANTILLA:ALIAS: los datos de pago, solo después del resumen y si paga por transferencia o mitad y mitad.\n- PLANTILLA:DESCUENTO_EFECTIVO: si pregunta por el descuento en efectivo.\n- PLANTILLA:CONFIANZA: si desconfía o dice que es una estafa. No se deriva: mandás la plantilla y seguís.\n- PLANTILLA:OFERTAS: solo si pregunta por promos o si lo que lleva está en oferta.\n- PLANTILLA:GRACIAS: al cerrar una venta por Uber o correo (en moto le llega sola cuando se entrega).\n- PLANTILLA:COMUNIDAD: si pide que le avisen cuando entre stock, pregunta cuándo reingresa o quiere enterarse de ofertas; también si confirma que el pedido llegó bien. Mandala una sola vez por conversación.\nEl resumen que devuelven armar_resumen y crear_pedido se manda tal cual, entero en un solo mensaje. Si tenés que volver a mandarlo, llamá de nuevo a armar_resumen: nunca lo copies de un mensaje anterior.\n\nLA VENTA, PASO A PASO\n1. Entendé qué busca con una pregunta abierta. No asumas que quiere un vape, y nunca ofrezcas THC si no lo nombró.\n2. Si pregunta qué hay o pide el catálogo, mandá la lista completa de esa categoría y preguntá cuál quiere. Si te pide que le recomiendes, no le mandes la lista: si ya te dijo qué le gusta, recomendá directo; si no, preguntale (nicotina: frutal, dulce o fresco, y si prefiere duración o sabor; THC: descartable o cápsula, y si tiene batería 510) y recomendá con su respuesta. Recomendá 2 o 3 que figuren en las listas, todos juntos en un solo mensaje con el formato de las listas:\n🔥 TE RECOMIENDO\n\n[emoji] [MODELO, como en la lista]\n[sabor, como en la lista de stock, con sus emojis]\n💰 [precio, como en la lista de precios]\n\n⸻\n\n[la siguiente opción, igual]\nEl modelo, el sabor y el precio se copian tal cual de las listas, y la pregunta de cierre (\"cuál te tienta más ?\") va en otro mensaje. Si pregunta qué hay de un modelo puntual, respondé con ese mismo bloque y los sabores de ese modelo. Si lo que pide no hay, ofrecé lo más parecido que sí haya (el mismo gusto en otra marca o un gusto similar) y confirmalo con él.\n3. Confirmá producto, sabor y cantidad, y a nombre de quién va. Sin el sabor elegido no avances.\n4. Si todavía no dijo cómo lo quiere recibir, mandá PLANTILLA:FORMAS_DE_ENTREGA y recomendá la moto. Si ya lo dijo (moto, Uber o correo), no la mandes y seguí. Apenas sepas si es moto o Uber, mirá en CONTEXTO DE HOY cuándo sale ese envío: si no es HOY, avisáselo en un mensaje aparte y bien claro antes de pedirle cualquier otro dato (\"ojo, por moto hoy ya no llegamos: sale MAÑANA a las 13:30, te sirve ?\", con el día y la hora que figuran) y seguí recién cuando te diga que sí.\n5. Pedí la dirección: calle, altura y barrio; si es depto, piso y número de depto (con eso alcanza, el timbre es ese). Si falta algo, pedilo una sola vez; si el cliente no lo da o no se entiende, seguí igual y anotá en referencias lo que dijo. Se pide y se confirma en cada pedido, aunque la tengas de antes.\n   Moto: llamá a cotizar_envio. Si no está cubierta, ofrecé Uber o correo.\n   Uber: mandá PLANTILLA:ENVIO_SEGURO y preguntá si lo suma. Después llamá a avisar_al_equipo con motivo cotizar_uber y la dirección. Leé el resultado de la tool: si reutiliza un monto, decile ese precio y seguí; si ya hay una pendiente, no repitas que vas a cotizar ni vuelvas a avisar; si creó una nueva, respondé la lista vacía porque el sistema ya le pidió al cliente que espere. Cuando el precio aparece en CONTEXTO DE HOY, seguí con el pago.\n   Correo: preguntá si va a sucursal o a domicilio, y pedí DNI, localidad y código postal (el barrio no hace falta).\n6. Preguntá cómo paga, antes del resumen. Moto: transferencia antes, efectivo (tiene descuento), al recibir (efectivo o transferencia cuando le llega) o mitad y mitad (mitad por transferencia antes y mitad en efectivo al recibir). Uber y correo: solo transferencia antes.\n7. Llamá a armar_resumen y mandá el resumen. Si paga por transferencia o mitad y mitad, mandá PLANTILLA:ALIAS (en mitad y mitad transfiere el monto que dice el resumen): ya le pide el comprobante, no lo pidas de nuevo en otro mensaje ni cuando te diga que ya transfiere (ahí respondé corto, tipo \"dale, te espero\"). Si paga en efectivo o al recibir, preguntale si confirma.\n8. Con el comprobante (o con su confirmación, si es efectivo o al recibir), llamá a crear_pedido y mandá el resumen que devuelve. Si es Uber o correo, sumá PLANTILLA:GRACIAS. Si es moto, no: cerrá con que ya quedó cargado y que le avisamos cuando el repartidor esté llegando.\nSi una tool devuelve un error, hacé lo que dice: casi siempre es pedirle un dato al cliente.\nEl comprobante llega descripto y con \"[Link de la url fuente: …]\": pasá esa URL exacta en comprobanteUrl y nunca se la muestres al cliente. Antes de derivar, mirá REGLA DE COMPROBANTES VÁLIDOS en CONTEXTO DE HOY. Si el alias activo es CALMO.DURO.DIA, Tame Lake S.A., Tame Lake S A y Secpaynet son el destino esperado: no derives por esos nombres. Derivá solo si le faltan más de $1.000 para el total, si el CBU/destino realmente no corresponde al alias activo o si parece trucho o editado. Si pagó de más o le faltan unos pocos pesos, seguí. El nombre de quien transfiere no importa: muchos pagan desde la cuenta de otro.\n\nENVÍOS\nAtendés las 24 hs: nunca digas que está cerrado. Se despacha todos los días, sábados y domingos incluidos, salvo feriados. Cuándo sale cada envío ya viene resuelto en CONTEXTO DE HOY (feriados incluidos); el Uber es más rápido, pero no es una excepción al horario.\nMoto: llega en el día, más o menos 1:30 hs después de que sale la moto; se puede dejar en seguridad y se paga contra entrega.\nUber: unos 30 minutos, se recibe en mano, el repartidor espera 7 minutos y es solo por transferencia.\nCorreo: de 1 a 3 días por Vía Cargo, y el envío se le paga al correo al recibir.\nNunca prometas una hora exacta de llegada.\nSi pregunta por un pedido que ya hizo (si salió, dónde está o el seguimiento), usá únicamente ESTADO REAL DEL ÚLTIMO PEDIDO en CONTEXTO DE HOY. Nunca afirmes “ya salió”, “está en camino” ni “te llega el seguimiento” si ese estado no lo dice. Si no aparece un pedido, decí que todavía no te figura cargado y preguntá si lo hizo con otro número. Si está pendiente, decí que está registrado y en preparación, pero que todavía no salió. Si está armado, repetí la descripción real. Solo decí entregado si el estado lo confirma. No derives una consulta normal de estado.\n\nCUÁNDO DERIVAR (llamás a avisar_al_equipo y en ese turno respondés una lista vacía: el sistema le avisa al cliente y pausa la conversación hasta que vuelve a vos)\nSolo en estos casos: reclamos; pedido perdido, robado, que llegó mal o incompleto; comprobante dudoso (ver arriba); cambios o devoluciones; producto vencido o con falla (antes preguntá qué modelo es, si prende y qué le pasa); si insiste en ir a buscarlo o conocer un local, después de explicarle que no hay; compras por mayor; temas médicos o legales.\nNada más se deriva: ni el estado de un pedido, ni días u horarios, ni desconfianza, ni un producto que no hay, ni una consulta mayorista que la lista responde. Si no sabés algo puntual, respondé con lo que sí sabés y seguí la venta.\n\nPRODUCTOS (para asesorar; el stock y el precio siempre salen de las listas)\nNicotina, de más a menos puffs: Dinner Lady Galaxy 60K, Flavor Beast 50K, Elfbar BC Pro 45K, los de 40K (Elfbar EB Create, Elfbar Ice King, Ignite V400, Ignite V400 Mix), Elfbar Duke 35K, Elfbar TE 30K. Los puffs son estimaciones del fabricante. No hay un mejor sabor: preguntá qué le gusta (frutal y fresco: Blue Razz Ice o Strawberry Ice; más fresco: Miami Mint).\nTHC: el descartable viene todo armado; la cápsula 510 es solo el cartucho y necesita una batería con rosca 510 (hay combos). Un descartable (de 2.5 a 7 g) rinde más que una cápsula (de 1 a 2 ml). Para confirmar compatibilidad, pedí una foto de la rosca. Dozo Live Rosin 2.5 g es premium y muy pedido; Ghost 7 g, para el que prioriza duración. Las Cápsulas 028 de 1 ml son la marca propia, de California, con análisis de laboratorio: decí \"según el análisis de este lote, alrededor de 91% de THC\". No digas cuál es mejor entre 028 y Jeeter: la 028 tiene el análisis del lote y Jeeter es una marca reconocida. Baterías: ELFTHC pen (USB-C, varios colores) y Torus Energy (potencia regulable y precalentado); la batería no cambia el % de THC. Uso: 5 clics prende y apaga, 3 cambian la temperatura (nivel M, azul), 2 precalientan; guardarlo parado; si se tapa, precalentar y aspirar lento.\nPerfumes: pedí el nombre del perfume (la marca no alcanza) o el perfil (dulce, fresco, amaderado; de día o de noche) y recomendá de la lista.\nApple: aclarás siempre si es original o Foxconn, y nunca llamás original a algo que no lo es.\nCarga: cargador USB-C de baja potencia (5V), desconectar al terminar, y no usarlo si está hinchado o muy caliente.\nNunca digas \"te dura X días\" ni des consejos médicos.\n\nCONTEXTO DE HOY\nAhora: {{ $now.setZone('America/Argentina/Buenos_Aires').setLocale('es').toFormat('cccc d/MM HH:mm') }}\nCliente: {{ $('Datos del mensaje').item.json.nombre }} ({{ $('Datos del mensaje').item.json.telefono }})\nSalida si compra ahora: por moto sale {{ $('Estado del día').item.json.salida.dia.toUpperCase() }} a las {{ $('Estado del día').item.json.salida.hora }}; por Uber sale {{ $('Estado del día').item.json.salidaUber.dia.toUpperCase() }} a las {{ $('Estado del día').item.json.salidaUber.hora }} (esa hora ya va en el resumen). Es la hora en que sale de acá, no la de llegada, y es solo para un pedido nuevo.\nDemora del día, si pregunta por tiempos: {{ $('Estado del día').item.json.demora }}\nESTADO REAL DEL ÚLTIMO PEDIDO DE ESTE TELÉFONO: {{ $('Estado del día').item.json.pedidoActual ? JSON.stringify($('Estado del día').item.json.pedidoActual) : 'ningún pedido estructurado encontrado' }}\nREGLA DE COMPROBANTES VÁLIDOS: {{ $('Estado del día').item.json.plantillas.COMPROBANTES_VALIDOS || '' }}\nCotización de Uber: {{ $('Leer cotización Uber').item.json.cotizacionUber ? '$' + Number($('Leer cotización Uber').item.json.cotizacionUber).toLocaleString('es-AR') + '. El equipo ya se la pasó al cliente y la conversación volvió a vos: si la acepta, seguí con el pago (la dirección confirmala igual).' : 'ninguna todavía.' }}\n{{ $('Lo que pasó en la pausa').isExecuted ? 'Mientras estuviste pausado pasó esto en la charla (seguí desde acá; no repitas ni contradigas lo que acordó el equipo):\\n' + $('Lo que pasó en la pausa').item.json.resumen : '' }}\n\nCATÁLOGO DE HOY (para saber qué hay y a cuánto; para mandarlo, usá las plantillas)\nSTOCK_NICOTINA:\n{{ $('Estado del día').item.json.plantillas.STOCK_NICOTINA || '(vacía hoy)' }}\nPRECIOS_VAPES:\n{{ $('Estado del día').item.json.plantillas.PRECIOS_VAPES || '(vacía hoy)' }}\nSTOCK_THC:\n{{ $('Estado del día').item.json.plantillas.STOCK_THC || '(vacía hoy)' }}\nPRECIOS_THC:\n{{ $('Estado del día').item.json.plantillas.PRECIOS_THC || '(vacía hoy)' }}\nPERFUMES:\n{{ $('Estado del día').item.json.plantillas.PERFUMES || '(vacía hoy)' }}\nAPPLE_ACCESORIOS:\n{{ $('Estado del día').item.json.plantillas.APPLE_ACCESORIOS || '(vacía hoy)' }}\nPRECIOS_MAYORISTA:\n{{ $('Estado del día').item.json.plantillas.PRECIOS_MAYORISTA || '(vacía hoy)' }}\nOFERTAS:\n{{ $('Estado del día').item.json.plantillas.OFERTAS || '(vacía hoy)' }}",
+          "maxIterations": 8
+        }
+      }
+    },
+    {
+      "id": "0a4849bb-32b0-4989-ae9e-a0441def4bd9",
+      "name": "Modelo 028 (OpenRouter)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        5872,
+        704
+      ],
+      "parameters": {
+        "model": "openai/gpt-5.6-luna-pro",
+        "options": {}
+      },
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter (028)"
+        }
+      }
+    },
+    {
+      "id": "383412ed-03ac-46ca-a13d-d2da2ca58aab",
+      "name": "Memoria",
+      "type": "@n8n/n8n-nodes-langchain.memoryRedisChat",
+      "typeVersion": 1.5,
+      "position": [
+        6016,
+        704
+      ],
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "=chat-{{ $('Datos del mensaje').item.json.conversacion }}",
+        "sessionTTL": 2592000,
+        "contextWindowLength": 60
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "612af2fe-8967-4960-82a5-044e04f29527",
+      "name": "Formato: lista de mensajes",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        6272,
+        928
+      ],
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"mensajes\": [\"dale\", \"PLANTILLA:FORMAS_DE_ENTREGA\", \"te lo mando por moto ?\"]\n}"
+      }
+    },
+    {
+      "id": "5a740585-1692-4078-bd19-c085ea3b9fce",
+      "name": "cotizar_envio",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.5,
+      "position": [
+        6208,
+        720
+      ],
+      "parameters": {
+        "toolDescription": "Cotiza la moto a una dirección. Devuelve encontrada, cubiertoMoto, monto (el precio del envío) y admiteEfectivo. Pasale calle, altura y barrio.",
+        "url": "https://us-central1-gestion-028.cloudfunctions.net/agentCotizarEnvio",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "direccion",
+              "value": "={{ $fromAI('direccion', 'Calle, altura y barrio, como la dio el cliente', 'string') }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "028 Agent API (X-Agent-Key)"
+        }
+      }
+    },
+    {
+      "id": "bdaea39b-6e33-40cb-9d6c-a98860b3fddc",
+      "name": "armar_resumen",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.5,
+      "position": [
+        6384,
+        720
+      ],
+      "parameters": {
+        "toolDescription": "Calcula el resumen del pedido (precios de la lista, envío, descuentos y total) sin guardar nada. Devuelve 'mensaje': mandáselo al cliente tal cual. Si devuelve un error, hacé lo que dice.",
+        "method": "POST",
+        "url": "https://us-central1-gestion-028.cloudfunctions.net/agentPedido",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify(Object.assign({}, $json, $fromAI('pedido', \"Objeto JSON con items: array de {producto: el nombre tal cual figura en la lista de precios, variante: el sabor o modelo, cantidad}; tipoEnvio: 'moto' | 'uber' | 'correo'; direccion: {texto: calle, altura, barrio, piso y depto, TODO JUNTO en un solo texto; referencias: timbre u otra indicación}; medioPago: 'transferencia' | 'efectivo' | 'al recibir' | 'mitad y mitad' (los tres últimos, solo moto); envioSeguro: true solo si es uber y el cliente lo sumó; datosCorreo, solo en correo: {aSucursal: true | false, dni, localidad, cp}; cliente: a nombre de quién va.\", 'json') || {}, { telefono: $('Datos del mensaje').item.json.telefono, preview: true })) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "028 Agent API (X-Agent-Key)"
+        }
+      }
+    },
+    {
+      "id": "f248552f-5e82-41b1-bc11-0a45edb87a96",
+      "name": "crear_pedido",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.5,
+      "position": [
+        6560,
+        720
+      ],
+      "parameters": {
+        "toolDescription": "Carga el pedido una sola vez en el panel. Usala recién con el comprobante válido (o con la confirmación, si paga en efectivo o al recibir). Si n8n reintenta el mismo mensaje, devuelve el pedido existente. Mandá el mensaje devuelto tal cual.",
+        "method": "POST",
+        "url": "https://us-central1-gestion-028.cloudfunctions.net/agentPedido",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify(Object.assign({}, $json, $fromAI('pedido', \"Objeto JSON con items: array de {producto: el nombre tal cual figura en la lista de precios, variante: el sabor o modelo, cantidad}; tipoEnvio: 'moto' | 'uber' | 'correo'; direccion: {texto: calle, altura, barrio, piso y depto, TODO JUNTO en un solo texto; referencias: timbre u otra indicación}; medioPago: 'transferencia' | 'efectivo' | 'al recibir' | 'mitad y mitad' (los tres últimos, solo moto); envioSeguro: true solo si es uber y el cliente lo sumó; datosCorreo, solo en correo: {aSucursal: true | false, dni, localidad, cp}; cliente: a nombre de quién va; comprobante: {numero, monto, nombre} tal cual se leen del comprobante; comprobanteUrl: la URL exacta de '[Link de la url fuente: …]' del comprobante.\", 'json') || {}, { telefono: $('Datos del mensaje').item.json.telefono, idConversacion: $('Datos del mensaje').item.json.conversacion, idMensajeOrigen: String($('Datos del mensaje').item.json.mensajeId) }, $('Leer último adjunto').item.json.ultimoAdjunto ? { comprobanteUrl: $('Leer último adjunto').item.json.ultimoAdjunto } : {})) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "028 Agent API (X-Agent-Key)"
+        }
+      }
+    },
+    {
+      "id": "f37e5e61-9c35-4d39-b03d-2293508e83e8",
+      "name": "avisar_al_equipo",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        6688,
+        704
+      ],
+      "parameters": {
+        "description": "Deriva una conversación real y pausa el bot 1:30 hs. Para cotizar Uber, la tool primero deduplica: si devuelve un monto reciente, usalo; si dice pendiente, no vuelvas a avisar; solo respondé lista vacía cuando confirme que creó la cotización o derivó al equipo.",
+        "workflowId": {
+          "__rl": true,
+          "value": "iYl1ItWtSkCLtpbf",
+          "mode": "list",
+          "cachedResultName": "028 - avisar al equipo"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "explicacionCaso": "={{ $fromAI('explicacionCaso', 'Qué pasó y qué necesita el cliente, para que una persona tome el caso', 'string') }}",
+            "motivo": "={{ $fromAI('motivo', 'reclamo | pedido_perdido | comprobante_dudoso | cobro | cambio | falla | local | mayorista | medico_legal | cotizar_uber | otro', 'string') }}",
+            "direccion": "={{ $fromAI('direccion', 'La dirección completa, si es para cotizar el Uber; si no, vacío', 'string') }}",
+            "idConversacion": "={{ $('Datos del mensaje').item.json.conversacion }}",
+            "telefonoCliente": "={{ $('Datos del mensaje').item.json.telefono }}",
+            "nombreCliente": "={{ $('Datos del mensaje').item.json.nombre }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "explicacionCaso",
+              "displayName": "explicacionCaso",
+              "required": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "idConversacion",
+              "displayName": "idConversacion",
+              "required": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "telefonoCliente",
+              "displayName": "telefonoCliente",
+              "required": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "nombreCliente",
+              "displayName": "nombreCliente",
+              "required": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "motivo",
+              "displayName": "motivo",
+              "required": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "direccion",
+              "displayName": "direccion",
+              "required": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      }
+    },
+    {
+      "id": "f0274c76-f3eb-4dcd-87e9-7cfac5e53d66",
+      "name": "Separar mensajes",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        7088,
+        464
+      ],
+      "parameters": {
+        "fieldToSplitOut": "output.mensajes",
+        "options": {
+          "destinationFieldName": "mensaje"
+        }
+      }
+    },
+    {
+      "id": "de935ce3-fe11-4f1a-8857-a02301eb9044",
+      "name": "Descartar lo que no puede salir",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        7296,
+        464
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c17",
+              "leftValue": "={{ $json.mensaje.trim() }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "c18",
+              "leftValue": "={{ $json.mensaje.toLowerCase() }}",
+              "rightValue": "\\b(cbu|cvu)\\b|alias\\s*:",
+              "operator": {
+                "type": "string",
+                "operation": "notRegex"
+              }
+            },
+            {
+              "id": "c19",
+              "leftValue": "={{ $json.mensaje.toLowerCase() }}",
+              "rightValue": "^ya te (lo )?confirmo|^dejame (que )?(chequear|chequeo|ver|fijarme|consultar)",
+              "operator": {
+                "type": "string",
+                "operation": "notRegex"
+              }
+            },
+            {
+              "id": "c20",
+              "leftValue": "={{ !$json.mensaje.startsWith('PLANTILLA:') || !!$('Estado del día').item.json.plantillas[$json.mensaje.replace('PLANTILLA:', '').trim()] }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "c4f81e40-ed36-48ea-abe0-963c58bb721c",
+      "name": "Armar mensaje",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        7520,
+        464
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f10",
+              "name": "texto",
+              "value": "={{ $json.mensaje.startsWith('PLANTILLA:') ? $('Estado del día').item.json.plantillas[$json.mensaje.replace('PLANTILLA:', '').trim()] : $json.mensaje }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "f0b9867a-aab4-4977-a4c9-03ef5563fb3d",
+      "name": "Nota entrada",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2144,
+        -64
+      ],
+      "parameters": {
+        "content": "## 1. Entrada\n**Filtrar mensaje** deja pasar solo mensajes de clientes: nada de salientes, notas privadas, stickers ni conversaciones que atiende una persona en Chatwoot.\n⚠️ **Modo prueba:** la condición de números permitidos se borra para producción.\n**/reset** (solo testers) borra la memoria y la pausa.",
+        "height": 700,
+        "width": 3020
+      }
+    },
+    {
+      "id": "3859f51d-7438-4fce-ae05-9e57f99e83a5",
+      "name": "Nota adjuntos",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        896,
+        -208
+      ],
+      "parameters": {
+        "content": "## 2. Adjuntos\nFotos, PDF y audios se bajan, se pasan a base64 y Gemini los lee (comprobantes) o los transcribe (audios).",
+        "height": 1140,
+        "width": 1256
+      }
+    },
+    {
+      "id": "3ca8ecc9-2c79-4c98-b049-f17c1cd60418",
+      "name": "Nota debounce",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2176,
+        304
+      ],
+      "parameters": {
+        "content": "## 3. Juntar mensajes\nCada mensaje entra a una lista y espera 10 s. Si el último de la lista no es el suyo, llegó otro después y responde ese. El último junta todos, borra la lista y sigue.",
+        "height": 416,
+        "width": 1488
+      }
+    },
+    {
+      "id": "cbc8f7e4-e444-41b9-b390-106b8af2597c",
+      "name": "Nota agente",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3680,
+        304
+      ],
+      "parameters": {
+        "content": "## 4. Agente\nSi la conversación está derivada (pausa), corta. **Estado del día** trae horarios, demora, tanda, listas y plantillas: el agente decide qué decir y las tools calculan la plata. Responde una lista de mensajes.",
+        "height": 772,
+        "width": 3256
+      }
+    },
+    {
+      "id": "c28be72c-ec91-4d50-883d-3c146c997470",
+      "name": "Nota salida",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        6960,
+        304
+      ],
+      "parameters": {
+        "content": "## 5. Salida\nUn mensaje de WhatsApp por elemento. \"PLANTILLA:NOMBRE\" se reemplaza por el texto de la plantilla. Se descartan datos bancarios y promesas de \"ya te confirmo\". Salen de a uno, con 1,2 s entre cada uno.",
+        "height": 400,
+        "width": 1100
+      }
+    },
+    {
+      "id": "9370105f-0496-4d58-9ec1-dc4aeb89f46e",
+      "name": "Enviar por Chatwoot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        7744,
+        464
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chatwoot.bunge.agenticsia.agency/api/v1/accounts/1/conversations/{{ $('Datos del mensaje').item.json.conversacion }}/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: $json.texto, message_type: 'outgoing', private: false }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Chatwoot API (completar token)"
+        }
+      }
+    },
+    {
+      "id": "772d5250-6320-44ac-b670-535cf47d943f",
+      "name": "Leer inicio de pausa",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        4192,
+        400
+      ],
+      "parameters": {
+        "operation": "get",
+        "propertyName": "pausaDesde",
+        "key": "=pausa-desde-{{ $('Datos del mensaje').item.json.conversacion }}",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "d6bf4598-219c-4ae7-95aa-92ae7cd4639a",
+      "name": "¿Vuelve de una pausa?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4416,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "p1",
+              "leftValue": "={{ !!$json.pausaDesde }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "21dd6ba6-0dce-4071-aaaf-b073bf5a4fdd",
+      "name": "Mensajes durante la pausa",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "position": [
+        4608,
+        560
+      ],
+      "parameters": {
+        "url": "=https://chatwoot.bunge.agenticsia.agency/api/v1/accounts/1/conversations/{{ $('Datos del mensaje').item.json.conversacion }}/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Chatwoot API (completar token)"
+        }
+      }
+    },
+    {
+      "id": "c15c147e-aeb5-46e1-b795-e81c5f8c942f",
+      "name": "Lo que pasó en la pausa",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4848,
+        560
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "r1",
+              "name": "resumen",
+              "value": "={{ $json.error ? '(no se pudo leer la charla)' : (($json.payload || [])\n  .filter(m => !m.private && [0, 1].includes(m.message_type)\n    && m.created_at >= Number($('Leer inicio de pausa').item.json.pausaDesde)\n    && !$('Leer la lista').item.json.lista.map(x => JSON.parse(x).id).includes(m.id))\n  .sort((a, b) => a.id - b.id)\n  .map(m => (m.message_type === 0 ? 'Cliente' : 'Equipo') + ': ' + (m.content || '[mandó un archivo]'))\n  .join('\\n') || 'nadie escribió nada') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "de96e6a2-4cbd-4ea6-89b2-80fc8772dc7a",
+      "name": "Olvidar inicio de pausa",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        5088,
+        560
+      ],
+      "parameters": {
+        "operation": "delete",
+        "key": "=pausa-desde-{{ $('Datos del mensaje').item.json.conversacion }}"
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "a7c76956-05de-42f4-adba-3555c4b9b170",
+      "name": "Borrar inicio de pausa",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        -448,
+        112
+      ],
+      "parameters": {
+        "operation": "delete",
+        "key": "=pausa-desde-{{ $('Datos del mensaje').item.json.conversacion }}"
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "146ae167-2dca-4b5f-9c5f-76e6a0549e8b",
+      "name": "Guardar último adjunto",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        368,
+        336
+      ],
+      "parameters": {
+        "operation": "set",
+        "key": "=ultimo-adjunto-{{ $('Datos del mensaje').item.json.conversacion }}",
+        "value": "={{ $('Datos del mensaje').item.json.adjuntoUrl }}",
+        "keyType": "string",
+        "expire": true,
+        "ttl": 86400
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "26dc0c9e-6a5e-4f37-9a86-d7b6e529c000",
+      "name": "Leer último adjunto",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        5616,
+        416
+      ],
+      "parameters": {
+        "operation": "get",
+        "propertyName": "ultimoAdjunto",
+        "key": "=ultimo-adjunto-{{ $('Datos del mensaje').item.json.conversacion }}",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    },
+    {
+      "id": "9afdf66b-d88b-4b93-9d4f-b994b3e3915c",
+      "name": "Borrar último adjunto",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        -224,
+        112
+      ],
+      "parameters": {
+        "operation": "delete",
+        "key": "=ultimo-adjunto-{{ $('Datos del mensaje').item.json.conversacion }}"
+      },
+      "credentials": {
+        "redis": {
+          "name": "Redis"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Filtrar mensaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrar mensaje": {
+      "main": [
+        [
+          {
+            "node": "Datos del mensaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datos del mensaje": {
+      "main": [
+        [
+          {
+            "node": "¿Es /reset?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Es /reset?": {
+      "main": [
+        [
+          {
+            "node": "Borrar memoria",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "¿Tiene adjunto?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Borrar memoria": {
+      "main": [
+        [
+          {
+            "node": "Borrar pausa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Borrar pausa": {
+      "main": [
+        [
+          {
+            "node": "Borrar cotización Uber",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Tiene adjunto?": {
+      "main": [
+        [
+          {
+            "node": "Guardar último adjunto",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Guardar conversación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descargar adjunto": {
+      "main": [
+        [
+          {
+            "node": "Pasar a base64",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pasar a base64": {
+      "main": [
+        [
+          {
+            "node": "¿Qué adjunto es?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Qué adjunto es?": {
+      "main": [
+        [
+          {
+            "node": "Leer imagen (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Leer PDF (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transcribir audio (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer imagen (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Mensaje con adjunto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer PDF (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Mensaje con adjunto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribir audio (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Mensaje con adjunto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mensaje con adjunto": {
+      "main": [
+        [
+          {
+            "node": "Guardar conversación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar conversación": {
+      "main": [
+        [
+          {
+            "node": "Guardar en la lista",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar en la lista": {
+      "main": [
+        [
+          {
+            "node": "Esperar 20 seg",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer la lista": {
+      "main": [
+        [
+          {
+            "node": "¿Es el último mensaje?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Es el último mensaje?": {
+      "main": [
+        [
+          {
+            "node": "Juntar mensajes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Juntar mensajes": {
+      "main": [
+        [
+          {
+            "node": "Borrar la lista",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Borrar la lista": {
+      "main": [
+        [
+          {
+            "node": "Chequear pausa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chequear pausa": {
+      "main": [
+        [
+          {
+            "node": "¿Sigue sin derivar?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Estado del día": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Separar mensajes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separar mensajes": {
+      "main": [
+        [
+          {
+            "node": "Descartar lo que no puede salir",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descartar lo que no puede salir": {
+      "main": [
+        [
+          {
+            "node": "Armar mensaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modelo 028 (OpenRouter)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memoria": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formato: lista de mensajes": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "cotizar_envio": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "armar_resumen": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "crear_pedido": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "avisar_al_equipo": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar mensaje": {
+      "main": [
+        [
+          {
+            "node": "Enviar por Chatwoot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Sigue sin derivar?": {
+      "main": [
+        [
+          {
+            "node": "Leer inicio de pausa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer inicio de pausa": {
+      "main": [
+        [
+          {
+            "node": "¿Vuelve de una pausa?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Vuelve de una pausa?": {
+      "main": [
+        [
+          {
+            "node": "Mensajes durante la pausa",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Leer cotización Uber",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mensajes durante la pausa": {
+      "main": [
+        [
+          {
+            "node": "Lo que pasó en la pausa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lo que pasó en la pausa": {
+      "main": [
+        [
+          {
+            "node": "Olvidar inicio de pausa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Olvidar inicio de pausa": {
+      "main": [
+        [
+          {
+            "node": "Leer cotización Uber",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Borrar cotización Uber": {
+      "main": [
+        [
+          {
+            "node": "Borrar inicio de pausa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Esperar 20 seg": {
+      "main": [
+        [
+          {
+            "node": "Leer la lista",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar último adjunto": {
+      "main": [
+        [
+          {
+            "node": "Descargar adjunto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer cotización Uber": {
+      "main": [
+        [
+          {
+            "node": "Leer último adjunto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer último adjunto": {
+      "main": [
+        [
+          {
+            "node": "Estado del día",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Borrar inicio de pausa": {
+      "main": [
+        [
+          {
+            "node": "Borrar último adjunto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Borrar último adjunto": {
+      "main": [
+        [
+          {
+            "node": "Confirmar reset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  }
+}
