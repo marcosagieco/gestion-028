@@ -249,7 +249,7 @@
       }
     },
     {
-      "id": "66869514-80f6-4f6f-980e-fce51fa7b0c6",
+      "id": "e674762d-0dc5-4eaf-94cf-0cd1a7cb61b6",
       "name": "¿Cotización nueva?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -283,7 +283,7 @@
       }
     },
     {
-      "id": "10c3eaa9-9f08-4d00-8e6a-f8bdc635fccc",
+      "id": "d6da5ab5-d18c-416b-8bf8-e44ec6d43187",
       "name": "Responder cotización existente",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,

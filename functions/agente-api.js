@@ -42,7 +42,7 @@ const TRAMOS_DESCUENTO_EFECTIVO = [
 const LIMITE_POR_TANDA = 10; // si el panel no tiene uno cargado
 const CADA_TANDA = 30; // minutos entre tandas (moto y Uber por igual)
 const ULTIMA_TANDA = 20 * 60; // 20:00
-const CORTE_DESPACHO = 20 * 60 + 10; // desde las 20:10 ya no entra en la tanda de las 20:00
+const CORTE_DESPACHO = 20 * 60; // a las 20:00 se cierra sin excepción
 const VIGENCIA_COTIZACION_UBER_MS = 3 * 60 * 60 * 1000;
 const RECOTIZACION_UBER_MS = 30 * 60 * 1000;
 
@@ -514,6 +514,8 @@ function minutosDe(texto) {
   return Number(m[1]) * 60 + Number(m[2] || 0);
 }
 
+const hhmmDe = (minutos) => `${Math.floor(minutos / 60)}:${String(minutos % 60).padStart(2, "0")}`;
+
 // En qué tanda sale un pedido tomado ahora. El bot atiende 24/7: cada tanda lleva hasta `limite`
 // pedidos, así que con `enCola` pedidos esperando, este sale tantas tandas después de la próxima.
 // Si hoy ya no entra (o el panel dice que hoy no sale nada más), sale mañana. La "próxima salida"
@@ -538,20 +540,19 @@ function proximoDiaHabil(fecha, sinDespacho) {
 
 function salida(fecha, { enCola, limite, soloManana, proximaSalida, sinDespacho = [] }) {
   const ahora = horaBuenosAires(fecha);
-  const hhmm = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
   const hoyNoSeDespacha = soloManana || sinDespacho.includes(ahora.fecha);
   const siguiente = proximoDiaHabil(fecha, sinDespacho);
   const delPanel = minutosDe(proximaSalida);
   if (delPanel !== null) {
-    return delPanel >= ahora.minutos && !sinDespacho.includes(ahora.fecha)
-      ? { dia: "hoy", hora: hhmm(delPanel) } : { dia: siguiente.etiqueta, hora: hhmm(delPanel) };
+    return delPanel >= ahora.minutos && ahora.minutos < CORTE_DESPACHO && !sinDespacho.includes(ahora.fecha)
+      ? { dia: "hoy", hora: hhmmDe(delPanel) } : { dia: siguiente.etiqueta, hora: hhmmDe(delPanel) };
   }
   const hoy = hoyNoSeDespacha ? [] : tandasDelDia(ahora.dia)
-    .filter((m) => m >= ahora.minutos || (m === ULTIMA_TANDA && ahora.minutos < CORTE_DESPACHO));
+    .filter((m) => ahora.minutos < CORTE_DESPACHO && m >= ahora.minutos);
   const saltear = Math.floor(enCola / limite);
-  if (saltear < hoy.length) return { dia: "hoy", hora: hhmm(hoy[saltear]) };
+  if (saltear < hoy.length) return { dia: "hoy", hora: hhmmDe(hoy[saltear]) };
   const tandas = tandasDelDia(siguiente.d.dia);
-  return { dia: siguiente.etiqueta, hora: hhmm(tandas[Math.min(saltear - hoy.length, tandas.length - 1)]) };
+  return { dia: siguiente.etiqueta, hora: hhmmDe(tandas[Math.min(saltear - hoy.length, tandas.length - 1)]) };
 }
 
 // Los pedidos de moto y Uber "para armar" (pendientes) ocupan las tandas; los armados ya salieron.
@@ -730,7 +731,26 @@ exports.agentPedido = conClave(async (req, res) => {
   const total = subtotal + valorEnvio + montoEnvioSeguro - montoDescuento;
   const envioCorreo = tipoEnvio === "correo" ? CORREO[correo.aSucursal ? "sucursal" : "domicilio"] : 0;
   const aTransferir = medioPago === "mitad y mitad" ? Math.ceil(total / 2) : 0;
-  const cuando = tipoEnvio === "correo" ? null : salidaDeUnPedidoNuevo(op, tipoEnvio, await pedidosEnCola());
+  let cuando = tipoEnvio === "correo" ? null : salidaDeUnPedidoNuevo(op, tipoEnvio, await pedidosEnCola());
+  const horaSolicitadaTexto = String(b.horaSolicitada || "").trim();
+  if (horaSolicitadaTexto && tipoEnvio !== "uber") {
+    return rechazar(res, "la hora solicitada solo se puede programar para Uber");
+  }
+  if (horaSolicitadaTexto) {
+    const solicitada = minutosDe(horaSolicitadaTexto);
+    const ahora = horaBuenosAires(new Date());
+    const primeraDisponible = cuando && cuando.dia === "hoy" ? minutosDe(cuando.hora) : null;
+    if (solicitada === null || solicitada < 13 * 60 + 30 || solicitada > ULTIMA_TANDA) {
+      return rechazar(res, "la hora de Uber tiene que estar entre 13:30 y 20:00, en formato HH:mm");
+    }
+    if (ahora.minutos >= CORTE_DESPACHO || !cuando || cuando.dia !== "hoy") {
+      return rechazar(res, `hoy ya no se puede programar ese Uber: la próxima salida disponible es ${cuando ? `${cuando.dia} a las ${cuando.hora}` : "el próximo día con despacho"}`);
+    }
+    if (solicitada < ahora.minutos || (primeraDisponible !== null && solicitada < primeraDisponible)) {
+      return rechazar(res, `no llegamos a programar el Uber a las ${hhmmDe(solicitada)}; la primera salida disponible es hoy a las ${cuando.hora}`);
+    }
+    cuando = { dia: "hoy", hora: hhmmDe(solicitada) };
+  }
 
   // Si no sale hoy, va arriba de todo: la gente no lee el detalle y después se queja.
   const noSaleHoy = cuando && cuando.dia !== "hoy";
@@ -746,8 +766,8 @@ exports.agentPedido = conClave(async (req, res) => {
     : null;
   const lineaSalida = cuando
     ? preview
-      ? `🕐 Si confirmás el pedido ahora, sale ${cuando.dia} a las ${cuando.hora}`
-      : `🕐 Sale ${cuando.dia} a las ${cuando.hora}`
+      ? `🕐 Si confirmás el pedido ahora, sale ${cuando.dia} a las ${cuando.hora}${horaSolicitadaTexto ? " (horario pedido por el cliente)" : ""}`
+      : `🕐 Sale ${cuando.dia} a las ${cuando.hora}${horaSolicitadaTexto ? " (horario pedido por el cliente)" : ""}`
     : null;
   const mensaje = [
     avisoSalida,
@@ -841,6 +861,7 @@ exports.agentPedido = conClave(async (req, res) => {
     montoDescuento,
     total,
     medioPago,
+    horaSolicitada: horaSolicitadaTexto ? cuando.hora : null,
     montoTransferencia: aTransferir || null,
     cuentaCobro: conComprobante ? (ALIASES[op.aliasActivo] ? op.aliasActivo : "alias1") : null,
     comprobante: b.comprobante || null,

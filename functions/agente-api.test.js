@@ -242,6 +242,17 @@ async function main() {
     ok("uber: usa el monto que cargó el depósito + envío seguro", r3.body.total === 26000 + 8500 + 1990, r3.body);
     const r4 = await resumen({ tipoEnvio: "uber", medioPago: "efectivo" });
     ok("uber: nunca en efectivo", r4.status === 400, r4.body);
+    const r5 = await conHora("2026-09-22T14:00:00", () => resumen({ tipoEnvio: "uber", horaSolicitada: "19:00" }));
+    ok("uber: permite programar una salida futura dentro del horario", r5.body.ok && /19:00 \(horario pedido por el cliente\)/.test(r5.body.mensaje), r5.body);
+    const r6 = await conHora("2026-09-22T14:00:00", () => resumen({ tipoEnvio: "uber", horaSolicitada: "13:00" }));
+    ok("uber: rechaza una hora programada fuera del horario", r6.status === 400 && /13:30 y 20:00/.test(r6.body.error), r6.body);
+    const r7 = await conHora("2026-09-22T20:00:00", () => resumen({ tipoEnvio: "uber", horaSolicitada: "20:00" }));
+    ok("uber: a las 20:00 ya no permite programar para hoy", r7.status === 400 && /hoy ya no/.test(r7.body.error), r7.body);
+    const r8 = await resumen({ tipoEnvio: "moto", horaSolicitada: "19:00" });
+    ok("moto: no acepta la hora programada de Uber", r8.status === 400 && /solo se puede programar para Uber/.test(r8.body.error), r8.body);
+    const r9 = await conHora("2026-09-22T14:00:00", () => pedido({ tipoEnvio: "uber", horaSolicitada: "19:00", comprobante: { numero: "19000001" } }));
+    const p9 = store[`pedidos/${r9.body.pedidoId}`];
+    ok("uber: el pedido guarda la hora solicitada y la modalidad", r9.body.ok && p9?.tipoEnvio === "uber" && p9?.horaSolicitada === "19:00", p9);
   }
   {
     const r = await resumen({ envioSeguro: true });
@@ -427,8 +438,8 @@ async function main() {
       ["16:50 con 9 en cola: entra en la de las 17:00", "2026-09-22T16:50:00", 9, "hoy 17:00"],
       ["16:50 con 10 en cola: tanda llena, sale 17:30", "2026-09-22T16:50:00", 10, "hoy 17:30"],
       ["16:50 con 25 en cola: dos tandas llenas, sale 18:00", "2026-09-22T16:50:00", 25, "hoy 18:00"],
-      ["20:09: todavía entra en la de las 20:00", "2026-09-22T20:09:00", 0, "hoy 20:00"],
-      ["20:10: ya sale mañana", "2026-09-22T20:10:00", 0, "mañana 14:00"],
+      ["19:59: todavía entra en la de las 20:00", "2026-09-22T19:59:00", 0, "hoy 20:00"],
+      ["20:00: ya sale mañana", "2026-09-22T20:00:00", 0, "mañana 14:00"],
       ["martes 21:00: mañana miércoles 14:00", "2026-09-22T21:00:00", 0, "mañana 14:00"],
       ["sábado 22:00: mañana domingo 17:00", "2026-10-03T22:00:00", 0, "mañana 17:00"],
       ["19:40 con 30 en cola: hoy no entra, mañana en la tercera", "2026-09-22T19:40:00", 30, "mañana 15:00"],
@@ -472,13 +483,13 @@ async function main() {
     ok("salida: el Uber no usa la próxima salida de moto", u1 === "hoy 17:00", u1);
     const u2 = await salidaCon("2026-09-22T16:50:00", 10, { proximaSalida: "18:00" }, "salidaUber");
     ok("salida: el Uber respeta el cupo de la tanda", u2 === "hoy 17:30", u2);
-    const u3 = await salidaCon("2026-09-22T20:10:00", 0, {}, "salidaUber");
-    ok("salida: el Uber desde las 20:10 sale mañana", u3 === "mañana 14:00", u3);
+    const u3 = await salidaCon("2026-09-22T20:00:00", 0, {}, "salidaUber");
+    ok("salida: el Uber desde las 20:00 sale mañana", u3 === "mañana 14:00", u3);
 
     for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
     for (const [k, v] of guardados) store[k] = v;
     store["settings/operativo"] = operativo; // tiene próxima salida 16:00
-    const r = await conHora("2026-09-22T04:00:00", () => pedido({ comprobante: { numero: "0012345" } }));
+    const r = await conHora("2026-09-22T04:00:00", () => pedido({ comprobante: { numero: "0098765" } }));
     ok("salida: el pedido cargado dice cuándo sale (con la hora del panel)", /🕐 Sale hoy a las 16:00/.test(r.body.mensaje), r.body.mensaje);
   }
 

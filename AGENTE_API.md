@@ -34,8 +34,8 @@ Todo lo del día, en una sola llamada:
 ```
 
 - `salida` (moto) y `salidaUber`: en qué tanda sale un pedido tomado ahora. Salen tandas cada 30 min
-  hasta las 20:00, desde las 13:30 (miércoles 14:00, domingos 17:00); hasta antes de las 20:10 todavía entra
-  en la de las 20:00, desde las 20:10 sale el próximo día con despacho. Cada tanda lleva hasta el límite de `/operativo`, contando los pedidos de moto
+  hasta las 20:00, desde las 13:30 (miércoles 14:00, domingos 17:00). A las 20:00 se cierra sin excepción;
+  desde ese momento sale el próximo día con despacho. Cada tanda lleva hasta el límite de `/operativo`, contando los pedidos de moto
   y Uber "para armar" (los armados ya salieron y no cuentan): con la de las 17:00 llena, sale 17:30. Si hoy no entra, o el
   panel dice que hoy no sale nada más, sale mañana. La misma hora va en el resumen del pedido.
   Si el depósito carga una "próxima salida" de moto en `/operativo` ("18", "18:00", "18 hs"), esa hora
@@ -83,6 +83,7 @@ Calcula el resumen (`preview: true`, no guarda nada) o carga el pedido en `pedid
   "cliente": "Uma Bach",
   "items": [{ "producto": "Elfbar Ice King", "variante": "Peach", "cantidad": 2 }],
   "tipoEnvio": "moto",
+  "horaSolicitada": null,
   "direccion": { "texto": "Cabildo 2000, Belgrano", "referencias": "3B, timbre negro" },
   "medioPago": "transferencia",
   "comprobante": { "numero": "0012345", "monto": 52000, "nombre": "Uma Bach" },
@@ -132,6 +133,11 @@ con descuento), `al recibir` (efectivo o transferencia cuando llega, sin comprob
 descuento; el resumen muestra los dos montos y el pedido guarda `montoTransferencia`). Uber y correo:
 solo `transferencia`.
 
+**Uber programado:** si el cliente pide explícitamente una hora de salida para hoy, se manda
+`horaSolicitada: "HH:mm"`. Se acepta entre 13:30 y 20:00, siempre que sea futura, no anterior a la
+primera tanda disponible y que el pedido se confirme antes del cierre estricto de las 20:00. La hora
+queda visible en el resumen y guardada en el pedido. No se aplica a moto ni correo.
+
 **Efectivo:** descuento sobre el subtotal de productos: $1.500 (hasta $50.000), $2.500 (desde
 $50.000), $5.000 (desde $100.000).
 
@@ -141,7 +147,7 @@ transferencia y mitad y mitad) y, para correo, sucursal/domicilio, DNI, localida
 **Qué guarda en el pedido**, además de los campos de siempre (`mensaje`, `estado: "pendiente"`,
 `tipoEnvio`, `createdAt`): `telefono`, `idConversacion`, `idMensajeOrigen`, `origen`, `schemaVersion`,
 `cliente`, `direccion {texto, referencias, lat, lng, zona}`,
-`items`, `valorEnvio`, `envioSeguro`, `montoEnvioSeguro`, `montoDescuento`, `total`, `medioPago`,
+`items`, `valorEnvio`, `envioSeguro`, `montoEnvioSeguro`, `montoDescuento`, `total`, `medioPago`, `horaSolicitada`,
 `cuentaCobro` (el alias activo al cargarlo, para el CSV por cuenta), `comprobante`,
 `comprobanteImagen` (la foto copiada a Storage) y `datosCorreo`. No descuenta stock ni crea la
 venta: eso lo sigue haciendo el depósito.
