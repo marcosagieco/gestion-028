@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import AddressAutocomplete from './reparto/AddressAutocomplete';
 import { armarPrefillFinalizar, rankearItemsEnStock } from './pedidos/autocompletarVenta';
+import { REPARTIDORES, repartidorDe, nombreRepartidor } from './reparto/repartidores';
 import { ZONAS } from './reparto/zonas';
 
 // --- Firebase: mismo patrón que FacturasPage.jsx — página 100% independiente de App.jsx,
@@ -660,7 +661,7 @@ function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, on
           </span>
           {pedido.tipoEnvio === 'moto' && (
             <span className={`flex items-center gap-1 text-xs font-bold ${dm ? 'text-indigo-400' : 'text-indigo-600'}`}>
-              <Bike size={13}/> Moto
+              <Bike size={13}/> Moto · {nombreRepartidor(repartidorDe(pedido))}
             </span>
           )}
           {pedido.tipoEnvio === 'uber' && (
@@ -724,6 +725,10 @@ function MotoPendienteCard({ pedido, dm, onListo, onCancel }) {
   const [zonaEsSugerida, setZonaEsSugerida] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  // Con qué motomensajero sale. Se elige acá, al armarlo, que es el momento en que alguien tiene el
+  // paquete en la mano y sabe para qué salida va. Arranca en el que ya venía asignado (el bot o
+  // /pedidos pueden traerlo marcado) y si no, en el primero que sale.
+  const [repartidorSel, setRepartidorSel] = useState(() => repartidorDe(pedido));
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => setEntered(true));
@@ -742,7 +747,7 @@ function MotoPendienteCard({ pedido, dm, onListo, onCancel }) {
     if (!puedeConfirmar) return;
     setSaving(true);
     try {
-      await onListo({ ...direccionData, referencias: referencias.trim() || null, zona: zona || null });
+      await onListo({ ...direccionData, referencias: referencias.trim() || null, zona: zona || null }, repartidorSel);
     } finally {
       setSaving(false);
     }
@@ -762,8 +767,10 @@ function MotoPendienteCard({ pedido, dm, onListo, onCancel }) {
           <span className={`flex items-center gap-1 text-xs font-bold ${isUrgente ? 'text-red-400' : isAlerta ? 'text-amber-400' : (dm ? 'text-zinc-500' : 'text-zinc-400')}`}>
             <Clock size={13}/> {timeAgoStr(pedido.createdAt)}
           </span>
+          {/* Acá se muestra el elegido en los botones de abajo, no el guardado: es lo que va a pasar
+              cuando se toque "Listo". */}
           <span className={`flex items-center gap-1 text-xs font-bold ${dm ? 'text-indigo-400' : 'text-indigo-600'}`}>
-            <Bike size={13}/> Moto
+            <Bike size={13}/> Moto · {nombreRepartidor(repartidorSel)}
           </span>
         </div>
       </div>
@@ -812,12 +819,36 @@ function MotoPendienteCard({ pedido, dm, onListo, onCancel }) {
             <p className={`text-[11px] font-medium ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>Sugerida según la dirección — revisá que sea correcta</p>
           )}
         </div>
+
+        {/* Con qué motomensajero sale. Al tocar "Listo", el pedido entra directo al recorrido del
+            elegido (y solo él lo ve en su pantalla). Si después hay que cambiarlo, se puede pasar al
+            otro desde el panel de reparto sin tocar nada más. */}
+        <div className="flex flex-col gap-1.5">
+          <label className={`text-xs font-semibold flex items-center gap-1.5 ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}><Bike size={13}/> ¿Con quién sale?</label>
+          <div className="flex gap-2">
+            {REPARTIDORES.map(r => {
+              const sel = r.id === repartidorSel;
+              return (
+                <button key={r.id} type="button" onClick={() => setRepartidorSel(r.id)}
+                  className={`flex-1 h-14 rounded-xl border font-bold transition-all active:scale-[0.98] ${
+                    sel
+                      ? 'text-white border-transparent'
+                      : (dm ? 'bg-[#101010] border-white/[0.07] text-zinc-400' : 'bg-white border-zinc-200 text-zinc-500')
+                  }`}
+                  style={sel ? { background: r.color } : undefined}>
+                  <span className="block text-base leading-tight">{r.nombre}</span>
+                  <span className="block text-[11px] font-semibold opacity-80 leading-tight">sale {r.salida}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       <div className="flex flex-col gap-2 mt-1">
         <button onClick={() => setShowConfirm(true)} disabled={!puedeConfirmar}
           className="w-full h-16 rounded-2xl font-black text-lg text-white transition-all active:scale-[0.97] bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed">
-          {saving ? 'Guardando...' : 'Listo'}
+          {saving ? 'Guardando...' : `Listo · ${nombreRepartidor(repartidorSel)}`}
         </button>
         <button onClick={onCancel}
           className={`w-full h-11 rounded-xl font-bold text-sm border transition-all active:scale-[0.97] ${dm ? 'border-red-500/30 text-red-400 hover:bg-red-500/10' : 'border-red-200 text-red-600 hover:bg-red-50'}`}>
@@ -857,7 +888,7 @@ function NextRow({ list, dm, onFocus }) {
                 <span className="flex items-center gap-1"><Clock size={10}/>{timeAgoStr(p.createdAt)}</span>
                 {p.tipoEnvio === 'moto' && (
                   <span className={`flex items-center gap-1 ${dm ? 'text-indigo-400' : 'text-indigo-600'}`}>
-                    <Bike size={10}/> Moto
+                    <Bike size={10}/> Moto · {nombreRepartidor(repartidorDe(p))}
                   </span>
                 )}
                 {p.tipoEnvio === 'uber' && (
@@ -939,7 +970,7 @@ function PendienteGrupo({ titulo, icon: Icon, list, dm, focusId, onFocus, onList
       </span>
       {focus.tipoEnvio === 'moto' ? (
         <MotoPendienteCard key={focus.id} pedido={focus} dm={dm}
-          onListo={direccion => onListoMoto(focus, direccion)} onCancel={() => onCancel(focus)} />
+          onListo={(direccion, repartidorId) => onListoMoto(focus, direccion, repartidorId)} onCancel={() => onCancel(focus)} />
       ) : (
         <FocusCard key={focus.id} pedido={focus} dm={dm} eyebrow="Próximo a armar" actionLabel="Listo" requireConfirm
           actionColor="bg-emerald-500 hover:bg-emerald-400"
@@ -1261,15 +1292,18 @@ export default function PedidosPage() {
   // Igual que handleMarcarArmado, pero para moto: además de pasar a "armado", guarda la dirección
   // recién cargada (dirección + referencias + zona) — con eso el pedido ya puede entrar al
   // recorrido de reparto en la pantalla de Reparto.
-  const handleMarcarArmadoMoto = async (pedido, direccion) => {
+  // `repartidorId` es el motomensajero que eligió el depósito en la tarjeta (ver MotoPendienteCard):
+  // el pedido entra directo a SU recorrido y solo él lo ve en su pantalla.
+  const handleMarcarArmadoMoto = async (pedido, direccion, repartidorId) => {
     try {
       await updateDoc(doc(db, 'pedidos', pedido.id), {
         estado: 'armado',
         armadoAt: new Date().toISOString(),
         direccion,
+        repartidor: repartidorId || repartidorDe(pedido),
       });
       setFocusPendienteId(null);
-      showToast('Pedido armado, ya entra al recorrido de reparto');
+      showToast(`Pedido armado, ya entra al recorrido de ${nombreRepartidor(repartidorId || repartidorDe(pedido))}`);
     } catch (e) {
       showToast('Error: ' + e.message, 'error');
     }
@@ -1761,7 +1795,7 @@ export default function PedidosPage() {
                       <>
                         {focus.tipoEnvio === 'moto' ? (
                           <MotoPendienteCard key={focus.id} pedido={focus} dm={dm}
-                            onListo={direccion => handleMarcarArmadoMoto(focus, direccion)} onCancel={() => setCancelTarget(focus)} />
+                            onListo={(direccion, repartidorId) => handleMarcarArmadoMoto(focus, direccion, repartidorId)} onCancel={() => setCancelTarget(focus)} />
                         ) : (
                           <FocusCard key={focus.id} pedido={focus} dm={dm} eyebrow="Próximo a armar" actionLabel="Listo" requireConfirm
                             actionColor="bg-emerald-500 hover:bg-emerald-400"
@@ -1779,15 +1813,15 @@ export default function PedidosPage() {
                   reemplazan por un cartel único de "no hay pedidos". */}
               <PendienteGrupo titulo="Moto" icon={Bike} list={pendientesMoto} dm={dm}
                 focusId={focusPendienteId} onFocus={setFocusPendienteId}
-                onListoMoto={(p, direccion) => handleMarcarArmadoMoto(p, direccion)}
+                onListoMoto={(p, direccion, repartidorId) => handleMarcarArmadoMoto(p, direccion, repartidorId)}
                 onListoUber={handleMarcarArmado} onCancel={setCancelTarget} />
               <PendienteGrupo titulo="Uber" icon={Car} list={pendientesUber} dm={dm}
                 focusId={focusPendienteId} onFocus={setFocusPendienteId}
-                onListoMoto={(p, direccion) => handleMarcarArmadoMoto(p, direccion)}
+                onListoMoto={(p, direccion, repartidorId) => handleMarcarArmadoMoto(p, direccion, repartidorId)}
                 onListoUber={handleMarcarArmado} onCancel={setCancelTarget} />
               <PendienteGrupo titulo="Retiro" icon={Store} list={pendientesRetiro} dm={dm}
                 focusId={focusPendienteId} onFocus={setFocusPendienteId}
-                onListoMoto={(p, direccion) => handleMarcarArmadoMoto(p, direccion)}
+                onListoMoto={(p, direccion, repartidorId) => handleMarcarArmadoMoto(p, direccion, repartidorId)}
                 onListoUber={handleMarcarArmado} onCancel={setCancelTarget} />
             </div>
           </>

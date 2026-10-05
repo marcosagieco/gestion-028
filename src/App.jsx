@@ -16,6 +16,7 @@ import { CSS as DndCSS } from '@dnd-kit/utilities';
 import ProjectionChart from './ProjectionChart';
 import MetricSlider from './MetricSlider';
 import { buildDailySeries, buildFullHistoryDailySeries, buildRatioSeries, computeProjection, PROJECTION_CUTOFF_DATE } from './projectionEngine';
+import { REPARTIDORES, repartidorConfig, repartidorDe } from './reparto/repartidores';
 
 import { initializeApp } from "firebase/app";
 import {
@@ -1083,7 +1084,10 @@ const DraggableHomeBlock = ({ id, darkMode, hidden, onToggleHide, children }) =>
 // `variant="inline"` la deja sin marco propio (para vivir adentro de otra tarjeta, en Inicio).
 // Arranca colapsado ("mini despliegue"): el detalle y los controles de pago solo aparecen al tocar
 // "Ver y pagar", así no compite en tamaño con el resto de la tarjeta que lo contiene.
-function NormanPagosPanel({ darkMode, deuda, ultimoPago, onPagar, variant = 'inline' }) {
+// `repartidor` es el id del motomensajero (norman / nico): el panel muestra su nombre, su hora de
+// salida y su propia deuda, y el pago que registra es solo el de él.
+function MotoPagosPanel({ darkMode, deuda, ultimoPago, onPagar, repartidor, variant = 'inline' }) {
+  const cfg = repartidorConfig(repartidor);
   const [expanded, setExpanded] = useState(false);
   const [modo, setModo] = useState('todo'); // 'todo' | 'rango'
   const [rangoDesde, setRangoDesde] = useState('');
@@ -1128,10 +1132,10 @@ function NormanPagosPanel({ darkMode, deuda, ultimoPago, onPagar, variant = 'inl
           <Bike size={12} style={{ color: deuda.cantidad > 0 ? '#f59e0b' : (darkMode ? '#a1a1aa' : '#71717a') }}/>
         </div>
         <div>
-          <span className={`text-sm font-bold ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Norman</span>
-          {variant === 'card' && (
-            <span className={`block text-[9px] font-bold uppercase tracking-wide mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{TEAM_PAYMENT_TYPE_LABELS.motomensajeria}</span>
-          )}
+          <span className={`text-sm font-bold ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{cfg.nombre}</span>
+          <span className={`block text-[9px] font-bold uppercase tracking-wide mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
+            {variant === 'card' ? `${TEAM_PAYMENT_TYPE_LABELS.motomensajeria} · sale ${cfg.salida}` : `Sale ${cfg.salida}`}
+          </span>
         </div>
         <span className={`ml-auto text-[10px] font-bold ${deuda.cantidad > 0 ? 'text-amber-500' : 'text-zinc-500'}`}>
           {deuda.cantidad === 0 ? 'Al día' : `${deuda.cantidad} sin pagar`}
@@ -3448,7 +3452,8 @@ export default function App() {
   const [wallets, setWallets] = useState({ LEMON: 0, AHORROS: 0, GALICIA: 0, GALICIA_GIECO: 0, MERCADO_PAGO: 0, CUENTA_RECAUDADORA: 0, EFECTIVO: 0, USDT: 0, USD: 0, SIN_CUENTA: 0 });
   // Deuda con Norman (motomensajería) — ver comentario en el listener de más abajo.
   const [pedidosMotoPendientesPago, setPedidosMotoPendientesPago] = useState([]);
-  const [normanUltimoPago, setNormanUltimoPago] = useState(null);
+  // Último pago registrado a cada motomensajero, por id: { norman: {...}, nico: {...} }.
+  const [ultimosPagosMoto, setUltimosPagosMoto] = useState({});
   // Pedidos recientes (ventana en vivo, igual que sales/expenses/cashFlow) — hoy solo alimenta el
   // mapa de calor día×hora de Inicio (createdAt = cuándo entra el pedido a armar, no cuándo se
   // arma ni se entrega). Si en el futuro algo más necesita pedidos, se suma acá antes de abrir un
@@ -3483,15 +3488,18 @@ export default function App() {
     await setDoc(doc(db, 'settings', 'wallets'), patch, { merge: true });
   };
 
-  // Cuánto se le debe a Norman ahora mismo: suma de motomensajeria.monto de los pedidos moto
-  // entregados que todavía no se marcaron pagados, más el rango de fechas que cubren (para saber
-  // "estos son los envíos de tal semana"). Se paga junto cada varios días, no envío por envío.
-  const normanDeuda = useMemo(() => {
-    const fechas = pedidosMotoPendientesPago.map(p => p.entregadoEn).filter(Boolean).sort();
+  // Cuánto se le debe a cada motomensajero ahora mismo: suma de motomensajeria.monto de sus
+  // pedidos entregados que todavía no se marcaron pagados, más el rango de fechas que cubren (para
+  // saber "estos son los envíos de tal semana"). Se paga junto cada varios días, no envío por
+  // envío. Con dos repartidores cada uno tiene su deuda y se le paga por separado: los pedidos se
+  // reparten por el campo `repartidor` (los viejos, sin ese campo, cuentan para el primero).
+  const deudaDe = (repartidorId) => {
+    const suyos = pedidosMotoPendientesPago.filter(p => repartidorDe(p) === repartidorId);
+    const fechas = suyos.map(p => p.entregadoEn).filter(Boolean).sort();
     // Desglose día por día ("cuánto le tengo que pagar de cada día") — se agrupa por la fecha de
     // entrega (entregadoEn), no por cuándo se cargó la venta, que puede ser otro día distinto.
     const porDiaMap = {};
-    pedidosMotoPendientesPago.forEach(p => {
+    suyos.forEach(p => {
       if (!p.entregadoEn) return;
       // Día LOCAL de la entrega, no el día UTC — entregadoEn se guarda con la hora real (ver
       // localDayKey), así que una entrega de noche no se corre al día siguiente acá.
@@ -3503,29 +3511,35 @@ export default function App() {
     });
     const porDia = Object.values(porDiaMap).sort((a, b) => a.dia.localeCompare(b.dia));
     return {
-      cantidad: pedidosMotoPendientesPago.length,
-      total: pedidosMotoPendientesPago.reduce((s, p) => s + (p.motomensajeria?.monto || 0), 0),
+      cantidad: suyos.length,
+      total: suyos.reduce((s, p) => s + (p.motomensajeria?.monto || 0), 0),
       desde: fechas[0] || null,
       hasta: fechas[fechas.length - 1] || null,
       porDia,
     };
-  }, [pedidosMotoPendientesPago]);
+  };
+
+  // { norman: {...}, nico: {...} } — lo que consumen los paneles de Inicio y de Equipo 028.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const deudasMoto = useMemo(() => Object.fromEntries(REPARTIDORES.map(r => [r.id, deudaDe(r.id)])), [pedidosMotoPendientesPago]);
 
   // Marca como pagado lo pendiente — TODO (rango=null) o solo un rango de fechas elegido a mano
   // (rango={desde,hasta}, YYYY-MM-DD inclusive los dos extremos, sobre entregadoEn) — y deja un
   // resumen en settings/normanPagos para mostrar "último pago" sin tener que traer nunca el
   // historial completo de pedidos ya pagados. Se usa igual desde Inicio y desde Equipo 028.
-  const handleMarcarNormanPagado = async (rango) => {
+  const handleMarcarMotoPagado = async (repartidorId, rango) => {
+    const cfg = repartidorConfig(repartidorId);
+    const suyos = pedidosMotoPendientesPago.filter(p => repartidorDe(p) === repartidorId);
     const objetivo = rango
-      ? pedidosMotoPendientesPago.filter(p => {
+      ? suyos.filter(p => {
           const dia = p.entregadoEn && localDayKey(p.entregadoEn);
           return dia && dia >= rango.desde && dia <= rango.hasta;
         })
-      : pedidosMotoPendientesPago;
+      : suyos;
     if (objetivo.length === 0) { showToast('No hay entregas sin pagar en ese rango', 'error'); return; }
     const total = objetivo.reduce((s, p) => s + (p.motomensajeria?.monto || 0), 0);
     const rangoTexto = rango ? ` (${safeDateStr(rango.desde)} — ${safeDateStr(rango.hasta)})` : '';
-    if (!window.confirm(`¿Marcar como pagado ${formatMoney(total)} a Norman por ${objetivo.length} entrega${objetivo.length === 1 ? '' : 's'}${rangoTexto}?`)) return;
+    if (!window.confirm(`¿Marcar como pagado ${formatMoney(total)} a ${cfg.nombre} por ${objetivo.length} entrega${objetivo.length === 1 ? '' : 's'}${rangoTexto}?`)) return;
     try {
       const nowIso = new Date().toISOString();
       const batch = writeBatch(db);
@@ -3533,8 +3547,8 @@ export default function App() {
         batch.update(doc(db, 'pedidos', p.id), { 'motomensajeria.pagado': true, 'motomensajeria.pagadaEl': nowIso });
       });
       await batch.commit();
-      await setDoc(doc(db, 'settings', 'normanPagos'), { monto: total, cantidadEnvios: objetivo.length, fecha: nowIso });
-      showToast('Pago a Norman registrado', 'success');
+      await setDoc(doc(db, 'settings', cfg.docUltimoPago), { monto: total, cantidadEnvios: objetivo.length, fecha: nowIso });
+      showToast(`Pago a ${cfg.nombre} registrado`, 'success');
     } catch (e) {
       showToast('Error al registrar el pago: ' + e.message, 'error');
     }
@@ -4154,12 +4168,13 @@ export default function App() {
             (snap) => setPedidosMotoPendientesPago(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
             () => setPedidosMotoPendientesPago([])
         );
-        // Último pago a Norman: no se calcula de los pedidos ya pagados (traerlos todos para buscar
-        // el más reciente sí crecería para siempre) — se escribe este resumen aparte, una vez, cada
-        // vez que se marca un pago (ver handleMarcarNormanPagado).
-        const unsubNormanUltimoPago = onSnapshot(doc(db, 'settings', 'normanPagos'), (docSnap) => {
-            setNormanUltimoPago(docSnap.exists() ? docSnap.data() : null);
-        }, () => setNormanUltimoPago(null));
+        // Último pago a cada motomensajero: no se calcula de los pedidos ya pagados (traerlos todos
+        // para buscar el más reciente sí crecería para siempre) — se escribe un resumen aparte, una
+        // vez, cada vez que se marca un pago (ver handleMarcarMotoPagado). Un documento por
+        // repartidor, así pagarle a uno no pisa el registro del otro.
+        const unsubsUltimoPagoMoto = REPARTIDORES.map(r => onSnapshot(doc(db, 'settings', r.docUltimoPago), (docSnap) => {
+            setUltimosPagosMoto(prev => ({ ...prev, [r.id]: docSnap.exists() ? docSnap.data() : null }));
+        }, () => setUltimosPagosMoto(prev => ({ ...prev, [r.id]: null }))));
 
         // Pedidos recientes: misma ventana en vivo que sales/expenses/cashFlow (últimos ~2 meses,
         // ver ventanaVivaCutoffISO) — alimenta el mapa de calor día×hora de Inicio. No hace falta
@@ -4188,7 +4203,7 @@ export default function App() {
         );
 
         setLoading(false);
-        return () => { unsubBatches(); unsubSales(); unsubExp(); unsubCash(); unsubNeutralStock(); unsubConsignments(); unsubSettings(); unsubWallets(); unsubNormanPendientes(); unsubNormanUltimoPago(); unsubPedidosRecientes(); unsubTeamMembers(); unsubTeamPayments(); unsubCotizaciones(); unsubCotizacionesHistorico(); };
+        return () => { unsubBatches(); unsubSales(); unsubExp(); unsubCash(); unsubNeutralStock(); unsubConsignments(); unsubSettings(); unsubWallets(); unsubNormanPendientes(); unsubsUltimoPagoMoto.forEach(fn => fn()); unsubPedidosRecientes(); unsubTeamMembers(); unsubTeamPayments(); unsubCotizaciones(); unsubCotizacionesHistorico(); };
     } catch (e) {
         setIsOffline(true);
         setLoading(false);
@@ -4226,10 +4241,14 @@ export default function App() {
   const normanSeedAttemptedRef = useRef(false);
   useEffect(() => {
     if (!teamSeeded || normanSeedAttemptedRef.current) return;
-    if (teamMembers.some(m => m.paymentType === 'motomensajeria')) return;
+    // Uno por motomensajero, y solo los que falten: si Norman ya está cargado de antes y se suma
+    // Nico, se crea nada más que Nico. Se reconocen por nombre, igual que el panel de pagos.
+    const faltan = REPARTIDORES.filter(r =>
+      !teamMembers.some(m => m.paymentType === 'motomensajeria' && (m.name || '').toLowerCase().includes(r.nombre.toLowerCase())));
+    if (faltan.length === 0) return;
     normanSeedAttemptedRef.current = true;
-    addDoc(collection(db, 'teamMembers'), {
-      name: 'Norman',
+    Promise.all(faltan.map(r => addDoc(collection(db, 'teamMembers'), {
+      name: r.nombre,
       paymentType: 'motomensajeria',
       monthlySalary: 0,
       salaryStartDate: getTodayDate(),
@@ -4237,7 +4256,7 @@ export default function App() {
       commissionStartDate: null,
       nextPaymentDate: null,
       createdAt: new Date().toISOString(),
-    }).catch(e => { console.error('Error creando a Norman en Equipo 028:', e); normanSeedAttemptedRef.current = false; });
+    }))).catch(e => { console.error('Error creando los motomensajeros en Equipo 028:', e); normanSeedAttemptedRef.current = false; });
   }, [teamSeeded, teamMembers]);
 
   const { uniqueProducts, uniqueVariants } = useMemo(() => {
@@ -9046,7 +9065,12 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             {/* MOTOMENSAJERÍA · NORMAN — no es un vendedor (no factura ni cobra comisión),
                                 pero comparte esta tarjeta con el resto del equipo porque es la otra persona
                                 a la que hay que pagarle. Mismo panel que en Equipo 028 (ver NormanPagosPanel). */}
-                            <NormanPagosPanel darkMode={darkMode} deuda={normanDeuda} ultimoPago={normanUltimoPago} onPagar={handleMarcarNormanPagado} variant="inline" />
+                            {REPARTIDORES.map(r => (
+                              <MotoPagosPanel key={r.id} darkMode={darkMode} repartidor={r.id}
+                                deuda={deudasMoto[r.id] || { cantidad: 0, total: 0, desde: null, hasta: null, porDia: [] }}
+                                ultimoPago={ultimosPagosMoto[r.id] || null}
+                                onPagar={(rango) => handleMarcarMotoPagado(r.id, rango)} variant="inline" />
+                            ))}
                         </div>
 
                         {/* NUEVOS CLIENTES + COSTO PROMEDIO POR PRODUCTO (columna derecha, apiladas para
@@ -13252,14 +13276,20 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                 ) : (
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                     {teamMembers.map(member => {
-                      // Norman no factura ni cobra comisión — se le debe un monto puntual por
-                      // entrega, no por mes ni por venta, así que no encaja en TeamMemberCard.
-                      // Mismo panel que en Inicio (NormanPagosPanel), acá con marco propio de
-                      // tarjeta para que se vea igual que el resto de Equipo 028.
+                      // Los motomensajeros no facturan ni cobran comisión — se les debe un monto
+                      // puntual por entrega, no por mes ni por venta, así que no encajan en
+                      // TeamMemberCard. Mismo panel que en Inicio (MotoPagosPanel), acá con marco
+                      // propio de tarjeta para que se vea igual que el resto de Equipo 028. Cuál de
+                      // los dos es se saca del nombre cargado en el equipo: así el panel de Norman
+                      // muestra la deuda de Norman y el de Nico la de Nico.
                       if (member.paymentType === 'motomensajeria') {
+                        const suyo = REPARTIDORES.find(r => (member.name || '').toLowerCase().includes(r.nombre.toLowerCase()));
+                        if (!suyo) return null;
                         return (
-                          <NormanPagosPanel key={member.id} darkMode={darkMode} deuda={normanDeuda}
-                            ultimoPago={normanUltimoPago} onPagar={handleMarcarNormanPagado} variant="card" />
+                          <MotoPagosPanel key={member.id} darkMode={darkMode} repartidor={suyo.id}
+                            deuda={deudasMoto[suyo.id] || { cantidad: 0, total: 0, desde: null, hasta: null, porDia: [] }}
+                            ultimoPago={ultimosPagosMoto[suyo.id] || null}
+                            onPagar={(rango) => handleMarcarMotoPagado(suyo.id, rango)} variant="card" />
                         );
                       }
                       const memberPayments = teamPayments.filter(p => p.memberId === member.id);

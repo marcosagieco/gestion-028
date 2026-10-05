@@ -34,9 +34,17 @@ createRoot(document.getElementById('root')).render(
             <RepartoDeposito />
           </Suspense>
         } />
+        {/* Una pantalla por motomensajero. Norman se queda con /reparto, el link que ya tiene
+            guardado en el celular; Nico entra por /reparto/nico. Es el mismo componente: cada uno
+            ve solo sus paradas y maneja su propio recorrido (ver reparto/repartidores.js). */}
         <Route path="/reparto" element={
           <Suspense fallback={null}>
-            <RepartoMoto />
+            <RepartoMoto repartidor="norman" />
+          </Suspense>
+        } />
+        <Route path="/reparto/nico" element={
+          <Suspense fallback={null}>
+            <RepartoMoto repartidor="nico" />
           </Suspense>
         } />
         <Route path="/operativo" element={

@@ -18,6 +18,7 @@ import { loadGoogleMaps, MAP_DARK_STYLE, MAP_LIGHT_STYLE } from './reparto/googl
 import { ZONAS_POR_ID, DEPOSITO_ORIGEN } from './reparto/zonas';
 import { computeRecorrido, ordenAPersistir } from './reparto/recorridoEngine';
 import { costoMotomensajeriaDe, medirCostoMotomensajeriaReal } from './reparto/motomensajeria';
+import { esDelRepartidor, repartidorConfig, REPARTIDOR_DEFAULT } from './reparto/repartidores';
 
 // --- Firebase: mismo patrón self-contenido que PedidosPage.jsx ---
 const firebaseConfig = {
@@ -32,7 +33,7 @@ const fbApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
 let db;
 try {
   // Caché persistente (IndexedDB) igual que el dashboard principal (App.jsx) — sin esto, la
-  // pantalla queda en blanco apenas se corta la señal, justo cuando más se usa (Norman en la
+  // pantalla queda en blanco apenas se corta la señal, justo cuando más se usa (el repartidor en la
   // calle, a veces en subte o en un ascensor). Con la caché, lo último que se sincronizó queda
   // disponible al instante aunque no haya internet, y las escrituras (marcar una entrega, etc.)
   // quedan en cola y se mandan solas apenas vuelve la señal. persistentMultipleTabManager permite
@@ -85,7 +86,7 @@ const formatDiaLabel = (dateStr) => {
   if (mismoDia(d, ayer)) return 'Ayer';
   return d.toLocaleDateString(undefined, { day: '2-digit', month: 'long', year: hoy.getFullYear() !== d.getFullYear() ? 'numeric' : undefined });
 };
-// Monto de la venta ya cerrada por depósito (venta.items) — mientras Norman no la finaliza en
+// Monto de la venta ya cerrada por depósito (venta.items) — mientras el depósito no la finaliza en
 // /pedidos todavía no hay precio cargado, así que puede no existir.
 const montoVenta = (pedido) => pedido.venta?.items?.reduce((s, it) => s + (it.precio || 0) * (it.unidades || 0), 0) ?? null;
 
@@ -119,7 +120,7 @@ function ConfirmModal({ dm, title, text, confirmLabel = 'Aceptar', onConfirm, on
 // nadie, etc.) — antes la única salida de una parada era marcarla "Entregado", así que una
 // entrega fallida solo se podía mentir como entregada o dejar el pedido colgado en el recorrido
 // para siempre. Pide motivo siempre (el botón de confirmar queda deshabilitado sin texto): sin
-// motivo, el registro no dice nada útil ni a Norman ni a depósito.
+// motivo, el registro no dice nada útil ni al repartidor ni al depósito.
 function EntregaFallidaModal({ dm, pedido, onConfirm, onCancel }) {
   const [motivo, setMotivo] = useState('');
   return (
@@ -241,7 +242,12 @@ function RestoStopRow({ dm, pedido, index, expanded, onToggleExpand, entregandoI
   );
 }
 
-export default function RepartoMoto() {
+// `repartidor` dice de quien es esta pantalla: /reparto es de Norman (el que sale 15:30) y
+// /reparto/nico es de Nico (18:30) — ver main.jsx y reparto/repartidores.js. Es la MISMA pantalla
+// para los dos, no una copia: cada uno ve solo sus paradas, tiene su propio estado de recorrido y
+// su propio historial de plata. Hacer dos archivos iguales obligaria a arreglar todo dos veces.
+export default function RepartoMoto({ repartidor = REPARTIDOR_DEFAULT }) {
+  const yo = repartidorConfig(repartidor);
   const [dm, setDm] = useState(() => localStorage.getItem('028_dark_mode') === 'true');
   // Único botón de modo claro/oscuro de esta pantalla — antes solo lo respetaba (mapa incluido)
   // pero para cambiarlo había que ir a otra pantalla. Al sol del mediodía en la calle, el modo
@@ -262,7 +268,7 @@ export default function RepartoMoto() {
   const [fallidaPedido, setFallidaPedido] = useState(null);
   const [marcandoFallidaId, setMarcandoFallidaId] = useState(null);
   const [toast, setToast] = useState(null);
-  // Norman se marca "inactivo" a mano cuando termina su turno/no está disponible — documento aparte
+  // El repartidor se marca "inactivo" a mano cuando termina su turno/no está disponible — documento aparte
   // de recorridos/activo a propósito, para no interferir con esa lógica (parada congelada, etc.) ni
   // depender de tocarla en cada setDoc que ya existe ahí.
   const [repartidorActivo, setRepartidorActivo] = useState(true);
@@ -294,16 +300,16 @@ export default function RepartoMoto() {
   }, []);
 
   useEffect(() => {
-    return onSnapshot(doc(db, 'recorridos', 'activo'), snap => {
+    return onSnapshot(doc(db, 'recorridos', yo.docRecorrido), snap => {
       setRecorrido(snap.exists() ? snap.data() : { estado: 'en_deposito', salidaEn: null, paradaCongelada: null });
     }, err => console.error('recorrido:', err));
-  }, []);
+  }, [yo.docRecorrido]);
 
   useEffect(() => {
-    return onSnapshot(doc(db, 'recorridos', 'repartidor'), snap => {
+    return onSnapshot(doc(db, 'recorridos', yo.docEstado), snap => {
       setRepartidorActivo(snap.exists() ? snap.data().activo !== false : true);
     }, err => console.error('repartidor:', err));
-  }, []);
+  }, [yo.docEstado]);
 
   // El botón de arriba solo sirve para pasar de Activo a Inactivo — la única forma de volver a
   // Activo es tocando "Salí a repartir" (ver handleSalir), nunca tocando este botón de nuevo. Si
@@ -320,11 +326,11 @@ export default function RepartoMoto() {
   const aplicarToggleActivo = async (nuevoActivo) => {
     setTogglingActivo(true);
     try {
-      await setDoc(doc(db, 'recorridos', 'repartidor'), { activo: nuevoActivo, updatedAt: new Date().toISOString() });
+      await setDoc(doc(db, 'recorridos', yo.docEstado), { activo: nuevoActivo, updatedAt: new Date().toISOString() });
       // Al terminar el día (pasa a inactivo) el recorrido queda reseteado, para que la próxima vez
       // que tenga pedidos vuelva a arrancar de cero mostrando "Salí a repartir".
       if (!nuevoActivo) {
-        await setDoc(doc(db, 'recorridos', 'activo'), { estado: 'en_deposito', salidaEn: null, paradaCongelada: null });
+        await setDoc(doc(db, 'recorridos', yo.docRecorrido), { estado: 'en_deposito', salidaEn: null, paradaCongelada: null });
       }
     } catch (e) {
       showToast('Error al cambiar el estado: ' + e.message, 'error');
@@ -352,18 +358,18 @@ export default function RepartoMoto() {
   }, []);
 
   const stopsRaw = useMemo(() =>
-    pedidos.filter(p => p.tipoEnvio === 'moto' && p.estado === 'armado' && p.direccion),
-    [pedidos]);
+    pedidos.filter(p => p.tipoEnvio === 'moto' && p.estado === 'armado' && p.direccion && esDelRepartidor(p, repartidor)),
+    [pedidos, repartidor]);
   const stopsOrdenadas = useMemo(() =>
     [...stopsRaw].sort((a, b) => (a.ordenRecorrido ?? 999) - (b.ordenRecorrido ?? 999)),
     [stopsRaw]);
 
-  // Historial de entregas de Norman: todo lo que ya salió de "armado" hacia adelante (entregado en
+  // Historial de entregas de este repartidor: todo lo que ya salió de "armado" hacia adelante (entregado en
   // la calle, y finalizado una vez que depósito le carga el precio en /pedidos), más reciente
   // primero, agrupado por día para que sea fácil de recorrer con el dedo.
   const historialGrupos = useMemo(() => {
     const entregas = pedidos
-      .filter(p => p.tipoEnvio === 'moto' && (p.estado === 'entregado' || p.estado === 'finalizado') && p.direccion)
+      .filter(p => p.tipoEnvio === 'moto' && (p.estado === 'entregado' || p.estado === 'finalizado') && p.direccion && esDelRepartidor(p, repartidor))
       .sort((a, b) => safeTime(b.entregadoEn || b.finalizadoAt) - safeTime(a.entregadoEn || a.finalizadoAt));
     const grupos = [];
     for (const p of entregas) {
@@ -375,7 +381,7 @@ export default function RepartoMoto() {
       grupo.totalMotomensajeria += costoMotomensajeriaDe(p)?.monto || 0;
     }
     return grupos;
-  }, [pedidos]);
+  }, [pedidos, repartidor]);
 
   // Total general de plata de motomensajería en TODO el historial cargado (todos los días juntos)
   // — lo que se muestra arriba de todo cuando el filtro está en "Todos".
@@ -401,7 +407,7 @@ export default function RepartoMoto() {
   const enCalle = recorrido?.estado === 'en_calle';
 
   // Único trigger de cálculo que le corresponde a esta pantalla: si hay paradas que TODAVÍA nunca
-  // se ordenaron (nadie abrió el panel del depósito antes), se calculan acá para no dejar a Norman
+  // se ordenaron (nadie abrió el panel del depósito antes), se calculan acá para no dejar al repartidor
   // con una lista sin ningún orden. Si ya venían calculadas (caso normal), no se vuelve a llamar a
   // Routes API por el simple hecho de abrir esta pantalla — esa llamada ya la hizo el depósito.
   useEffect(() => {
@@ -496,7 +502,7 @@ export default function RepartoMoto() {
     if (stopsOrdenadas.length === 0 || salioLoading) return;
     setSalioLoading(true);
     try {
-      await setDoc(doc(db, 'recorridos', 'activo'), {
+      await setDoc(doc(db, 'recorridos', yo.docRecorrido), {
         estado: 'en_calle',
         salidaEn: new Date().toISOString(),
         paradaCongelada: stopsOrdenadas[0].id,
@@ -505,7 +511,7 @@ export default function RepartoMoto() {
       // anterior que no reactivó a mano), esto lo pone en Activo solo, sin que haga falta tocar
       // el botón de arriba a la derecha aparte.
       if (!repartidorActivo) {
-        await setDoc(doc(db, 'recorridos', 'repartidor'), { activo: true, updatedAt: new Date().toISOString() });
+        await setDoc(doc(db, 'recorridos', yo.docEstado), { activo: true, updatedAt: new Date().toISOString() });
       }
     } catch (e) {
       showToast('Error al salir a repartir: ' + e.message, 'error');
@@ -553,7 +559,7 @@ export default function RepartoMoto() {
       // guarda en el pedido para que el historial no tenga que volver a llamar a Google nunca más.
       // Corre aparte, sin bloquear el resto del flujo (el repartidor no tiene por qué esperarla) —
       // si falla o Google no responde, el historial cae solo al estimado en línea recta.
-      // pagado:false arranca sin pagar — Inicio lo suma como "a pagarle a Norman" hasta que el
+      // pagado:false arranca sin pagar — Inicio lo suma a la deuda con ese repartidor hasta que el
       // dueño lo marca como pagado (se paga junto, cada varios días, no envío por envío).
       medirCostoMotomensajeriaReal(pedido.direccion)
         .then(costo => { if (costo) return updateDoc(doc(db, 'pedidos', pedido.id), { motomensajeria: { ...costo, pagado: false } }); })
@@ -561,14 +567,14 @@ export default function RepartoMoto() {
 
       const restantes = stopsRaw.filter(p => p.id !== pedido.id);
       if (restantes.length === 0) {
-        await setDoc(doc(db, 'recorridos', 'activo'), { estado: 'en_deposito', salidaEn: null, paradaCongelada: null });
+        await setDoc(doc(db, 'recorridos', yo.docRecorrido), { estado: 'en_deposito', salidaEn: null, paradaCongelada: null });
       } else {
         const origin = posEntrega || { lat: pedido.direccion.lat, lng: pedido.direccion.lng };
         const ordenado = await computeRecorrido({ pedidos: restantes, paradaCongeladaId: null, origin });
         const batch = writeBatch(db);
         ordenado.forEach((p, i) => batch.update(doc(db, 'pedidos', p.id), { ordenRecorrido: i + 1 }));
         await batch.commit();
-        await setDoc(doc(db, 'recorridos', 'activo'), { estado: 'en_calle', salidaEn: recorrido?.salidaEn || nowIso, paradaCongelada: ordenado[0].id });
+        await setDoc(doc(db, 'recorridos', yo.docRecorrido), { estado: 'en_calle', salidaEn: recorrido?.salidaEn || nowIso, paradaCongelada: ordenado[0].id });
       }
       showToast('Entrega registrada');
     } catch (e) {
@@ -602,7 +608,7 @@ export default function RepartoMoto() {
       const batch = writeBatch(db);
       ordenado.forEach((p, i) => batch.update(doc(db, 'pedidos', p.id), { ordenRecorrido: i + 1 }));
       await batch.commit();
-      await setDoc(doc(db, 'recorridos', 'activo'), { estado: 'en_calle', salidaEn: recorrido?.salidaEn || nowIso, paradaCongelada: ordenado[0].id });
+      await setDoc(doc(db, 'recorridos', yo.docRecorrido), { estado: 'en_calle', salidaEn: recorrido?.salidaEn || nowIso, paradaCongelada: ordenado[0].id });
 
       showToast('Intento fallido registrado — el pedido vuelve a la cola');
     } catch (e) {
@@ -613,7 +619,7 @@ export default function RepartoMoto() {
   };
 
   // Sin clave — esta pantalla (y /pedidos y /pedidos/reparto) queda sin login a propósito, la
-  // usan Norman/depósito directo desde el celular. El resto del sistema sigue pidiendo clave.
+  // usan los repartidores y el depósito directo desde el celular. El resto del sistema sigue pidiendo clave.
   const proxima = stopsOrdenadas[0];
   const resto = stopsOrdenadas.slice(1);
 
@@ -625,7 +631,7 @@ export default function RepartoMoto() {
   );
 
   // Reordenar a mano, mismo criterio que el panel de depósito (RepartoDeposito.jsx): se persiste
-  // directo, sin llamar a Routes API — Norman ya decidió el orden, no hace falta que Google lo
+  // directo, sin llamar a Routes API — el repartidor ya decidió el orden, no hace falta que Google lo
   // "corrija". Marca ordenManual=true en todo lo que no sea la parada congelada, así un pedido
   // nuevo que entre después se agrega al final sin tocar este orden a mano. La parada congelada
   // (si el recorrido ya está activo) ni siquiera aparece en la lista arrastrable — no hace falta
@@ -658,7 +664,12 @@ export default function RepartoMoto() {
         <div className="px-4 h-14 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#6366f1' }}><Bike size={16} className="text-white" /></div>
-            <p className="font-black text-base tracking-tight truncate">Mi Recorrido</p>
+            <div className="min-w-0">
+              <p className="font-black text-base tracking-tight truncate leading-tight">Mi Recorrido</p>
+              {/* Con dos repartidores, el nombre y la hora de salida evitan que alguien reparta
+                  por la pantalla del otro (los links son parecidos). */}
+              <p className="text-[11px] font-bold text-zinc-500 leading-tight">{yo.nombre} · sale {yo.salida}</p>
+            </div>
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
             {/* Norman se marca activo/inactivo acá — no bloquea nada del flujo, es solo para que
