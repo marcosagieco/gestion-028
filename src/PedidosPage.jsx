@@ -8,6 +8,7 @@ import {
   Bike, Car, MapPin, PackageCheck, Store, Archive, Pencil
 } from 'lucide-react';
 import AddressAutocomplete from './reparto/AddressAutocomplete';
+import { armarPrefillFinalizar, rankearItemsEnStock } from './pedidos/autocompletarVenta';
 import { ZONAS } from './reparto/zonas';
 
 // --- Firebase: mismo patrón que FacturasPage.jsx — página 100% independiente de App.jsx,
@@ -122,6 +123,10 @@ const PEDIDO_VENDEDOR_OPTIONS = [
   { value: 'Bautista', label: 'Bauti' },
   { value: 'Jeronimo', label: 'Jero' },
 ];
+// Precio del envío seguro — igual que PRECIO_ENVIO_SEGURO en functions/agente-api.js, que es el
+// que le cobra el bot al cliente. Si allá cambia, hay que cambiarlo acá.
+const ENVIO_SEGURO_PRECIO = 1990;
+
 // Umbrales (minutos) para resaltar un pedido pendiente/armado que lleva mucho tiempo sin moverse.
 const PEDIDO_ALERTA_MIN = 15;
 const PEDIDO_URGENTE_MIN = 90;
@@ -163,8 +168,16 @@ function ProductAutocomplete({ dm, items, value, onChange, selected, onSelect })
     return () => document.removeEventListener('mousedown', onClickOutside);
   }, []);
 
+  // Dos formas de buscar, y las dos hacen falta:
+  //   - Lo que se escribe a mano se filtra por texto contenido, como siempre ("peach" → todos los
+  //     que tengan peach).
+  //   - Cuando el campo viene autocompletado con el nombre del pedido, ese texto casi nunca está
+  //     contenido tal cual en el stock (el bot dice "ELFBAR ICE KING - Watermelon Ice" y el lote
+  //     "Elfbar ice - Watermelon ice"), así que no aparecía NADA en la lista y había que borrar y
+  //     tipear de nuevo. Para eso se usa el mismo ranking por palabras del autocompletado.
   const query = value.trim().toLowerCase();
-  const matches = query.length === 0 ? [] : items.filter(it => it.label.toLowerCase().includes(query)).slice(0, 8);
+  const porTexto = query.length === 0 ? [] : items.filter(it => it.label.toLowerCase().includes(query));
+  const matches = (porTexto.length > 0 ? porTexto : rankearItemsEnStock(value, items).map(c => c.it)).slice(0, 8);
 
   return (
     <div className="relative" ref={wrapperRef}>
@@ -1032,6 +1045,7 @@ export default function PedidosPage() {
   const [dm, setDm] = useState(() => localStorage.getItem('028_dark_mode') === 'true');
   const [pedidos, setPedidos] = useState([]);
   const [batches, setBatches] = useState([]); // stock real, solo lectura acá (se descuenta al finalizar)
+  const [aliasActivo, setAliasActivo] = useState(''); // el de /operativo, para el medio de pago de los pedidos cargados a mano
   const [section, setSection] = useState('pendiente'); // 'pendiente' | 'armado' | 'finalizado'
   const [focusPendienteId, setFocusPendienteId] = useState(null);
   const [focusArmadoId, setFocusArmadoId] = useState(null);
@@ -1056,6 +1070,15 @@ export default function PedidosPage() {
   const nuevoPago = () => ({ uid: Math.random().toString(36).slice(2), medioPago: '', monto: '' });
   const [finalizarPagos, setFinalizarPagos] = useState(() => [nuevoPago()]);
   const [savingFinalizar, setSavingFinalizar] = useState(false);
+  // Envío seguro: sí/no, con su precio fijo. No se mezcla con "Envío cobrado" (ese es el envío a
+  // secas) — al guardar se suman los dos, así el total es el que pagó el cliente.
+  const [finalizarEnvioSeguro, setFinalizarEnvioSeguro] = useState(false);
+  // Total que debería dar la venta según el pedido (lo que el bot le cobró al cliente, o el "TOTAL A
+  // PAGAR" del mensaje). Null cuando el pedido no lo dice. Sirve para el control de arriba del
+  // formulario: si lo que se está cargando no coincide, se marca en rojo antes de guardar.
+  const [finalizarTotalEsperado, setFinalizarTotalEsperado] = useState(null);
+  // Qué campos llenó el sistema solo, para marcarlos en pantalla y que se vea qué revisar.
+  const [finalizarOrigen, setFinalizarOrigen] = useState({ items: null, envio: false, pago: false, vendedor: false, sinMatch: 0 });
   const [showCancelados, setShowCancelados] = useState(false);
   const [pedidosBorrados, setPedidosBorrados] = useState([]);
   const [showBorrados, setShowBorrados] = useState(false);
@@ -1110,6 +1133,16 @@ export default function PedidosPage() {
     return onSnapshot(q,
       snap => setBatches(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
       err => console.error('batches:', err)
+    );
+  }, []);
+
+  // Alias del día (el que está marcado en /operativo, el mismo que el bot le pasa al cliente para
+  // que pague). Se usa para autocompletar el medio de pago de los pedidos cargados a mano: el
+  // mensaje dice "transferencia" pero no a qué cuenta, y la del día es la que se le pasó.
+  useEffect(() => {
+    return onSnapshot(doc(db, 'settings', 'operativo'),
+      snap => setAliasActivo(snap.exists() ? (snap.data().aliasActivo || '') : ''),
+      () => setAliasActivo('')
     );
   }, []);
 
@@ -1305,14 +1338,23 @@ export default function PedidosPage() {
     }
   };
 
+  // El formulario se abre ya lleno con lo que dice el pedido (ver armarPrefillFinalizar): los
+  // productos buscados y confirmados contra el stock real, unidades, precio unitario, envío, medio
+  // de pago y vendedor. Queda todo editable y marcado, para revisar en vez de tipear de cero.
   const handleAbrirFinalizar = (pedido) => {
-    setFinalizarForm({ tipoCliente: '', vendedor: '', envioCliente: '', costoEnvio: '', fecha: getTodayDate() });
-    setFinalizarItems([nuevaLineaProducto()]);
-    setFinalizarPagos([nuevoPago()]);
+    const prefill = armarPrefillFinalizar(pedido, sellableItems, getTodayDate(), aliasActivo);
+    setFinalizarForm(prefill.form);
+    setFinalizarItems(prefill.items);
+    setFinalizarPagos(prefill.pagos);
+    setFinalizarEnvioSeguro(prefill.envioSeguro);
+    setFinalizarTotalEsperado(prefill.totalEsperado);
+    setFinalizarOrigen(prefill.origen);
     setFinalizarTarget(pedido);
   };
 
-  const actualizarFinalizarItem = (uid, patch) => setFinalizarItems(items => items.map(it => it.uid === uid ? { ...it, ...patch } : it));
+  // Tocar cualquier campo de una línea apaga su cartelito "Auto": a partir de ahí lo cargó una
+  // persona, y la marca tiene que decir la verdad para que sirva de algo.
+  const actualizarFinalizarItem = (uid, patch) => setFinalizarItems(items => items.map(it => it.uid === uid ? { ...it, ...patch, auto: false } : it));
   const agregarFinalizarItem = () => setFinalizarItems(items => [...items, nuevaLineaProducto()]);
   const quitarFinalizarItem = (uid) => setFinalizarItems(items => items.length > 1 ? items.filter(it => it.uid !== uid) : items);
 
@@ -1335,8 +1377,15 @@ export default function PedidosPage() {
     return (finalizarQtyPorItemId[it.selectedProductItem.itemId] || 0) <= it.selectedProductItem.currentStock;
   };
   const finalizarTotalGeneral = finalizarItems.reduce((sum, it) => sum + (parseFloat(it.precio) || 0) * (parseInt(it.unidades) || 0), 0);
-  // Total a repartir entre los medios de pago: productos + lo que se le cobró de envío al cliente.
-  const finalizarTotalConEnvio = finalizarTotalGeneral + (finalizarForm.envioCliente !== '' ? (parseFloat(finalizarForm.envioCliente) || 0) : 0);
+  const finalizarMontoEnvioSeguro = finalizarEnvioSeguro ? ENVIO_SEGURO_PRECIO : 0;
+  // Total a repartir entre los medios de pago: productos + envío cobrado + envío seguro si lo pagó.
+  const finalizarEnvioCobrado = (finalizarForm.envioCliente !== '' ? (parseFloat(finalizarForm.envioCliente) || 0) : 0) + finalizarMontoEnvioSeguro;
+  const finalizarTotalConEnvio = finalizarTotalGeneral + finalizarEnvioCobrado;
+  // Diferencia contra lo que dice el pedido (null si el pedido no trae total). Se tolera un par de
+  // pesos: el formulario guarda precio por unidad, así que un combo que no se divide exacto entre
+  // sus unidades (3 por $170.000) deja una diferencia de redondeo que no vale marcar en rojo.
+  const finalizarDiferencia = finalizarTotalEsperado != null ? finalizarTotalConEnvio - finalizarTotalEsperado : null;
+  const finalizarCuadra = finalizarDiferencia == null || Math.abs(finalizarDiferencia) <= 2;
 
   const actualizarFinalizarPago = (uid, patch) => setFinalizarPagos(pagos => pagos.map(p => p.uid === uid ? { ...p, ...patch } : p));
   const agregarFinalizarPago = () => setFinalizarPagos(pagos => [...pagos, nuevoPago()]);
@@ -1368,7 +1417,10 @@ export default function PedidosPage() {
     setSavingFinalizar(true);
     try {
       const shippingCostArs = finalizarForm.costoEnvio !== '' ? (parseFloat(finalizarForm.costoEnvio) || 0) : 0;
-      const clientShippingCharge = finalizarForm.envioCliente !== '' ? (parseFloat(finalizarForm.envioCliente) || 0) : 0;
+      // El envío seguro viaja junto al envío cobrado: es plata que pagó el cliente por encima de los
+      // productos y entra a la cuenta por el mismo camino. Queda anotado aparte en pedido.venta para
+      // poder distinguirlo después.
+      const clientShippingCharge = finalizarEnvioCobrado;
       const shippingProfit = (clientShippingCharge && shippingCostArs) ? (clientShippingCharge - shippingCostArs) : 0;
       const isReseller = finalizarForm.tipoCliente === 'Revendedor';
       const nowIso = new Date().toISOString();
@@ -1532,6 +1584,8 @@ export default function PedidosPage() {
           vendedor: finalizarForm.vendedor,
           envioCliente: clientShippingCharge || null,
           costoEnvio: shippingCostArs || null,
+          envioSeguro: finalizarEnvioSeguro,
+          montoEnvioSeguro: finalizarMontoEnvioSeguro || null,
         },
       });
 
@@ -1976,7 +2030,7 @@ export default function PedidosPage() {
       {finalizarTarget && (
         <div className={sheetOverlayClass}
           style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(2px)' }}
-          onClick={() => { if (!savingFinalizar) { setFinalizarTarget(null); setSelectedProductItem(null); } }}>
+          onClick={() => { if (!savingFinalizar) setFinalizarTarget(null); }}>
           <div onClick={e => e.stopPropagation()} className={sheetShellClassWide} style={sheetShellStyle}>
             {sheetHandle}
             <div className={`px-5 pb-4 border-b flex-shrink-0 ${dm ? 'border-white/[0.06]' : 'border-zinc-100'}`}>
@@ -1988,6 +2042,49 @@ export default function PedidosPage() {
                 <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Mensaje original del pedido</span>
                 <p className={`text-sm rounded-xl border p-3 mt-1.5 whitespace-pre-wrap ${dm ? 'border-white/[0.07] bg-white/[0.02] text-zinc-300' : 'border-zinc-200 bg-zinc-50 text-zinc-700'}`}>
                   {finalizarTarget.mensaje}
+                </p>
+              </div>
+
+              {/* Control contra el total del pedido: es la red para no guardar una venta por un
+                  número distinto al que pagó el cliente. Arriba de todo porque es lo que hay que
+                  mirar antes de apretar Guardar. */}
+              <div className={`lg:col-span-2 rounded-xl border p-3 ${
+                finalizarTotalEsperado == null ? (dm ? 'border-white/[0.07] bg-white/[0.02]' : 'border-zinc-200 bg-zinc-50')
+                  : finalizarCuadra ? (dm ? 'border-emerald-500/30 bg-emerald-500/[0.06]' : 'border-emerald-200 bg-emerald-50')
+                  : (dm ? 'border-amber-500/40 bg-amber-500/[0.06]' : 'border-amber-200 bg-amber-50')
+              }`}>
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="text-xs">
+                    {finalizarTotalEsperado != null ? (
+                      <>
+                        <span className={dm ? 'text-zinc-400' : 'text-zinc-600'}>Según el pedido: </span>
+                        <span className="font-bold">{formatMoney(finalizarTotalEsperado)}</span>
+                        <span className={dm ? 'text-zinc-600' : 'text-zinc-400'}> · </span>
+                        <span className={dm ? 'text-zinc-400' : 'text-zinc-600'}>cargando: </span>
+                        <span className="font-bold">{formatMoney(finalizarTotalConEnvio)}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className={dm ? 'text-zinc-400' : 'text-zinc-600'}>Total que vas a cargar: </span>
+                        <span className="font-bold">{formatMoney(finalizarTotalConEnvio)}</span>
+                        <span className={`${dm ? 'text-zinc-500' : 'text-zinc-500'}`}> — este pedido no dice el total, revisalo con el mensaje</span>
+                      </>
+                    )}
+                  </div>
+                  {finalizarTotalEsperado != null && (
+                    <span className={`text-xs font-black flex items-center gap-1 ${finalizarCuadra ? (dm ? 'text-emerald-400' : 'text-emerald-600') : (dm ? 'text-amber-400' : 'text-amber-600')}`}>
+                      {finalizarCuadra ? <><CheckCircle size={13}/> Coincide</> : <>Diferencia de {formatMoney(Math.abs(finalizarDiferencia))} {finalizarDiferencia > 0 ? 'de más' : 'de menos'}</>}
+                    </span>
+                  )}
+                </div>
+                {/* Qué llenó el sistema y qué quedó para revisar */}
+                <p className={`text-[11px] mt-1.5 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                  {finalizarOrigen.items === 'bot' ? 'Se completó con los datos que cargó el bot.'
+                    : finalizarOrigen.items === 'mensaje' ? 'Se completó leyendo el mensaje del pedido.'
+                    : 'Este pedido no tenía datos para completar: cargalo a mano.'}
+                  {finalizarOrigen.sinMatch > 0 && ` ${finalizarOrigen.sinMatch === 1 ? 'Un producto no se encontró' : `${finalizarOrigen.sinMatch} productos no se encontraron`} en el stock: elegilo a mano abajo.`}
+                  {!finalizarOrigen.pago && finalizarTarget.medioPago === 'al recibir' && ' El cliente paga al recibir: elegí si fue efectivo o transferencia.'}
+                  {finalizarOrigen.aliasAdivinado && ' El mensaje no dice a qué cuenta transfirió: se puso el alias que está activo en Agente IA, confirmalo.'}
                 </p>
               </div>
 
@@ -2087,7 +2184,16 @@ export default function PedidosPage() {
                   return (
                     <div key={it.uid} className={`p-3 rounded-xl border space-y-3 ${dm ? 'bg-white/[0.02] border-white/[0.06]' : 'bg-zinc-50 border-zinc-200'}`}>
                       <div className="flex items-center justify-between gap-2">
-                        <span className={`text-[10px] font-black uppercase tracking-widest ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>Producto {finalizarItems.length > 1 ? idx + 1 : ''}</span>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`text-[10px] font-black uppercase tracking-widest ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>Producto {finalizarItems.length > 1 ? idx + 1 : ''}</span>
+                          {/* "Auto" = lo puso el sistema leyendo el pedido; se apaga en cuanto lo tocás. */}
+                          {it.auto && (
+                            <span className={`text-[9px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-full ${dm ? 'bg-indigo-500/15 text-indigo-300' : 'bg-indigo-50 text-indigo-600'}`}>Auto</span>
+                          )}
+                          {!it.selectedProductItem && it.producto.trim() !== '' && (
+                            <span className={`text-[9px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-full ${dm ? 'bg-amber-500/15 text-amber-300' : 'bg-amber-50 text-amber-700'}`}>Elegilo del stock</span>
+                          )}
+                        </div>
                         {finalizarItems.length > 1 && (
                           <button type="button" onClick={() => quitarFinalizarItem(it.uid)}
                             className={`p-1.5 -m-1 rounded-lg transition-colors active:scale-90 ${dm ? 'text-zinc-600 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-500 hover:bg-red-50'}`}>
@@ -2176,6 +2282,31 @@ export default function PedidosPage() {
                     />
                   </div>
                 </div>
+
+                {/* Envío seguro: sí/no. Es plata aparte del envío (la cobra el bot cuando el cliente
+                    lo acepta), así que no se mezcla con el campo de arriba — se suma al total. */}
+                <div className="flex flex-col gap-1.5 lg:col-span-2">
+                  <label className={`text-xs font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                    ¿Pagó envío seguro? ({formatMoney(ENVIO_SEGURO_PRECIO)})
+                  </label>
+                  <div className="flex gap-2">
+                    {[{ v: true, t: 'Sí' }, { v: false, t: 'No' }].map(op => (
+                      <button key={op.t} type="button" onClick={() => setFinalizarEnvioSeguro(op.v)}
+                        className={`flex-1 h-12 rounded-xl font-bold text-base border transition-all active:scale-[0.98] ${
+                          finalizarEnvioSeguro === op.v
+                            ? 'bg-[#6366f1] border-[#6366f1] text-white'
+                            : (dm ? 'bg-[#101010] border-white/[0.07] text-zinc-400' : 'bg-white border-zinc-200 text-zinc-500')
+                        }`}>
+                        {op.t}
+                      </button>
+                    ))}
+                  </div>
+                  {finalizarEnvioSeguro && (
+                    <p className={`text-[11px] ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                      Se suman {formatMoney(ENVIO_SEGURO_PRECIO)} al envío cobrado: en total entran {formatMoney(finalizarEnvioCobrado)}.
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
             <div className="p-5 pt-3 border-t flex-shrink-0 flex flex-col lg:flex-row-reverse gap-2" style={{ paddingBottom: 'max(1.25rem, env(safe-area-inset-bottom))' }}>
@@ -2183,7 +2314,7 @@ export default function PedidosPage() {
                 className="w-full lg:w-auto lg:px-8 h-14 rounded-xl font-black text-base bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-all active:scale-[0.98] flex items-center justify-center gap-2">
                 <CheckCircle size={18}/> {savingFinalizar ? 'Guardando...' : 'Guardar y finalizar'}
               </button>
-              <button onClick={() => { setFinalizarTarget(null); setSelectedProductItem(null); }} disabled={savingFinalizar}
+              <button onClick={() => setFinalizarTarget(null)} disabled={savingFinalizar}
                 className={`w-full lg:w-auto lg:px-6 h-11 lg:h-14 rounded-xl font-bold text-sm transition-all disabled:opacity-40 ${dm ? 'text-zinc-400 hover:text-zinc-200 lg:hover:bg-white/[0.06]' : 'text-zinc-500 hover:text-zinc-700 lg:hover:bg-zinc-100'}`}>
                 Cancelar
               </button>
