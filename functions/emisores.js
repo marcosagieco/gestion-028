@@ -64,4 +64,19 @@ const EMISORES = {
   },
 };
 
-module.exports = { EMISORES, soloDigitos, formatCuit, cuitNum };
+// Qué credenciales le faltan a un emisor para poder facturar. Todas salen de variables de entorno
+// (functions/.env), así que si el deploy se hace desde una máquina cuyo .env no las tiene, quedan
+// vacías y la emisión falla — pasó: desde el 15/09/2026 ningún intento de facturar pudo siquiera
+// llegar a ARCA, porque sin CUIT ni se puede buscar el token guardado. Se chequea ANTES de tocar
+// nada, para avisar qué falta en vez de dejar la venta en "pendiente" culpando a ARCA.
+function credencialesFaltantes(emisor) {
+  const faltan = [];
+  const sufijo = emisor?.id === 'alias2' ? '_2' : '';
+  if (!emisor?.cuit) faltan.push(`AFIP_CUIT${sufijo}`);
+  if (!emisor?.cert) faltan.push(`AFIP_CERT${sufijo}`);
+  if (!emisor?.key) faltan.push(`AFIP_KEY${sufijo}`);
+  if (!Number.isFinite(emisor?.ptoVta)) faltan.push(emisor?.id === 'alias2' ? 'ptoVta' : 'AFIP_PTO_VTA');
+  return faltan;
+}
+
+module.exports = { EMISORES, soloDigitos, formatCuit, cuitNum, credencialesFaltantes };
