@@ -55,7 +55,7 @@ const DEMORAS = {
   solo_manana: "por hoy ya no se despacha más: se toma el pedido y sale mañana",
 };
 
-// Los datos de cobro viven acá y no en el prompt: el modelo nunca ve un CBU, así que no lo puede tipear mal.
+// El cliente recibe los datos de cobro mediante la plantilla, no redactados por el modelo.
 const ALIASES = {
   alias1: "dale te paso los datos\nLucio Felix Bunge\nCBU: 00701941-30004014092980\nAlias: 028import.gl (Banco Galicia)\nmandame el comprobante cuando lo hagas",
   alias2: "dale te paso los datos\nMarcos Agustin Gieco\nCBU: 0070181130004057764295\nAlias: 028import.gal2 (Banco Galicia)\nmandame el comprobante cuando lo hagas",
@@ -91,7 +91,7 @@ const PLANTILLAS_FIJAS = {
   DESCUENTO_EFECTIVO: (([alto, medio, base]) =>
     `pagando en efectivo tenés descuento: si es menos de ${$(medio.desde)} son ${$(base.off)} off, desde ${$(medio.desde)} son ${$(medio.off)} off, y desde ${$(alto.desde)} son ${$(alto.off)} off`)(TRAMOS_DESCUENTO_EFECTIVO),
   COMUNIDAD: COMUNIDAD_028,
-  COMPROBANTES_VALIDOS: "Regla interna: si el comprobante coincide con el alias activo y figura como Tame Lake S.A., Tame Lake S A o Secpaynet, es válido para alias3/CALMO.DURO.DIA. No derives solo por ver Secpaynet.",
+  COMPROBANTES_VALIDOS: "Regla interna: compará el comprobante con la cuenta enviada al cliente. alias1/028import.gl: Lucio Felix Bunge, Banco Galicia, CBU 0070194130004014092980. alias2/028import.gal2: Marcos Agustin Gieco, Banco Galicia, CBU 0070181130004057764295. alias3/CALMO.DURO.DIA: Tame Lake S.A., Tame Lake S A o Secpaynet, CBU 0000598201000000015014. Son tres cuentas distintas del negocio: nunca exijas Tame Lake o Secpaynet a quien recibió los datos de Galicia. Ignorá mayúsculas, tildes, espacios y guiones al comparar. Si cambió el alias activo después de enviar los datos, usá la cuenta que recibió el cliente para ese pedido. Esto valida el destino del comprobante, no la acreditación bancaria.",
   // Uber y correo: al cargar el pedido (ya pagó). Moto: la manda "aviso de entrega" al entregarlo.
   GRACIAS: "❤️ ¡GRACIAS POR TU COMPRA!\n✈️ 028 IMPORT\n\nEsperamos que disfrutes tu pedido. ¡Gracias por confiar en nosotros! 🫶\n\n🔥 SUMATE A NUESTRA COMUNIDAD DE WHATSAPP\n\nEs donde primero avisamos:\n✅ Promociones exclusivas\n✅ Liquidaciones\n✅ Reingresos de stock\n✅ Nuevos productos\n✅ Sorteos\n✅ Ofertas que no publicamos en otros lados\n\n🔗 https://chat.whatsapp.com/JYgkBHg7P4DLwv1V2HCZUZ\n\n━━━━━━━━━━━━━\n\n📲 SEGUINOS EN INSTAGRAM\n\n🔗 https://www.instagram.com/028.import\n\n⭐ Si te gustó la experiencia, recomendanos a tus amigos o compartí tu compra en Instagram y etiquetanos @028.import.\n\n━━━━━━━━━━━━━\n\n🌐 WEB OFICIAL\n\nConsultá el catálogo actualizado con todos los productos, precios y stock disponible.\n\n🔗 https://028import.com\n\n━━━━━━━━━━━━━\n\n⚠️ IMPORTANTE\n\n• No realizamos devoluciones.\n• Únicamente realizamos cambios por fallas de fábrica.\n• El plazo para informar una falla es de 48 horas desde la recepción del producto.\n• Pasado ese plazo no podremos gestionar reclamos.\n\n🙏 ¡Gracias por elegir 028 Import!",
   CONFIANZA: "🔒 Entendemos tu desconfianza\n\nEntendemos que al comprar por primera vez puedas tener dudas. 👍🏻\n\nPor eso te invitamos a conocer un poco más sobre 028 Import.\n\n📲 Instagram:\nhttps://www.instagram.com/028.import?igsh=a2pzbDNtNGFkcDNz&utm_source=qr\n\nAhí vas a encontrar:\n✅ Miles de seguidores.\n⭐ Referencias reales de clientes.\n🤝 Colaboraciones con influencers.\n🔥 Publicaciones e historias diarias.\n\nTrabajamos hace años y más de 4.000 clientes ya eligieron 028 Import.\n\nSi después de ver nuestro perfil te queda alguna duda, escribinos sin problema. Estamos para ayudarte. 💙",
@@ -595,6 +595,7 @@ function salidaDeUnPedidoNuevo(op, tipoEnvio, enCola) {
 exports.agentEstadoOperativo = conClave(async (req, res) => {
   const op = await leerOperativo();
   const plantillas = { ...PLANTILLAS_FIJAS, ALIAS: ALIASES[op.aliasActivo] || ALIASES.alias1 };
+  plantillas.COMPROBANTES_VALIDOS += `\nCuenta activa para una venta nueva (${ALIASES[op.aliasActivo] ? op.aliasActivo : "alias1"}):\n${plantillas.ALIAS}`;
   for (const [nombre, campo] of Object.entries(LISTAS_DEL_PANEL)) plantillas[nombre] = textoDe(op[campo]);
   const [enCola, pedidoActual] = await Promise.all([
     pedidosEnCola(),

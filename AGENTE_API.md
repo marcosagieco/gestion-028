@@ -57,7 +57,9 @@ Todo lo del día, en una sola llamada:
   `CONFIANZA`, `COMUNIDAD`, `COMPROBANTES_VALIDOS`). Una lista vacía llega como `""`.
   `COMUNIDAD` se usa cuando piden aviso de reingreso/stock nuevo/ofertas, y también como cierre
   liviano cuando el cliente confirma que llegó todo bien. `COMPROBANTES_VALIDOS` es regla interna:
-  Tame Lake S.A. / Secpaynet es esperado para alias3 y no debe derivarse solo por ese texto.
+  incluye las tres cuentas: Lucio Felix Bunge/Galicia para alias1, Marcos Agustin Gieco/Galicia
+  para alias2 y Tame Lake S.A./Secpaynet para alias3. Identifica la cuenta activa y compara contra
+  los datos enviados al cliente, incluso si el alias cambia luego. No confirma acreditación bancaria.
 
 ## GET `/agentCotizarEnvio?direccion=`
 

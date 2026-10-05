@@ -399,6 +399,21 @@ async function main() {
     ok("estado: manda las listas del panel", r.body.plantillas.PRECIOS_VAPES === LISTAS.preciosVapesTexto.trim(), null);
     ok("estado: demora del día (la hora va aparte, en salida)", /2 hs/.test(r.body.demora) && !/16:00/.test(r.body.demora) && r.body.salida.hora === "16:00", r.body);
     ok("estado: manda comunidad y regla de Secpaynet", /COMUNIDAD 028 IMPORT/.test(r.body.plantillas.COMUNIDAD) && /Secpaynet/.test(r.body.plantillas.COMPROBANTES_VALIDOS), r.body.plantillas);
+    const aliasGuardado = store["settings/operativo"].aliasActivo;
+    for (const [alias, titular, cbu] of [
+      ["alias1", "Lucio Felix Bunge", "0070194130004014092980"],
+      ["alias2", "Marcos Agustin Gieco", "0070181130004057764295"],
+      ["alias3", "Tame Lake S.A.", "0000598201000000015014"],
+    ]) {
+      store["settings/operativo"].aliasActivo = alias;
+      const estado = await llamar(api.agentEstadoOperativo);
+      const regla = estado.body.plantillas.COMPROBANTES_VALIDOS;
+      ok(`comprobantes: ${alias} identifica su titular, CBU y cuenta activa`, regla.includes(titular) && regla.includes(cbu) && regla.includes(`Cuenta activa para una venta nueva (${alias})`) && regla.endsWith(estado.body.plantillas.ALIAS), regla);
+    }
+    store["settings/operativo"].aliasActivo = "desconocido";
+    const fallback = await llamar(api.agentEstadoOperativo);
+    ok("comprobantes: alias inválido usa Galicia tanto en pago como en validación", fallback.body.plantillas.ALIAS.includes("Lucio Felix Bunge") && fallback.body.plantillas.COMPROBANTES_VALIDOS.includes("Cuenta activa para una venta nueva (alias1)"), fallback.body.plantillas);
+    store["settings/operativo"].aliasActivo = aliasGuardado;
 
     const cola = async (n, extra = {}) => {
       for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
