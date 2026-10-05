@@ -13,6 +13,7 @@ const RepartoDeposito = lazy(() => import('./RepartoDeposito.jsx'))
 const RepartoMoto = lazy(() => import('./RepartoMoto.jsx'))
 const OperativoPage = lazy(() => import('./OperativoPage.jsx'))
 const CotizarUberPage = lazy(() => import('./CotizarUberPage.jsx'))
+const LinkViejo = lazy(() => import('./reparto/LinkViejo.jsx'))
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -34,19 +35,23 @@ createRoot(document.getElementById('root')).render(
             <RepartoDeposito />
           </Suspense>
         } />
-        {/* Una pantalla por motomensajero. Norman se queda con /reparto, el link que ya tiene
-            guardado en el celular; Nico entra por /reparto/nico. Es el mismo componente: cada uno
-            ve solo sus paradas y maneja su propio recorrido (ver reparto/repartidores.js). */}
-        <Route path="/reparto" element={
+        {/* Una pantalla por reparto (el de las 15:30 y el de las 18:30). Es el mismo componente con
+            un parámetro: cada uno ve solo sus paradas y maneja su propio recorrido — ver
+            reparto/repartidores.js, donde están los dos links y por qué cada uno lleva su código. */}
+        <Route path="/ruta-bravo-7k2m" element={
           <Suspense fallback={null}>
-            <RepartoMoto repartidor="norman" />
+            <RepartoMoto repartidor="moto1" />
           </Suspense>
         } />
-        <Route path="/reparto/nico" element={
+        <Route path="/ruta-delta-9q4x" element={
           <Suspense fallback={null}>
-            <RepartoMoto repartidor="nico" />
+            <RepartoMoto repartidor="moto2" />
           </Suspense>
         } />
+        {/* /reparto era el link del único motomensajero que había. Ya no muestra ningún recorrido:
+            si siguiera abierto, cualquiera de los dos podría entrar y ver las paradas del otro, que
+            es justo lo que se quiso evitar al separarlos. Solo avisa que hay que pedir el link. */}
+        <Route path="/reparto" element={<Suspense fallback={null}><LinkViejo /></Suspense>} />
         <Route path="/operativo" element={
           <Suspense fallback={null}>
             <OperativoPage />

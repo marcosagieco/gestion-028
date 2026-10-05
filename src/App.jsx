@@ -444,7 +444,7 @@ const normalizeProductName = (name) => {
 // Tipo de pago de cada empleado: 'salario' (sueldo fijo mensual, ej. Gieco), 'comision' (solo gana
 // por comisión de ventas, ej. Delfina) o 'mixto' (sueldo + comisión, ej. Bautista y Jeronimo).
 // 'motomensajeria' es distinto a los otros tres: no devenga sueldo ni comisión sobre ventas, se le
-// debe un monto puntual por cada entrega (ver NormanPagosPanel) — se excluye a propósito de
+// debe un monto puntual por cada entrega (ver MotoPagosPanel) — se excluye a propósito de
 // teamSummary y nunca pasa por TeamMemberCard, solo se identifica acá para el nombre que se muestra.
 const TEAM_PAYMENT_TYPE_LABELS = { salario: 'Sueldo fijo', comision: 'Comisión', mixto: 'Sueldo + Comisión', motomensajeria: 'Motomensajería · por entrega' };
 const TEAM_DEFAULT_MEMBERS = [
@@ -1076,7 +1076,7 @@ const DraggableHomeBlock = ({ id, darkMode, hidden, onToggleHide, children }) =>
   );
 };
 
-// --- MOTOMENSAJERÍA: PANEL DE PAGO A NORMAN ---
+// --- MOTOMENSAJERÍA: PANEL DE PAGO A CADA REPARTO ---
 // Un solo componente, usado tal cual en dos lugares (Inicio → Rendimiento del Equipo, y Equipo 028
 // → como su propia tarjeta): el desglose día por día de lo que se le debe, y dos formas de pagar —
 // todo de una, o eligiendo a mano un rango de fechas (para pagar solo una parte). `variant="card"` le
@@ -1084,7 +1084,7 @@ const DraggableHomeBlock = ({ id, darkMode, hidden, onToggleHide, children }) =>
 // `variant="inline"` la deja sin marco propio (para vivir adentro de otra tarjeta, en Inicio).
 // Arranca colapsado ("mini despliegue"): el detalle y los controles de pago solo aparecen al tocar
 // "Ver y pagar", así no compite en tamaño con el resto de la tarjeta que lo contiene.
-// `repartidor` es el id del motomensajero (norman / nico): el panel muestra su nombre, su hora de
+// `repartidor` es el id del reparto (moto1 / moto2): el panel muestra su nombre, su hora de
 // salida y su propia deuda, y el pago que registra es solo el de él.
 function MotoPagosPanel({ darkMode, deuda, ultimoPago, onPagar, repartidor, variant = 'inline' }) {
   const cfg = repartidorConfig(repartidor);
@@ -3450,9 +3450,9 @@ export default function App() {
   const [cashFlowReciente, setCashFlowReciente] = useState([]);
   const [cashFlowHistorico, setCashFlowHistorico] = useState([]);
   const [wallets, setWallets] = useState({ LEMON: 0, AHORROS: 0, GALICIA: 0, GALICIA_GIECO: 0, MERCADO_PAGO: 0, CUENTA_RECAUDADORA: 0, EFECTIVO: 0, USDT: 0, USD: 0, SIN_CUENTA: 0 });
-  // Deuda con Norman (motomensajería) — ver comentario en el listener de más abajo.
+  // Deuda con los motomensajeros — ver comentario en el listener de más abajo.
   const [pedidosMotoPendientesPago, setPedidosMotoPendientesPago] = useState([]);
-  // Último pago registrado a cada motomensajero, por id: { norman: {...}, nico: {...} }.
+  // Último pago registrado a cada reparto, por id: { moto1: {...}, moto2: {...} }.
   const [ultimosPagosMoto, setUltimosPagosMoto] = useState({});
   // Pedidos recientes (ventana en vivo, igual que sales/expenses/cashFlow) — hoy solo alimenta el
   // mapa de calor día×hora de Inicio (createdAt = cuándo entra el pedido a armar, no cuándo se
@@ -3519,7 +3519,7 @@ export default function App() {
     };
   };
 
-  // { norman: {...}, nico: {...} } — lo que consumen los paneles de Inicio y de Equipo 028.
+  // { moto1: {...}, moto2: {...} } — lo que consumen los paneles de Inicio y de Equipo 028.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const deudasMoto = useMemo(() => Object.fromEntries(REPARTIDORES.map(r => [r.id, deudaDe(r.id)])), [pedidosMotoPendientesPago]);
 
@@ -4157,13 +4157,13 @@ export default function App() {
             if (docSnap.exists()) setWallets({ LEMON: 0, AHORROS: 0, GALICIA: 0, GALICIA_GIECO: 0, MERCADO_PAGO: 0, CUENTA_RECAUDADORA: 0, EFECTIVO: 0, USDT: 0, USD: 0, ...docSnap.data() });
         }, () => {});
 
-        // Deuda con Norman (motomensajería): un solo where de igualdad sobre motomensajeria.pagado
+        // Deuda con los motomensajeros: un solo where de igualdad sobre motomensajeria.pagado
         // (Firestore indexa cada campo de un mapa por separado, así que esto no necesita índice
         // compuesto) — trae SOLO los pedidos de moto entregados que todavía no se le pagaron, nunca
         // el historial completo, así esto no crece sin límite con los años como sales/expenses/
         // cashFlow antes de acotarlos (ver hallazgo E2). Se marcan como pagados en bloque desde
-        // Inicio (handleMarcarNormanPagado) cuando el dueño le paga junto varios días de una vez.
-        const unsubNormanPendientes = onSnapshot(
+        // Inicio (handleMarcarMotoPagado) cuando el dueño le paga junto varios días de una vez.
+        const unsubMotoPendientes = onSnapshot(
             query(collection(db, 'pedidos'), where('motomensajeria.pagado', '==', false)),
             (snap) => setPedidosMotoPendientesPago(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
             () => setPedidosMotoPendientesPago([])
@@ -4203,7 +4203,7 @@ export default function App() {
         );
 
         setLoading(false);
-        return () => { unsubBatches(); unsubSales(); unsubExp(); unsubCash(); unsubNeutralStock(); unsubConsignments(); unsubSettings(); unsubWallets(); unsubNormanPendientes(); unsubsUltimoPagoMoto.forEach(fn => fn()); unsubPedidosRecientes(); unsubTeamMembers(); unsubTeamPayments(); unsubCotizaciones(); unsubCotizacionesHistorico(); };
+        return () => { unsubBatches(); unsubSales(); unsubExp(); unsubCash(); unsubNeutralStock(); unsubConsignments(); unsubSettings(); unsubWallets(); unsubMotoPendientes(); unsubsUltimoPagoMoto.forEach(fn => fn()); unsubPedidosRecientes(); unsubTeamMembers(); unsubTeamPayments(); unsubCotizaciones(); unsubCotizacionesHistorico(); };
     } catch (e) {
         setIsOffline(true);
         setLoading(false);
@@ -4234,21 +4234,24 @@ export default function App() {
     })();
   }, [teamSeeded, teamMembers.length]);
 
-  // Siembra única de Norman (motomensajería) en Equipo 028 — aparte del efecto de arriba porque
+  // Siembra única de los dos repartos (motomensajería) en Equipo 028 — aparte del efecto de arriba porque
   // ese solo corre si teamMembers está totalmente vacío, y acá ya puede haber otros empleados
   // cargados de antes. Un ref propio para no reintentar en cada render mientras la escritura está
   // en curso; se apaga solo cuando ya existe alguien con paymentType 'motomensajeria'.
-  const normanSeedAttemptedRef = useRef(false);
+  const motoSeedAttemptedRef = useRef(false);
   useEffect(() => {
-    if (!teamSeeded || normanSeedAttemptedRef.current) return;
-    // Uno por motomensajero, y solo los que falten: si Norman ya está cargado de antes y se suma
-    // Nico, se crea nada más que Nico. Se reconocen por nombre, igual que el panel de pagos.
+    if (!teamSeeded || motoSeedAttemptedRef.current) return;
+    // Uno por reparto, y solo los que falten: si uno ya está cargado de antes y se suma
+    // el otro, se crea nada más que el que falta.
     const faltan = REPARTIDORES.filter(r =>
-      !teamMembers.some(m => m.paymentType === 'motomensajeria' && (m.name || '').toLowerCase().includes(r.nombre.toLowerCase())));
+      !teamMembers.some(m => m.paymentType === 'motomensajeria' && (m.repartidorId === r.id || (m.name || '').toLowerCase().includes(r.nombre.toLowerCase()))));
     if (faltan.length === 0) return;
-    normanSeedAttemptedRef.current = true;
+    motoSeedAttemptedRef.current = true;
     Promise.all(faltan.map(r => addDoc(collection(db, 'teamMembers'), {
       name: r.nombre,
+      // Queda guardado a qué reparto corresponde, así el panel no depende de cómo se escriba el
+      // nombre (se puede renombrar en Equipo 028 sin romper nada).
+      repartidorId: r.id,
       paymentType: 'motomensajeria',
       monthlySalary: 0,
       salaryStartDate: getTodayDate(),
@@ -4256,7 +4259,7 @@ export default function App() {
       commissionStartDate: null,
       nextPaymentDate: null,
       createdAt: new Date().toISOString(),
-    }))).catch(e => { console.error('Error creando los motomensajeros en Equipo 028:', e); normanSeedAttemptedRef.current = false; });
+    }))).catch(e => { console.error('Error creando los motomensajeros en Equipo 028:', e); motoSeedAttemptedRef.current = false; });
   }, [teamSeeded, teamMembers]);
 
   const { uniqueProducts, uniqueVariants } = useMemo(() => {
@@ -5049,7 +5052,7 @@ export default function App() {
   const teamSummary = useMemo(() => {
     let totalPendingSalary = 0, totalPendingCommission = 0;
     teamMembers.forEach(m => {
-      if (m.paymentType === 'motomensajeria') return; // se paga aparte, ver NormanPagosPanel
+      if (m.paymentType === 'motomensajeria') return; // se paga aparte, ver MotoPagosPanel
       if (m.paymentType !== 'comision') {
         const accrued = monthsElapsedInclusive(m.salaryStartDate) * (m.monthlySalary || 0);
         const paid = teamPayments.filter(p => p.memberId === m.id && p.concept === 'salario').reduce((a, p) => a + (p.amount || 0), 0);
@@ -9062,9 +9065,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 );
                             })()}
 
-                            {/* MOTOMENSAJERÍA · NORMAN — no es un vendedor (no factura ni cobra comisión),
+                            {/* MOTOMENSAJERÍA — no son vendedores (no facturan ni cobran comisión),
                                 pero comparte esta tarjeta con el resto del equipo porque es la otra persona
-                                a la que hay que pagarle. Mismo panel que en Equipo 028 (ver NormanPagosPanel). */}
+                                a los que hay que pagarles. Mismo panel que en Equipo 028 (ver MotoPagosPanel). */}
                             {REPARTIDORES.map(r => (
                               <MotoPagosPanel key={r.id} darkMode={darkMode} repartidor={r.id}
                                 deuda={deudasMoto[r.id] || { cantidad: 0, total: 0, desde: null, hasta: null, porDia: [] }}
@@ -13280,10 +13283,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                       // puntual por entrega, no por mes ni por venta, así que no encajan en
                       // TeamMemberCard. Mismo panel que en Inicio (MotoPagosPanel), acá con marco
                       // propio de tarjeta para que se vea igual que el resto de Equipo 028. Cuál de
-                      // los dos es se saca del nombre cargado en el equipo: así el panel de Norman
-                      // muestra la deuda de Norman y el de Nico la de Nico.
+                      // los dos es se saca del id que se guarda al crearlo (o del nombre, para los
+                      // que estaban cargados de antes): cada panel muestra la deuda de su reparto.
                       if (member.paymentType === 'motomensajeria') {
-                        const suyo = REPARTIDORES.find(r => (member.name || '').toLowerCase().includes(r.nombre.toLowerCase()));
+                        const suyo = REPARTIDORES.find(r => member.repartidorId === r.id)
+                          || REPARTIDORES.find(r => (member.name || '').toLowerCase().includes(r.nombre.toLowerCase()));
                         if (!suyo) return null;
                         return (
                           <MotoPagosPanel key={member.id} darkMode={darkMode} repartidor={suyo.id}

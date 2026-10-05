@@ -1574,9 +1574,9 @@ export default function PedidosPage() {
       // la plata tal cual se cobró por ese medio, envío incluido (no solo la ganancia neta del envío
       // como en las demás). El envío se reparte a prorrata entre los medios de pago según su monto.
       //
-      // Pedidos de MOTO (esta sección "Entregado", los que reparte Norman) son la otra excepción:
+      // Pedidos de MOTO (esta sección "Entregado", los que reparten los motomensajeros) son la otra excepción:
       // acá entra el envío COMPLETO igual que en Alias 4, no solo la ganancia — porque esa plata se
-      // junta toda en la cuenta y a Norman se le paga aparte, juntando varios días, en vez de que él
+      // junta toda en la cuenta y al motomensajero se le paga aparte, juntando varios días, en vez de que él
       // se quede con el envío directo como en otros canales. Uber y Retiro (la sección "Armado") NO
       // cambian: siguen entrando solo con la ganancia del envío, como siempre.
       const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', alias4: 'CUENTA_RECAUDADORA', efectivo: 'EFECTIVO' };
