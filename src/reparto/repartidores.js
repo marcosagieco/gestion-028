@@ -9,10 +9,12 @@
 // Se identifican por HORARIO, no por el nombre del motomensajero: la gente cambia y no queremos
 // tener que tocar el código (ni los documentos de Firestore) cada vez que entra o sale alguien.
 //
-// Los links son distintos a propósito y cada uno lleva su propio código al final: así, el que tiene
-// un link no puede deducir el del otro y ver un recorrido que no es suyo. No es seguridad de verdad
-// (quien tiene el link entra), pero alcanza para que cada uno vea solo lo suyo. Si algún link se
-// filtra, se cambia el código acá y queda invalidado.
+// Cada uno tiene su propio link, nombrado por el turno (/reparto-tarde y /reparto-noche): se
+// entiende, se dicta por teléfono y se escribe de memoria, que es lo que importa — el que reparte
+// lo va a tener que tipear en la calle, y un link con código raro termina en "no me acuerdo cómo
+// entrar". El precio de esa simplicidad es que son adivinables entre sí: quien tenga uno puede
+// llegar al otro y ver sus paradas. Si eso llega a molestar, la solución no es un link más
+// enredado, es ponerle a cada pantalla una clave corta propia.
 //
 // El primero se queda con los documentos que ya existían (sin sufijo): así los pedidos que están en
 // la calle hoy y el historial de entregas siguen donde estaban, sin migrar nada.
@@ -22,7 +24,7 @@ export const REPARTIDORES = [
     id: 'moto1',
     nombre: 'Reparto 15:30',
     salida: '15:30',
-    ruta: '/ruta-bravo-7k2m',
+    ruta: '/reparto-tarde',
     // Documentos de Firestore. Los del primero son los que ya venían usándose.
     docRecorrido: 'activo',
     docEstado: 'repartidor',
@@ -37,7 +39,7 @@ export const REPARTIDORES = [
     id: 'moto2',
     nombre: 'Reparto 18:30',
     salida: '18:30',
-    ruta: '/ruta-delta-9q4x',
+    ruta: '/reparto-noche',
     docRecorrido: 'activo_moto2',
     docEstado: 'repartidor_moto2',
     docLock: 'lockRecalculo_moto2',

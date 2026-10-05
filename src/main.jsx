@@ -38,12 +38,12 @@ createRoot(document.getElementById('root')).render(
         {/* Una pantalla por reparto (el de las 15:30 y el de las 18:30). Es el mismo componente con
             un parámetro: cada uno ve solo sus paradas y maneja su propio recorrido — ver
             reparto/repartidores.js, donde están los dos links y por qué cada uno lleva su código. */}
-        <Route path="/ruta-bravo-7k2m" element={
+        <Route path="/reparto-tarde" element={
           <Suspense fallback={null}>
             <RepartoMoto repartidor="moto1" />
           </Suspense>
         } />
-        <Route path="/ruta-delta-9q4x" element={
+        <Route path="/reparto-noche" element={
           <Suspense fallback={null}>
             <RepartoMoto repartidor="moto2" />
           </Suspense>
