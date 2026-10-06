@@ -984,7 +984,7 @@ exports.agentPedido = conClave(async (req, res) => {
     fechaSalida: cuando?.fecha || null,
     horaSalida: cuando?.hora || null,
     tandaSalida: cuando?.tandaId || null,
-    repartidor: usaTandaMoto ? (cuando.tandaId === "segunda" ? "moto2" : "moto1") : null,
+    repartidor: usaTandaMoto ? (conservarSalida && anterior.repartidor ? anterior.repartidor : cuando.tandaId === "segunda" ? "moto2" : "moto1") : null,
     medioPago,
     horaSolicitada: horaSolicitadaTexto ? cuando.hora : null,
     montoTransferencia: aTransferir || null,

@@ -559,6 +559,16 @@ async function main() {
     const r = await pedido({ medioPago: "al recibir", comprobanteUrl: undefined, salidaSeleccionada: selection });
     const guardado = store[`pedidos/${r.body.pedidoId}`];
     ok("tandas: guarda segunda elegida, fecha y hora en detalle", r.body.ok && guardado.fechaSalida === selection.fecha && guardado.tandaSalida === "segunda" && guardado.horaSalida === "18:30" && /06\/10, a las 18:30/.test(guardado.mensaje), r.body);
+    ok("tandas: segunda se asigna al reparto moto2", guardado.repartidor === "moto2", guardado.repartidor);
+    guardado.estado = "armado";
+    store["recorridos/activo"] = { estado: "en_calle" };
+    store["recorridos/activo_moto2"] = { estado: "preparando" };
+    const primeraEnCalle = await llamar(api.agentEstadoOperativo, { query: { telefono: "5491158696086" } });
+    ok("estado: primera moto en calle no despacha pedidos de segunda", !primeraEnCalle.body.pedidoActual.puedeAfirmarEnCamino, primeraEnCalle.body.pedidoActual);
+    store["recorridos/activo_moto2"].estado = "en_calle";
+    const segundaEnCalle = await llamar(api.agentEstadoOperativo, { query: { telefono: "5491158696086" } });
+    ok("estado: segunda en calle informa solo su recorrido", segundaEnCalle.body.pedidoActual.puedeAfirmarEnCamino, segundaEnCalle.body.pedidoActual);
+    guardado.estado = "pendiente";
     const sinEleccion = await pedido({ medioPago: "al recibir", salidaSeleccionada: undefined });
     ok("tandas: exige elegir antes de cargar moto", sinEleccion.status === 400 && sinEleccion.body.opcionesMoto?.length, sinEleccion.body);
     const invalida = await pedido({ salidaSeleccionada: { fecha: "2026-02-30", tandaId: "primera" } });

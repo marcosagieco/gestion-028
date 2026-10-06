@@ -51,7 +51,8 @@ Todo lo del día, en una sola llamada:
   Si `/operativo` está en `solo_manana`, esa regla le gana a todo y dice que sale mañana.
 - `pedidoActual`: último pedido estructurado de ese teléfono, con una descripción segura del estado.
   El agente usa este campo para seguimiento y nunca infiere que salió. Un pedido `pendiente` todavía
-  no salió; una moto `armada` solo puede figurar en camino si el recorrido global está `en_calle`.
+  no salió; una moto `armada` solo puede figurar en camino si su recorrido asignado está `en_calle`
+  (`moto1`: `recorridos/activo`, `moto2`: `recorridos/activo_moto2`).
   Incluye `fechaSalida`, `horaSalida`, `tandaSalida`, `puedeModificar` y detalle estructurado
   para modificar un pedido del bot. Si no hay un pedido estructurado para ese teléfono, llega `null`.
 - `plantillas`: las listas de `/operativo` (`STOCK_NICOTINA`, `PRECIOS_VAPES`, `STOCK_THC`,
@@ -168,7 +169,7 @@ transferencia y mitad y mitad) y, para correo, sucursal/domicilio, DNI, localida
 `tipoEnvio`, `createdAt`): `telefono`, `idConversacion`, `idMensajeOrigen`, `origen`, `schemaVersion`,
 `cliente`, `direccion {texto, referencias, lat, lng, zona}`,
 `items`, `valorEnvio`, `envioSeguro`, `montoEnvioSeguro`, `montoDescuento`, `total`, `medioPago`, `horaSolicitada`,
-`cuentaCobro` (el alias activo al cargarlo, para el CSV por cuenta), `comprobante`,
+`cuentaCobro` (la cuenta enviada para ese pedido, o el alias activo si no se informa), `comprobante`,
 `comprobanteImagen` (la foto copiada a Storage) y `datosCorreo`. No descuenta stock ni crea la
 venta: eso lo sigue haciendo el depósito.
 También se guardan `fechaSalida`, `horaSalida`, `tandaSalida`, `mayorista`, `subtotalUSD`,
