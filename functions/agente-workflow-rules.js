@@ -35,6 +35,10 @@ function actualizarReglas(workflow) {
   const partes = prompt.split(bloqueCombos);
   prompt = partes.join("") + bloqueCombos;
   agente.parameters.options.systemMessage = prompt;
+  for (const nombre of ["Leer imagen (Gemini)", "Leer PDF (Gemini)"]) {
+    const lector = w.nodes.find((n) => n.name === nombre);
+    if (lector?.parameters.jsonBody) lector.parameters.jsonBody = lector.parameters.jsonBody.replace("titular, destinatario y fecha", "titular, destinatario, CBU o CVU de destino, alias visible y fecha");
+  }
 
   const extra = " Para moto incluye salidaSeleccionada:{fecha:'AAAA-MM-DD',tandaId:'primera'|'segunda',hora:'HH:mm'} elegida por el cliente. Para mayorista incluye mayorista:true. Para previsualizar cambios incluye pedidoId y solo campos a cambiar. cuentaCobro es el alias enviado al cliente para este pedido.";
   for (const nombre of ["armar_resumen", "crear_pedido"]) {

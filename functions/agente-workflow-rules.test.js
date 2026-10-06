@@ -15,6 +15,9 @@ assert.equal(prompt.match(/REGLAS NUEVAS 06-10/g).length, 2);
 assert.equal(prompt.match(/\nCOMBOS_BATERIAS:/g).length, 1);
 assert.equal(twice.nodes.filter((n) => n.name === "modificar_pedido").length, 1);
 assert.deepEqual(result.connections.modificar_pedido, result.connections.crear_pedido);
+for (const nombre of ["Leer imagen (Gemini)", "Leer PDF (Gemini)"]) {
+  assert(result.nodes.find(n => n.name === nombre).parameters.jsonBody.includes("CBU o CVU de destino"));
+}
 for (const name of ["armar_resumen", "crear_pedido", "modificar_pedido"]) {
   const node = result.nodes.find((n) => n.name === name);
   const expression = node.parameters.jsonBody.slice(3, -2).trim();
