@@ -200,7 +200,13 @@ async function ultimoPedidoDelCliente(telefono) {
     const tipoEnvio = pedido.datosCorreo ? "correo" : pedido.tipoEnvio;
     let recorridoEnCalle = false;
     if (tipoEnvio === "moto" && pedido.estado === "armado") {
-      const recorrido = await db.collection("recorridos").doc("activo").get();
+      // Hay dos repartos (15:30 y 18:30) y cada uno tiene su propio recorrido, así que acá se mira
+      // el del reparto al que le toca ESTE pedido: si no, a un cliente del segundo se le diría que
+      // su pedido ya salió solo porque salió el primero. Los nombres de los documentos salen de
+      // src/reparto/repartidores.js (ahí está la definición completa de cada reparto).
+      const DOC_RECORRIDO = { moto1: "activo", moto2: "activo_moto2" };
+      const docRecorrido = DOC_RECORRIDO[pedido.repartidor] || DOC_RECORRIDO.moto1;
+      const recorrido = await db.collection("recorridos").doc(docRecorrido).get();
       recorridoEnCalle = recorrido.exists && recorrido.data().estado === "en_calle";
     }
 

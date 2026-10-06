@@ -8,7 +8,7 @@ const db = admin.firestore();
 
 const { emitirFacturaC } = require('./facturacion');
 const { generarFacturaPDFBuffer } = require('./generar-factura-pdf');
-const { EMISORES, cuitNum } = require('./emisores');
+const { EMISORES, cuitNum, credencialesFaltantes } = require('./emisores');
 const crypto = require('crypto');
 const axios = require('axios');
 
@@ -995,6 +995,12 @@ async function resolverPendingFactura(pendingSnap, textoRespuesta) {
                 solo: true,
             };
         }
+        if (resultado.motivo === 'sin_credenciales') {
+            return {
+                texto: `⚠️ No se pudo facturar: faltan las credenciales de ARCA en el servidor (${resultado.detalle}). No es un problema de ARCA.`,
+                solo: true,
+            };
+        }
         return {
             texto: '⚠️ ARCA no respondió. La factura quedó como *pendiente* y se reintentará.',
             solo: true,
@@ -1013,6 +1019,14 @@ async function resolverPendingFactura(pendingSnap, textoRespuesta) {
 // intentos concurrentes (reintento de webhook, doble click en la web) apuntan a las mismas ventas.
 async function emitirYGuardarFactura({ saleIds, monto, emisorId }) {
     const emisor = EMISORES[emisorId] || EMISORES.alias1;
+
+    // Sin credenciales no hay nada que intentar: se corta acá, antes de marcar las ventas como
+    // 'procesando', para no dejarlas trabadas ni decir que el problema fue de ARCA.
+    const faltan = credencialesFaltantes(emisor);
+    if (faltan.length) {
+        console.error(`❌ Faltan credenciales de ARCA para ${emisor.id}: ${faltan.join(', ')} (revisar functions/.env y volver a publicar las funciones)`);
+        return { ok: false, motivo: 'sin_credenciales', detalle: faltan.join(', ') };
+    }
 
     const marcado = await marcarProcesandoTransaccional(saleIds);
     if (!marcado.ok) {
@@ -1086,6 +1100,9 @@ exports.emitirFacturaWeb = functions.https.onRequest(async (req, res) => {
             if (resultado.motivo === 'ya_procesada') {
                 const d = resultado.detalle || {};
                 return res.status(409).json({ ok: false, error: 'La factura ya fue emitida o está en proceso.', cae: d.invoiceCAE || null, nroComprobante: d.invoiceNumber || null });
+            }
+            if (resultado.motivo === 'sin_credenciales') {
+                return res.status(503).json({ ok: false, error: `El servidor no tiene cargadas las credenciales de ARCA (faltan: ${resultado.detalle}). No es un problema de ARCA: hay que configurarlas y volver a publicar las funciones.` });
             }
             return res.status(502).json({ ok: false, error: 'ARCA no respondió. Podés reintentar en un momento.' });
         }

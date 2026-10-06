@@ -17,6 +17,7 @@ import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } 
 import { CSS as DndCSS } from '@dnd-kit/utilities';
 import { ZONAS, ZONAS_POR_ID, DEPOSITO_ORIGEN } from './reparto/zonas';
 import { computeRecorrido, ordenAPersistir } from './reparto/recorridoEngine';
+import { REPARTIDORES, REPARTIDOR_DEFAULT, repartidorConfig, repartidorDe, esDelRepartidor, otrosRepartidores } from './reparto/repartidores';
 import { loadGoogleMaps, MAP_DARK_STYLE, MAP_LIGHT_STYLE } from './reparto/googleMapsLoader';
 import AddressAutocomplete from './reparto/AddressAutocomplete';
 
@@ -69,10 +70,10 @@ const STOP_MARKER_HOVER_FONT = 16;
 // mitad de camino, el lock vence solo a los 20s y no deja el recálculo trabado para siempre.
 const RECALC_LOCK_TIMEOUT_MS = 20000;
 
-async function tomarLockRecalculo() {
+async function tomarLockRecalculo(docLock) {
   try {
     return await runTransaction(db, async (t) => {
-      const lockRef = doc(db, 'recorridos', 'lockRecalculo');
+      const lockRef = doc(db, 'recorridos', docLock);
       const snap = await t.get(lockRef);
       const vigenteHasta = snap.exists() ? (snap.data().vigenteHasta || 0) : 0;
       if (vigenteHasta > Date.now()) return false; // otro panel ya lo tiene y todavía no venció
@@ -81,15 +82,15 @@ async function tomarLockRecalculo() {
     });
   } catch {
     // Si la transacción falla (ej. sin señal), no bloqueamos el cálculo local — preferible el
-    // riesgo de duplicar una llamada a Google antes que dejar a Norman sin recorrido calculado.
+    // riesgo de duplicar una llamada a Google antes que dejar al repartidor sin recorrido calculado.
     return true;
   }
 }
 
 // Libera el lock apenas termina, sin esperar a que vença solo — así el próximo recálculo (otro
 // pedido nuevo, el otro panel) no tiene que esperar los 20s completos si este ya terminó antes.
-async function liberarLockRecalculo() {
-  try { await setDoc(doc(db, 'recorridos', 'lockRecalculo'), { vigenteHasta: 0 }, { merge: true }); } catch {}
+async function liberarLockRecalculo(docLock) {
+  try { await setDoc(doc(db, 'recorridos', docLock), { vigenteHasta: 0 }, { merge: true }); } catch {}
 }
 
 function animarEscalaMarcador(marker, agrandar) {
@@ -134,7 +135,7 @@ const formatHora = (dateStr) => {
 // useSortable) cuando el repartidor ya salió — dnd-kit se encarga de que no reaccione al drag,
 // acá solo hace falta marcarla visualmente distinta (candado + sin agarradera). El bloqueo se
 // puede sacar a mano tocando "Desbloquear" (ver handleDesbloquear) para corregir el orden igual.
-function StopRow({ dm, pedido, index, locked, expanded, onToggleExpand, onBorrar, onDesbloquear, onEditarDireccion, onHoverStart, onHoverEnd }) {
+function StopRow({ dm, pedido, index, locked, expanded, onToggleExpand, onBorrar, onDesbloquear, onEditarDireccion, onHoverStart, onHoverEnd, otros = [], pasando = false, onPasar }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: pedido.id, disabled: locked });
   const style = {
     transform: DndCSS.Transform.toString(transform),
@@ -266,9 +267,20 @@ function StopRow({ dm, pedido, index, locked, expanded, onToggleExpand, onBorrar
               </button>
             </div>
           )}
-          <button onClick={() => onToggleExpand(pedido.id)} className={`flex items-center gap-1 text-xs font-bold mt-2 ${dm ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-700'}`}>
-            {expanded ? 'Ocultar mensaje' : 'Ver mensaje original'} {expanded ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}
-          </button>
+          <div className="flex items-center gap-3 flex-wrap mt-2">
+            <button onClick={() => onToggleExpand(pedido.id)} className={`flex items-center gap-1 text-xs font-bold ${dm ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-700'}`}>
+              {expanded ? 'Ocultar mensaje' : 'Ver mensaje original'} {expanded ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}
+            </button>
+            {/* Pasar la parada al otro motomensajero: un toque, sin salir de la lista. Recalcula los
+                dos recorridos (ver handlePasarRepartidor). */}
+            {otros.map(otro => (
+              <button key={otro.id} onClick={() => onPasar(pedido, otro.id)} disabled={pasando}
+                title={`Pasar esta parada a ${otro.nombre} (sale ${otro.salida})`}
+                className={`flex items-center gap-1 text-xs font-bold transition-colors disabled:opacity-50 ${dm ? 'text-indigo-400 hover:text-indigo-300' : 'text-indigo-600 hover:text-indigo-500'}`}>
+                <Bike size={12}/> {pasando ? 'Pasando...' : `Pasar a ${otro.nombre}`}
+              </button>
+            ))}
+          </div>
           {expanded && (
             <p className={`text-xs mt-2 whitespace-pre-wrap rounded-lg p-2.5 ${dm ? 'bg-white/[0.03] text-zinc-400' : 'bg-zinc-50 text-zinc-600'}`}>{pedido.mensaje}</p>
           )}
@@ -294,8 +306,15 @@ function StopRow({ dm, pedido, index, locked, expanded, onToggleExpand, onBorrar
 export default function RepartoDeposito() {
   const [dm, setDm] = useState(() => localStorage.getItem('028_dark_mode') === 'true');
   const [pedidos, setPedidos] = useState([]);
-  const [recorrido, setRecorrido] = useState(null);
-  const [repartidorActivo, setRepartidorActivo] = useState(true);
+  // Que repartidor se esta mirando. Las paradas de los dos se siguen leyendo igual (hacen falta
+  // para los contadores de las solapas y para recalcular al pasar un pedido de uno al otro),
+  // esto solo decide que recorrido se muestra.
+  const [repartidorSel, setRepartidorSel] = useState(REPARTIDOR_DEFAULT);
+  // Recorrido y estado activo/inactivo de CADA repartidor, por id. Antes eran dos valores sueltos
+  // porque habia un solo motomensajero.
+  const [recorridos, setRecorridos] = useState({});
+  const [activos, setActivos] = useState({});
+  const [pasandoId, setPasandoId] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
   const [computing, setComputing] = useState(false);
   const [toast, setToast] = useState(null);
@@ -322,24 +341,41 @@ export default function RepartoDeposito() {
     return onSnapshot(q, snap => setPedidos(snap.docs.map(d => ({ id: d.id, ...d.data() }))), err => console.error('pedidos:', err));
   }, []);
 
+  // El recorrido de cada repartidor (en el depósito / en la calle, cuál es su parada fija) y si
+  // está activo. Cada uno tiene sus propios documentos — ver reparto/repartidores.js.
   useEffect(() => {
-    return onSnapshot(doc(db, 'recorridos', 'activo'), snap => {
-      setRecorrido(snap.exists() ? snap.data() : { estado: 'en_deposito', salidaEn: null, paradaCongelada: null });
-    }, err => console.error('recorrido:', err));
+    const bajas = REPARTIDORES.map(r => onSnapshot(doc(db, 'recorridos', r.docRecorrido), snap => {
+      setRecorridos(prev => ({ ...prev, [r.id]: snap.exists() ? snap.data() : { estado: 'en_deposito', salidaEn: null, paradaCongelada: null } }));
+    }, err => console.error('recorrido ' + r.id + ':', err)));
+    return () => bajas.forEach(fn => fn());
   }, []);
 
-  // Norman se marca activo/inactivo desde su propia pantalla (arriba a la derecha) — acá solo se
-  // muestra, es de solo lectura.
+  // Activo/inactivo lo marca cada repartidor desde su propia pantalla — acá es de solo lectura.
   useEffect(() => {
-    return onSnapshot(doc(db, 'recorridos', 'repartidor'), snap => {
-      setRepartidorActivo(snap.exists() ? snap.data().activo !== false : true);
-    }, err => console.error('repartidor:', err));
+    const bajas = REPARTIDORES.map(r => onSnapshot(doc(db, 'recorridos', r.docEstado), snap => {
+      setActivos(prev => ({ ...prev, [r.id]: snap.exists() ? snap.data().activo !== false : true }));
+    }, err => console.error('activo ' + r.id + ':', err)));
+    return () => bajas.forEach(fn => fn());
   }, []);
 
-  // Paradas activas de moto: armadas (ya empaquetadas), no entregadas todavía, con dirección cargada.
-  const stopsRaw = useMemo(() =>
+  const yo = repartidorConfig(repartidorSel);
+  const recorrido = recorridos[repartidorSel] || { estado: 'en_deposito', salidaEn: null, paradaCongelada: null };
+  const repartidorActivo = activos[repartidorSel] !== false;
+
+  // Paradas activas de moto: armadas (ya empaquetadas), no entregadas todavía, con dirección
+  // cargada. Son las de los DOS repartidores: `stopsRaw` es lo que se muestra (las del que se
+  // está mirando) y `todasLasParadas` las usan los contadores y el recálculo al pasar un pedido.
+  const todasLasParadas = useMemo(() =>
     pedidos.filter(p => p.tipoEnvio === 'moto' && p.estado === 'armado' && p.direccion),
     [pedidos]);
+
+  const paradasPorRepartidor = useMemo(() => {
+    const out = {};
+    for (const r of REPARTIDORES) out[r.id] = todasLasParadas.filter(p => esDelRepartidor(p, r.id));
+    return out;
+  }, [todasLasParadas]);
+
+  const stopsRaw = useMemo(() => paradasPorRepartidor[repartidorSel] || [], [paradasPorRepartidor, repartidorSel]);
 
   const stopsOrdenadas = useMemo(() =>
     [...stopsRaw].sort((a, b) => (a.ordenRecorrido ?? 999) - (b.ordenRecorrido ?? 999)),
@@ -435,19 +471,24 @@ export default function RepartoDeposito() {
   // API intenta tomar el lock compartido (ver comentario junto a tomarLockRecalculo): si otro
   // panel ya está calculando en este mismo momento, esta llamada se corta acá, sin gastar una
   // llamada a Google — el resultado del que sí calculó llega solo por el onSnapshot de pedidos.
-  const recalcularYGuardar = async (lista) => {
+  // `repartidorId` dice de quién es el recorrido que se recalcula: cada uno tiene su propia
+  // parada fija y su propio lock, así que mover algo de uno no toca el orden del otro.
+  const recalcularYGuardar = async (lista, repartidorId = repartidorSel) => {
     if (lista.length === 0) return;
-    const tieneLock = await tomarLockRecalculo();
+    const cfg = repartidorConfig(repartidorId);
+    const tieneLock = await tomarLockRecalculo(cfg.docLock);
     if (!tieneLock) return;
+    const recorridoDeEse = recorridos[repartidorId];
+    const congeladaDeEse = recorridoDeEse?.estado === 'en_calle' ? recorridoDeEse?.paradaCongelada : null;
     setComputing(true);
     try {
-      const ordenado = await computeRecorrido({ pedidos: lista, paradaCongeladaId });
+      const ordenado = await computeRecorrido({ pedidos: lista, paradaCongeladaId: congeladaDeEse });
       const ordenMap = ordenAPersistir(ordenado);
       const batch = writeBatch(db);
       ordenado.forEach((p, i) => {
         // La parada congelada no se toca (ni su orden ni ordenManual); el resto, si veníamos en
         // modo auto, se guarda tal cual salió del cálculo (ordenManual se deja como estaba).
-        if (p.id === paradaCongeladaId) return;
+        if (p.id === congeladaDeEse) return;
         batch.update(doc(db, 'pedidos', p.id), { ordenRecorrido: i + 1 });
       });
       await batch.commit();
@@ -456,31 +497,40 @@ export default function RepartoDeposito() {
       showToast('No se pudo calcular el recorrido: ' + e.message, 'error');
     } finally {
       setComputing(false);
-      await liberarLockRecalculo();
+      await liberarLockRecalculo(cfg.docLock);
     }
   };
 
-  // Trigger 1: abrir el panel — recalcula una vez al montar si hay paradas.
+  // Trigger 1: abrir el panel — recalcula una vez el recorrido de CADA repartidor que tenga
+  // paradas (no solo el de la solapa abierta: si no, las paradas del otro se quedan sin orden).
   useEffect(() => {
     if (!firstLoadRef.current) return;
-    if (stopsRaw.length === 0) return;
+    if (todasLasParadas.length === 0) return;
     firstLoadRef.current = false;
-    seenIdsRef.current = new Set(stopsRaw.map(p => p.id));
-    recalcularYGuardar(stopsRaw);
+    seenIdsRef.current = new Set(todasLasParadas.map(p => p.id));
+    for (const r of REPARTIDORES) {
+      const suyas = paradasPorRepartidor[r.id] || [];
+      if (suyas.length) recalcularYGuardar(suyas, r.id);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stopsRaw.length]);
+  }, [todasLasParadas.length]);
 
-  // Trigger 2: entra un pedido nuevo al recorrido — recalcula solo cuando aparece un id que no
-  // había visto antes (no cuando uno desaparece por haberse entregado: eso lo recalcula y persiste
-  // quien marca la entrega, en la pantalla del motomensajero, para no duplicar la llamada).
+  // Trigger 2: entra un pedido nuevo al recorrido — recalcula solo el recorrido del repartidor
+  // al que le toca, y solo cuando aparece un id que no había visto antes (no cuando uno
+  // desaparece por haberse entregado: eso lo recalcula y persiste quien marca la entrega, en la
+  // pantalla del motomensajero, para no duplicar la llamada).
   useEffect(() => {
     if (firstLoadRef.current) return;
-    const currentIds = new Set(stopsRaw.map(p => p.id));
-    const hayNuevo = [...currentIds].some(id => !seenIdsRef.current.has(id));
-    seenIdsRef.current = currentIds;
-    if (hayNuevo) recalcularYGuardar(stopsRaw);
+    const nuevos = todasLasParadas.filter(p => !seenIdsRef.current.has(p.id));
+    seenIdsRef.current = new Set(todasLasParadas.map(p => p.id));
+    if (!nuevos.length) return;
+    const afectados = [...new Set(nuevos.map(p => repartidorDe(p)))];
+    for (const id of afectados) {
+      const suyas = paradasPorRepartidor[id] || [];
+      if (suyas.length) recalcularYGuardar(suyas, id);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stopsRaw]);
+  }, [todasLasParadas]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -532,24 +582,32 @@ export default function RepartoDeposito() {
   const handleConfirmarBorrado = async () => {
     if (!cancelTarget) return;
     const pedido = cancelTarget;
-    const wasFrozen = pedido.id === paradaCongeladaId;
+    // ¿Era la parada que su repartidor ya tenía fija porque iba para ahí? Se mira contra el recorrido
+    // del dueño del pedido, no contra el de la solapa abierta.
+    const recorridoDelDueno = recorridos[repartidorDe(pedido)];
+    const wasFrozen = recorridoDelDueno?.estado === 'en_calle' && recorridoDelDueno?.paradaCongelada === pedido.id;
     try {
       await updateDoc(doc(db, 'pedidos', pedido.id), {
         estado: 'cancelado',
         canceladoAt: new Date().toISOString(),
         motivoCancelacion: cancelMotivo.trim() || 'Borrado desde el panel de reparto',
       });
-      const restantes = stopsRaw.filter(p => p.id !== pedido.id);
+      // El pedido que se borra puede ser de cualquiera de los dos motomensajeros, no solo del que se
+      // está mirando en la solapa (se puede borrar desde la lista del otro recién pasada). Así que
+      // todo lo que se toca acá —el recorrido y la parada fija— es el del dueño de ESE pedido.
+      const dueno = repartidorConfig(repartidorDe(pedido));
+      const recorridoDueno = recorridos[dueno.id];
+      const restantes = (paradasPorRepartidor[dueno.id] || []).filter(p => p.id !== pedido.id);
       if (restantes.length === 0) {
-        if (wasFrozen) await setDoc(doc(db, 'recorridos', 'activo'), { estado: 'en_deposito', salidaEn: null, paradaCongelada: null });
+        if (wasFrozen) await setDoc(doc(db, 'recorridos', dueno.docRecorrido), { estado: 'en_deposito', salidaEn: null, paradaCongelada: null });
       } else if (wasFrozen) {
         const ordenado = await computeRecorrido({ pedidos: restantes, paradaCongeladaId: null });
         const batch = writeBatch(db);
         ordenado.forEach((p, i) => batch.update(doc(db, 'pedidos', p.id), { ordenRecorrido: i + 1 }));
         await batch.commit();
-        await setDoc(doc(db, 'recorridos', 'activo'), { estado: recorrido?.estado || 'en_calle', salidaEn: recorrido?.salidaEn || null, paradaCongelada: ordenado[0].id });
+        await setDoc(doc(db, 'recorridos', dueno.docRecorrido), { estado: recorridoDueno?.estado || 'en_calle', salidaEn: recorridoDueno?.salidaEn || null, paradaCongelada: ordenado[0].id });
       } else {
-        await recalcularYGuardar(restantes);
+        await recalcularYGuardar(restantes, dueno.id);
       }
       cerrarModalCancelar();
       showToast('Pedido borrado del reparto');
@@ -576,12 +634,54 @@ export default function RepartoDeposito() {
   // así que vuelve a quedar arrastrable como cualquier otra parada hasta que Norman entregue de
   // nuevo (ahí RepartoMoto vuelve a congelar la nueva parada 1 automáticamente).
   const handleDesbloquear = async (pedido) => {
-    if (!window.confirm(`¿Desbloquear "${pedido.direccion?.texto || 'esta parada'}"? Se va a poder mover de lugar aunque Norman ya haya salido para ahí.`)) return;
+    if (!window.confirm(`¿Desbloquear "${pedido.direccion?.texto || 'esta parada'}"? Se va a poder mover de lugar aunque ${yo.nombre} ya haya salido para ahí.`)) return;
     try {
-      await setDoc(doc(db, 'recorridos', 'activo'), { estado: recorrido?.estado || 'en_calle', salidaEn: recorrido?.salidaEn || null, paradaCongelada: null });
+      await setDoc(doc(db, 'recorridos', yo.docRecorrido), { estado: recorrido?.estado || 'en_calle', salidaEn: recorrido?.salidaEn || null, paradaCongelada: null });
       showToast('Parada desbloqueada');
     } catch (e) {
       showToast('Error al desbloquear: ' + e.message, 'error');
+    }
+  };
+
+  // Pasa una parada de un motomensajero al otro. Es lo que se usa cuando un pedido entró para la
+  // salida de las 15:30 pero no se armó a tiempo, o cuando uno queda cargado y el otro libre.
+  //
+  // Se recalculan los DOS recorridos: el que la pierde (para que no quede un hueco en el orden) y el
+  // que la recibe (para que entre en el lugar que le corresponde por distancia). Si la parada era la
+  // que el primero tenía fija porque ya iba para ahí, se le limpia esa marca: ya no es suya. El
+  // orden se borra para que no llegue al otro recorrido con un número que no significa nada.
+  const handlePasarRepartidor = async (pedido, nuevoId) => {
+    if (pasandoId) return;
+    const desdeId = repartidorDe(pedido);
+    if (desdeId === nuevoId) return;
+    const desde = repartidorConfig(desdeId);
+    const hacia = repartidorConfig(nuevoId);
+    const recorridoDesde = recorridos[desdeId];
+    const eraSuParadaFija = recorridoDesde?.estado === 'en_calle' && recorridoDesde?.paradaCongelada === pedido.id;
+    if (eraSuParadaFija && !window.confirm(`${desde.nombre} ya salió para "${pedido.direccion?.texto || 'esa parada'}". ¿Pasársela igual a ${hacia.nombre}?`)) return;
+
+    setPasandoId(pedido.id);
+    try {
+      await updateDoc(doc(db, 'pedidos', pedido.id), { repartidor: nuevoId, ordenRecorrido: null, ordenManual: false });
+
+      if (eraSuParadaFija) {
+        const quedanDelPrimero = (paradasPorRepartidor[desdeId] || []).filter(p => p.id !== pedido.id);
+        await setDoc(doc(db, 'recorridos', desde.docRecorrido), {
+          estado: quedanDelPrimero.length ? (recorridoDesde?.estado || 'en_calle') : 'en_deposito',
+          salidaEn: quedanDelPrimero.length ? (recorridoDesde?.salidaEn || null) : null,
+          paradaCongelada: null,
+        });
+      }
+
+      const quedan = (paradasPorRepartidor[desdeId] || []).filter(p => p.id !== pedido.id);
+      const recibe = [...(paradasPorRepartidor[nuevoId] || []), { ...pedido, repartidor: nuevoId, ordenRecorrido: null }];
+      if (quedan.length) await recalcularYGuardar(quedan, desdeId);
+      await recalcularYGuardar(recibe, nuevoId);
+      showToast(`Pedido pasado a ${hacia.nombre}`);
+    } catch (e) {
+      showToast('Error al pasar el pedido: ' + e.message, 'error');
+    } finally {
+      setPasandoId(null);
     }
   };
 
@@ -610,11 +710,37 @@ export default function RepartoDeposito() {
             ya no está centrado con max-width en lg), con ancho fijo angosto tipo panel lateral. */}
         <div className="max-w-lg mx-auto lg:mx-0 lg:max-w-none lg:w-[560px] lg:flex-shrink-0 space-y-4">
 
+          {/* Solapas: de qué motomensajero se está viendo el recorrido. Cada una muestra cuántas
+              paradas tiene ahora y si está en la calle, así se ve de un vistazo cómo viene cada uno
+              sin tener que ir cambiando. */}
+          <div className="flex gap-2">
+            {REPARTIDORES.map(r => {
+              const cantidad = (paradasPorRepartidor[r.id] || []).length;
+              const suyoEnCalle = recorridos[r.id]?.estado === 'en_calle';
+              const sel = r.id === repartidorSel;
+              return (
+                <button key={r.id} onClick={() => setRepartidorSel(r.id)}
+                  className={`flex-1 rounded-2xl border p-3 text-left transition-all active:scale-[0.98] ${
+                    sel
+                      ? (dm ? 'border-white/20 bg-white/[0.06]' : 'border-zinc-300 bg-white shadow-sm')
+                      : (dm ? 'border-white/[0.06] bg-[#141414] opacity-70' : 'border-zinc-200 bg-zinc-50 opacity-80')
+                  }`}>
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: suyoEnCalle ? '#34d399' : r.color }}/>
+                    <span className={`text-sm font-black truncate ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{r.nombre}</span>
+                    <span className={`ml-auto text-xs font-black px-1.5 py-0.5 rounded-full ${dm ? 'bg-white/[0.08] text-zinc-300' : 'bg-zinc-100 text-zinc-600'}`}>{cantidad}</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 mt-0.5">sale {r.salida} · {suyoEnCalle ? 'en la calle' : 'en el depósito'}</p>
+                </button>
+              );
+            })}
+          </div>
+
           {/* Estado del repartidor: fundamental para saber si la parada 1 se puede mover */}
           <div className={`rounded-2xl border p-4 flex items-center gap-3 ${enCalle ? (dm ? 'bg-emerald-500/[0.08] border-emerald-500/30' : 'bg-emerald-50 border-emerald-200') : (dm ? 'bg-[#141414] border-white/[0.07]' : 'bg-white border-zinc-200')}`}>
             <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${enCalle ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'}`}/>
             <div className="min-w-0">
-              <p className={`text-sm font-black ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{enCalle ? 'Norman está en la calle' : 'Norman está en el depósito'}</p>
+              <p className={`text-sm font-black ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{enCalle ? `${yo.nombre} está en la calle` : `${yo.nombre} está en el depósito`}</p>
               <p className="text-[11px] text-zinc-500">{enCalle ? 'La parada 1 quedó fija — está yendo para ahí (se puede desbloquear abajo)' : 'Todavía no salió a repartir: se puede mover cualquier parada'}</p>
             </div>
             <span className={`flex items-center gap-1.5 h-7 pl-2 pr-2.5 rounded-full text-[11px] font-bold flex-shrink-0 ml-auto ${
@@ -631,7 +757,7 @@ export default function RepartoDeposito() {
           {stopsOrdenadas.length === 0 ? (
             <div className={`rounded-3xl border-2 border-dashed p-10 flex flex-col items-center justify-center gap-3 text-center ${dm ? 'border-white/[0.08] bg-white/[0.02]' : 'border-zinc-200 bg-zinc-50'}`}>
               <PartyPopper size={32} className={dm ? 'text-zinc-600' : 'text-zinc-300'} />
-              <p className={`text-sm font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-500'}`}>No hay paradas de moto armadas ahora mismo.</p>
+              <p className={`text-sm font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-500'}`}>{yo.nombre} no tiene paradas armadas ahora mismo.</p>
             </div>
           ) : (
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -641,7 +767,8 @@ export default function RepartoDeposito() {
                     <StopRow key={p.id} dm={dm} pedido={p} index={i} locked={p.id === paradaCongeladaId}
                       expanded={expandedId === p.id} onToggleExpand={id => setExpandedId(cur => cur === id ? null : id)}
                       onBorrar={setCancelTarget} onDesbloquear={handleDesbloquear} onEditarDireccion={handleEditarDireccion}
-                      onHoverStart={setHoveredId} onHoverEnd={id => setHoveredId(cur => cur === id ? null : cur)} />
+                      onHoverStart={setHoveredId} onHoverEnd={id => setHoveredId(cur => cur === id ? null : cur)}
+                      otros={otrosRepartidores(repartidorSel)} pasando={pasandoId === p.id} onPasar={handlePasarRepartidor} />
                   ))}
                 </div>
               </SortableContext>
