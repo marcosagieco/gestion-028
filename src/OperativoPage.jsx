@@ -59,10 +59,10 @@ const DIAS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 's
 const fechaLinda = (f) => { const [a, m, d] = f.split('-').map(Number); return `${DIAS[new Date(a, m - 1, d).getDay()]} ${d}/${m}`; };
 
 const DEFAULTS = {
-  situacion: 'sin_demora', proximaSalida: '', aliasActivo: 'alias1', limitePorTanda: 10, diasSinDespacho: [],
+  situacion: 'sin_demora', salidasMoto: { primera: '15:30', segunda: '18:30' }, aliasActivo: 'alias1', limitePorTanda: 10, diasSinDespacho: [],
   stockNicotinaTexto: '', stockThcTexto: '',
   preciosVapesTexto: '', preciosThcTexto: '', perfumesTexto: '', appleTexto: '',
-  preciosMayoristaTexto: '', ofertasTexto: '',
+  preciosMayoristaTexto: '', ofertasTexto: '', combosBateriasTexto: '', combosBateriasTitulo: 'Combos y baterias', dolarMayorista: '',
 };
 
 export default function OperativoPage() {
@@ -77,7 +77,7 @@ export default function OperativoPage() {
 
   useEffect(() => {
     const unsub = onSnapshot(DOC_REF(), (snap) => {
-      if (snap.exists()) setForm({ ...DEFAULTS, ...snap.data() });
+      if (snap.exists()) setForm({ ...DEFAULTS, ...snap.data(), salidasMoto: { ...DEFAULTS.salidasMoto, ...snap.data().salidasMoto } });
       setLoaded(true);
     }, () => setLoaded(true));
     return unsub;
@@ -94,11 +94,21 @@ export default function OperativoPage() {
   };
 
   const guardar = async () => {
+    const horarios = [form.salidasMoto?.primera, form.salidasMoto?.segunda];
+    if (horarios.some((h) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(h || '') || h > '20:00') || horarios[0] >= horarios[1]) {
+      alert('Las dos salidas deben tener horarios distintos y ordenados, hasta las 20:00.');
+      return;
+    }
+    if (form.dolarMayorista != null && form.dolarMayorista !== '' && !(Number.isFinite(Number(form.dolarMayorista)) && Number(form.dolarMayorista) > 0)) {
+      alert('El valor del dolar debe ser mayor que cero.');
+      return;
+    }
     setSaving(true);
     try {
       await setDoc(DOC_REF(), {
         situacion: SITUACIONES.some((s) => s.id === form.situacion) ? form.situacion : 'sin_demora',
-        proximaSalida: (form.proximaSalida || '').trim(),
+        salidasMoto: { primera: horarios[0], segunda: horarios[1] },
+        proximaSalida: '',
         limitePorTanda: Number(form.limitePorTanda) > 0 ? Number(form.limitePorTanda) : 10,
         diasSinDespacho,
         aliasActivo: ALIASES.some((a) => a.id === form.aliasActivo) ? form.aliasActivo : 'alias1',
@@ -110,6 +120,9 @@ export default function OperativoPage() {
         appleTexto: (form.appleTexto || '').trim(),
         preciosMayoristaTexto: (form.preciosMayoristaTexto || '').trim(),
         ofertasTexto: (form.ofertasTexto || '').trim(),
+        combosBateriasTexto: (form.combosBateriasTexto || '').trim(),
+        combosBateriasTitulo: (form.combosBateriasTitulo || '').trim() || 'Combos y baterias',
+        dolarMayorista: Number(form.dolarMayorista) > 0 ? Number(form.dolarMayorista) : null,
         actualizadoEn: new Date().toISOString(),
       }, { merge: true });
       setSavedAt(Date.now());
@@ -181,19 +194,22 @@ export default function OperativoPage() {
             </div>
           </div>
 
-          {/* Proxima salida */}
+          {/* Salidas de motomensajeria */}
           <div className={`rounded-2xl border p-5 ${card}`}>
-            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Proxima salida de moto <span className="normal-case font-normal">(opcional)</span></label>
-            <p className={`text-[11px] mb-3 ${label}`}>Solo para moto. Si la cargas (ej. 18:00), el bot le dice a todos los pedidos de moto que salen a esa hora, sin importar el cupo (el Uber sigue saliendo cada 30 min) (si esa hora ya paso, dice que sale manana a esa hora). Borrala cuando se normalice: vacio = tandas normales.</p>
-            <input value={form.proximaSalida} onChange={(e) => set('proximaSalida', e.target.value)}
-              placeholder="16:00"
-              className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors ${input}`} />
+            <p className={`block text-xs font-bold uppercase tracking-wide mb-3 ${label}`}>Salidas de motomensajeria</p>
+            {['primera', 'segunda'].map((id, i) => (
+              <label key={id} className="block mb-4">
+                <span className={`block text-sm mb-2 ${label}`}>Salida {i + 1}</span>
+                <input type="time" max="20:00" value={form.salidasMoto?.[id] || DEFAULTS.salidasMoto[id]}
+                  onChange={(e) => set('salidasMoto', { ...DEFAULTS.salidasMoto, ...form.salidasMoto, [id]: e.target.value })}
+                  className={`w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none ${input}`} />
+              </label>
+            ))}
           </div>
 
           {/* Limite de pedidos por tanda */}
           <div className={`rounded-2xl border p-5 ${card}`}>
             <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Pedidos maximos por tanda</label>
-            <p className={`text-[11px] mb-3 ${label}`}>Cuantos envios (moto + Uber juntos) entran en una tanda. Cuando la cantidad de pedidos <b>sin completar</b> llega a este numero, el bot sigue vendiendo pero le avisa al cliente que su pedido sale en la tanda siguiente. <b>Ojo:</b> cuenta los pedidos que siguen en pendiente o armado, asi que hay que ir marcandolos a medida que salen.</p>
             <input type="number" min="1" max="99" value={form.limitePorTanda}
               onChange={(e) => set('limitePorTanda', e.target.value)}
               className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors ${input}`} />
@@ -312,7 +328,11 @@ export default function OperativoPage() {
           {/* Precios mayorista */}
           <div className={`rounded-2xl border p-5 ${card}`}>
             <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Precios mayorista — texto</label>
-            <p className={`text-[11px] mb-3 ${label}`}>Lista de precios por volumen para revendedores. El bot la manda tal cual cuando alguien pregunta por mayorista; cuando quieren comprar, deriva al equipo.</p>
+            <label className={`block text-sm mb-3 ${label}`}>Pesos por dolar
+              <input type="number" min="0.01" step="0.01" value={form.dolarMayorista ?? ''}
+                onChange={(e) => set('dolarMayorista', e.target.value)}
+                className={`mt-2 w-full rounded-lg border px-3.5 py-2.5 outline-none ${input}`} />
+            </label>
             <textarea value={form.preciosMayoristaTexto} onChange={(e) => set('preciosMayoristaTexto', e.target.value)}
               rows={8} placeholder={'LISTA MAYORISTA\n\nDesde 10 unidades: ...\nDesde 50 unidades: ...\n...'}
               className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors font-mono ${input}`} />
@@ -328,6 +348,16 @@ export default function OperativoPage() {
 🔥 ELFBAR ICE KING 2x $45.000
 Hasta el domingo`}
               className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors font-mono ${input}`} />
+          </div>
+          <div className={`rounded-lg border p-5 ${card}`}>
+            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Nombre del apartado
+              <input value={form.combosBateriasTitulo} onChange={(e) => set('combosBateriasTitulo', e.target.value)}
+                className={`mt-2 w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none ${input}`} />
+            </label>
+            <label className={`block text-sm mt-4 mb-2 ${label}`}>{form.combosBateriasTitulo || 'Combos y baterias'}</label>
+            <textarea aria-label="Informacion de combos y baterias" value={form.combosBateriasTexto}
+              onChange={(e) => set('combosBateriasTexto', e.target.value)} rows={8}
+              className={`w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none font-mono ${input}`} />
           </div>
         </div>
 

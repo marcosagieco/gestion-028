@@ -17,8 +17,9 @@ Todo lo del día, en una sola llamada:
 ```json
 {
   "ok": true,
-  "salida": { "dia": "hoy", "hora": "18:00" },
-  "salidaUber": { "dia": "hoy", "hora": "17:30" },
+  "salida": { "dia": "hoy", "fecha": "2026-10-06", "hora": "15:30", "tandaId": "primera" },
+  "opcionesMoto": [{ "dia": "hoy", "fecha": "2026-10-06", "hora": "15:30", "tandaId": "primera" }],
+  "salidaUber": { "dia": "hoy", "fecha": "2026-10-06", "hora": "17:30" },
   "pedidosEnCola": 8,
   "demora": "hoy estamos con una demora de alrededor de 2 hs en los envíos",
   "pedidoActual": {
@@ -33,14 +34,15 @@ Todo lo del día, en una sola llamada:
 }
 ```
 
-- `salida` (moto) y `salidaUber`: en qué tanda sale un pedido tomado ahora. Salen tandas cada 30 min
-  hasta las 20:00, desde las 13:30 (miércoles 14:00, domingos 17:00). A las 20:00 se cierra sin excepción;
-  desde ese momento sale el próximo día con despacho. Cada tanda lleva hasta el límite de `/operativo`, contando los pedidos de moto
-  y Uber "para armar" (los armados ya salieron y no cuentan): con la de las 17:00 llena, sale 17:30. Si hoy no entra, o el
-  panel dice que hoy no sale nada más, sale mañana. La misma hora va en el resumen del pedido.
-  Si el depósito carga una "próxima salida" de moto en `/operativo` ("18", "18:00", "18 hs"), esa hora
-  le gana a todo para la moto, cupo incluido (si ya pasó, es la de mañana), mientras esté cargada.
-  El Uber no la usa: sale siempre por tandas. Vacía = tandas.
+- `salida` es la primera opción de moto; `opcionesMoto` ofrece hasta cuatro opciones con fecha,
+  hora y `tandaId`. Hay dos salidas (`primera` y `segunda`), por defecto 15:30 y 18:30, editables
+  como `salidasMoto` en `/operativo`. Una tanda a la hora exacta o ya pasada no se ofrece hoy.
+  El cliente elige la fecha y tanda; la API exige `salidaSeleccionada` para cargar moto.
+  El cupo se cuenta por fecha y tanda, incluyendo pendientes y armados no cancelados.
+  `primera` se asigna a `repartidor: "moto1"` y `segunda` a `"moto2"`, los repartos existentes del depósito.
+  Una transacción vuelve a validar horario y cupo al guardar. `proximaSalida` queda obsoleto.
+- `salidaUber` conserva tandas cada 30 minutos hasta las 20:00, desde 13:30 (miércoles 14:00,
+  domingos 17:00), contando la cola pendiente. El cierre a las 20:00 sigue siendo estricto.
   Los días sin despacho (feriados, domingos que no se trabaja) se cargan en `/operativo`
   (`diasSinDespacho`, fechas `AAAA-MM-DD`): ese día no sale nada y lo que se pide sale el próximo
   día con despacho (`"dia": "el lunes"`).
@@ -50,9 +52,10 @@ Todo lo del día, en una sola llamada:
 - `pedidoActual`: último pedido estructurado de ese teléfono, con una descripción segura del estado.
   El agente usa este campo para seguimiento y nunca infiere que salió. Un pedido `pendiente` todavía
   no salió; una moto `armada` solo puede figurar en camino si el recorrido global está `en_calle`.
-  Si no hay un pedido estructurado para ese teléfono, llega `null`.
-- `plantillas`: las 8 listas de `/operativo` (`STOCK_NICOTINA`, `PRECIOS_VAPES`, `STOCK_THC`,
-  `PRECIOS_THC`, `PERFUMES`, `APPLE_ACCESORIOS`, `PRECIOS_MAYORISTA`, `OFERTAS`), el `ALIAS` activo
+  Incluye `fechaSalida`, `horaSalida`, `tandaSalida`, `puedeModificar` y detalle estructurado
+  para modificar un pedido del bot. Si no hay un pedido estructurado para ese teléfono, llega `null`.
+- `plantillas`: las listas de `/operativo` (`STOCK_NICOTINA`, `PRECIOS_VAPES`, `STOCK_THC`,
+  `PRECIOS_THC`, `PERFUMES`, `APPLE_ACCESORIOS`, `PRECIOS_MAYORISTA`, `OFERTAS`, `COMBOS_BATERIAS`), el `ALIAS` activo
   y los textos fijos (`FORMAS_DE_ENTREGA`, `ENVIO_SEGURO`, `WEB`, `DESCUENTO_EFECTIVO`, `GRACIAS`,
   `CONFIANZA`, `COMUNIDAD`, `COMPROBANTES_VALIDOS`). Una lista vacía llega como `""`.
   `COMUNIDAD` se usa cuando piden aviso de reingreso/stock nuevo/ofertas, y también como cierre
@@ -60,6 +63,9 @@ Todo lo del día, en una sola llamada:
   incluye las tres cuentas: Lucio Felix Bunge/Galicia para alias1, Marcos Agustin Gieco/Galicia
   para alias2 y Tame Lake S.A./Secpaynet para alias3. Identifica la cuenta activa y compara contra
   los datos enviados al cliente, incluso si el alias cambia luego. No confirma acreditación bancaria.
+  La diferencia de importe se tolera hasta $5.000 inclusive en ambos sentidos. Si supera ese
+  rango se deriva; un destino explícitamente incorrecto o evidencia de edición se sigue revisando.
+- `mayorista`: informa mínimo de 10 unidades, agrupación y valor del dólar cargado en el panel.
 
 ## GET `/agentCotizarEnvio?direccion=`
 
@@ -85,6 +91,7 @@ Calcula el resumen (`preview: true`, no guarda nada) o carga el pedido en `pedid
   "cliente": "Uma Bach",
   "items": [{ "producto": "Elfbar Ice King", "variante": "Peach", "cantidad": 2 }],
   "tipoEnvio": "moto",
+  "salidaSeleccionada": { "fecha": "2026-10-06", "tandaId": "primera", "hora": "15:30" },
   "horaSolicitada": null,
   "direccion": { "texto": "Cabildo 2000, Belgrano", "referencias": "3B, timbre negro" },
   "medioPago": "transferencia",
@@ -105,12 +112,20 @@ estado persistido en `pedidoActual`.
 La carga definitiva es idempotente. n8n manda `idConversacion` e `idMensajeOrigen`; si reintenta el
 mismo mensaje, la API devuelve el pedido existente con `reutilizado: true` y no crea un duplicado.
 Como respaldo, una transferencia con el mismo teléfono y número de comprobante también reutiliza el
-pedido. Los documentos nuevos guardan esos identificadores, `origen: "bot_n8n"` y `schemaVersion: 2`.
+pedido. Los documentos nuevos guardan esos identificadores, `origen: "bot_n8n"` y `schemaVersion: 3`.
 
 **Precios:** salen de las listas de `/operativo` (vapes, THC, perfumes, Apple), con sus combos
 (`2x $49.000` es el combo de 2 entero). Las `OFERTAS` escritas con el mismo formato pisan esos
 precios. Si un producto no está, es ambiguo o esa cantidad no se vende, el pedido no se calcula.
 El agente nunca manda precios.
+
+**Mayorista:** `mayorista: true` usa exclusivamente `preciosMayoristaTexto`. Se interpretan precios
+unitarios en USD (incluidos decimales con coma) y se toma el tramo más alto alcanzado.
+`dolarMayorista` es el valor en pesos por USD editable en el panel. Sin ese valor, el preview
+devuelve `necesitaTipoCambio: true` y subtotal en USD, pero no un total en pesos ni una carga definitiva.
+Por defecto los tramos y el mínimo se aplican por modelo, mezclando sabores. `mayoristaAgrupacion:
+"total"` permite sumar modelos; este criterio requiere confirmación del negocio. No se deriva por
+superar 100 unidades, solo si piden negociar el precio. No se agrega descuento minorista por efectivo.
 
 **Stock:** vapes y THC se controlan contra `STOCK_NICOTINA` y `STOCK_THC` de `/operativo`. Si el
 modelo no figura, el sabor no está o está en `(0)`, o se pide más de lo que dice el `(n)`, el pedido
@@ -128,6 +143,9 @@ Con la lista de stock vacía no se frena la venta.
 El correo se guarda con `tipoEnvio: "retiro"`: el depósito lo maneja como un retiro (arma el paquete
 y lo lleva a Vía Cargo). El mensaje del panel arranca con `📦 VÍA CARGO — SUCURSAL` (o DOMICILIO) y
 el pedido trae `datosCorreo`.
+Excepción: el **correo mayorista** se guarda con `tipoEnvio: "moto"`, `entregaCliente: "correo"` y
+`despachoInterno: "moto_a_via_cargo"`. Se agenda en la primera tanda disponible (si ya pasó, primera
+del próximo día hábil). El resumen distingue traslado interno y entrega Vía Cargo al cliente.
 
 **Formas de pago** (`medioPago`): `transferencia` (antes, con comprobante), `efectivo` (al recibir,
 con descuento), `al recibir` (efectivo o transferencia cuando llega, sin comprobante ni descuento) y
@@ -153,6 +171,25 @@ transferencia y mitad y mitad) y, para correo, sucursal/domicilio, DNI, localida
 `cuentaCobro` (el alias activo al cargarlo, para el CSV por cuenta), `comprobante`,
 `comprobanteImagen` (la foto copiada a Storage) y `datosCorreo`. No descuenta stock ni crea la
 venta: eso lo sigue haciendo el depósito.
+También se guardan `fechaSalida`, `horaSalida`, `tandaSalida`, `mayorista`, `subtotalUSD`,
+`dolarMayorista`, `entregaCliente`, `despachoInterno`, `montoPagado` y `comprobantesAdicionales`.
+
+### Modificar el Mismo Pedido
+
+POST `/agentPedido` con `pedidoId`, teléfono y solo los campos a cambiar. `preview: true`
+calcula sin escribir; devuelve `saldoPendiente`. La tool definitiva `modificar_pedido` fuerza
+`modificar: true` y `preview: false`: exige el ID para no crear otro por accidente.
+La API verifica que sea un pedido del bot de ese cliente y que siga `pendiente`, tanto antes
+de calcular como en una transacción al escribir. Si está armado/finalizado devuelve `409`,
+`derivar: true`, `motivo: "modificar_pedido_armado"`. Si otro cambio concurrente alteró el detalle,
+devuelve conflicto y exige revisar de nuevo.
+
+Se conservan ID, fecha de creación, trazabilidad original, cuenta de cobro, comprobante y campos
+omitidos. Cambiar solo dirección/referencia no recalcula los precios de productos ya acordados.
+Cambiar dirección de Uber exige cotización válida para esa nueva dirección.
+Si se agrega un producto a un pedido transferido y falta más de $5.000, no se actualiza hasta
+recibir `comprobanteAdicional: {numero, monto}` por el saldo. No se suma el mismo comprobante dos veces.
+Los reintentos del mismo `idMensajeOrigen` reutilizan el cambio ya aplicado.
 
 ## Cotización de Uber
 

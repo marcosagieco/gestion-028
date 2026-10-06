@@ -15,6 +15,8 @@ const { onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const admin = require("firebase-admin");
 const axios = require("axios");
 const crypto = require("crypto");
+const { opcionesMoto, elegirSalida, tandasMoto, fechaBA, corta } = require("./agente-salidas");
+const { parsearMayorista, precioMayorista } = require("./agente-mayorista");
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -40,11 +42,12 @@ const TRAMOS_DESCUENTO_EFECTIVO = [
   { desde: 0, off: 1500 },
 ];
 const LIMITE_POR_TANDA = 10; // si el panel no tiene uno cargado
-const CADA_TANDA = 30; // minutos entre tandas (moto y Uber por igual)
+const CADA_TANDA = 30; // minutos entre tandas de Uber
 const ULTIMA_TANDA = 20 * 60; // 20:00
 const CORTE_DESPACHO = 20 * 60; // a las 20:00 se cierra sin excepción
 const VIGENCIA_COTIZACION_UBER_MS = 3 * 60 * 60 * 1000;
 const RECOTIZACION_UBER_MS = 30 * 60 * 1000;
+const TOLERANCIA_COMPROBANTE = 5000;
 
 const DEMORAS = {
   sin_demora: "los envíos están saliendo normal, sin demora",
@@ -107,8 +110,9 @@ const LISTAS_DEL_PANEL = {
   APPLE_ACCESORIOS: "appleTexto",
   PRECIOS_MAYORISTA: "preciosMayoristaTexto",
   OFERTAS: "ofertasTexto",
+  COMBOS_BATERIAS: "combosBateriasTexto",
 };
-// Las que tienen precios minoristas (la mayorista está en USD y esas compras las cierra el equipo).
+// Listas minoristas en pesos; la mayorista tiene su propio parser en USD.
 const LISTAS_CON_PRECIO = ["preciosVapesTexto", "preciosThcTexto", "perfumesTexto", "appleTexto"];
 // La lista de stock de cada lista de precios (perfumes y Apple no tienen).
 const STOCK_DE = { preciosVapesTexto: "stockNicotinaTexto", preciosThcTexto: "stockThcTexto" };
@@ -217,6 +221,15 @@ async function ultimoPedidoDelCliente(telefono) {
       creadoEn: pedido.createdAt || null,
       armadoEn: pedido.armadoAt || null,
       entregadoEn: pedido.entregadoEn || null,
+      fechaSalida: pedido.fechaSalida || null,
+      horaSalida: pedido.horaSalida || null,
+      tandaSalida: pedido.tandaSalida || null,
+      puedeModificar: pedido.origen === "bot_n8n" && pedido.estado === "pendiente",
+      detalle: pedido.origen === "bot_n8n" ? {
+        cliente: pedido.cliente, direccion: pedido.direccion, items: pedido.items,
+        total: pedido.total, medioPago: pedido.medioPago, mayorista: pedido.mayorista || false,
+        datosCorreo: pedido.datosCorreo, envioSeguro: pedido.envioSeguro,
+      } : null,
       descripcion: textos[pedido.estado] || "el pedido existe, pero su estado no está reconocido; no afirmes que salió",
       puedeAfirmarEnCamino: tipoEnvio === "moto" && pedido.estado === "armado" && recorridoEnCalle,
       puedeAfirmarEntregado: ["entregado", "finalizado"].includes(pedido.estado),
@@ -516,11 +529,7 @@ function minutosDe(texto) {
 
 const hhmmDe = (minutos) => `${Math.floor(minutos / 60)}:${String(minutos % 60).padStart(2, "0")}`;
 
-// En qué tanda sale un pedido tomado ahora. El bot atiende 24/7: cada tanda lleva hasta `limite`
-// pedidos, así que con `enCola` pedidos esperando, este sale tantas tandas después de la próxima.
-// Si hoy ya no entra (o el panel dice que hoy no sale nada más), sale mañana. La "próxima salida"
-// que carga el depósito le gana a todo (ej. si vienen atrasados): si esa hora ya pasó, es la de
-// mañana. Rige mientras esté cargada; borrarla vuelve a las tandas.
+// Programacion de Uber por cola, separada de las dos salidas de moto del panel.
 const DIAS_SEMANA = { Sun: "domingo", Mon: "lunes", Tue: "martes", Wed: "miércoles", Thu: "jueves", Fri: "viernes", Sat: "sábado" };
 
 // Los días sin despacho (feriados, domingos que no se trabaja) los carga el depósito en /operativo
@@ -538,21 +547,16 @@ function proximoDiaHabil(fecha, sinDespacho) {
   return { d: horaBuenosAires(new Date(fecha.getTime() + 24 * 60 * 60 * 1000)), etiqueta: "mañana" };
 }
 
-function salida(fecha, { enCola, limite, soloManana, proximaSalida, sinDespacho = [] }) {
+function salida(fecha, { enCola, limite, soloManana, sinDespacho = [] }) {
   const ahora = horaBuenosAires(fecha);
   const hoyNoSeDespacha = soloManana || sinDespacho.includes(ahora.fecha);
   const siguiente = proximoDiaHabil(fecha, sinDespacho);
-  const delPanel = minutosDe(proximaSalida);
-  if (delPanel !== null) {
-    return delPanel >= ahora.minutos && ahora.minutos < CORTE_DESPACHO && !sinDespacho.includes(ahora.fecha)
-      ? { dia: "hoy", hora: hhmmDe(delPanel) } : { dia: siguiente.etiqueta, hora: hhmmDe(delPanel) };
-  }
   const hoy = hoyNoSeDespacha ? [] : tandasDelDia(ahora.dia)
     .filter((m) => ahora.minutos < CORTE_DESPACHO && m >= ahora.minutos);
   const saltear = Math.floor(enCola / limite);
-  if (saltear < hoy.length) return { dia: "hoy", hora: hhmmDe(hoy[saltear]) };
+  if (saltear < hoy.length) return { dia: "hoy", fecha: ahora.fecha, hora: hhmmDe(hoy[saltear]) };
   const tandas = tandasDelDia(siguiente.d.dia);
-  return { dia: siguiente.etiqueta, hora: hhmmDe(tandas[Math.min(saltear - hoy.length, tandas.length - 1)]) };
+  return { dia: siguiente.etiqueta, fecha: siguiente.d.fecha, hora: hhmmDe(tandas[Math.min(saltear - hoy.length, tandas.length - 1)]) };
 }
 
 // Los pedidos de moto y Uber "para armar" (pendientes) ocupan las tandas; los armados ya salieron.
@@ -577,10 +581,15 @@ function demoraOperativa(op, enCola) {
   return DEMORAS[op.situacion] || DEMORAS.sin_demora;
 }
 
-// La "próxima salida" del panel es solo para la moto: el Uber sale siempre por tandas.
-function salidaDeUnPedidoNuevo(op, tipoEnvio, enCola) {
+// El Uber conserva sus tandas de media hora; la moto usa opcionesMoto.
+function salidaDeUnPedidoNuevo(op, enCola) {
   const limite = Number(op.limitePorTanda) > 0 ? Number(op.limitePorTanda) : LIMITE_POR_TANDA;
-  return salida(new Date(), { enCola, limite, soloManana: op.situacion === "solo_manana", proximaSalida: tipoEnvio === "moto" ? op.proximaSalida : "", sinDespacho: diasSinDespachoDe(op) });
+  return salida(new Date(), { enCola, limite, soloManana: op.situacion === "solo_manana", sinDespacho: diasSinDespachoDe(op) });
+}
+
+async function pedidosMoto() {
+  const snap = await db.collection("pedidos").where("tipoEnvio", "==", "moto").get();
+  return snap.docs.map((d) => ({ ...d.data(), id: d.id }));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -591,14 +600,23 @@ exports.agentEstadoOperativo = conClave(async (req, res) => {
   const plantillas = { ...PLANTILLAS_FIJAS, ALIAS: ALIASES[op.aliasActivo] || ALIASES.alias1 };
   plantillas.COMPROBANTES_VALIDOS += `\nCuenta activa para una venta nueva (${ALIASES[op.aliasActivo] ? op.aliasActivo : "alias1"}):\n${plantillas.ALIAS}`;
   for (const [nombre, campo] of Object.entries(LISTAS_DEL_PANEL)) plantillas[nombre] = textoDe(op[campo]);
-  const [enCola, pedidoActual] = await Promise.all([
+  plantillas.COMPROBANTES_VALIDOS += `\nTolerancia de importe: hasta $${TOLERANCIA_COMPROBANTE} de diferencia absoluta, tanto de mas como de menos. Solo derivar por importe si supera esa diferencia. Recepcion del archivo no equivale a acreditacion bancaria.`;
+  const horarios = tandasMoto(op);
+  plantillas.FORMAS_DE_ENTREGA = plantillas.FORMAS_DE_ENTREGA.replace("⏳ 13:30 hs - 🌙 20:00 hs", `⏳ Dos salidas: ${horarios[0].hora} y ${horarios[1].hora}. Fecha y disponibilidad a confirmar.`);
+  const [enCola, pedidoActual, motos] = await Promise.all([
     pedidosEnCola(),
     ultimoPedidoDelCliente(req.query.telefono),
+    pedidosMoto(),
   ]);
+  const opciones = opcionesMoto(op, motos);
   res.json({
     ok: true,
-    salida: salidaDeUnPedidoNuevo(op, "moto", enCola),
-    salidaUber: salidaDeUnPedidoNuevo(op, "uber", enCola),
+    salida: opciones[0] || null,
+    opcionesMoto: opciones.slice(0, 4),
+    salidasMoto: horarios,
+    mayorista: { minimoUnidades: 10, agrupacion: op.mayoristaAgrupacion || "por_modelo", dolarEnPesos: Number(op.dolarMayorista) > 0 ? Number(op.dolarMayorista) : null, derivarSoloNegociacion: true },
+    combosBateriasTitulo: textoDe(op.combosBateriasTitulo) || "Combos y baterias",
+    salidaUber: salidaDeUnPedidoNuevo(op, enCola),
     pedidosEnCola: enCola,
     demora: demoraOperativa(op, enCola),
     pedidoActual,
@@ -644,7 +662,33 @@ function armarDireccion(d) {
 }
 
 exports.agentPedido = conClave(async (req, res) => {
-  const b = req.body || {};
+  const entrada = req.body || {};
+  if (entrada.modificar && !entrada.pedidoId) return rechazar(res, "para modificar un pedido hace falta pedidoId; no crees otro pedido");
+  const telefonoEntrada = normalizarTelefono(entrada.telefono);
+  if (!entrada.pedidoId && !entrada.preview) {
+    const origen = entrada.idConversacion && entrada.idMensajeOrigen ? `chatwoot:${entrada.idConversacion}:${entrada.idMensajeOrigen}` : String(entrada.comprobante?.numero || "").replace(/\D/g, "") ? `comprobante:${telefonoEntrada}:${String(entrada.comprobante.numero).replace(/\D/g, "")}` : null;
+    if (origen) {
+      const ref = db.collection("pedidos").doc(`bot-${hashCorto(origen)}`);
+      const existente = await ref.get();
+      if (existente.exists) return res.json({ ok: true, pedidoId: ref.id, mensaje: existente.data().mensaje, total: existente.data().total, reutilizado: true });
+    }
+  }
+  const pedidoEditarRef = entrada.pedidoId ? db.collection("pedidos").doc(String(entrada.pedidoId)) : null;
+  const anteriorSnap = pedidoEditarRef ? await pedidoEditarRef.get() : null;
+  const anterior = anteriorSnap?.exists ? anteriorSnap.data() : null;
+  if (pedidoEditarRef && (!anterior || anterior.origen !== "bot_n8n" || anterior.telefono !== telefonoEntrada)) {
+    return res.status(403).json({ ok: false, error: "no se puede modificar ese pedido para este cliente" });
+  }
+  if (anterior && anterior.estado !== "pendiente") {
+    return res.status(409).json({ ok: false, derivar: true, motivo: "modificar_pedido_armado", error: "el pedido ya no esta pendiente de armado: deriva al equipo, no crees otro pedido" });
+  }
+  if (anterior && entrada.idMensajeOrigen && anterior.ultimoMensajeModificacion === String(entrada.idMensajeOrigen) && !entrada.preview) {
+    return res.json({ ok: true, pedidoId: pedidoEditarRef.id, mensaje: anterior.mensaje, total: anterior.total, reutilizado: true, modificado: true });
+  }
+  const b = anterior ? { ...anterior, tipoEnvio: anterior.datosCorreo ? "correo" : anterior.tipoEnvio, ...entrada } : entrada;
+  if (anterior && entrada.direccion && typeof entrada.direccion === "object") b.direccion = { ...anterior.direccion, ...entrada.direccion };
+  if (anterior && entrada.datosCorreo) b.datosCorreo = { ...anterior.datosCorreo, ...entrada.datosCorreo };
+  if (anterior && entrada.tipoEnvio && entrada.tipoEnvio !== (anterior.datosCorreo ? "correo" : anterior.tipoEnvio) && entrada.horaSolicitada === undefined) b.horaSolicitada = null;
   const preview = b.preview === true || b.preview === "true";
   const telefono = normalizarTelefono(b.telefono);
   const tipoEnvio = b.tipoEnvio;
@@ -654,6 +698,7 @@ exports.agentPedido = conClave(async (req, res) => {
   const dir = armarDireccion(b.direccion);
   const correo = b.datosCorreo || {};
   const items = Array.isArray(b.items) ? b.items : [];
+  const mayorista = b.mayorista === true || b.mayorista === "true";
 
   if (!["moto", "uber", "correo"].includes(tipoEnvio)) return rechazar(res, "tipoEnvio tiene que ser moto, uber o correo");
   if (medioPago && medioPago !== "transferencia" && tipoEnvio !== "moto") return rechazar(res, "en Uber y correo se paga solo por transferencia antes; efectivo, al recibir y mitad y mitad son solo con moto");
@@ -687,8 +732,10 @@ exports.agentPedido = conClave(async (req, res) => {
     if (!ubicacion.cubiertoMoto) return rechazar(res, "esa dirección no entra en moto: ofrecele Uber o correo");
     valorEnvio = ubicacion.monto;
   } else if (tipoEnvio === "uber") {
-    const cot = await cotizacionUber(telefono);
+    const mismaDireccion = anterior?.tipoEnvio === "uber" && normalizarDireccionCotizacion(anterior.direccion.texto) === normalizarDireccionCotizacion(dir.texto);
+    const cot = mismaDireccion ? { montoUber: anterior.valorEnvio, direccion: dir.texto } : await cotizacionUber(telefono);
     if (!cot) return rechazar(res, "todavía no hay una cotización de Uber vigente para este cliente: derivá con motivo cotizar_uber");
+    if (cot.direccion && !mismaDireccionCotizacion(cot.direccion, dir.texto)) return rechazar(res, "la cotizacion de Uber corresponde a otra direccion: solicita una cotizacion para la direccion nueva");
     valorEnvio = Number(cot.montoUber);
   }
 
@@ -696,48 +743,93 @@ exports.agentPedido = conClave(async (req, res) => {
   const op = await leerOperativo();
   const listas = LISTAS_CON_PRECIO.flatMap((campo) => parsearProductos(op[campo]).map((p) => ({ ...p, lista: campo })));
   const ofertas = parsearProductos(op.ofertasTexto);
+  const listaMayorista = parsearMayorista(op.preciosMayoristaTexto);
+  const dolarMayorista = Number(op.dolarMayorista);
+  const conservarPrecios = anterior && entrada.items === undefined;
+  if (mayorista && items.reduce((s, it) => s + Number(it.cantidad), 0) < 10) return rechazar(res, "la compra mayorista requiere al menos 10 unidades");
   // Los combos valen por modelo, mezclando sabores: "2x $40.000" de EB Create es 1 Golden Berry + 1 Pink
   // Lemonade. Se suma la cantidad de cada modelo, se calcula con los combos y se reparte entre sus renglones.
   const lineas = [];
   const modelos = new Map();
+  const cantidadesStock = new Map();
   for (const it of items) {
-    const cantidad = Number(it.cantidad) || 1;
-    const r = productoDeLinea(listas, ofertas, it);
+    const cantidad = Number(it.cantidad ?? 1);
+    if (!Number.isSafeInteger(cantidad) || cantidad <= 0) return rechazar(res, "la cantidad tiene que ser un entero positivo");
+    if (conservarPrecios) {
+      if (!Number.isFinite(it.importe) || it.importe < 0) return rechazar(res, "el pedido original no tiene precios estructurados: consulta al equipo");
+      if (mayorista && buscarProducto(listaMayorista, it.producto)?.producto?.prepago && medioPago !== "transferencia") return rechazar(res, `${it.producto} es pre pago: se abona por transferencia antes`);
+      const linea = { producto: it.producto, variante: it.variante || "", cantidad, importe: it.importe };
+      if (it.precioUnitarioUSD != null) linea.precioUnitarioUSD = it.precioUnitarioUSD;
+      lineas.push(linea);
+      continue;
+    }
+    const r = productoDeLinea(mayorista ? listaMayorista.map((p) => ({ ...p, lista: "preciosVapesTexto" })) : listas, mayorista ? [] : ofertas, it);
     if (r.error) return rechazar(res, r.error);
-    const sinStock = STOCK_DE[r.producto.lista] && faltaStock(op[STOCK_DE[r.producto.lista]], r.producto.nombre, it.variante, cantidad);
+    const claveStock = `${r.producto.nombre}:${normalizar(it.variante)}`;
+    const cantidadStock = (cantidadesStock.get(claveStock) || 0) + cantidad;
+    cantidadesStock.set(claveStock, cantidadStock);
+    const sinStock = STOCK_DE[r.producto.lista] && faltaStock(op[STOCK_DE[r.producto.lista]], r.producto.nombre, it.variante, cantidadStock);
     if (sinStock) return rechazar(res, sinStock);
+    if (mayorista && r.producto.prepago && medioPago !== "transferencia") return rechazar(res, `${r.producto.nombre} es pre pago: se abona por transferencia antes`);
     const linea = { producto: String(it.producto), variante: String(it.variante || ""), cantidad, importe: 0 };
     lineas.push(linea);
-    const m = modelos.get(r.producto.nombre) || { precios: r.precios, cantidad: 0, lineas: [] };
+    const m = modelos.get(r.producto.nombre) || { producto: r.producto, precios: r.precios, cantidad: 0, lineas: [] };
     m.cantidad += cantidad;
     m.lineas.push(linea);
     modelos.set(r.producto.nombre, m);
   }
+  let subtotalUSD = conservarPrecios ? lineas.reduce((s, l) => s + (l.precioUnitarioUSD || 0) * l.cantidad, 0) : 0;
   for (const [nombre, m] of modelos) {
-    const importe = importePorCantidad(m.precios, m.cantidad);
+    const cantidadTramo = op.mayoristaAgrupacion === "total" ? lineas.reduce((s, l) => s + l.cantidad, 0) : m.cantidad;
+    if (mayorista && cantidadTramo < 10) return rechazar(res, `${nombre}: el minimo mayorista es 10 unidades por modelo, mezclando sabores`);
+    const centavosUSD = mayorista ? precioMayorista(m.producto, cantidadTramo) : null;
+    const importe = mayorista ? (centavosUSD === null ? null : Math.round(centavosUSD * m.cantidad * (dolarMayorista > 0 ? dolarMayorista : 1) / 100)) : importePorCantidad(m.precios, m.cantidad);
     if (importe === null) {
       return rechazar(res, `"${nombre}" no se vende de a ${m.cantidad} (opciones: ${Object.keys(m.precios).map((n) => `${n}x`).join(", ")})`);
     }
     let resto = importe;
+    if (mayorista) subtotalUSD += centavosUSD * m.cantidad / 100;
     m.lineas.forEach((l, i) => {
+      if (mayorista) l.precioUnitarioUSD = centavosUSD / 100;
       l.importe = i === m.lineas.length - 1 ? resto : Math.round((importe * l.cantidad) / m.cantidad);
       resto -= l.importe;
     });
   }
 
+  if (mayorista && !conservarPrecios && !(Number.isFinite(dolarMayorista) && dolarMayorista > 0)) {
+    if (!preview) return rechazar(res, "falta cargar el valor del dolar mayorista en el panel: no inventes el total en pesos ni registres el pedido");
+    return res.json({ ok: true, preview: true, necesitaTipoCambio: true, moneda: "USD", subtotalUSD,
+      mensaje: ["PRODUCTOS MAYORISTAS", ...lineas.map((l) => `${l.cantidad}x ${l.producto}${l.variante ? " - " + l.variante : ""}: USD ${l.precioUnitarioUSD} c/u`), `Subtotal productos: USD ${subtotalUSD}`, "Total en pesos pendiente del valor del dolar mayorista del panel. El envio se cotiza en pesos por separado."].join("\n") });
+  }
+
   const subtotal = lineas.reduce((s, l) => s + l.importe, 0);
   const envioSeguro = tipoEnvio === "uber" && (b.envioSeguro === true || b.envioSeguro === "true");
   const montoEnvioSeguro = envioSeguro ? PRECIO_ENVIO_SEGURO : 0;
-  const montoDescuento = efectivo ? descuentoEfectivo(subtotal) : 0;
+  const montoDescuento = efectivo && !mayorista ? descuentoEfectivo(subtotal) : 0;
   const total = subtotal + valorEnvio + montoEnvioSeguro - montoDescuento;
   const envioCorreo = tipoEnvio === "correo" ? CORREO[correo.aSucursal ? "sucursal" : "domicilio"] : 0;
   const aTransferir = medioPago === "mitad y mitad" ? Math.ceil(total / 2) : 0;
-  let cuando = tipoEnvio === "correo" ? null : salidaDeUnPedidoNuevo(op, tipoEnvio, await pedidosEnCola());
+  const despachoMayorista = mayorista && tipoEnvio === "correo";
+  const usaTandaMoto = tipoEnvio === "moto" || despachoMayorista;
+  let opciones = [];
+  let cuando = tipoEnvio === "correo" ? null : salidaDeUnPedidoNuevo(op, await pedidosEnCola());
+  const conservarSalida = anterior && !Object.hasOwn(entrada, "salidaSeleccionada") && anterior.fechaSalida && anterior.horaSalida && tipoEnvio === (anterior.datosCorreo ? "correo" : anterior.tipoEnvio);
+  if (!usaTandaMoto && conservarSalida) cuando = { fecha: anterior.fechaSalida, hora: anterior.horaSalida, dia: anterior.fechaSalida === fechaBA(new Date()) ? "hoy" : `el ${corta(anterior.fechaSalida)}` };
+  if (usaTandaMoto) {
+    opciones = opcionesMoto(op, await pedidosMoto(), new Date(), pedidoEditarRef?.id);
+    const seleccion = entrada.salidaSeleccionada;
+    cuando = conservarSalida
+      ? { fecha: anterior.fechaSalida, hora: anterior.horaSalida, tandaId: anterior.tandaSalida, dia: anterior.fechaSalida === fechaBA(new Date()) ? "hoy" : `el ${corta(anterior.fechaSalida)}` }
+      : elegirSalida(opciones, seleccion, despachoMayorista);
+    if (!cuando || (!preview && !despachoMayorista && !seleccion && !conservarSalida)) {
+      return res.status(400).json({ ok: false, error: "elegi una fecha y tanda de moto disponible; no se puede usar una salida pasada o llena", opcionesMoto: opciones.slice(0, 4) });
+    }
+  }
   const horaSolicitadaTexto = String(b.horaSolicitada || "").trim();
   if (horaSolicitadaTexto && tipoEnvio !== "uber") {
     return rechazar(res, "la hora solicitada solo se puede programar para Uber");
   }
-  if (horaSolicitadaTexto) {
+  if (horaSolicitadaTexto && !(conservarSalida && entrada.horaSolicitada === undefined)) {
     const solicitada = minutosDe(horaSolicitadaTexto);
     const ahora = horaBuenosAires(new Date());
     const primeraDisponible = cuando && cuando.dia === "hoy" ? minutosDe(cuando.hora) : null;
@@ -750,25 +842,39 @@ exports.agentPedido = conClave(async (req, res) => {
     if (solicitada < ahora.minutos || (primeraDisponible !== null && solicitada < primeraDisponible)) {
       return rechazar(res, `no llegamos a programar el Uber a las ${hhmmDe(solicitada)}; la primera salida disponible es hoy a las ${cuando.hora}`);
     }
-    cuando = { dia: "hoy", hora: hhmmDe(solicitada) };
+    cuando = { dia: "hoy", fecha: fechaBA(new Date()), hora: hhmmDe(solicitada) };
+  }
+
+  const esperadoPago = medioPago === "mitad y mitad" ? aTransferir : total;
+  const pagoAdicional = entrada.comprobanteAdicional;
+  if (pagoAdicional && (!anterior || !String(pagoAdicional.numero || "").trim() || !(Number.isFinite(Number(pagoAdicional.monto)) && Number(pagoAdicional.monto) > 0))) return rechazar(res, "el comprobante adicional requiere numero y monto positivo, y un pedido existente");
+  const adicionales = anterior?.comprobantesAdicionales || [];
+  if (pagoAdicional && adicionales.some((p) => String(p.numero) === String(pagoAdicional.numero))) return rechazar(res, "ese comprobante adicional ya esta registrado: no lo sumes otra vez");
+  const montoBase = anterior && entrada.comprobante === undefined ? Number(anterior.montoPagado ?? anterior.comprobante?.monto ?? anterior.montoTransferencia ?? anterior.total) : b.comprobante?.monto != null ? Number(b.comprobante.monto) : null;
+  const montoRecibido = conComprobante && montoBase !== null ? montoBase + (pagoAdicional ? Number(pagoAdicional.monto) : 0) : null;
+  const diferenciaPago = montoRecibido !== null ? montoRecibido - esperadoPago : null;
+  if (!preview && conComprobante && montoRecibido !== null && (!Number.isFinite(montoRecibido) || Math.abs(diferenciaPago) > TOLERANCIA_COMPROBANTE)) {
+    return res.status(400).json({ ok: false, requierePago: !!anterior && diferenciaPago < 0, derivar: diferenciaPago > TOLERANCIA_COMPROBANTE || !anterior || !!entrada.comprobante || !!pagoAdicional, motivo: "comprobante_dudoso", diferencia: diferenciaPago, error: anterior && diferenciaPago < 0 && !entrada.comprobante && !pagoAdicional ? `el cambio requiere un pago adicional de ${$(-diferenciaPago)}: pide ese comprobante antes de modificar` : "el importe difiere en mas de $5.000 del monto a transferir: deriva para verificar" });
   }
 
   // Si no sale hoy, va arriba de todo: la gente no lee el detalle y después se queja.
   const noSaleHoy = cuando && cuando.dia !== "hoy";
-  const avisoNoRegistrado = preview
+  const avisoNoRegistrado = preview && anterior
+    ? "Cambio propuesto: el pedido existente todavia no fue actualizado."
+    : preview
     ? conComprobante
       ? "⚠️ Todavía no está registrado para despacho. Para registrarlo, mandá el comprobante de pago."
       : "⚠️ Todavía no está registrado para despacho. Para registrarlo, confirmame el pedido."
     : null;
   const avisoSalida = noSaleHoy
     ? preview
-      ? `⚠️ OJO: SI CONFIRMÁS AHORA, SALE ${cuando.dia.toUpperCase()} A LAS ${cuando.hora}`
-      : `⚠️ OJO: SALE ${cuando.dia.toUpperCase()} A LAS ${cuando.hora}`
+      ? `⚠️ OJO: SI CONFIRMÁS AHORA, SALE ${cuando.dia.toUpperCase()}, ${corta(cuando.fecha)}, A LAS ${cuando.hora}`
+      : `⚠️ OJO: SALE ${cuando.dia.toUpperCase()}, ${corta(cuando.fecha)}, A LAS ${cuando.hora}`
     : null;
   const lineaSalida = cuando
     ? preview
-      ? `🕐 Si confirmás el pedido ahora, sale ${cuando.dia} a las ${cuando.hora}${horaSolicitadaTexto ? " (horario pedido por el cliente)" : ""}`
-      : `🕐 Sale ${cuando.dia} a las ${cuando.hora}${horaSolicitadaTexto ? " (horario pedido por el cliente)" : ""}`
+      ? `🕐 Si confirmás el pedido ahora, sale ${cuando.dia}, ${corta(cuando.fecha)}, a las ${cuando.hora}${horaSolicitadaTexto ? " (horario pedido por el cliente)" : ""}`
+      : `🕐 Sale ${cuando.dia}, ${corta(cuando.fecha)}, a las ${cuando.hora}${horaSolicitadaTexto ? " (horario pedido por el cliente)" : ""}`
     : null;
   const mensaje = [
     avisoSalida,
@@ -776,10 +882,11 @@ exports.agentPedido = conClave(async (req, res) => {
     avisoNoRegistrado,
     avisoNoRegistrado ? "" : null,
     "🛒 PRODUCTOS",
-    ...lineas.map((l) => `* ${l.cantidad}x ${l.producto}${l.variante ? " - " + l.variante : ""}: ${$(l.importe)}`),
+    ...lineas.map((l) => `* ${l.cantidad}x ${l.producto}${l.variante ? " - " + l.variante : ""}: ${$(l.importe)}${mayorista ? ` (mayorista USD ${l.precioUnitarioUSD} c/u)` : ""}`),
     "",
     "💰 TOTALES",
     `Subtotal: ${$(subtotal)}`,
+    mayorista ? `Subtotal mayorista: USD ${subtotalUSD} — dolar: ${$(conservarPrecios ? anterior.dolarMayorista : dolarMayorista)}` : null,
     valorEnvio ? `Envío: ${$(valorEnvio)}` : null,
     envioSeguro ? `🛡️ Envío seguro: ${$(montoEnvioSeguro)}` : null,
     montoDescuento ? `💵 Descuento por efectivo: -${$(montoDescuento)}` : null,
@@ -789,6 +896,7 @@ exports.agentPedido = conClave(async (req, res) => {
     "📦 ENTREGA",
     ENVIO_LABEL[tipoEnvio] + (envioSeguro ? " — 🛡️ CON ENVÍO SEGURO" : "") +
       (tipoEnvio === "correo" ? (correo.aSucursal ? " a sucursal" : " a domicilio") : ""),
+    despachoMayorista ? "Traslado interno a despacho: motomensajeria, primera tanda. No es la entrega al cliente." : null,
     lineaSalida,
     dir.texto,
     ubicacion && ubicacion.zona ? `Zona ${ubicacion.zona}` : null,
@@ -802,9 +910,10 @@ exports.agentPedido = conClave(async (req, res) => {
     aTransferir ? `A transferir ahora: ${$(aTransferir)}` : null,
     aTransferir ? `En efectivo al recibir: ${$(total - aTransferir)}` : null,
     b.comprobante && b.comprobante.numero ? `Comprobante: ${b.comprobante.numero}` : null,
+    ...[...adicionales, ...(pagoAdicional ? [pagoAdicional] : [])].map((p) => `Comprobante adicional: ${p.numero} — ${$(p.monto)}`),
   ].filter((l) => l !== null).join("\n");
 
-  if (preview) return res.json({ ok: true, preview: true, mensaje, total });
+  if (preview) return res.json({ ok: true, preview: true, mensaje, total, salida: cuando, opcionesMoto: opciones.slice(0, 4), pedidoId: pedidoEditarRef?.id || null, saldoPendiente: anterior && diferenciaPago < 0 ? -diferenciaPago : 0 });
 
   // El depósito maneja el correo como un retiro (arma el paquete y lo lleva a Vía Cargo), así que
   // va a la columna Retiro del panel con una primera línea que lo deja claro, igual que lo cargan ellos.
@@ -820,7 +929,7 @@ exports.agentPedido = conClave(async (req, res) => {
   const idempotencia = idempotenciaOrigen ? hashCorto(idempotenciaOrigen) : null;
   const pedidos = db.collection("pedidos");
   const pedidoRef = idempotencia ? pedidos.doc(`bot-${idempotencia}`) : null;
-  if (pedidoRef) {
+  if (pedidoRef && !pedidoEditarRef) {
     const existente = await pedidoRef.get();
     if (existente.exists) {
       const data = existente.data();
@@ -838,14 +947,14 @@ exports.agentPedido = conClave(async (req, res) => {
     // Campos que ya usaba el panel:
     mensaje: esCorreo ? `📦 VÍA CARGO — ${correo.aSucursal ? "SUCURSAL" : "DOMICILIO"}\n\n${mensaje}` : mensaje,
     estado: "pendiente",
-    tipoEnvio: esCorreo ? "retiro" : tipoEnvio,
+    tipoEnvio: despachoMayorista ? "moto" : esCorreo ? "retiro" : tipoEnvio,
     createdAt: new Date().toISOString(),
     // Estructurados del agente:
     telefono,
     idConversacion: idConversacion || null,
     idMensajeOrigen: idMensajeOrigen || null,
     origen: "bot_n8n",
-    schemaVersion: 2,
+    schemaVersion: 3,
     idempotencia,
     cliente: String(b.cliente).trim(),
     direccion: {
@@ -861,39 +970,86 @@ exports.agentPedido = conClave(async (req, res) => {
     montoEnvioSeguro,
     montoDescuento,
     total,
+    mayorista,
+    subtotalUSD: mayorista ? subtotalUSD : null,
+    dolarMayorista: mayorista ? (conservarPrecios ? anterior.dolarMayorista : dolarMayorista) : null,
+    entregaCliente: tipoEnvio,
+    despachoInterno: despachoMayorista ? "moto_a_via_cargo" : null,
+    fechaSalida: cuando?.fecha || null,
+    horaSalida: cuando?.hora || null,
+    tandaSalida: cuando?.tandaId || null,
+    repartidor: usaTandaMoto ? (cuando.tandaId === "segunda" ? "moto2" : "moto1") : null,
     medioPago,
     horaSolicitada: horaSolicitadaTexto ? cuando.hora : null,
     montoTransferencia: aTransferir || null,
-    cuentaCobro: conComprobante ? (ALIASES[op.aliasActivo] ? op.aliasActivo : "alias1") : null,
+    cuentaCobro: conComprobante ? (ALIASES[b.cuentaCobro] ? b.cuentaCobro : ALIASES[op.aliasActivo] ? op.aliasActivo : "alias1") : null,
     comprobante: b.comprobante || null,
+    montoPagado: conComprobante ? montoRecibido : null,
+    comprobantesAdicionales: [...adicionales, ...(pagoAdicional ? [{ numero: String(pagoAdicional.numero), monto: Number(pagoAdicional.monto) }] : [])],
     comprobanteImagen: null,
     datosCorreo: tipoEnvio === "correo"
       ? { dni: String(correo.dni).trim(), localidad: String(correo.localidad).trim(), cp: String(correo.cp).trim(), aSucursal: correo.aSucursal, valor: envioCorreo }
       : null,
   };
-  const pedidoGuardado = pedidoRef || await pedidos.add(pedidoData);
-  if (pedidoRef) await pedidoRef.set(pedidoData);
+  const pedidoGuardado = pedidoEditarRef || pedidoRef || pedidos.doc();
+  const resultado = await db.runTransaction(async (tx) => {
+    const actualSnap = await tx.get(pedidoGuardado);
+    const actual = actualSnap.exists ? actualSnap.data() : null;
+    if (pedidoEditarRef) {
+      if (actual?.estado !== "pendiente") return { bloqueado: true };
+      if (actual.telefono !== telefono || actual.origen !== "bot_n8n") return { bloqueado: true };
+      if (actual.updatedAt !== anterior.updatedAt || actual.total !== anterior.total || actual.mensaje !== anterior.mensaje) return { conflicto: true };
+    } else if (actual) return { reutilizado: true, data: actual };
+    if (usaTandaMoto && !conservarSalida) {
+      // El documento de tanda serializa altas concurrentes, incluso cuando la tanda estaba vacia.
+      const lockRef = db.collection("bot_tandas").doc(`${cuando.fecha}-${cuando.tandaId}`);
+      const lock = await tx.get(lockRef);
+      const config = await tx.get(db.collection("settings").doc("operativo"));
+      const agendados = await tx.get(db.collection("pedidos").where("fechaSalida", "==", cuando.fecha));
+      const disponibles = opcionesMoto(config.exists ? config.data() : {}, agendados.docs.map((d) => ({ ...d.data(), id: d.id })), new Date(), pedidoEditarRef?.id);
+      if (!elegirSalida(disponibles, cuando, despachoMayorista)) return { sinCupo: true };
+      tx.set(lockRef, { version: Number(lock.exists ? lock.data().version : 0) + 1 });
+    }
+    tx.set(pedidoGuardado, pedidoEditarRef ? {
+      ...actual, ...pedidoData, estado: actual.estado, createdAt: actual.createdAt,
+      idempotencia: actual.idempotencia, idMensajeOrigen: actual.idMensajeOrigen,
+      cuentaCobro: actual.cuentaCobro || pedidoData.cuentaCobro, comprobanteImagen: actual.comprobanteImagen,
+      updatedAt: new Date().toISOString(), ultimoMensajeModificacion: String(entrada.idMensajeOrigen || ""),
+    } : pedidoData);
+    return { reutilizado: false };
+  });
+  if (resultado.bloqueado) return res.status(409).json({ ok: false, derivar: true, motivo: "modificar_pedido_armado", error: "el deposito cambio el estado: deriva al equipo sin crear otro pedido" });
+  if (resultado.conflicto) return res.status(409).json({ ok: false, error: "el pedido cambio durante la modificacion: consulta el estado y vuelve a confirmar" });
+  if (resultado.sinCupo) return res.status(409).json({ ok: false, error: "la tanda elegida ya no esta disponible: consulta las salidas y pide elegir otra" });
+  if (resultado.reutilizado) return res.json({ ok: true, pedidoId: pedidoGuardado.id, mensaje: resultado.data.mensaje, total: resultado.data.total, reutilizado: true });
 
   // La foto del comprobante se copia a Storage para no depender de la URL de Chatwoot. Si falla,
   // el pedido queda cargado igual, sin foto.
-  if (b.comprobanteUrl && conComprobante) {
-    const imagen = await copiarComprobante(b.comprobanteUrl, pedidoGuardado.id);
-    if (imagen) await pedidoGuardado.update({ comprobanteImagen: imagen });
+  if (entrada.comprobanteUrl && conComprobante) {
+    const adicionalId = pagoAdicional ? hashCorto(pagoAdicional.numero) : null;
+    const imagen = await copiarComprobante(b.comprobanteUrl, pedidoGuardado.id, adicionalId);
+    if (imagen && adicionalId) {
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(pedidoGuardado);
+        const data = snap.data();
+        tx.set(pedidoGuardado, { ...data, comprobantesAdicionales: data.comprobantesAdicionales.map((p) => String(p.numero) === String(pagoAdicional.numero) ? { ...p, imagen } : p) });
+      });
+    } else if (imagen) await pedidoGuardado.update({ comprobanteImagen: imagen });
   }
 
-  res.json({ ok: true, pedidoId: pedidoGuardado.id, mensaje, total, reutilizado: false });
+  res.json({ ok: true, pedidoId: pedidoGuardado.id, mensaje, total, salida: cuando, reutilizado: false, modificado: !!pedidoEditarRef });
 });
 
 const EXTENSIONES = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic", "application/pdf": "pdf" };
 
-async function copiarComprobante(url, pedidoId) {
+async function copiarComprobante(url, pedidoId, adicionalId = null) {
   try {
     const resp = await axios.get(url, { responseType: "arraybuffer", timeout: 15000, maxContentLength: 15 * 1024 * 1024 });
     const tipo = String(resp.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
     if (!EXTENSIONES[tipo]) return null;
-    const path = `comprobantes/${new Date().toISOString().slice(0, 7).replace("-", "/")}/${pedidoId}.${EXTENSIONES[tipo]}`;
+    const path = `comprobantes/${new Date().toISOString().slice(0, 7).replace("-", "/")}/${pedidoId}${adicionalId ? "-" + adicionalId : ""}.${EXTENSIONES[tipo]}`;
     await admin.storage().bucket(STORAGE_BUCKET).file(path).save(Buffer.from(resp.data), { contentType: tipo });
-    return { url: `${SERVE_COMPROBANTE_BASE}?pedido=${pedidoId}`, path, contentType: tipo };
+    return { url: `${SERVE_COMPROBANTE_BASE}?pedido=${pedidoId}${adicionalId ? "&adicional=" + adicionalId : ""}`, path, contentType: tipo };
   } catch (e) {
     console.error("[agente-api] no se pudo copiar el comprobante", e.message);
     return null;
@@ -905,7 +1061,9 @@ async function copiarComprobante(url, pedidoId) {
 exports.serveComprobante = functions.https.onRequest(async (req, res) => {
   const pedidoId = String(req.query.pedido || "").trim();
   const snap = pedidoId ? await db.collection("pedidos").doc(pedidoId).get() : null;
-  const img = snap && snap.exists && snap.data().comprobanteImagen;
+  const img = snap && snap.exists && (req.query.adicional
+    ? snap.data().comprobantesAdicionales?.find((p) => hashCorto(p.numero) === req.query.adicional)?.imagen
+    : snap.data().comprobanteImagen);
   if (!img || !img.path) return res.status(404).send("ese pedido no tiene comprobante guardado");
   res.setHeader("Content-Type", img.contentType);
   // Sin este header el panel puede MOSTRAR la foto (un <img> no necesita permiso) pero no puede

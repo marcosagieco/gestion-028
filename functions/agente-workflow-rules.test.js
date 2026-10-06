@@ -1,0 +1,30 @@
+"use strict";
+const assert = require("node:assert/strict");
+const { actualizarReglas } = require("./agente-workflow-rules");
+const w = require("../automation/n8n/028-import-agente-whatsapp.json");
+const result = actualizarReglas(w);
+const twice = actualizarReglas(result);
+const prompt = twice.nodes.find((n) => n.name === "AI Agent").parameters.options.systemMessage;
+assert(!prompt.includes("$1.000"));
+assert(!prompt.includes("compras por mayor;"));
+assert(!prompt.includes("por moto sale {{"));
+assert(prompt.includes("$5.000"));
+assert(prompt.includes("OPCIONES MOTO"));
+assert(prompt.includes("modificar_pedido"));
+assert.equal(prompt.match(/REGLAS NUEVAS 06-10/g).length, 2);
+assert.equal(prompt.match(/\nCOMBOS_BATERIAS:/g).length, 1);
+assert.equal(twice.nodes.filter((n) => n.name === "modificar_pedido").length, 1);
+assert.deepEqual(result.connections.modificar_pedido, result.connections.crear_pedido);
+for (const name of ["armar_resumen", "crear_pedido", "modificar_pedido"]) {
+  const node = result.nodes.find((n) => n.name === name);
+  const expression = node.parameters.jsonBody.slice(3, -2).trim();
+  const captured = [];
+  const fromAI = (_name, description) => { captured.push(description); return { pedidoId: "test", preview: true }; };
+  const $ = () => ({ item: { json: { telefono: "test", conversacion: "123", mensajeId: "456", ultimoAdjunto: null } } });
+  const body = JSON.parse(new Function("$json", "$fromAI", "$", `return (${expression})`)({}, fromAI, $));
+  assert.equal(body.telefono, "test");
+  assert(captured[0].includes("salidaSeleccionada"));
+  if (name !== "armar_resumen") assert.equal(body.preview, false);
+  if (name === "modificar_pedido") assert.equal(body.modificar, true);
+}
+console.log("Workflow: reglas, expresiones de tools, conexiones y transformacion repetida OK");
