@@ -494,15 +494,22 @@ async function cotizacionUber(telefono) {
     .sort((a, b) => Date.parse(b.resueltoEn) - Date.parse(a.resueltoEn))[0] || null;
 }
 
-const normalizarDireccionCotizacion = (direccion) => normalizar(direccion).replace(/\b(caba|capital federal|ciudad autonoma de buenos aires)\b/g, "").trim();
 const tiempoCotizacionUber = (c) => Math.max(
   Date.parse(c.createdAt) || 0,
   Date.parse(c.resueltoEn) || 0,
   Date.parse(c.procesadoEn) || 0
 );
+// El agente escribe la misma dirección distinta cada vez ("Av. del Libertador 5930, Belgrano, CABA,
+// esquina Juramento" / "Av. del Libertador 5930, entre Juramento y Echeverría"): se compara solo la
+// calle y la altura. Sin altura (una esquina, una YPF) no hay con qué comparar y se da por buena.
+function nucleoDireccion(direccion) {
+  const calle = normalizar(String(direccion || "").split(/[,(]|\bentre\b|\besquina\b/i)[0]);
+  const m = [...calle.matchAll(/([a-z]+) (\d{1,5})\b(?! de\b)/g)][0];
+  return m ? `${m[1]} ${m[2]}` : "";
+}
 function mismaDireccionCotizacion(a, b) {
-  const na = normalizarDireccionCotizacion(a);
-  const nb = normalizarDireccionCotizacion(b);
+  const na = nucleoDireccion(a);
+  const nb = nucleoDireccion(b);
   return !na || !nb || na === nb;
 }
 
@@ -738,7 +745,7 @@ exports.agentPedido = conClave(async (req, res) => {
     if (!ubicacion.cubiertoMoto) return rechazar(res, "esa dirección no entra en moto: ofrecele Uber o correo");
     valorEnvio = ubicacion.monto;
   } else if (tipoEnvio === "uber") {
-    const mismaDireccion = anterior?.tipoEnvio === "uber" && normalizarDireccionCotizacion(anterior.direccion.texto) === normalizarDireccionCotizacion(dir.texto);
+    const mismaDireccion = anterior?.tipoEnvio === "uber" && mismaDireccionCotizacion(anterior.direccion?.texto, dir.texto);
     const cot = mismaDireccion ? { montoUber: anterior.valorEnvio, direccion: dir.texto } : await cotizacionUber(telefono);
     if (!cot) return rechazar(res, "todavía no hay una cotización de Uber vigente para este cliente: derivá con motivo cotizar_uber");
     if (cot.direccion && !mismaDireccionCotizacion(cot.direccion, dir.texto)) return rechazar(res, "la cotizacion de Uber corresponde a otra direccion: solicita una cotizacion para la direccion nueva");

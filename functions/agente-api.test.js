@@ -259,6 +259,19 @@ async function main() {
     const rDir = await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "99", telefonoCliente: "+54 9 11 3333-4444", direccion: "Cabildo 2000, Belgrano" } });
     const rDir2 = await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "99b", telefonoCliente: "+54 9 11 3333-4444", direccion: "Lacroze 2542, Colegiales" } });
     ok("uber: si cambia la dirección permite una nueva cotización aunque sea reciente", rDir2.body.ok && !rDir2.body.yaPendiente && rDir2.body.id !== rDir.body.id, rDir2.body);
+    // La misma dirección escrita distinto (casos reales del 6/10) no pide otra cotización.
+    for (const [n, a, b] of [
+      ["10", "Av. del Libertador 5930, Belgrano, CABA, esquina Juramento", "Av. del Libertador 5930, entre Juramento y Echeverría, Belgrano, CABA. Coordenadas: -34.557,-58.447"],
+      ["11", "Defensa 649, entre Chile y México, San Telmo", "Defensa 649, San Telmo"],
+      ["12", "YPF de Av. Balbín y Av. General Paz, ubicación: https://maps.google.com/?q=-34.55,-58.49", "YPF de Av. Balbín y General Paz"],
+      ["13", "Av. 9 de Julio 1200, CABA", "Avenida 9 de Julio 1200"],
+    ]) {
+      await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: n, telefonoCliente: `+54 9 11 4444-00${n}`, direccion: a } });
+      const rMisma = await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: n + "b", telefonoCliente: `+54 9 11 4444-00${n}`, direccion: b } });
+      ok(`uber: "${b.slice(0, 30)}…" es la misma dirección`, rMisma.body.yaPendiente, rMisma.body);
+    }
+    const rOtra = await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "14b", telefonoCliente: "+54 9 11 4444-0013", direccion: "Avenida 9 de Julio 1500" } });
+    ok("uber: otra altura de la misma calle es otra dirección", rOtra.body.ok && !rOtra.body.yaPendiente, rOtra.body);
     const r3 = await resumen({ tipoEnvio: "uber", envioSeguro: true });
     ok("uber: usa el monto que cargó el depósito + envío seguro", r3.body.total === 26000 + 8500 + 1990, r3.body);
     const r4 = await resumen({ tipoEnvio: "uber", medioPago: "efectivo" });
@@ -353,7 +366,8 @@ async function main() {
     const estadoPendiente = await llamar(api.agentEstadoOperativo, { query: { telefono: "+54 9 11 5869-6086" } });
     ok("estado: un pedido pendiente nunca figura en camino", estadoPendiente.body.pedidoActual?.estado === "pendiente" && /todavía no figura como despachado/.test(estadoPendiente.body.pedidoActual.descripcion) && !estadoPendiente.body.pedidoActual.puedeAfirmarEnCamino, estadoPendiente.body.pedidoActual);
     store[`pedidos/${r1.body.pedidoId}`].estado = "armado";
-    store["recorridos/activo"] = { estado: "en_calle", salidaEn: new Date().toISOString() };
+    // El reparto que le toca depende de la hora (15:30 o 18:30): se pone en la calle ese.
+    store[`recorridos/${p.repartidor === "moto2" ? "activo_moto2" : "activo"}`] = { estado: "en_calle", salidaEn: new Date().toISOString() };
     const estadoEnCalle = await llamar(api.agentEstadoOperativo, { query: { telefono: "5491158696086" } });
     ok("estado: moto solo puede decir en camino si el reparto salió", estadoEnCalle.body.pedidoActual?.puedeAfirmarEnCamino === true && /reparto ya está en la calle/.test(estadoEnCalle.body.pedidoActual.descripcion), estadoEnCalle.body.pedidoActual);
 
