@@ -237,6 +237,22 @@ async function main() {
     ok(`efectivo: descuento de ${off}`, r.body.ok && r.body.mensaje.includes(`-$${off.toLocaleString("es-AR")}`), r.body);
   }
 
+  // ── combos de baterías (lista propia del panel, con los nombres en minúscula) ──
+  {
+    const operativo = store["settings/operativo"];
+    store["settings/operativo"] = { ...operativo, combosBateriasTexto: "\n\n🔥 COMBOS DISPONIBLES\n\n🖊️ Batería ELFTHC + Cápsula 028 1ML\n💰 $70.000\n\n⚡ Batería TORUS + Cápsula 028 1ML\n💰 $75.000\n\n━━━━━━━━━━━━━━━\n\n💨 Elegí tu batería y llevátela lista con Cápsula 028 1ML." };
+    for (const [nombre, total] of [
+      ["Batería ELFTHC + Cápsula 028 1ML", "70.000"],
+      ["🖊️ Batería ELFTHC + Cápsula 028 1ML", "70.000"],
+      ["BATERÍA ELFTHC + CÁPSULA 028", "70.000"],
+      ["Batería TORUS + Cápsula 028 1ML", "75.000"],
+    ]) {
+      const r = await resumen({ medioPago: "transferencia", items: [{ producto: nombre, variante: "Pineapple Express", cantidad: 1 }] });
+      ok(`combos: "${nombre}" sale $${total}`, r.body.ok && r.body.mensaje.includes(`$${total}`), r.body);
+    }
+    store["settings/operativo"] = operativo;
+  }
+
   // ── uber ──
   {
     const r = await resumen({ tipoEnvio: "uber" });

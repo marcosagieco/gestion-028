@@ -314,6 +314,30 @@ function parsearProductos(texto) {
   return productos.filter((p) => p.nombre);
 }
 
+// La lista de combos de baterías escribe el nombre como viene ("🖊️ Batería ELFTHC + Cápsula 028 1ML"),
+// no en mayúsculas, y arriba lleva un título ("🔥 COMBOS DISPONIBLES") que parsearProductos tomaría por
+// nombre. Acá el nombre de cada precio es el renglón de texto que tiene justo arriba.
+function parsearCombos(texto) {
+  const productos = [];
+  let anterior = null;
+  for (const cruda of String(texto || "").split("\n")) {
+    const linea = cruda.trim();
+    if (!linea || SEPARADOR_RE.test(linea)) { anterior = null; continue; }
+    const precio = linea.match(PRECIO_RE);
+    if (!precio) { anterior = sinEmojis(linea); continue; }
+    const monto = parseInt(precio[1].replace(/\D/g, ""), 10);
+    const antes = linea.slice(0, precio.index);
+    const cantidad = Number((antes.match(CANTIDAD_RE) || [])[1]) || 1;
+    const enLinea = sinEmojis(antes.replace(CANTIDAD_RE, " "));
+    const nombre = (enLinea.match(/\p{L}/gu) || []).length >= 3 ? enLinea : anterior;
+    if (!(monto > 0) || !nombre) continue;
+    const mismo = productos.find((p) => p.nombre === nombre);
+    if (mismo) mismo.precios[cantidad] = monto;
+    else productos.push({ nombre, detalle: "", precios: { [cantidad]: monto } });
+  }
+  return productos;
+}
+
 function distanciaLevenshtein(a, b) {
   const fila = Array.from({ length: b.length + 1 }, (_, j) => j);
   for (let i = 1; i <= a.length; i++) {
@@ -754,7 +778,8 @@ exports.agentPedido = conClave(async (req, res) => {
 
   // Precios: siempre de las listas del día.
   const op = await leerOperativo();
-  const listas = LISTAS_CON_PRECIO.flatMap((campo) => parsearProductos(op[campo]).map((p) => ({ ...p, lista: campo })));
+  const listas = LISTAS_CON_PRECIO.flatMap((campo) => parsearProductos(op[campo]).map((p) => ({ ...p, lista: campo })))
+    .concat(parsearCombos(op.combosBateriasTexto).map((p) => ({ ...p, lista: "combosBateriasTexto" })));
   const ofertas = parsearProductos(op.ofertasTexto);
   const listaMayorista = parsearMayorista(op.preciosMayoristaTexto);
   const dolarMayorista = Number(op.dolarMayorista);
