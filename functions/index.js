@@ -15,6 +15,17 @@ const axios = require('axios');
 const STORAGE_BUCKET  = 'gestion-028.firebasestorage.app';
 const SERVE_PDF_BASE  = 'https://us-central1-gestion-028.cloudfunctions.net/servePdf';
 
+// Credenciales de ARCA (CUIT, certificado y clave de cada emisor) — viven en Secret Manager, no en
+// functions/.env. Antes salían del .env de quien corría el deploy, así que publicar desde una
+// máquina sin ese bloque (ej. la de otro programador trabajando en el bot) dejaba el servidor sin
+// credenciales y la facturación rota, sin que nadie lo notara hasta que alguien intentaba facturar
+// — pasó del 15/09 al 07/10. Con el `secrets` de acá, Firebase inyecta el valor real en
+// process.env ANTES de que corra el código de esta función, sea quien sea el que haga el deploy:
+// ya no depende de qué .env tenga la computadora que publica. Se atan solo a `webhook` y
+// `emitirFacturaWeb`, las únicas dos funciones que de verdad llaman a ARCA (ver emitirFacturaC en
+// facturacion.js) — el resto no los necesita y no hace falta dárselos.
+const ARCA_SECRETS = ['AFIP_CUIT', 'AFIP_CERT', 'AFIP_KEY', 'AFIP_PTO_VTA', 'AFIP_CUIT_2', 'AFIP_CERT_2', 'AFIP_KEY_2'];
+
 // ─── Subir PDF a Storage (solo guarda; la URL se sirve vía servePdf) ──────────
 async function subirPDFStorage(pdfBuffer, filePath) {
     const bucket = admin.storage().bucket(STORAGE_BUCKET);
@@ -571,7 +582,7 @@ exports.patchPdfUrls = functions.https.onRequest(async (req, res) => {
     return res.status(200).json({ ok: true, updated: snap.size });
 });
 
-exports.webhook = functions.https.onRequest(async (req, res) => {
+exports.webhook = functions.https.onRequest({ secrets: ARCA_SECRETS }, async (req, res) => {
     if (req.method === "GET") {
         if (req.query["hub.verify_token"] === VERIFY_TOKEN) {
             return res.status(200).send(req.query["hub.challenge"]);
@@ -1081,7 +1092,7 @@ async function emitirYGuardarFactura({ saleIds, monto, emisorId }) {
 
 // ─── Endpoint HTTP que llama la web (Pedidos → Finalizar) para facturar una venta ya registrada,
 // con el mismo criterio que WhatsApp: solo Alias 1 / Alias 2 tienen emisor dado de alta en ARCA.
-exports.emitirFacturaWeb = functions.https.onRequest(async (req, res) => {
+exports.emitirFacturaWeb = functions.https.onRequest({ secrets: ARCA_SECRETS }, async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Headers', 'Content-Type, X-Factura-Key');
     res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
