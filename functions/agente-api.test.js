@@ -240,12 +240,21 @@ async function main() {
   // ── combos de baterías (lista propia del panel, con los nombres en minúscula) ──
   {
     const operativo = store["settings/operativo"];
-    store["settings/operativo"] = { ...operativo, combosBateriasTexto: "\n\n🔥 COMBOS DISPONIBLES\n\n🖊️ Batería ELFTHC + Cápsula 028 1ML\n💰 $70.000\n\n⚡ Batería TORUS + Cápsula 028 1ML\n💰 $75.000\n\n━━━━━━━━━━━━━━━\n\n💨 Elegí tu batería y llevátela lista con Cápsula 028 1ML." };
+    // Texto real del panel (8/10): la batería sola arriba de los combos. El adaptador original ya está
+    // en la lista de Apple de prueba, bajo el título de su sección ("APPLE ORIGINAL").
+    store["settings/operativo"] = { ...operativo,
+      combosBateriasTexto: "🔋 LISTA PRECIOS BATERÍAS THC - CLIENTES\n\n━━━━━━━━━━━━━━━\n\n🖊️ BATERÍA PEN ELFTHC\n\n💨 Diseño tipo Pen\n🔌 Compatible con cápsulas rosca 510\n💎 Compacta, práctica y fácil de usar\n\n💰 1x $35.000\n\n━━━━━━━━━━━━━━━\n\n🔥 COMBOS DISPONIBLES\n\n🖊️ Batería ELFTHC + Cápsula 028 1ML\n💰 $70.000\n\n⚡ Batería TORUS + Cápsula 028 1ML\n💰 $75.000\n\n━━━━━━━━━━━━━━━\n\n💨 Elegí tu batería y llevátela lista con Cápsula 028 1ML.",
+    };
     for (const [nombre, total] of [
       ["Batería ELFTHC + Cápsula 028 1ML", "70.000"],
       ["🖊️ Batería ELFTHC + Cápsula 028 1ML", "70.000"],
       ["BATERÍA ELFTHC + CÁPSULA 028", "70.000"],
       ["Batería TORUS + Cápsula 028 1ML", "75.000"],
+      ["combo torus", "75.000"],
+      ["Batería ELFTHC", "35.000"], // la batería sola no es el combo
+      ["BATERÍA PEN ELFTHC", "35.000"],
+      ["Cápsula 028", "45.000"], // la cápsula sola (lista THC, en plural) no es un combo
+      ["Adaptador 20W", "65.000"],
     ]) {
       const r = await resumen({ medioPago: "transferencia", items: [{ producto: nombre, variante: "Pineapple Express", cantidad: 1 }] });
       ok(`combos: "${nombre}" sale $${total}`, r.body.ok && r.body.mensaje.includes(`$${total}`), r.body);

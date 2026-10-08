@@ -112,8 +112,11 @@ const LISTAS_DEL_PANEL = {
   OFERTAS: "ofertasTexto",
   COMBOS_BATERIAS: "combosBateriasTexto",
 };
-// Listas minoristas en pesos; la mayorista tiene su propio parser en USD.
-const LISTAS_CON_PRECIO = ["preciosVapesTexto", "preciosThcTexto", "perfumesTexto", "appleTexto"];
+// Listas minoristas en pesos: todas las del panel menos las de stock, la mayorista (tiene su propio
+// parser en USD) y las ofertas (pisan precios, ver productoDeLinea). Una lista nueva que se sume a
+// LISTAS_DEL_PANEL se cobra sola: lo que el bot puede ofrecer, el backend lo puede cobrar.
+const LISTAS_CON_PRECIO = Object.values(LISTAS_DEL_PANEL)
+  .filter((campo) => !/^stock/.test(campo) && !["preciosMayoristaTexto", "ofertasTexto"].includes(campo));
 // La lista de stock de cada lista de precios (perfumes y Apple no tienen).
 const STOCK_DE = { preciosVapesTexto: "stockNicotinaTexto", preciosThcTexto: "stockThcTexto" };
 
@@ -170,7 +173,9 @@ const normalizar = (texto) =>
     .replace(/ +/g, " ")
     .trim();
 
-const PALABRAS_VACIAS = new Set(["de", "del", "la", "el", "los", "las", "con", "a", "x"]);
+// "combo" tampoco distingue un producto: en las listas va en el título de la sección ("COMBOS
+// DISPONIBLES"), no en el nombre de cada combo.
+const PALABRAS_VACIAS = new Set(["de", "del", "la", "el", "los", "las", "con", "a", "x", "combo", "combos"]);
 const palabras = (texto) => normalizar(texto).split(" ").filter((p) => p && !PALABRAS_VACIAS.has(p));
 
 // Teléfono → 549XXXXXXXXXX, igual que el webhook de index.js.
@@ -273,10 +278,17 @@ function esNombre(linea) {
   return letras.length >= 2 && mayusculas / letras.length >= 0.6;
 }
 
+// Cada producto guarda además `lineas`: todos los renglones de texto de su bloque (título de sección,
+// nombre y descripción). El nombre se adivina por las mayúsculas, y cada lista del panel se escribe
+// distinto ("🔥 COMBOS DISPONIBLES" arriba de "🖊️ Batería ELFTHC + Cápsula 028 1ML", "🍏 APPLE ORIGINAL"
+// arriba de "🔋 Adaptador 20W Original Apple"): buscarProducto busca en todos los renglones, así un
+// producto se encuentra aunque su nombre no sea el renglón que se tomó como nombre.
 function parsearProductos(texto) {
   const productos = [];
   let nombres = [];
   let detalles = [];
+  let bloque = []; // los renglones de texto desde el último precio o separador
+  let vienePrecio = false;
   let actual = null; // el producto que está recibiendo renglones de precio
   for (const cruda of String(texto || "").split("\n")) {
     const linea = cruda.trim();
@@ -284,14 +296,19 @@ function parsearProductos(texto) {
     if (SEPARADOR_RE.test(linea)) {
       nombres = [];
       detalles = [];
+      bloque = [];
       actual = null;
       continue;
     }
     const precio = linea.match(PRECIO_RE);
+    if (precio) vienePrecio = true;
     if (!precio) {
+      if (vienePrecio) bloque = []; // texto después de precios: empieza el bloque de otro producto
+      vienePrecio = false;
       actual = null;
       if (/lista|precio/i.test(linea)) continue; // encabezados: "LISTA DE PRECIOS", "PRECIO LIQUIDACIÓN"
       (esNombre(linea) ? nombres : detalles).push(sinEmojis(linea));
+      bloque.push(sinEmojis(linea));
       continue;
     }
     const monto = parseInt(precio[1].replace(/\D/g, ""), 10);
@@ -300,11 +317,11 @@ function parsearProductos(texto) {
     const cantidad = Number((antes.match(CANTIDAD_RE) || [])[1]) || 1;
     const nombreEnLinea = sinEmojis(antes.replace(CANTIDAD_RE, " "));
     if ((nombreEnLinea.match(/\p{L}/gu) || []).length >= 3) {
-      productos.push({ nombre: nombreEnLinea, detalle: [...nombres, ...detalles].join(" "), precios: { [cantidad]: monto } });
+      productos.push({ nombre: nombreEnLinea, detalle: [...nombres, ...detalles].join(" "), lineas: [nombreEnLinea], precios: { [cantidad]: monto } });
       continue;
     }
     if (!actual) {
-      actual = { nombre: nombres.join(" ") || detalles[0] || "", detalle: detalles.join(" "), precios: {} };
+      actual = { nombre: nombres.join(" ") || detalles[0] || "", detalle: detalles.join(" "), lineas: bloque, precios: {} };
       productos.push(actual);
       nombres = [];
       detalles = [];
@@ -312,30 +329,6 @@ function parsearProductos(texto) {
     actual.precios[cantidad] = monto;
   }
   return productos.filter((p) => p.nombre);
-}
-
-// La lista de combos de baterías escribe el nombre como viene ("🖊️ Batería ELFTHC + Cápsula 028 1ML"),
-// no en mayúsculas, y arriba lleva un título ("🔥 COMBOS DISPONIBLES") que parsearProductos tomaría por
-// nombre. Acá el nombre de cada precio es el renglón de texto que tiene justo arriba.
-function parsearCombos(texto) {
-  const productos = [];
-  let anterior = null;
-  for (const cruda of String(texto || "").split("\n")) {
-    const linea = cruda.trim();
-    if (!linea || SEPARADOR_RE.test(linea)) { anterior = null; continue; }
-    const precio = linea.match(PRECIO_RE);
-    if (!precio) { anterior = sinEmojis(linea); continue; }
-    const monto = parseInt(precio[1].replace(/\D/g, ""), 10);
-    const antes = linea.slice(0, precio.index);
-    const cantidad = Number((antes.match(CANTIDAD_RE) || [])[1]) || 1;
-    const enLinea = sinEmojis(antes.replace(CANTIDAD_RE, " "));
-    const nombre = (enLinea.match(/\p{L}/gu) || []).length >= 3 ? enLinea : anterior;
-    if (!(monto > 0) || !nombre) continue;
-    const mismo = productos.find((p) => p.nombre === nombre);
-    if (mismo) mismo.precios[cantidad] = monto;
-    else productos.push({ nombre, detalle: "", precios: { [cantidad]: monto } });
-  }
-  return productos;
 }
 
 function distanciaLevenshtein(a, b) {
@@ -356,8 +349,11 @@ function distanciaLevenshtein(a, b) {
 // y las que tienen números ("028", "v400", "35w") solo valen exactas.
 function coincidencia(palabra, lista) {
   let mejor = 0;
+  // Singular y plural son la misma palabra ("cápsula" / "CÁPSULAS", "cargador" / "cargadores"): si no,
+  // el plural de la lista pierde contra un singular exacto de otro producto.
+  const plural = (a, b) => a.length > 3 && !/\d/.test(a) && (b === a + "s" || b === a + "es");
   for (const w of lista) {
-    if (w === palabra) return 1;
+    if (w === palabra || plural(w, palabra) || plural(palabra, w)) return 1;
     if (palabra.length > 3 && !/\d/.test(palabra)) {
       const largo = Math.max(w.length, palabra.length);
       mejor = Math.max(mejor, (largo - distanciaLevenshtein(palabra, w)) / largo);
@@ -366,26 +362,38 @@ function coincidencia(palabra, lista) {
   return mejor >= 0.8 ? mejor : 0;
 }
 
-// Busca el producto que nombró el agente. Casi todas sus palabras tienen que estar en el producto,
-// al menos una en su nombre, y gana el nombre más parecido: "Ignite V400" no se confunde con
-// "Ignite V400 Mix". Si dos quedan empatados es ambiguo y no se elige ninguno.
+// Busca el producto que nombró el agente. Casi todas sus palabras tienen que estar en el producto, y
+// se compara con cada renglón del producto (su nombre y los de su bloque, ver parsearProductos): gana
+// el renglón más parecido, así "Ignite V400" no se confunde con "Ignite V400 Mix" y "Batería ELFTHC"
+// no se confunde con el combo "Batería ELFTHC + Cápsula 028 1ML". Si dos quedan empatados es ambiguo
+// y no se elige ninguno.
 function buscarProducto(productos, nombre) {
   const q = palabras(nombre);
   if (!q.length) return null;
   const candidatos = [];
   for (const p of productos) {
-    const enNombre = palabras(p.nombre);
-    const enTodo = [...enNombre, ...palabras(p.detalle)];
+    const renglones = [p.nombre, ...(p.lineas || [])];
+    const enTodo = [...renglones, p.detalle].flatMap(palabras);
     const encontradas = q.filter((w) => coincidencia(w, enTodo) > 0).length;
-    const parecidoNombre = q.reduce((s, w) => s + coincidencia(w, enNombre), 0) / q.length;
-    if (encontradas / q.length < 2 / 3 || !parecidoNombre) continue;
-    const nombreCubierto = enNombre.filter((w) => coincidencia(w, q) > 0).length / enNombre.length;
-    candidatos.push({ p, puntaje: parecidoNombre + nombreCubierto });
+    if (encontradas / q.length < 2 / 3) continue;
+    let mejor = null;
+    for (const renglon of renglones) {
+      const enRenglon = palabras(renglon);
+      if (!enRenglon.length) continue;
+      const parecido = q.reduce((s, w) => s + coincidencia(w, enRenglon), 0) / q.length;
+      if (!parecido) continue;
+      // Pesa más cuánto del pedido está en el renglón que cuánto del renglón cubre el pedido: si no,
+      // una descripción corta ("🌿 Live Rosin" de otra cápsula) le gana al nombre ("DOZO LIVE ROSIN 2.5G").
+      const cubierto = enRenglon.filter((w) => coincidencia(w, q) > 0).length / enRenglon.length;
+      const puntaje = 2 * parecido + cubierto;
+      if (!mejor || puntaje > mejor.puntaje) mejor = { puntaje, renglon };
+    }
+    if (mejor) candidatos.push({ p, ...mejor });
   }
   candidatos.sort((a, b) => b.puntaje - a.puntaje);
   if (!candidatos.length) return null;
   if (candidatos[1] && candidatos[1].puntaje === candidatos[0].puntaje) {
-    return { ambiguo: [candidatos[0].p.nombre, candidatos[1].p.nombre] };
+    return { ambiguo: [candidatos[0].renglon, candidatos[1].renglon] };
   }
   return { producto: candidatos[0].p };
 }
@@ -778,8 +786,7 @@ exports.agentPedido = conClave(async (req, res) => {
 
   // Precios: siempre de las listas del día.
   const op = await leerOperativo();
-  const listas = LISTAS_CON_PRECIO.flatMap((campo) => parsearProductos(op[campo]).map((p) => ({ ...p, lista: campo })))
-    .concat(parsearCombos(op.combosBateriasTexto).map((p) => ({ ...p, lista: "combosBateriasTexto" })));
+  const listas = LISTAS_CON_PRECIO.flatMap((campo) => parsearProductos(op[campo]).map((p) => ({ ...p, lista: campo })));
   const ofertas = parsearProductos(op.ofertasTexto);
   const listaMayorista = parsearMayorista(op.preciosMayoristaTexto);
   const dolarMayorista = Number(op.dolarMayorista);

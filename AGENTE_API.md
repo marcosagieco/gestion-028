@@ -115,10 +115,13 @@ mismo mensaje, la API devuelve el pedido existente con `reutilizado: true` y no 
 Como respaldo, una transferencia con el mismo teléfono y número de comprobante también reutiliza el
 pedido. Los documentos nuevos guardan esos identificadores, `origen: "bot_n8n"` y `schemaVersion: 3`.
 
-**Precios:** salen de las listas de `/operativo` (vapes, THC, perfumes, Apple), con sus combos
-(`2x $49.000` es el combo de 2 entero). Las `OFERTAS` escritas con el mismo formato pisan esos
-precios. Si un producto no está, es ambiguo o esa cantidad no se vende, el pedido no se calcula.
-El agente nunca manda precios.
+**Precios:** salen de todas las listas de `/operativo` que el agente ve, menos stock, mayorista y
+ofertas (hoy vapes, THC, perfumes, Apple y combos de baterías; una lista nueva del panel se cobra
+sola), con sus combos (`2x $49.000` es el combo de 2 entero). Las `OFERTAS` escritas con el mismo
+formato pisan esos precios. Cada precio queda con todos los renglones de su bloque (título de
+sección, nombre, descripción) y el producto se busca contra todos: no hace falta que el nombre esté
+en mayúsculas. Si un producto no está, es ambiguo o esa cantidad no se vende, el pedido no se
+calcula. El agente nunca manda precios.
 
 **Mayorista:** `mayorista: true` usa exclusivamente `preciosMayoristaTexto`. Se interpretan precios
 unitarios en USD (incluidos decimales con coma) y se toma el tramo más alto alcanzado.
