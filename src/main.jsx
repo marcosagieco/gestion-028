@@ -14,6 +14,7 @@ const RepartoMoto = lazy(() => import('./RepartoMoto.jsx'))
 const OperativoPage = lazy(() => import('./OperativoPage.jsx'))
 const CotizarUberPage = lazy(() => import('./CotizarUberPage.jsx'))
 const LinkViejo = lazy(() => import('./reparto/LinkViejo.jsx'))
+const EscanerPage = lazy(() => import('./EscanerPage.jsx'))
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -60,6 +61,11 @@ createRoot(document.getElementById('root')).render(
         <Route path="/cotizar-uber" element={
           <Suspense fallback={null}>
             <CotizarUberPage />
+          </Suspense>
+        } />
+        <Route path="/escaner" element={
+          <Suspense fallback={null}>
+            <EscanerPage />
           </Suspense>
         } />
       </Routes>
