@@ -231,7 +231,7 @@ const DEFAULT_HOME_SECTOR_ORDER = ['sector1', 'sector2', 'sector3'];
 // de la grilla de tarjetas).
 const HOME_BLOCK_META = {
   evolucion:      { label: 'Evolución del Período' },
-  equipoClientes: { label: 'Equipo, Nuevos Clientes y Costo Promedio' },
+  equipoClientes: { label: 'Equipo, Nuevos Clientes y Último Costo' },
   topProductos:   { label: 'Top Productos' },
   fallosRobos:    { label: 'Fallas y Robos' },
   cotizaciones:   { label: 'Cotización del Dólar' },
@@ -4988,31 +4988,39 @@ export default function App() {
   const topProductsByProfit = useMemo(() => [...topProducts].sort((a, b) => b.profit - a.profit), [topProducts]);
   const topProductsByProfitBySeña = useMemo(() => [...topProductsBySeña].sort((a, b) => b.profit - a.profit), [topProductsBySeña]);
 
-  // Costo promedio por producto: a diferencia de topProducts (que sale de las VENTAS del período
+  // Último costo por producto: a diferencia de topProducts (que sale de las VENTAS del período
   // elegido), esto sale directo de los LOTES — recorre todos los ítems de todos los lotes que haya
-  // (se hayan vendido o no, sin importar el período elegido arriba), agrupa por producto igual que
-  // topProducts (junta "ElfBar Ice" del lote A + "ElfBar Ice" del lote B, etc.) y promedia el costo
-  // por unidad ponderado por la cantidad que entró en cada lote, para que un lote grande pese más
-  // que uno chico en el promedio general.
+  // (se hayan vendido o no, sin importar el período elegido arriba) y agrupa por producto igual
+  // que topProducts (junta "ElfBar Ice" del lote A + "ElfBar Ice" del lote B, etc.).
+  //
+  // Antes esto mostraba el promedio ponderado de todos los lotes juntos; ahora muestra el costo
+  // del lote MÁS RECIENTE de cada producto — "cuánto pagué la última vez que lo compré", que es lo
+  // que sirve para decidir a qué precio reponer, no un promedio mezclado con compras viejas a otro
+  // precio. Se compara por la fecha del LOTE (createdAt), no por si ese lote puntual ya se vendió
+  // del todo: un lote más nuevo manda aunque ya esté en $0 de stock, porque sigue siendo la compra
+  // más reciente. `units`/`totalCost` quedan calculados igual que antes por si en algún momento
+  // hace falta volver a ofrecer el promedio como opción aparte.
   const topProductsByAvgCost = useMemo(() => {
     const map = {};
     batches.forEach(b => {
+      const batchAt = Date.parse(b.createdAt) || 0;
       (b.items || []).forEach(item => {
         const name = normalizeProductName(item.product);
         if (!name) return;
         const units = Number(item.initialStock) || 0;
         const stock = Number(item.currentStock) || 0;
         const cost = Number(item.costArs) || 0;
-        if (!map[name]) map[name] = { name, units: 0, stock: 0, totalCost: 0 };
+        if (!map[name]) map[name] = { name, units: 0, stock: 0, totalCost: 0, lastCost: 0, lastAt: -Infinity };
         map[name].units     += units;
         map[name].stock      += stock;
         map[name].totalCost += cost * units;
+        if (batchAt >= map[name].lastAt) { map[name].lastAt = batchAt; map[name].lastCost = cost; }
       });
     });
     return Object.values(map)
       .filter(p => p.units > 0 && p.stock > 0)
-      .map(p => ({ name: p.name, units: p.units, stock: p.stock, avgCost: p.totalCost / p.units }))
-      .sort((a, b) => b.avgCost - a.avgCost);
+      .map(p => ({ name: p.name, units: p.units, stock: p.stock, avgCost: p.totalCost / p.units, lastCost: p.lastCost }))
+      .sort((a, b) => b.lastCost - a.lastCost);
   }, [batches]);
 
   // Equipo 028 — comisión: todas las ventas (TODAS, no solo el período que se esté viendo en
@@ -9086,10 +9094,10 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             ))}
                         </div>
 
-                        {/* NUEVOS CLIENTES + COSTO PROMEDIO POR PRODUCTO (columna derecha, apiladas para
+                        {/* NUEVOS CLIENTES + ÚLTIMO COSTO POR PRODUCTO (columna derecha, apiladas para
                             aprovechar el espacio que deja Equipo, más alto, en la columna izquierda —
                             h-full para que el wrapper tome el alto completo de la fila del grid, y así
-                            "Costo Promedio" (flex-1 más abajo) pueda estirarse hasta llenarlo) */}
+                            "Último Costo" (flex-1 más abajo) pueda estirarse hasta llenarlo) */}
                         <div className="flex flex-col gap-5 h-full">
                         <div className={`rounded-2xl p-5 ${darkMode ? 'bg-[#0E0E0E]' : 'bg-white'}`}>
                             {(() => {
@@ -9185,15 +9193,15 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 { key: 'stockDesc', label: 'Más stock' },
                             ];
                             const sorted = [...topProductsByAvgCost].sort((a, b) => {
-                                if (avgCostSort === 'costAsc') return a.avgCost - b.avgCost;
+                                if (avgCostSort === 'costAsc') return a.lastCost - b.lastCost;
                                 if (avgCostSort === 'stockDesc') return b.stock - a.stock;
-                                return b.avgCost - a.avgCost;
+                                return b.lastCost - a.lastCost;
                             }).filter(p => p.name.toLowerCase().includes(avgCostSearch.trim().toLowerCase()));
                             return (
                             <div className={`rounded-2xl p-5 flex-1 flex flex-col ${darkMode ? 'bg-[#0E0E0E]' : 'bg-white'}`}>
                                 <div className="flex items-center gap-2 mb-1 flex-wrap">
                                     <div className="flex items-center gap-2 flex-shrink-0">
-                                        <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Costo Promedio por Producto</h3>
+                                        <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Último Costo por Producto</h3>
                                     </div>
                                     <div className="flex-1 min-w-[110px] relative">
                                         <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none"/>
@@ -9240,7 +9248,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                                         <div className={`text-xs font-semibold truncate ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{p.name}</div>
                                                     </div>
                                                 </div>
-                                                <div className="text-xs font-black text-sky-400 flex-shrink-0 ml-2">{formatMoney(p.avgCost)}</div>
+                                                <div className="text-xs font-black text-sky-400 flex-shrink-0 ml-2">{formatMoney(p.lastCost)}</div>
                                             </div>
                                         ))}
                                     </div>
