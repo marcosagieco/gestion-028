@@ -5,12 +5,14 @@ import { initializeFirestore, getFirestore, collection, query, orderBy, onSnapsh
 import {
   ClipboardList, Plus, Clock, AlertTriangle, XCircle, CheckCircle, ChevronRight,
   ChevronDown, ChevronUp, History, Save, Moon, Sun, PartyPopper, Search, Trash2, Download,
-  Bike, Car, MapPin, PackageCheck, Store, Archive, Pencil
+  Bike, Car, MapPin, PackageCheck, Store, Archive, Pencil, Loader2
 } from 'lucide-react';
 import AddressAutocomplete from './reparto/AddressAutocomplete';
 import { armarPrefillFinalizar, rankearItemsEnStock } from './pedidos/autocompletarVenta';
 import { REPARTIDORES, repartidorDe, nombreRepartidor } from './reparto/repartidores';
 import { ZONAS } from './reparto/zonas';
+import { useCodigosBarra, derivarProductosConocidos, registrarCodigoBarra, agregarAEscaneo } from './escaneo/datos';
+import { CajaEscaneo, RegistrarCodigoModal, FilaEscaneada } from './escaneo/componentes';
 
 // --- Firebase: mismo patrón que FacturasPage.jsx — página 100% independiente de App.jsx,
 // reutiliza la instancia si ya fue inicializada (no debería pasar acá porque esta página vive
@@ -244,6 +246,106 @@ function ConfirmMiniModal({ dm, text, confirmLabel = 'Sí, ya lo empaqueté', on
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Pantalla de escaneo que se abre al tocar "Listo" en un pendiente, antes de confirmarlo armado —
+// pide escanear lo que se va a empaquetar, usando las mismas piezas que /escaner (ver
+// escaneo/componentes.jsx y escaneo/datos.js: un código nuevo pide una vez qué producto es y queda
+// aprendido para siempre). Al confirmar, guarda un registro en `salidasDeposito` ya atado a ESTE
+// pedido (acá no hace falta buscarlo como en /escaner — ya se sabe cuál es) y recién después llama
+// a `onConfirmar`, que es la acción real de marcar armado (la pasa el que usa este modal).
+//
+// Por defecto no se puede confirmar sin haber escaneado al menos un producto — es lo que se pidió:
+// "que tengan que escanear". La salida de emergencia de abajo (chica, bajo contraste a propósito)
+// es para cuando la lectora falla o un código no se puede leer: pide una segunda confirmación y deja
+// pasar sin escanear, para que un problema con la lectora nunca trabe la operación del depósito.
+function EscanearEmpaqueModal({ dm, pedido, db, codigosBarra, productosConocidos, onConfirmar, onCancelar }) {
+  const [sesion, setSesion] = useState([]);
+  const [codigoSinRegistrar, setCodigoSinRegistrar] = useState(null);
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState('');
+  const [confirmandoSinEscanear, setConfirmandoSinEscanear] = useState(false);
+
+  const handleScan = (codigoCrudo) => {
+    const codigo = codigoCrudo.trim();
+    if (!codigo) return;
+    const conocido = codigosBarra[codigo];
+    if (conocido) { agregarAEscaneo(setSesion, { codigo, product: conocido.product, variant: conocido.variant }); return; }
+    setCodigoSinRegistrar(codigo);
+  };
+
+  const registrarCodigo = async ({ product, variant }) => {
+    await registrarCodigoBarra(db, { codigo: codigoSinRegistrar, product, variant });
+    agregarAEscaneo(setSesion, { codigo: codigoSinRegistrar, product, variant });
+    setCodigoSinRegistrar(null);
+  };
+
+  const cambiarFila = (uid, patch) => setSesion(s => s.map(it => it.uid === uid ? { ...it, ...patch } : it));
+  const quitarFila = (uid) => setSesion(s => s.filter(it => it.uid !== uid));
+
+  const confirmar = async () => {
+    if (sesion.length === 0 || guardando) return;
+    setGuardando(true);
+    setError('');
+    try {
+      await addDoc(collection(db, 'salidasDeposito'), {
+        pedidoId: pedido.id,
+        clienteTexto: pedido.cliente || (pedido.mensaje || '').split('\n')[0].slice(0, 60),
+        items: sesion.map(it => ({ codigo: it.codigo, product: it.product, variant: it.variant, cantidad: parseInt(it.cantidad) || 0 })),
+        createdAt: new Date().toISOString(),
+      });
+      onConfirmar();
+    } catch (e) {
+      setError('No se pudo guardar el registro de salida: ' + e.message);
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center p-0 sm:p-4" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)' }}>
+      <div className={`w-full sm:max-w-md sm:rounded-3xl rounded-t-3xl border-t sm:border p-5 max-h-[88vh] flex flex-col ${dm ? 'bg-[#161616] border-white/[0.1]' : 'bg-white border-zinc-200'}`}>
+        <p className={`text-lg font-black ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>Escaneá lo que vas a empaquetar</p>
+        <p className={`text-xs mt-1 mb-4 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>Antes de marcarlo armado, escaneá cada producto que metés en la bolsa.</p>
+
+        <CajaEscaneo dm={dm} onScan={handleScan} disabled={!!codigoSinRegistrar} />
+
+        <div className="flex-1 overflow-y-auto my-3 space-y-2">
+          {sesion.length === 0 ? (
+            <p className={`text-xs text-center py-6 ${dm ? 'text-zinc-600' : 'text-zinc-400'}`}>Todavía no escaneaste nada.</p>
+          ) : sesion.map(it => (
+            <FilaEscaneada key={it.uid} dm={dm} item={it} mostrarCosto={false}
+              onCambiar={p => cambiarFila(it.uid, p)} onQuitar={() => quitarFila(it.uid)} />
+          ))}
+        </div>
+
+        {error && <p className="text-xs font-semibold text-red-500 mb-2">{error}</p>}
+
+        <button onClick={confirmar} disabled={sesion.length === 0 || guardando}
+          className="w-full h-14 rounded-2xl font-black text-base text-white bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+          {guardando ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle size={18} />} Listo, ya lo empaqueté
+        </button>
+        <button onClick={onCancelar} disabled={guardando}
+          className={`w-full h-10 mt-1.5 rounded-xl font-bold text-sm disabled:opacity-40 ${dm ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>
+          Todavía no
+        </button>
+
+        <button onClick={() => setConfirmandoSinEscanear(true)} disabled={guardando}
+          className={`text-[11px] font-semibold mt-3 text-center disabled:opacity-40 ${dm ? 'text-zinc-600 hover:text-zinc-400' : 'text-zinc-400 hover:text-zinc-600'}`}>
+          ¿No podés escanear? Marcar como armado sin escanear
+        </button>
+      </div>
+
+      {codigoSinRegistrar && (
+        <RegistrarCodigoModal dm={dm} codigo={codigoSinRegistrar} productosConocidos={productosConocidos}
+          onGuardar={registrarCodigo} onCancelar={() => setCodigoSinRegistrar(null)} />
+      )}
+      {confirmandoSinEscanear && (
+        <ConfirmMiniModal dm={dm} text="¿Seguro que querés marcarlo armado SIN escanear nada? Esto no va a quedar registrado en Salida."
+          confirmLabel="Sí, marcar sin escanear" onConfirm={onConfirmar} onCancel={() => setConfirmandoSinEscanear(false)} />
+      )}
     </div>
   );
 }
@@ -631,9 +733,10 @@ function EditableDireccion({ pedido, dm }) {
 // un solo pedido a la vez, bien grande, con un botón enorme para no errarle.
 // Se monta de nuevo cada vez que cambia el pedido en foco (el padre le pasa key={pedido.id}),
 // así el "entered" arranca en false y dispara la animación de crecimiento apenas se pinta.
-function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, onCancel, hideCancel = false, requireConfirm = false, extraAction }) {
+function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, onCancel, hideCancel = false, requireConfirm = false, extraAction, requireScan = false, db, codigosBarra, productosConocidos }) {
   const [entered, setEntered] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [showScan, setShowScan] = useState(false);
   useEffect(() => {
     const raf = requestAnimationFrame(() => setEntered(true));
     return () => cancelAnimationFrame(raf);
@@ -687,7 +790,7 @@ function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, on
       <DetalleComercial pedido={pedido} dm={dm} />
 
       <div className="flex flex-col gap-2 mt-1">
-        <button onClick={() => requireConfirm ? setShowConfirm(true) : onAction()}
+        <button onClick={() => requireScan ? setShowScan(true) : (requireConfirm ? setShowConfirm(true) : onAction())}
           className={`w-full h-16 rounded-2xl font-black text-lg text-white transition-all active:scale-[0.97] ${actionColor}`}>
           {actionLabel}
         </button>
@@ -708,6 +811,10 @@ function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, on
         <ConfirmMiniModal dm={dm} text="¿Confirmás que armaste y empaquetaste este pedido?"
           onConfirm={() => { setShowConfirm(false); onAction(); }} onCancel={() => setShowConfirm(false)} />
       )}
+      {showScan && (
+        <EscanearEmpaqueModal dm={dm} pedido={pedido} db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
+          onConfirmar={() => { setShowScan(false); onAction(); }} onCancelar={() => setShowScan(false)} />
+      )}
     </div>
   );
 }
@@ -716,7 +823,7 @@ function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, on
 // marcar "Listo" hace falta cargar la dirección (con el autocompletado de Google, nunca a mano),
 // referencias opcionales y la zona — recién con eso completo se habilita el botón, que además de
 // pasar a "armado" guarda la dirección en el pedido para que entre al recorrido de reparto.
-function MotoPendienteCard({ pedido, dm, onListo, onCancel }) {
+function MotoPendienteCard({ pedido, dm, onListo, onCancel, db, codigosBarra, productosConocidos }) {
   const [entered, setEntered] = useState(false);
   const [direccionTexto, setDireccionTexto] = useState('');
   const [direccionData, setDireccionData] = useState(null); // { texto, lat, lng, placeId }
@@ -856,8 +963,8 @@ function MotoPendienteCard({ pedido, dm, onListo, onCancel }) {
         </button>
       </div>
       {showConfirm && (
-        <ConfirmMiniModal dm={dm} text="¿Confirmás que armaste y empaquetaste este pedido?"
-          onConfirm={() => { setShowConfirm(false); handleListo(); }} onCancel={() => setShowConfirm(false)} />
+        <EscanearEmpaqueModal dm={dm} pedido={pedido} db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
+          onConfirmar={() => { setShowConfirm(false); handleListo(); }} onCancelar={() => setShowConfirm(false)} />
       )}
     </div>
   );
@@ -948,7 +1055,7 @@ function SinClasificarSection({ list, dm, onClasificar }) {
 // Solo se usa en la vista de PC: un tipo de envío (moto o uber) con su propio foco + cola de
 // siguientes, para que en pantallas grandes moto y uber queden en bloques separados en vez de
 // mezclados en una sola cola (en celular sigue todo junto, sin este componente).
-function PendienteGrupo({ titulo, icon: Icon, list, dm, focusId, onFocus, onListoMoto, onListoUber, onCancel }) {
+function PendienteGrupo({ titulo, icon: Icon, list, dm, focusId, onFocus, onListoMoto, onListoUber, onCancel, db, codigosBarra, productosConocidos }) {
   // Las 3 columnas (Moto/Uber/Retiro) quedan siempre visibles en PC, aunque una esté vacía — así
   // el orden de las 3 no salta según qué tipo tenga pedidos en el momento.
   if (list.length === 0) {
@@ -969,10 +1076,11 @@ function PendienteGrupo({ titulo, icon: Icon, list, dm, focusId, onFocus, onList
         <Icon size={13}/> {titulo} ({list.length})
       </span>
       {focus.tipoEnvio === 'moto' ? (
-        <MotoPendienteCard key={focus.id} pedido={focus} dm={dm}
+        <MotoPendienteCard key={focus.id} pedido={focus} dm={dm} db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
           onListo={(direccion, repartidorId) => onListoMoto(focus, direccion, repartidorId)} onCancel={() => onCancel(focus)} />
       ) : (
-        <FocusCard key={focus.id} pedido={focus} dm={dm} eyebrow="Próximo a armar" actionLabel="Listo" requireConfirm
+        <FocusCard key={focus.id} pedido={focus} dm={dm} eyebrow="Próximo a armar" actionLabel="Listo" requireScan
+          db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
           actionColor="bg-emerald-500 hover:bg-emerald-400"
           onAction={() => onListoUber(focus)} onCancel={() => onCancel(focus)} />
       )}
@@ -1077,6 +1185,11 @@ export default function PedidosPage() {
   const [pedidos, setPedidos] = useState([]);
   const [batches, setBatches] = useState([]); // stock real, solo lectura acá (se descuenta al finalizar)
   const [aliasActivo, setAliasActivo] = useState(''); // el de /operativo, para el medio de pago de los pedidos cargados a mano
+  // Códigos de barra aprendidos y sus nombres de producto/variante — para el escaneo obligatorio
+  // antes de marcar un pendiente como armado (ver EscanearEmpaqueModal). Mismas fuentes que usa
+  // /escaner: codigosBarra en vivo, productosConocidos derivado del stock real que ya se carga acá.
+  const codigosBarra = useCodigosBarra(db);
+  const productosConocidos = useMemo(() => derivarProductosConocidos(batches), [batches]);
   const [section, setSection] = useState('pendiente'); // 'pendiente' | 'armado' | 'finalizado'
   const [focusPendienteId, setFocusPendienteId] = useState(null);
   const [focusArmadoId, setFocusArmadoId] = useState(null);
@@ -1794,10 +1907,11 @@ export default function PedidosPage() {
                     return (
                       <>
                         {focus.tipoEnvio === 'moto' ? (
-                          <MotoPendienteCard key={focus.id} pedido={focus} dm={dm}
+                          <MotoPendienteCard key={focus.id} pedido={focus} dm={dm} db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
                             onListo={(direccion, repartidorId) => handleMarcarArmadoMoto(focus, direccion, repartidorId)} onCancel={() => setCancelTarget(focus)} />
                         ) : (
-                          <FocusCard key={focus.id} pedido={focus} dm={dm} eyebrow="Próximo a armar" actionLabel="Listo" requireConfirm
+                          <FocusCard key={focus.id} pedido={focus} dm={dm} eyebrow="Próximo a armar" actionLabel="Listo" requireScan
+                            db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
                             actionColor="bg-emerald-500 hover:bg-emerald-400"
                             onAction={() => handleMarcarArmado(focus)} onCancel={() => setCancelTarget(focus)} />
                         )}
@@ -1812,14 +1926,17 @@ export default function PedidosPage() {
               {/* Las 3 columnas quedan siempre visibles, aunque las 3 estén vacías — nunca se
                   reemplazan por un cartel único de "no hay pedidos". */}
               <PendienteGrupo titulo="Moto" icon={Bike} list={pendientesMoto} dm={dm}
+                db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
                 focusId={focusPendienteId} onFocus={setFocusPendienteId}
                 onListoMoto={(p, direccion, repartidorId) => handleMarcarArmadoMoto(p, direccion, repartidorId)}
                 onListoUber={handleMarcarArmado} onCancel={setCancelTarget} />
               <PendienteGrupo titulo="Uber" icon={Car} list={pendientesUber} dm={dm}
+                db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
                 focusId={focusPendienteId} onFocus={setFocusPendienteId}
                 onListoMoto={(p, direccion, repartidorId) => handleMarcarArmadoMoto(p, direccion, repartidorId)}
                 onListoUber={handleMarcarArmado} onCancel={setCancelTarget} />
               <PendienteGrupo titulo="Retiro" icon={Store} list={pendientesRetiro} dm={dm}
+                db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
                 focusId={focusPendienteId} onFocus={setFocusPendienteId}
                 onListoMoto={(p, direccion, repartidorId) => handleMarcarArmadoMoto(p, direccion, repartidorId)}
                 onListoUber={handleMarcarArmado} onCancel={setCancelTarget} />

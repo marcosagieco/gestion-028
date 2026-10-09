@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   initializeFirestore, getFirestore, collection, query, where, orderBy, limit, onSnapshot,
@@ -6,9 +6,11 @@ import {
   persistentLocalCache, persistentMultipleTabManager,
 } from 'firebase/firestore';
 import {
-  ScanBarcode, Moon, Sun, Trash2, CheckCircle, XCircle, Loader2, PackagePlus,
+  ScanBarcode, Moon, Sun, CheckCircle, XCircle, Loader2, PackagePlus,
   PackageMinus, Pencil, Search, X, History,
 } from 'lucide-react';
+import { rid, useCodigosBarra, derivarProductosConocidos, registrarCodigoBarra, agregarAEscaneo } from './escaneo/datos';
+import { CajaEscaneo, RegistrarCodigoModal, FilaEscaneada } from './escaneo/componentes';
 
 // --- Firebase: mismo patrón self-contenido que PedidosPage.jsx / RepartoMoto.jsx ---
 const firebaseConfig = {
@@ -34,7 +36,6 @@ if (!db) db = getFirestore(fbApp);
 // número del negocio (ventas, ganancias, billeteras) — solo stock entrando y saliendo.
 
 const formatMoney = (n) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n || 0);
-const rid = () => Math.random().toString(36).slice(2, 11);
 const accountLabel = (acc) => {
   if (acc === 'SIN_CUENTA') return 'Sin cuenta';
   if (acc === 'GALICIA_GIECO') return 'Galicia Gieco';
@@ -69,138 +70,6 @@ const formatFechaCorta = (iso) => {
   return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' });
 };
 
-// ───────────────────────────────────────────────────────────────────────────────────────────
-// Caja de escaneo: un cuadro de texto grande, siempre enfocado, donde "escribe" la lectora (son
-// lectoras USB/Bluetooth tipo teclado — escanean, tipean el número solas y mandan Enter, como si
-// alguien lo hubiera tecleado a mano y apretado Enter). Funciona igual tipeando a mano, por si hay
-// que cargar un código que no escanea bien.
-//
-// A propósito NO se re-enfoca sola todo el tiempo: si lo hiciera, le robaría el foco a los campos
-// de cantidad/costo apenas alguien toca uno para corregirlo a mano. Se enfoca al abrir la pantalla
-// y de nuevo después de cada escaneo (que es cuando de verdad hace falta seguir escaneando); si el
-// operario tocó otro campo, alcanza con un click acá para retomar.
-function CajaEscaneo({ dm, onScan, disabled }) {
-  const [valor, setValor] = useState('');
-  const inputRef = useRef(null);
-
-  useEffect(() => { inputRef.current?.focus(); }, []);
-
-  const submit = () => {
-    const codigo = valor.trim();
-    setValor('');
-    if (codigo) onScan(codigo);
-    inputRef.current?.focus();
-  };
-
-  return (
-    <div onClick={() => inputRef.current?.focus()}
-      className={`rounded-2xl border-2 border-dashed p-4 flex items-center gap-3 cursor-text transition-colors ${dm ? 'border-indigo-500/40 bg-indigo-500/[0.06]' : 'border-indigo-300 bg-indigo-50'}`}>
-      <ScanBarcode size={26} className={`flex-shrink-0 ${dm ? 'text-indigo-400' : 'text-indigo-600'}`} />
-      <div className="flex-1 min-w-0">
-        <p className={`text-[10px] font-black uppercase tracking-widest ${dm ? 'text-indigo-300' : 'text-indigo-600'}`}>Escaneá acá</p>
-        <input ref={inputRef} value={valor} disabled={disabled}
-          onChange={e => setValor(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
-          placeholder="Apuntá la pistola y dispará — o escribí el código a mano"
-          className={`w-full bg-transparent text-lg font-bold outline-none mt-0.5 ${dm ? 'text-zinc-100 placeholder-zinc-600' : 'text-zinc-900 placeholder-zinc-400'}`} />
-      </div>
-    </div>
-  );
-}
-
-// ───────────────────────────────────────────────────────────────────────────────────────────
-// Cartel para registrar un código que nunca se había escaneado. Sin esto confirmado no hay forma
-// de sumarlo a la sesión — un código sin producto asignado no sirve para nada. Una vez guardado acá
-// queda para siempre: la próxima vez que se escanee este mismo código, ya se reconoce solo.
-function RegistrarCodigoModal({ dm, codigo, productosConocidos, onGuardar, onCancelar }) {
-  const [product, setProduct] = useState('');
-  const [variant, setVariant] = useState('');
-  const [saving, setSaving] = useState(false);
-  const variantesDelProducto = useMemo(() => {
-    const p = productosConocidos.find(x => x.product.toLowerCase() === product.trim().toLowerCase());
-    return p ? p.variantes : [];
-  }, [product, productosConocidos]);
-
-  const guardar = async () => {
-    if (!product.trim() || saving) return;
-    setSaving(true);
-    try { await onGuardar({ product: product.trim(), variant: variant.trim() || 'Único' }); }
-    finally { setSaving(false); }
-  };
-
-  return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)' }} onClick={onCancelar}>
-      <div onClick={e => e.stopPropagation()} className={`w-full max-w-sm rounded-3xl border p-5 ${dm ? 'bg-[#161616] border-white/[0.1]' : 'bg-white border-zinc-200'}`}>
-        <p className={`text-lg font-black ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>Código nuevo</p>
-        <p className={`text-xs mt-1 mb-4 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>
-          Este código (<span className="font-mono font-bold">{codigo}</span>) todavía no está asociado a ningún producto. Decime qué es — de acá en más se va a reconocer solo.
-        </p>
-        <div className="space-y-3">
-          <div>
-            <label className={`text-xs font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>Producto</label>
-            <input value={product} onChange={e => setProduct(e.target.value)} autoFocus list="escaner-productos"
-              placeholder="Ej: Elfbar Ice"
-              className={`h-12 border rounded-xl px-3.5 w-full text-base outline-none mt-1 ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100' : 'bg-white border-zinc-200 text-zinc-900'}`} />
-            <datalist id="escaner-productos">{productosConocidos.map(p => <option key={p.product} value={p.product} />)}</datalist>
-          </div>
-          <div>
-            <label className={`text-xs font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>Variante / sabor (opcional)</label>
-            <input value={variant} onChange={e => setVariant(e.target.value)} list="escaner-variantes"
-              placeholder="Ej: Cherry Strazz"
-              className={`h-12 border rounded-xl px-3.5 w-full text-base outline-none mt-1 ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100' : 'bg-white border-zinc-200 text-zinc-900'}`} />
-            <datalist id="escaner-variantes">{variantesDelProducto.map(v => <option key={v} value={v} />)}</datalist>
-          </div>
-        </div>
-        <div className="flex gap-2 mt-5">
-          <button onClick={guardar} disabled={!product.trim() || saving}
-            className="flex-1 h-12 rounded-xl font-bold text-white bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 flex items-center justify-center gap-2">
-            {saving ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />} Guardar y seguir
-          </button>
-          <button onClick={onCancelar} className={`px-4 h-12 rounded-xl font-bold text-sm ${dm ? 'text-zinc-400 hover:bg-white/[0.06]' : 'text-zinc-500 hover:bg-zinc-100'}`}>
-            Cancelar
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Una fila de la sesión (entrada o salida) — cantidad siempre editable (sirve tanto para escanear
-// unidad por unidad como para escanear una vez y tipear el total que llegó), costo solo en Entrada.
-function FilaSesion({ dm, item, mostrarCosto, onCambiar, onQuitar }) {
-  const total = (parseFloat(item.costo) || 0) * (parseInt(item.cantidad) || 0);
-  return (
-    <div className={`rounded-xl border p-3 flex items-center gap-3 ${dm ? 'bg-white/[0.02] border-white/[0.06]' : 'bg-zinc-50 border-zinc-200'}`}>
-      <div className="min-w-0 flex-1">
-        <p className={`text-sm font-bold truncate ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>
-          {item.product}{item.variant && item.variant !== 'Único' ? ` · ${item.variant}` : ''}
-        </p>
-        <p className={`text-[11px] font-mono ${dm ? 'text-zinc-600' : 'text-zinc-400'}`}>{item.codigo}</p>
-      </div>
-      <div className="flex items-center gap-1.5 flex-shrink-0">
-        <span className={`text-[10px] font-bold uppercase ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>Cant.</span>
-        <input type="number" inputMode="numeric" min="1" value={item.cantidad} onWheel={e => e.target.blur()}
-          onChange={e => onCambiar({ cantidad: e.target.value })}
-          className={`h-10 w-16 border rounded-lg px-2 text-center text-sm font-bold outline-none ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100' : 'bg-white border-zinc-200 text-zinc-900'}`} />
-      </div>
-      {mostrarCosto && (
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          <span className={`text-[10px] font-bold ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>$</span>
-          <input type="number" inputMode="decimal" min="0" value={item.costo} onWheel={e => e.target.blur()}
-            onChange={e => onCambiar({ costo: e.target.value })} placeholder="costo c/u"
-            className={`h-10 w-24 border rounded-lg px-2 text-sm font-bold outline-none ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100 placeholder-zinc-600' : 'bg-white border-zinc-200 text-zinc-900'}`} />
-        </div>
-      )}
-      {mostrarCosto && total > 0 && (
-        <span className={`text-xs font-bold w-20 text-right flex-shrink-0 ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>{formatMoney(total)}</span>
-      )}
-      <button onClick={onQuitar} className={`p-2 -m-1 rounded-lg flex-shrink-0 ${dm ? 'text-zinc-600 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-500 hover:bg-red-50'}`}>
-        <Trash2 size={15} />
-      </button>
-    </div>
-  );
-}
-
 export default function EscanerPage() {
   const [dm, setDm] = useState(() => localStorage.getItem('028_dark_mode') === 'true');
   useEffect(() => { localStorage.setItem('028_dark_mode', dm); }, [dm]);
@@ -209,15 +78,8 @@ export default function EscanerPage() {
   const showToast = (message, type = 'success') => { setToast({ message, type }); setTimeout(() => setToast(null), 2800); };
 
   // Códigos ya aprendidos — se escuchan en vivo (son pocos, entran todos de una, y así un código
-  // recién registrado en esta misma pestaña o en otro celular se reconoce al instante).
-  const [codigosBarra, setCodigosBarra] = useState({}); // { [codigo]: { product, variant } }
-  useEffect(() => {
-    return onSnapshot(collection(db, 'codigosBarra'), snap => {
-      const mapa = {};
-      snap.forEach(d => { mapa[d.id] = d.data(); });
-      setCodigosBarra(mapa);
-    }, () => {});
-  }, []);
+  // recién registrado en esta misma pestaña, en /pedidos o en otro celular se reconoce al instante).
+  const codigosBarra = useCodigosBarra(db); // { [codigo]: { product, variant } }
 
   // Stock real (todos los lotes), solo para armar las sugerencias de producto/variante al registrar
   // un código nuevo — así el nombre que se carga acá coincide con el que ya usan Ventas y Pedidos,
@@ -226,15 +88,7 @@ export default function EscanerPage() {
   useEffect(() => {
     return onSnapshot(collection(db, 'batches'), snap => setBatches(snap.docs.map(d => d.data())), () => {});
   }, []);
-  const productosConocidos = useMemo(() => {
-    const mapa = new Map();
-    batches.forEach(b => (b.items || []).forEach(it => {
-      if (!it.product) return;
-      if (!mapa.has(it.product)) mapa.set(it.product, new Set());
-      if (it.variant && it.variant !== 'Único') mapa.get(it.product).add(it.variant);
-    }));
-    return Array.from(mapa.entries()).map(([product, vs]) => ({ product, variantes: Array.from(vs).sort() })).sort((a, b) => a.product.localeCompare(b.product));
-  }, [batches]);
+  const productosConocidos = useMemo(() => derivarProductosConocidos(batches), [batches]);
 
   // Código recién escaneado que no se reconoce — mientras esto no sea null, el modal de registro
   // está abierto. `destino` dice a qué sesión (entrada/salida) va a parar una vez confirmado.
@@ -242,7 +96,7 @@ export default function EscanerPage() {
 
   const registrarCodigo = async ({ product, variant }) => {
     const { codigo, destino } = codigoSinRegistrar;
-    await setDoc(doc(db, 'codigosBarra', codigo), { codigo, product, variant, createdAt: new Date().toISOString() });
+    await registrarCodigoBarra(db, { codigo, product, variant });
     agregarASesion(destino, { codigo, product, variant });
     setCodigoSinRegistrar(null);
     showToast(`Registrado: ${product}${variant !== 'Único' ? ' · ' + variant : ''}`);
@@ -276,14 +130,7 @@ export default function EscanerPage() {
 
   // Agrega (o suma +1 si ya estaba) un ítem a la sesión que corresponda. Compartido entre Entrada y
   // Salida: el único código que cambia entre una y otra es qué lista de estado se actualiza.
-  const agregarASesion = (destino, { codigo, product, variant }) => {
-    const setSesion = destino === 'entrada' ? setSesionEntrada : setSesionSalida;
-    setSesion(prev => {
-      const existe = prev.find(it => it.codigo === codigo);
-      if (existe) return prev.map(it => it.codigo === codigo ? { ...it, cantidad: (parseInt(it.cantidad) || 0) + 1 } : it);
-      return [...prev, { uid: rid(), codigo, product, variant, cantidad: 1, costo: '' }];
-    });
-  };
+  const agregarASesion = (destino, item) => agregarAEscaneo(destino === 'entrada' ? setSesionEntrada : setSesionSalida, item);
 
   const handleScan = (destino) => (codigoCrudo) => {
     const codigo = codigoCrudo.trim();
@@ -443,7 +290,7 @@ export default function EscanerPage() {
                 <div className="space-y-2">
                   <span className={`text-[11px] font-black uppercase tracking-widest px-1 ${dm ? 'text-zinc-600' : 'text-zinc-400'}`}>Escaneado ({sesionEntrada.length})</span>
                   {sesionEntrada.map(it => (
-                    <FilaSesion key={it.uid} dm={dm} item={it} mostrarCosto
+                    <FilaEscaneada key={it.uid} dm={dm} item={it} mostrarCosto
                       onCambiar={p => cambiarFilaEntrada(it.uid, p)} onQuitar={() => quitarFilaEntrada(it.uid)} />
                   ))}
                 </div>
@@ -530,7 +377,7 @@ export default function EscanerPage() {
                 <div className="space-y-2">
                   <span className={`text-[11px] font-black uppercase tracking-widest px-1 ${dm ? 'text-zinc-600' : 'text-zinc-400'}`}>Escaneado ({sesionSalida.length})</span>
                   {sesionSalida.map(it => (
-                    <FilaSesion key={it.uid} dm={dm} item={it} mostrarCosto={false}
+                    <FilaEscaneada key={it.uid} dm={dm} item={it} mostrarCosto={false}
                       onCambiar={p => cambiarFilaSalida(it.uid, p)} onQuitar={() => quitarFilaSalida(it.uid)} />
                   ))}
                 </div>
