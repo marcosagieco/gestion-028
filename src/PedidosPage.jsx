@@ -1551,6 +1551,11 @@ export default function PedidosPage() {
   const finalizarMontoEnvioSeguro = finalizarEnvioSeguro ? ENVIO_SEGURO_PRECIO : 0;
   // Total a repartir entre los medios de pago: productos + envío cobrado + envío seguro si lo pagó.
   const finalizarEnvioCobrado = (finalizarForm.envioCliente !== '' ? (parseFloat(finalizarForm.envioCliente) || 0) : 0) + finalizarMontoEnvioSeguro;
+  // En moto el envío no deja margen: lo que se le cobra al cliente es exactamente lo que se le paga
+  // al motomensajero. Por eso ahí va un solo campo y el costo sale de ese mismo número — pedirlo dos
+  // veces solo abría la puerta a que quedaran distintos por un tipeo y ensuciaran la ganancia.
+  const finalizarEsMoto = finalizarTarget?.tipoEnvio === 'moto';
+  const finalizarEnvioSolo = finalizarForm.envioCliente !== '' ? (parseFloat(finalizarForm.envioCliente) || 0) : 0;
   const finalizarTotalConEnvio = finalizarTotalGeneral + finalizarEnvioCobrado;
   // Diferencia contra lo que dice el pedido (null si el pedido no trae total). Se tolera un par de
   // pesos: el formulario guarda precio por unidad, así que un combo que no se divide exacto entre
@@ -1587,7 +1592,9 @@ export default function PedidosPage() {
     if (!finalizarTarget || !finalizarValido || savingFinalizar) return;
     setSavingFinalizar(true);
     try {
-      const shippingCostArs = finalizarForm.costoEnvio !== '' ? (parseFloat(finalizarForm.costoEnvio) || 0) : 0;
+      const shippingCostArs = finalizarEsMoto
+        ? finalizarEnvioSolo
+        : (finalizarForm.costoEnvio !== '' ? (parseFloat(finalizarForm.costoEnvio) || 0) : 0);
       // El envío seguro viaja junto al envío cobrado: es plata que pagó el cliente por encima de los
       // productos y entra a la cuenta por el mismo camino. Queda anotado aparte en pedido.venta para
       // poder distinguirlo después.
@@ -2447,8 +2454,10 @@ export default function PedidosPage() {
               </div>
 
               <div className={`p-3 rounded-lg border space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-3 lg:col-span-2 ${dm ? 'bg-[#0D0D0D] border-[#1F1F1F]' : 'bg-zinc-50 border-zinc-200'}`}>
-                <div className="flex flex-col gap-1.5">
-                  <label className={`text-xs font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>Envío cobrado (opcional)</label>
+                <div className={`flex flex-col gap-1.5 ${finalizarEsMoto ? 'lg:col-span-2' : ''}`}>
+                  <label className={`text-xs font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                    {finalizarEsMoto ? 'Envío (opcional)' : 'Envío cobrado (opcional)'}
+                  </label>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none"><span className={`text-base font-medium ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>$</span></div>
                     <input type="number" inputMode="decimal" value={finalizarForm.envioCliente} onChange={e => setFinalizarForm({ ...finalizarForm, envioCliente: e.target.value })}
@@ -2457,6 +2466,11 @@ export default function PedidosPage() {
                     />
                   </div>
                 </div>
+                {finalizarEsMoto ? (
+                  <p className={`text-[11px] lg:col-span-2 -mt-1 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                    En moto se cobra y se paga lo mismo, así que este número va como cobrado y como costo.
+                  </p>
+                ) : (
                 <div className="flex flex-col gap-1.5">
                   <label className={`text-xs font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>Costo envío (opcional)</label>
                   <div className="relative">
@@ -2467,6 +2481,7 @@ export default function PedidosPage() {
                     />
                   </div>
                 </div>
+                )}
 
                 {/* Envío seguro: sí/no. Es plata aparte del envío (la cobra el bot cuando el cliente
                     lo acepta), así que no se mezcla con el campo de arriba — se suma al total. */}
