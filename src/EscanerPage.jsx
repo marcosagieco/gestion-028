@@ -2,12 +2,12 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   initializeFirestore, getFirestore, collection, query, where, orderBy, limit, onSnapshot,
-  doc, setDoc, addDoc, increment,
+  doc, setDoc, addDoc, deleteDoc,
   persistentLocalCache, persistentMultipleTabManager,
 } from 'firebase/firestore';
 import {
   ScanBarcode, Moon, Sun, CheckCircle, XCircle, Loader2, PackagePlus,
-  PackageMinus, Pencil, Search, X, History,
+  PackageMinus, Pencil, Trash2, Search, X, History,
 } from 'lucide-react';
 import { rid, useCodigosBarra, derivarProductosConocidos, registrarCodigoBarra, agregarAEscaneo } from './escaneo/datos';
 import { CajaEscaneo, RegistrarCodigoModal, FilaEscaneada } from './escaneo/componentes';
@@ -45,19 +45,6 @@ const accountLabel = (acc) => {
 };
 const ACCOUNTS = ['LEMON', 'AHORROS', 'GALICIA', 'GALICIA_GIECO', 'MERCADO_PAGO', 'CUENTA_RECAUDADORA', 'EFECTIVO', 'USDT', 'USD', 'SIN_CUENTA'];
 const BATCH_CATEGORIES = ['THC', 'APPLE', 'PERFUMES', 'NICOTINA'];
-
-// Única vía para mover saldos de billetera — mismo patrón y mismo motivo que applyWalletDeltas en
-// App.jsx (increment() en vez de leer+escribir el objeto entero, así una escritura de acá no pisa
-// lo que otra pantalla mueva al mismo tiempo).
-async function applyWalletDeltas(deltas) {
-  const patch = {};
-  for (const [acc, delta] of Object.entries(deltas || {})) {
-    if (!acc || !delta || !Number.isFinite(delta)) continue;
-    patch[acc] = increment(delta);
-  }
-  if (Object.keys(patch).length === 0) return;
-  await setDoc(doc(db, 'settings', 'wallets'), patch, { merge: true });
-}
 
 const formatFechaHora = (iso) => {
   const d = new Date(iso);
@@ -107,7 +94,6 @@ export default function EscanerPage() {
   const [nombreLote, setNombreLote] = useState('');
   const [cuentaLote, setCuentaLote] = useState('');
   const [categoriaLote, setCategoriaLote] = useState('');
-  const [sinGastoLote, setSinGastoLote] = useState(false);
   const [creandoLote, setCreandoLote] = useState(false);
 
   // ── Sesión de SALIDA ───────────────────────────────────────────────────────────────────────
@@ -146,14 +132,14 @@ export default function EscanerPage() {
   const quitarFilaSalida = (uid) => setSesionSalida(s => s.filter(it => it.uid !== uid));
 
   const totalEntrada = sesionEntrada.reduce((s, it) => s + (parseFloat(it.costo) || 0) * (parseInt(it.cantidad) || 0), 0);
-  const puedeCrearLote = sesionEntrada.length > 0 && cuentaLote && !creandoLote &&
+  const puedeCrearLote = sesionEntrada.length > 0 && !creandoLote &&
     sesionEntrada.every(it => (parseInt(it.cantidad) || 0) > 0 && (parseFloat(it.costo) || 0) > 0);
 
   // Mismo resultado que armar el lote a mano en Gestión 028 (Lotes → Agregar producto), ítem por
   // ítem: cada producto escaneado queda con su propio id, su costo y su stock inicial = lo
-  // escaneado. Si el lote no está marcado "sin gasto", cada ítem con costo anota un movimiento de
-  // "stock" en Gastos y la cuenta elegida se descuenta — igual que hace Gestión 028, para que la
-  // plata y el stock queden sincronizados sin que haya que repetir la carga a mano después.
+  // escaneado. Va siempre con skipExpense: un lote que entra por acá nunca anota gasto ni descuenta
+  // de ninguna billetera — la plata de las compras se carga aparte. La cuenta queda sólo como dato
+  // de dónde se compró, y Gestión 028 respeta ese skipExpense si después le agregan ítems al lote.
   const handleCrearLote = async () => {
     if (!puedeCrearLote) return;
     setCreandoLote(true);
@@ -169,24 +155,12 @@ export default function EscanerPage() {
         currentStock: parseInt(it.cantidad) || 0,
         codigoBarra: it.codigo,
       }));
-      const batchRef = await addDoc(collection(db, 'batches'), {
+      await addDoc(collection(db, 'batches'), {
         name: nombre, createdAt: nowIso, items,
-        account: cuentaLote, category: categoriaLote || null, skipExpense: sinGastoLote,
+        account: cuentaLote || null, category: categoriaLote || null, skipExpense: true,
       });
-      if (!sinGastoLote) {
-        for (const it of items) {
-          const itemCost = it.costArs * it.initialStock;
-          if (itemCost <= 0) continue;
-          await addDoc(collection(db, 'cashFlow'), {
-            type: 'stock', account: cuentaLote, date: nowIso,
-            description: `Compra stock: ${it.product}${it.variant !== 'Único' ? ' / ' + it.variant : ''} (${nombre})`,
-            amount: itemCost, batchId: batchRef.id, batchName: nombre, itemId: it.id,
-          });
-        }
-        if (totalEntrada > 0) await applyWalletDeltas({ [cuentaLote]: -totalEntrada });
-      }
       showToast(`Lote "${nombre}" creado con ${items.length} producto${items.length === 1 ? '' : 's'}`);
-      setSesionEntrada([]); setNombreLote(''); setCuentaLote(''); setCategoriaLote(''); setSinGastoLote(false);
+      setSesionEntrada([]); setNombreLote(''); setCuentaLote(''); setCategoriaLote('');
     } catch (e) {
       showToast('Error al crear el lote: ' + e.message, 'error');
     } finally {
@@ -242,6 +216,15 @@ export default function EscanerPage() {
     await setDoc(doc(db, 'codigosBarra', codigo), { codigo, product: editProduct.trim(), variant: editVariant.trim() || 'Único', createdAt: codigosBarra[codigo]?.createdAt || new Date().toISOString() });
     setEditandoCodigo(null);
     showToast('Código actualizado');
+  };
+
+  // Borrar sólo olvida a qué producto apuntaba ese código: no toca stock, lotes ni salidas ya
+  // registradas. Si se vuelve a escanear, lo va a pedir de nuevo como si fuera código nuevo.
+  const [confirmarBorrado, setConfirmarBorrado] = useState(null);
+  const borrarCodigo = async (codigo) => {
+    await deleteDoc(doc(db, 'codigosBarra', codigo));
+    setConfirmarBorrado(null);
+    showToast('Código borrado');
   };
 
   return (
@@ -301,7 +284,7 @@ export default function EscanerPage() {
                   <div className="flex gap-2">
                     <select value={cuentaLote} onChange={e => setCuentaLote(e.target.value)}
                       className={`h-12 flex-1 border rounded-xl px-3 text-sm font-semibold outline-none ${dm ? 'bg-[#0a0a0a] border-white/[0.07] text-zinc-100' : 'bg-white border-zinc-200 text-zinc-900'}`}>
-                      <option value="">-- Cuenta de compra --</option>
+                      <option value="">-- Cuenta de compra (opcional) --</option>
                       {ACCOUNTS.map(a => <option key={a} value={a}>{accountLabel(a)}</option>)}
                     </select>
                     <select value={categoriaLote} onChange={e => setCategoriaLote(e.target.value)}
@@ -310,10 +293,9 @@ export default function EscanerPage() {
                       {BATCH_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
-                  <label className={`flex items-center gap-2 text-xs font-medium cursor-pointer ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                    <input type="checkbox" checked={sinGastoLote} onChange={e => setSinGastoLote(e.target.checked)} className="w-4 h-4 accent-indigo-600" />
-                    No registrar como gasto en la billetera
-                  </label>
+                  <p className={`text-[11px] leading-relaxed px-1 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                    Este lote no se anota como gasto ni descuenta de ninguna billetera. La cuenta es sólo para dejar registrado de dónde se compró.
+                  </p>
                   {totalEntrada > 0 && (
                     <div className="flex justify-between items-center px-1">
                       <span className={`text-xs font-semibold ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>Total del lote</span>
@@ -324,7 +306,6 @@ export default function EscanerPage() {
                     className="w-full h-14 rounded-xl font-black text-base text-white bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                     {creandoLote ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle size={18} />} Crear lote
                   </button>
-                  {!cuentaLote && <p className="text-[11px] text-amber-500 text-center">Elegí de qué cuenta sale la compra para poder crear el lote.</p>}
                 </div>
               </>
             )}
@@ -443,10 +424,24 @@ export default function EscanerPage() {
                           <p className={`text-sm font-bold truncate ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{c.product}{c.variant && c.variant !== 'Único' ? ` · ${c.variant}` : ''}</p>
                           <p className={`text-[11px] font-mono ${dm ? 'text-zinc-600' : 'text-zinc-400'}`}>{c.codigo}</p>
                         </div>
-                        <button onClick={() => { setEditandoCodigo(c.codigo); setEditProduct(c.product); setEditVariant(c.variant === 'Único' ? '' : c.variant); }}
-                          className={`p-2 rounded-lg flex-shrink-0 ${dm ? 'text-zinc-500 hover:bg-white/[0.06]' : 'text-zinc-400 hover:bg-zinc-100'}`}>
-                          <Pencil size={14} />
-                        </button>
+                        {confirmarBorrado === c.codigo ? (
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            <span className={`text-[11px] font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-500'}`}>¿Borrar?</span>
+                            <button onClick={() => borrarCodigo(c.codigo)} className="h-9 px-3 rounded-lg bg-red-500 hover:bg-red-400 text-white font-bold text-xs">Sí</button>
+                            <button onClick={() => setConfirmarBorrado(null)} className={`h-9 px-2.5 rounded-lg text-xs font-bold ${dm ? 'text-zinc-400 hover:bg-white/[0.06]' : 'text-zinc-500 hover:bg-zinc-100'}`}>No</button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <button onClick={() => { setEditandoCodigo(c.codigo); setEditProduct(c.product); setEditVariant(c.variant === 'Único' ? '' : c.variant); }}
+                              className={`p-2 rounded-lg ${dm ? 'text-zinc-500 hover:bg-white/[0.06]' : 'text-zinc-400 hover:bg-zinc-100'}`}>
+                              <Pencil size={14} />
+                            </button>
+                            <button onClick={() => setConfirmarBorrado(c.codigo)}
+                              className={`p-2 rounded-lg ${dm ? 'text-zinc-600 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-500 hover:bg-red-50'}`}>
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
