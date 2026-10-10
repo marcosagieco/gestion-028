@@ -5,6 +5,7 @@ import {
   persistentLocalCache, persistentMultipleTabManager,
 } from 'firebase/firestore';
 import { Car, Moon, Sun, Check, X, Clock, User, MapPin } from 'lucide-react';
+import AccesosRapidos from './navegacion/AccesosRapidos';
 
 // --- Firebase: mismo patron que OperativoPage.jsx (pagina 100% independiente). ---
 const firebaseConfig = {
@@ -123,7 +124,8 @@ export default function CotizarUberPage() {
       style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       <div className="max-w-[900px] mx-auto px-4 md:px-8 py-6">
 
-        <div className="flex items-center justify-end mb-6">
+        <div className="flex items-center justify-end gap-1 mb-6">
+          <AccesosRapidos dm={dm} actual="uber" />
           <button onClick={() => setDm((v) => !v)} className={`p-2 rounded-lg ${dm ? 'hover:bg-white/5' : 'hover:bg-zinc-100'}`}>
             {dm ? <Sun size={15} /> : <Moon size={15} />}
           </button>

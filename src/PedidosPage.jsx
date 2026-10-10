@@ -13,6 +13,7 @@ import { REPARTIDORES, repartidorDe, nombreRepartidor } from './reparto/repartid
 import { ZONAS } from './reparto/zonas';
 import { useCodigosBarra, derivarProductosConocidos, registrarCodigoBarra, agregarAEscaneo } from './escaneo/datos';
 import { CajaEscaneo, RegistrarCodigoModal, FilaEscaneada } from './escaneo/componentes';
+import AccesosRapidos from './navegacion/AccesosRapidos';
 
 // --- Firebase: mismo patrón que FacturasPage.jsx — página 100% independiente de App.jsx,
 // reutiliza la instancia si ya fue inicializada (no debería pasar acá porque esta página vive
@@ -1858,7 +1859,7 @@ export default function PedidosPage() {
     <div className={`min-h-screen ${dm ? 'bg-[#050505] text-zinc-100' : 'bg-slate-50 text-zinc-900'}`}
       style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
 
-      {/* Header — sin ningún link de vuelta a Gestión, esta página es autocontenida */}
+      {/* Header — el menú de AccesosRapidos es la única puerta a las otras pantallas. */}
       <div className={`sticky top-0 z-20 border-b backdrop-blur-xl ${dm ? 'bg-[#101010]/90 border-white/[0.06]' : 'bg-white/90 border-zinc-200'}`}
         style={{ paddingTop: 'env(safe-area-inset-top)' }}>
         <div className="max-w-lg mx-auto px-4 lg:max-w-none lg:mx-0 lg:px-6 h-14 flex items-center justify-between gap-3">
@@ -1890,6 +1891,7 @@ export default function PedidosPage() {
             <button onClick={() => setShowBorrados(true)} className={`p-2.5 rounded-lg transition-colors relative ${dm ? 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.06]' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`} title="Registro de borrados">
               <Archive size={17}/>
             </button>
+            <AccesosRapidos dm={dm} actual="pedidos" />
             <button onClick={() => setDm(v => !v)} className={`p-2.5 rounded-lg transition-colors ${dm ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.06]' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}>
               {dm ? <Sun size={17}/> : <Moon size={17}/>}
             </button>

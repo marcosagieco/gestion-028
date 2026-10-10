@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { rid, useCodigosBarra, derivarProductosConocidos, registrarCodigoBarra, agregarAEscaneo } from './escaneo/datos';
 import { CajaEscaneo, RegistrarCodigoModal, FilaEscaneada } from './escaneo/componentes';
+import AccesosRapidos from './navegacion/AccesosRapidos';
 
 // --- Firebase: mismo patrón self-contenido que PedidosPage.jsx / RepartoMoto.jsx ---
 const firebaseConfig = {
@@ -235,9 +236,12 @@ export default function EscanerPage() {
             <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#6366f1' }}><ScanBarcode size={16} className="text-white" /></div>
             <p className="font-black text-base tracking-tight truncate">Escáner de depósito</p>
           </div>
-          <button onClick={() => setDm(v => !v)} className={`p-2.5 rounded-lg flex-shrink-0 transition-colors ${dm ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.06]' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}>
-            {dm ? <Sun size={19} /> : <Moon size={19} />}
-          </button>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <AccesosRapidos dm={dm} actual="escaner" />
+            <button onClick={() => setDm(v => !v)} className={`p-2.5 rounded-lg flex-shrink-0 transition-colors ${dm ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.06]' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}>
+              {dm ? <Sun size={19} /> : <Moon size={19} />}
+            </button>
+          </div>
         </div>
         <div className="px-4 pb-3 flex gap-2">
           {[
