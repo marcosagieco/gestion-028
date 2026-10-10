@@ -5,7 +5,7 @@ import { initializeFirestore, getFirestore, collection, query, orderBy, onSnapsh
 import {
   ClipboardList, Plus, Clock, AlertTriangle, XCircle, CheckCircle, ChevronRight,
   ChevronDown, ChevronUp, History, Save, Moon, Sun, PartyPopper, Search, Trash2, Download,
-  Bike, Car, MapPin, PackageCheck, Store, Archive, Pencil, Loader2
+  Bike, Car, MapPin, PackageCheck, Store, Archive, Pencil, Loader2, Mail
 } from 'lucide-react';
 import AddressAutocomplete from './reparto/AddressAutocomplete';
 import { armarPrefillFinalizar, rankearItemsEnStock } from './pedidos/autocompletarVenta';
@@ -88,13 +88,20 @@ const minutesSince = (dateStr) => {
   return Math.floor((Date.now() - d.getTime()) / 60000);
 };
 
+// Correo (Vía Cargo) es un canal propio del tablero, pero no se guarda igual que los otros: los
+// pedidos que arma el bot quedan con tipoEnvio 'retiro' + datosCorreo, porque el paquete sale del
+// depósito igual que un retiro. Los que se clasifican a mano acá no tienen datosCorreo, así que
+// se marcan con tipoEnvio 'correo'. Cualquiera de las dos formas cuenta como correo.
+const esPedidoCorreo = (p) => p?.datosCorreo != null || p?.tipoEnvio === 'correo';
+
 // Lee SOLO la primera palabra del mensaje para decidir el tipo de envío — nunca se parsea nada
-// más del texto. Si no arranca con "moto"/"uber"/"retiro", tipoEnvio queda null y el pedido cae en
-// "Sin clasificar" hasta que alguien lo asigne a mano; nunca se adivina.
+// más del texto. Si no arranca con "moto"/"uber"/"retiro"/"correo", tipoEnvio queda null y el
+// pedido cae en "Sin clasificar" hasta que alguien lo asigne a mano; nunca se adivina.
 const parseTipoEnvio = (mensaje) => {
   const primera = (mensaje || '').trim().split(/\s+/)[0]?.toLowerCase().replace(/[^a-záéíóúñ]/g, '') || '';
   if (primera === 'moto') return 'moto';
   if (primera === 'uber') return 'uber';
+  if (primera === 'correo') return 'correo';
   if (primera === 'retiro') return 'retiro';
   return null;
 };
@@ -772,7 +779,12 @@ function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, on
               <Car size={13}/> Uber
             </span>
           )}
-          {pedido.tipoEnvio === 'retiro' && (
+          {esPedidoCorreo(pedido) && (
+            <span className={`flex items-center gap-1 text-xs font-bold ${dm ? 'text-sky-400' : 'text-sky-600'}`}>
+              <Mail size={13}/> Correo
+            </span>
+          )}
+          {pedido.tipoEnvio === 'retiro' && !esPedidoCorreo(pedido) && (
             <span className={`flex items-center gap-1 text-xs font-bold ${dm ? 'text-amber-400' : 'text-amber-600'}`}>
               <Store size={13}/> Retiro
             </span>
@@ -1003,7 +1015,12 @@ function NextRow({ list, dm, onFocus }) {
                     <Car size={10}/> Uber
                   </span>
                 )}
-                {p.tipoEnvio === 'retiro' && (
+                {esPedidoCorreo(p) && (
+                  <span className={`flex items-center gap-1 ${dm ? 'text-sky-400' : 'text-sky-600'}`}>
+                    <Mail size={10}/> Correo
+                  </span>
+                )}
+                {p.tipoEnvio === 'retiro' && !esPedidoCorreo(p) && (
                   <span className={`flex items-center gap-1 ${dm ? 'text-amber-400' : 'text-amber-600'}`}>
                     <Store size={10}/> Retiro
                   </span>
@@ -1031,18 +1048,22 @@ function SinClasificarSection({ list, dm, onClasificar }) {
         {list.map(p => (
           <div key={p.id} className={`rounded-2xl border p-3.5 ${dm ? 'bg-amber-500/[0.05] border-amber-500/25' : 'bg-amber-50/70 border-amber-200'}`}>
             <div className={`text-xs leading-snug line-clamp-3 mb-2.5 ${dm ? 'text-zinc-300' : 'text-zinc-700'}`}>{p.mensaje}</div>
-            <div className="flex gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <button onClick={() => onClasificar(p, 'moto')}
-                className={`flex-1 h-11 rounded-xl font-bold text-sm transition-all active:scale-[0.97] flex items-center justify-center gap-1.5 text-white bg-[#6366f1] hover:bg-[#4f46e5]`}>
+                className={`h-11 rounded-xl font-bold text-sm transition-all active:scale-[0.97] flex items-center justify-center gap-1.5 text-white bg-[#6366f1] hover:bg-[#4f46e5]`}>
                 <Bike size={16}/> Moto
               </button>
               <button onClick={() => onClasificar(p, 'uber')}
-                className={`flex-1 h-11 rounded-xl font-bold text-sm transition-all active:scale-[0.97] flex items-center justify-center gap-1.5 ${dm ? 'bg-white/[0.08] text-zinc-200 hover:bg-white/[0.14]' : 'bg-zinc-800 text-white hover:bg-zinc-700'}`}>
+                className={`h-11 rounded-xl font-bold text-sm transition-all active:scale-[0.97] flex items-center justify-center gap-1.5 ${dm ? 'bg-white/[0.08] text-zinc-200 hover:bg-white/[0.14]' : 'bg-zinc-800 text-white hover:bg-zinc-700'}`}>
                 <Car size={16}/> Uber
               </button>
               <button onClick={() => onClasificar(p, 'retiro')}
-                className="flex-1 h-11 rounded-xl font-bold text-sm transition-all active:scale-[0.97] flex items-center justify-center gap-1.5 text-white bg-amber-500 hover:bg-amber-400">
+                className="h-11 rounded-xl font-bold text-sm transition-all active:scale-[0.97] flex items-center justify-center gap-1.5 text-white bg-amber-500 hover:bg-amber-400">
                 <Store size={16}/> Retiro
+              </button>
+              <button onClick={() => onClasificar(p, 'correo')}
+                className="h-11 rounded-xl font-bold text-sm transition-all active:scale-[0.97] flex items-center justify-center gap-1.5 text-white bg-sky-500 hover:bg-sky-400">
+                <Mail size={16}/> Correo
               </button>
             </div>
           </div>
@@ -1324,7 +1345,8 @@ export default function PedidosPage() {
   // todo junto).
   const pendientesMoto = useMemo(() => pendientesClasificados.filter(p => p.tipoEnvio === 'moto'), [pendientesClasificados]);
   const pendientesUber = useMemo(() => pendientesClasificados.filter(p => p.tipoEnvio === 'uber'), [pendientesClasificados]);
-  const pendientesRetiro = useMemo(() => pendientesClasificados.filter(p => p.tipoEnvio === 'retiro'), [pendientesClasificados]);
+  const pendientesRetiro = useMemo(() => pendientesClasificados.filter(p => p.tipoEnvio === 'retiro' && !esPedidoCorreo(p)), [pendientesClasificados]);
+  const pendientesCorreo = useMemo(() => pendientesClasificados.filter(esPedidoCorreo), [pendientesClasificados]);
   // "Armado" en este tablero principal es el flujo de Uber y Retiro (y pedidos viejos sin
   // tipoEnvio, para no dejar huérfano nada que ya estuviera armado antes de este cambio) — los de
   // moto pasan a manejarse desde la pantalla de Reparto una vez armados, hasta que se entregan.
@@ -1359,7 +1381,8 @@ export default function PedidosPage() {
   // existiera tipoEnvio — se muestra solo si hay alguno, no es un canal real.
   const finalizadosMoto = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'moto'), [finalizadosFiltrados]);
   const finalizadosUber = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'uber'), [finalizadosFiltrados]);
-  const finalizadosRetiro = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'retiro'), [finalizadosFiltrados]);
+  const finalizadosRetiro = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'retiro' && !esPedidoCorreo(p)), [finalizadosFiltrados]);
+  const finalizadosCorreo = useMemo(() => finalizadosFiltrados.filter(esPedidoCorreo), [finalizadosFiltrados]);
   const finalizadosSinTipo = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio == null), [finalizadosFiltrados]);
   const cancelados = useMemo(() =>
     pedidos.filter(p => p.estado === 'cancelado').sort((a, b) => safeDateTime(b.canceladoAt || b.createdAt) - safeDateTime(a.canceladoAt || a.createdAt)),
@@ -1921,9 +1944,9 @@ export default function PedidosPage() {
                   })()}
             </div>
 
-            {/* PC: moto, uber y retiro cada uno en su propia columna. */}
-            <div className="hidden lg:grid lg:grid-cols-3 lg:gap-6 lg:items-start">
-              {/* Las 3 columnas quedan siempre visibles, aunque las 3 estén vacías — nunca se
+            {/* PC: moto, uber, retiro y correo cada uno en su propia columna. */}
+            <div className="hidden lg:grid lg:grid-cols-2 xl:grid-cols-4 lg:gap-6 lg:items-start">
+              {/* Las 4 columnas quedan siempre visibles, aunque estén vacías — nunca se
                   reemplazan por un cartel único de "no hay pedidos". */}
               <PendienteGrupo titulo="Moto" icon={Bike} list={pendientesMoto} dm={dm}
                 db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
@@ -1936,6 +1959,11 @@ export default function PedidosPage() {
                 onListoMoto={(p, direccion, repartidorId) => handleMarcarArmadoMoto(p, direccion, repartidorId)}
                 onListoUber={handleMarcarArmado} onCancel={setCancelTarget} />
               <PendienteGrupo titulo="Retiro" icon={Store} list={pendientesRetiro} dm={dm}
+                db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
+                focusId={focusPendienteId} onFocus={setFocusPendienteId}
+                onListoMoto={(p, direccion, repartidorId) => handleMarcarArmadoMoto(p, direccion, repartidorId)}
+                onListoUber={handleMarcarArmado} onCancel={setCancelTarget} />
+              <PendienteGrupo titulo="Correo" icon={Mail} list={pendientesCorreo} dm={dm}
                 db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
                 focusId={focusPendienteId} onFocus={setFocusPendienteId}
                 onListoMoto={(p, direccion, repartidorId) => handleMarcarArmadoMoto(p, direccion, repartidorId)}
@@ -2017,14 +2045,18 @@ export default function PedidosPage() {
                     expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
                   <FinalizadoGrupo titulo="Retiro" icon={Store} list={finalizadosRetiro} dm={dm}
                     expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                  <FinalizadoGrupo titulo="Correo" icon={Mail} list={finalizadosCorreo} dm={dm}
+                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
                 </div>
 
-                <div className="hidden lg:grid lg:grid-cols-3 lg:gap-6 lg:items-start">
+                <div className="hidden lg:grid lg:grid-cols-2 xl:grid-cols-4 lg:gap-6 lg:items-start">
                   <FinalizadoGrupo titulo="Moto" icon={Bike} list={finalizadosMoto} dm={dm}
                     expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
                   <FinalizadoGrupo titulo="Uber" icon={Car} list={finalizadosUber} dm={dm}
                     expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
                   <FinalizadoGrupo titulo="Retiro" icon={Store} list={finalizadosRetiro} dm={dm}
+                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                  <FinalizadoGrupo titulo="Correo" icon={Mail} list={finalizadosCorreo} dm={dm}
                     expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
                 </div>
                 </>

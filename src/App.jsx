@@ -17,6 +17,7 @@ import ProjectionChart from './ProjectionChart';
 import MetricSlider from './MetricSlider';
 import { buildDailySeries, buildFullHistoryDailySeries, buildRatioSeries, computeProjection, PROJECTION_CUTOFF_DATE } from './projectionEngine';
 import { REPARTIDORES, repartidorConfig, repartidorDe } from './reparto/repartidores';
+import { useCodigosBarra, registrarCodigoBarra } from './escaneo/datos';
 
 import { initializeApp } from "firebase/app";
 import {
@@ -3291,6 +3292,59 @@ function useTabGatedMemo(factory, deps, active) {
   }, [...deps, active]);
 }
 
+// Le asigna un código de barra a un producto que ya estaba cargado en un lote. Es el mismo registro
+// que hace /escaner cuando aparece un código desconocido, pero al revés: acá el producto ya se
+// conoce y lo que falta es el código. Sin esto, el stock cargado antes de que existiera la lectora
+// nunca se reconocería al escanear una salida.
+function EscanearCodigoModal({ darkMode, item, codigosBarra, onGuardar, onCerrar }) {
+  const [codigo, setCodigo] = useState('');
+  const [guardando, setGuardando] = useState(false);
+  const inputRef = useRef(null);
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  const limpio = codigo.trim();
+  const yaUsado = limpio ? codigosBarra[limpio] : null;
+  const nombre = `${item.product || 'Sin nombre'}${item.variant && item.variant !== 'Único' ? ' · ' + item.variant : ''}`;
+
+  const guardar = async () => {
+    if (!limpio || yaUsado || guardando) return;
+    setGuardando(true);
+    try { await onGuardar(limpio); } finally { setGuardando(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(2px)' }} onClick={onCerrar}>
+      <div onClick={e => e.stopPropagation()}
+        className={`w-full max-w-sm rounded-3xl border p-5 ${darkMode ? 'bg-[#131313] border-white/[0.08]' : 'bg-white border-zinc-200'}`}>
+        <h3 className={`font-bold text-base ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Escanear producto</h3>
+        <p className={`text-sm font-semibold mt-1 ${darkMode ? 'text-indigo-300' : 'text-indigo-600'}`}>{nombre}</p>
+        <p className="text-[11px] text-zinc-500 mt-1 mb-4">
+          Disparále con la lectora o escribí el código a mano. Queda asociado a este producto para siempre: la próxima vez que se escanee, se reconoce solo.
+        </p>
+        <input ref={inputRef} value={codigo} onChange={e => setCodigo(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); guardar(); } if (e.key === 'Escape') onCerrar(); }}
+          placeholder="Código de barra"
+          className={`h-12 w-full border rounded-xl px-3.5 text-base font-mono outline-none focus:border-indigo-500 ${darkMode ? 'bg-[#0B0B0B] border-zinc-700 text-zinc-100 placeholder-zinc-600' : 'bg-white border-zinc-300 text-zinc-900'}`} />
+        {yaUsado && (
+          <p className="text-[11px] text-red-500 mt-2 font-medium">
+            Ese código ya está asignado a {yaUsado.product}{yaUsado.variant && yaUsado.variant !== 'Único' ? ' · ' + yaUsado.variant : ''}. Usá otro.
+          </p>
+        )}
+        <div className="flex gap-2 mt-5">
+          <button onClick={guardar} disabled={!limpio || !!yaUsado || guardando}
+            className="flex-1 h-12 rounded-xl font-bold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+            <ScanBarcode size={16} /> Guardar código
+          </button>
+          <button onClick={onCerrar} className={`px-4 h-12 rounded-xl font-bold text-sm ${darkMode ? 'text-zinc-400 hover:bg-white/[0.06]' : 'text-zinc-500 hover:bg-zinc-100'}`}>
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- APP PRINCIPAL ---
 export default function App() {
   const [user, setUser] = useState(() => localStorage.getItem(ADMIN_AUTH_KEY) || null);
@@ -3314,6 +3368,29 @@ export default function App() {
   const showToast = (message, type = 'success') => {
       setToast({ message, type });
       setTimeout(() => setToast(null), 3000);
+  };
+
+  // Códigos de barra ya aprendidos, para marcar en Lotes qué productos todavía no tienen uno. El
+  // código se guarda por producto+variante (no por ítem de lote), así que alcanza con que una sola
+  // unidad de ese producto esté escaneada para que todas se reconozcan.
+  const codigosBarra = useCodigosBarra(db);
+  const [escaneandoItem, setEscaneandoItem] = useState(null);
+  const claveProducto = (product, variant) =>
+    `${(product || '').trim().toLowerCase()}|${((variant || '').trim() || 'Único').toLowerCase()}`;
+  const clavesConCodigo = useMemo(
+    () => new Set(Object.values(codigosBarra).map(c => claveProducto(c.product, c.variant))),
+    [codigosBarra]
+  );
+  const itemTieneCodigo = (item) => clavesConCodigo.has(claveProducto(item.product, item.variant));
+  const guardarCodigoDeItem = async (codigo) => {
+    const item = escaneandoItem;
+    try {
+      await registrarCodigoBarra(db, { codigo, product: item.product, variant: (item.variant || '').trim() || 'Único' });
+      setEscaneandoItem(null);
+      showToast(`Código asignado a ${item.product}`);
+    } catch (e) {
+      showToast('No se pudo guardar el código: ' + e.message, 'error');
+    }
   };
 
   useEffect(() => {
@@ -8552,6 +8629,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
   return (
     <div className={`flex h-screen overflow-hidden transition-colors duration-300 ${darkMode ? 'bg-[#030303] text-zinc-100' : 'bg-slate-50 text-zinc-900'}`} style={{fontFamily:"'Inter', system-ui, sans-serif"}}>
       
+      {escaneandoItem && (
+          <EscanearCodigoModal darkMode={darkMode} item={escaneandoItem} codigosBarra={codigosBarra}
+            onGuardar={guardarCodigoDeItem} onCerrar={() => setEscaneandoItem(null)} />
+      )}
+
       {toast && (
           <div className={`fixed bottom-24 md:bottom-8 right-4 md:right-8 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-in slide-in-from-bottom-5 z-50 border ${toast.type === 'error' ? 'bg-red-600/95 border-red-500 text-white' : 'bg-zinc-900/95 border-[#1D1D1D] text-white'}`}>
              {toast.type === 'error' ? <XCircle size={18} className="text-red-200"/> : <CheckCircle size={18} className="text-emerald-400"/>}
@@ -10727,11 +10809,19 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                               </div>
                                           </td>
                                           <td className="px-5 py-3 text-right">
-                                              <div className="flex justify-end gap-1 opacity-0 group-hover/item:opacity-100 transition-all">
-                                                  <button onClick={() => setRestoringItem({ ...item, amount: '' })} className={`p-2 rounded-lg ${darkMode ? 'text-amber-400 hover:bg-amber-500/10' : 'text-amber-600 hover:bg-amber-50'}`} title="Restaurar unidades"><RotateCcw size={16} /></button>
-                                                  <button onClick={() => setSubtractingItem({ ...item, amount: '' })} className={`p-2 rounded-lg ${darkMode ? 'text-rose-400 hover:bg-rose-500/10' : 'text-rose-600 hover:bg-rose-50'}`} title="Restar unidades"><Minus size={16} /></button>
-                                                  <button onClick={() => setEditingItem(item)} className={`p-2 rounded-lg ${darkMode ? 'text-indigo-400 hover:bg-indigo-500/10' : 'text-indigo-600 hover:bg-indigo-50'}`} title="Editar Producto"><Settings size={16} /></button>
-                                                  <button onClick={() => handleDeleteItemFromBatch(b.id, item.id)} className={`p-2 rounded-lg ${darkMode ? 'text-red-400 hover:bg-red-500/10' : 'text-red-600 hover:bg-red-50'}`} title="Eliminar Producto"><Trash2 size={16} /></button>
+                                              <div className="flex justify-end items-center gap-1.5">
+                                                  {!itemTieneCodigo(item) && (
+                                                      <button onClick={() => setEscaneandoItem(item)} title="Asignarle un código de barra a este producto"
+                                                          className={`text-[11px] font-bold px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 flex-shrink-0 whitespace-nowrap transition-colors ${darkMode ? 'text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20' : 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100'}`}>
+                                                          <ScanBarcode size={14} /> Escanear
+                                                      </button>
+                                                  )}
+                                                  <div className="flex justify-end gap-1 opacity-0 group-hover/item:opacity-100 transition-all">
+                                                      <button onClick={() => setRestoringItem({ ...item, amount: '' })} className={`p-2 rounded-lg ${darkMode ? 'text-amber-400 hover:bg-amber-500/10' : 'text-amber-600 hover:bg-amber-50'}`} title="Restaurar unidades"><RotateCcw size={16} /></button>
+                                                      <button onClick={() => setSubtractingItem({ ...item, amount: '' })} className={`p-2 rounded-lg ${darkMode ? 'text-rose-400 hover:bg-rose-500/10' : 'text-rose-600 hover:bg-rose-50'}`} title="Restar unidades"><Minus size={16} /></button>
+                                                      <button onClick={() => setEditingItem(item)} className={`p-2 rounded-lg ${darkMode ? 'text-indigo-400 hover:bg-indigo-500/10' : 'text-indigo-600 hover:bg-indigo-50'}`} title="Editar Producto"><Settings size={16} /></button>
+                                                      <button onClick={() => handleDeleteItemFromBatch(b.id, item.id)} className={`p-2 rounded-lg ${darkMode ? 'text-red-400 hover:bg-red-500/10' : 'text-red-600 hover:bg-red-50'}`} title="Eliminar Producto"><Trash2 size={16} /></button>
+                                                  </div>
                                               </div>
                                           </td>
                                       </>
