@@ -8616,13 +8616,15 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
   const TABS = [
       { id: 'home', icon: Activity, label: 'Inicio' },
       { id: 'sales', icon: ShoppingCart, label: 'Ventas' }, 
-      { id: 'wholesale', icon: UserCircle, label: 'Mayorista' }, 
+      // shortLabel es el nombre que usa la barra de abajo en el celular, donde cada botón tiene
+      // menos de 40px: los nombres largos no entran y se montaban unos sobre otros.
+      { id: 'wholesale', icon: UserCircle, label: 'Mayorista', shortLabel: 'Mayor.' },
       { id: 'batches', icon: FolderOpen, label: 'Lotes' },
-      { id: 'consignment', icon: Users, label: 'Consignación' },
-      { id: 'analysis', icon: BarChart3, label: 'Análisis' }, 
+      { id: 'consignment', icon: Users, label: 'Consignación', shortLabel: 'Consig.' },
+      { id: 'analysis', icon: BarChart3, label: 'Análisis', shortLabel: 'Anál.' },
       { id: 'expenses', icon: Wallet, label: 'Gastos' },
-      { id: 'comprobantes', icon: Receipt, label: 'Comprobantes' },
-      { id: 'metaads', icon: Target, label: 'Meta Ads' },
+      { id: 'comprobantes', icon: Receipt, label: 'Comprobantes', shortLabel: 'Compr.' },
+      { id: 'metaads', icon: Target, label: 'Meta Ads', shortLabel: 'Ads' },
       { id: 'team', icon: UserCog, label: 'Equipo 028', shortLabel: 'Equipo' },
   ];
 
@@ -8809,11 +8811,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
               <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className="flex flex-col items-center justify-center flex-1 min-w-[40px] h-full gap-1 transition-all px-0.5"
+                  className="flex flex-col items-center justify-center flex-1 min-w-0 h-full gap-1 transition-all px-0.5"
                   style={activeTab === tab.id ? {color:'#6366f1'} : {}}
               >
                   <tab.icon size={19} strokeWidth={activeTab === tab.id ? 2.5 : 1.8} />
-                  <span className={`text-[9px] leading-none whitespace-nowrap ${activeTab === tab.id ? 'font-bold' : 'font-medium'}`}>{tab.shortLabel || tab.label}</span>
+                  <span className={`text-[9px] leading-none w-full text-center truncate ${activeTab === tab.id ? 'font-bold' : 'font-medium'}`}>{tab.shortLabel || tab.label}</span>
               </button>
             ))}
           </div>
@@ -10229,7 +10231,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                           {expandedSaleTicket === group.ticketId ? 'Ver menos' : 'Ver más'}
                                           {expandedSaleTicket === group.ticketId ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}
                                         </button>
-                                        <button onClick={() => handleDeleteTicket(group)} className={`p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:bg-red-500/10 hover:text-red-400' : 'text-zinc-400 hover:bg-red-50 hover:text-red-600'}`}><Trash2 size={16} /></button>
+                                        <button onClick={() => handleDeleteTicket(group)} className={`p-2 rounded-lg opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:bg-red-500/10 hover:text-red-400' : 'text-zinc-400 hover:bg-red-50 hover:text-red-600'}`}><Trash2 size={16} /></button>
                                       </div>
                                   </td>
                                 </tr>
@@ -10643,24 +10645,24 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                         <h3 className={`font-bold text-base ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{b.name || 'Sin nombre'}</h3>
                                         <button
                                             onClick={(e) => { e.stopPropagation(); setEditingBatchId(b.id); setEditingBatchName(b.name || ''); setEditingBatchAccount(b.account || 'LEMON'); setEditingBatchCategory(b.category || ''); setEditingBatchSkipExpense(b.skipExpense || false); }}
-                                            className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md ${darkMode ? 'hover:bg-zinc-800 text-zinc-400' : 'hover:bg-zinc-200 text-zinc-500'}`}
+                                            className={`opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity p-1 rounded-md ${darkMode ? 'hover:bg-zinc-800 text-zinc-400' : 'hover:bg-zinc-200 text-zinc-500'}`}
                                         >
                                             <Settings size={14}/>
                                         </button>
                                     </div>
                                 )}
 
-                                <div className="flex items-center gap-3 mt-1">
-                                    <span className={`text-xs font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{(b.items || []).length} Ítems</span>
+                                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
+                                    <span className={`text-xs font-medium whitespace-nowrap ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>{(b.items || []).length} Ítems</span>
                                     <span className="text-zinc-300 dark:text-zinc-700">•</span>
-                                    <span className={`text-xs font-bold ${b.finalizedAt ? (darkMode ? 'text-zinc-500' : 'text-zinc-500') : (darkMode ? 'text-emerald-400' : 'text-emerald-600')}`}>{b.finalizedAt ? 'Archivado' : 'En Venta'}</span>
+                                    <span className={`text-xs font-bold whitespace-nowrap ${b.finalizedAt ? (darkMode ? 'text-zinc-500' : 'text-zinc-500') : (darkMode ? 'text-emerald-400' : 'text-emerald-600')}`}>{b.finalizedAt ? 'Archivado' : 'En Venta'}</span>
                                     {b.account && (<>
                                       <span className="text-zinc-300 dark:text-zinc-700">•</span>
-                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-fuchsia-500/30 text-fuchsia-400' : 'border-fuchsia-200 text-fuchsia-600'}`}>{accountLabel(b.account)}</span>
+                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border whitespace-nowrap ${darkMode ? 'border-fuchsia-500/30 text-fuchsia-400' : 'border-fuchsia-200 text-fuchsia-600'}`}>{accountLabel(b.account)}</span>
                                     </>)}
                                     {b.category && (<>
                                       <span className="text-zinc-300 dark:text-zinc-700">•</span>
-                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>{b.category}</span>
+                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border whitespace-nowrap ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>{b.category}</span>
                                     </>)}
                                 </div>
                             </div>
@@ -10816,7 +10818,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                                           <ScanBarcode size={14} /> Escanear
                                                       </button>
                                                   )}
-                                                  <div className="flex justify-end gap-1 opacity-0 group-hover/item:opacity-100 transition-all">
+                                                  <div className="flex justify-end gap-1 opacity-100 md:opacity-0 md:group-hover/item:opacity-100 transition-all">
                                                       <button onClick={() => setRestoringItem({ ...item, amount: '' })} className={`p-2 rounded-lg ${darkMode ? 'text-amber-400 hover:bg-amber-500/10' : 'text-amber-600 hover:bg-amber-50'}`} title="Restaurar unidades"><RotateCcw size={16} /></button>
                                                       <button onClick={() => setSubtractingItem({ ...item, amount: '' })} className={`p-2 rounded-lg ${darkMode ? 'text-rose-400 hover:bg-rose-500/10' : 'text-rose-600 hover:bg-rose-50'}`} title="Restar unidades"><Minus size={16} /></button>
                                                       <button onClick={() => setEditingItem(item)} className={`p-2 rounded-lg ${darkMode ? 'text-indigo-400 hover:bg-indigo-500/10' : 'text-indigo-600 hover:bg-indigo-50'}`} title="Editar Producto"><Settings size={16} /></button>
@@ -12517,9 +12519,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                           <div className="flex items-center gap-2 mt-1">
                                             <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{safeDateStr(item.date, {month:'long', day:'numeric'})}</span>
                                             <span className="text-zinc-300 dark:text-zinc-700">•</span>
-                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-emerald-500/30 text-emerald-400' : 'border-emerald-200 text-emerald-600'}`}>Ingreso</span>
+                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border whitespace-nowrap ${darkMode ? 'border-emerald-500/30 text-emerald-400' : 'border-emerald-200 text-emerald-600'}`}>Ingreso</span>
                                             {item.account && (
-                                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
+                                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border whitespace-nowrap ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
                                                 {accountLabel(item.account)}
                                               </span>
                                             )}
@@ -12528,7 +12530,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                       </div>
                                       <div className="flex items-center gap-6">
                                         <span className="font-bold tracking-tight text-emerald-400 text-lg">+{formatMoney(item.amount)}</span>
-                                        <button onClick={() => handleDeleteCashMovement(item.id)} className={`p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}><Trash2 size={18}/></button>
+                                        <button onClick={() => handleDeleteCashMovement(item.id)} className={`p-2.5 rounded-lg opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}><Trash2 size={18}/></button>
                                       </div>
                                     </div>
                                   );
@@ -12548,12 +12550,12 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                           <div className="flex items-center gap-2 mt-1 flex-wrap">
                                             <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{safeDateStr(group.date, {month:'long', day:'numeric'})}</span>
                                             <span className="text-zinc-300 dark:text-zinc-700">•</span>
-                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-emerald-500/30 text-emerald-400' : 'border-emerald-200 text-emerald-600'}`}>Venta</span>
-                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
+                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border whitespace-nowrap ${darkMode ? 'border-emerald-500/30 text-emerald-400' : 'border-emerald-200 text-emerald-600'}`}>Venta</span>
+                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border whitespace-nowrap ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
                                               {accountLabel(group.account)}
                                             </span>
                                             {group.seller && (
-                                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-zinc-700 text-zinc-400' : 'border-zinc-200 text-zinc-500'}`}>{group.seller}</span>
+                                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border whitespace-nowrap ${darkMode ? 'border-zinc-700 text-zinc-400' : 'border-zinc-200 text-zinc-500'}`}>{group.seller}</span>
                                             )}
                                             {group.shipProfit !== 0 && (
                                               <span className={`flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-sky-500/30 text-sky-400' : 'border-sky-200 text-sky-600'}`}>
@@ -12573,7 +12575,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                         {group.account !== 'SIN_CUENTA' && (
                                           <button onClick={() => handleUnlinkSaleAccount(group)}
                                             title={`Quitar de ${accountLabel(group.account)} (no borra la venta)`}
-                                            className={`p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-amber-400 hover:bg-amber-500/10' : 'text-zinc-400 hover:text-amber-600 hover:bg-amber-50'}`}>
+                                            className={`p-2.5 rounded-lg opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-amber-400 hover:bg-amber-500/10' : 'text-zinc-400 hover:text-amber-600 hover:bg-amber-50'}`}>
                                             <XCircle size={18}/>
                                           </button>
                                         )}
@@ -12632,14 +12634,14 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                           <div className="flex items-center gap-2 mt-1 flex-wrap">
                                             <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{safeDateStr(group.entries[0].date, {month:'long', day:'numeric'})}</span>
                                             <span className="text-zinc-300 dark:text-zinc-700">•</span>
-                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-fuchsia-500/30 text-fuchsia-400' : 'border-fuchsia-200 text-fuchsia-600'}`}>Compra Stock</span>
+                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border whitespace-nowrap ${darkMode ? 'border-fuchsia-500/30 text-fuchsia-400' : 'border-fuchsia-200 text-fuchsia-600'}`}>Compra Stock</span>
                                             {group.account && (
-                                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
+                                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border whitespace-nowrap ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
                                                 {accountLabel(group.account)}
                                               </span>
                                             )}
                                             {group.entries.length > 1 && (
-                                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-zinc-700 text-zinc-400' : 'border-zinc-200 text-zinc-500'}`}>{group.entries.length} compras</span>
+                                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border whitespace-nowrap ${darkMode ? 'border-zinc-700 text-zinc-400' : 'border-zinc-200 text-zinc-500'}`}>{group.entries.length} compras</span>
                                             )}
                                           </div>
                                         </div>
@@ -12652,7 +12654,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                           {isExpanded ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}
                                         </button>
                                         <button onClick={() => handleDeleteStockGroup(group)}
-                                          className={`p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}>
+                                          className={`p-2.5 rounded-lg opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}>
                                           <Trash2 size={18}/>
                                         </button>
                                       </div>
@@ -12707,13 +12709,13 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                       <div className="flex items-center gap-2 mt-1">
                                         <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{safeDateStr(item.date, {month:'long', day:'numeric'})}</span>
                                         <span className="text-zinc-300 dark:text-zinc-700">•</span>
-                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-red-500/30 text-red-400' : 'border-red-200 text-red-600'}`}>Gasto</span>
+                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border whitespace-nowrap ${darkMode ? 'border-red-500/30 text-red-400' : 'border-red-200 text-red-600'}`}>Gasto</span>
                                         {item.account && (
-                                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
+                                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border whitespace-nowrap ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
                                             {accountLabel(item.account)}
                                           </span>
                                         )}
-                                        {item.batchName && (<span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-zinc-700 text-zinc-400' : 'border-zinc-200 text-zinc-500'}`}>{item.batchName}</span>)}
+                                        {item.batchName && (<span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border whitespace-nowrap ${darkMode ? 'border-zinc-700 text-zinc-400' : 'border-zinc-200 text-zinc-500'}`}>{item.batchName}</span>)}
                                         <GroupBadge darkMode={darkMode} group={item.group}
                                           isEditing={editingGroupId === `gasto-${item.id}`}
                                           editValue={editingGroupValue}
@@ -12726,7 +12728,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                   </div>
                                   <div className="flex items-center gap-6">
                                     <span className="font-bold tracking-tight text-red-500 text-lg">-{formatMoney(item.amount)}</span>
-                                    <button onClick={() => handleDeleteExpense(item.id)} className={`p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}><Trash2 size={18}/></button>
+                                    <button onClick={() => handleDeleteExpense(item.id)} className={`p-2.5 rounded-lg opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}><Trash2 size={18}/></button>
                                   </div>
                                 </div>
                               );
@@ -12756,17 +12758,17 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${colorBadge}`}>{badgeLabel}</span>
                                       {isTransferencia ? (
                                         <>
-                                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
+                                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border whitespace-nowrap ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
                                             {accountLabel(m.account)} → {accountLabel(m.accountTo)}
                                           </span>
                                           {isConversion && (
-                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-emerald-500/30 text-emerald-400' : 'border-emerald-200 text-emerald-600'}`}>
+                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border whitespace-nowrap ${darkMode ? 'border-emerald-500/30 text-emerald-400' : 'border-emerald-200 text-emerald-600'}`}>
                                               Cotización {formatMoney(m.exchangeRate)}
                                             </span>
                                           )}
                                         </>
                                       ) : m.account && (
-                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
+                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border whitespace-nowrap ${darkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>
                                           {accountLabel(m.account)}
                                         </span>
                                       )}
@@ -12790,7 +12792,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                   ) : (
                                     <span className={`font-bold tracking-tight text-lg ${colorAmt}`}>{amtLabel}</span>
                                   )}
-                                  {!isAjuste && <button onClick={() => handleDeleteCashMovement(m.id)} className={`p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}><Trash2 size={18}/></button>}
+                                  {!isAjuste && <button onClick={() => handleDeleteCashMovement(m.id)} className={`p-2.5 rounded-lg opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all ${darkMode ? 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50'}`}><Trash2 size={18}/></button>}
                                 </div>
                               </div>
                             );

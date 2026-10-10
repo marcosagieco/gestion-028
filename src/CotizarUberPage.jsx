@@ -126,8 +126,8 @@ export default function CotizarUberPage() {
 
         <div className="flex items-center justify-end gap-1 mb-6">
           <AccesosRapidos dm={dm} actual="uber" />
-          <button onClick={() => setDm((v) => !v)} className={`p-2 rounded-lg ${dm ? 'hover:bg-white/5' : 'hover:bg-zinc-100'}`}>
-            {dm ? <Sun size={15} /> : <Moon size={15} />}
+          <button onClick={() => setDm((v) => !v)} className={`p-2.5 rounded-lg ${dm ? 'hover:bg-white/5' : 'hover:bg-zinc-100'}`}>
+            {dm ? <Sun size={17} /> : <Moon size={17} />}
           </button>
         </div>
 
@@ -154,49 +154,59 @@ export default function CotizarUberPage() {
             </div>
           )}
           {pendientes.map((item) => (
-            <div key={item.id} className={`rounded-2xl border p-5 ${card}`}>
-              <div className="flex items-start justify-between gap-4 mb-3">
-                <div>
-                  <p className="text-sm font-bold flex items-center gap-1.5">
-                    <User size={14} className={label} /> {item.nombreCliente || 'Sin nombre'}
-                    <span className={`font-normal ${label}`}>· {item.telefonoCliente}</span>
+            <div key={item.id} className={`rounded-2xl border p-4 sm:p-5 ${card}`}>
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div className="min-w-0">
+                  {/* En un teléfono un nombre largo más el número no entran en una línea: se envuelven. */}
+                  <p className="text-sm font-bold flex flex-wrap items-center gap-x-1.5">
+                    <User size={14} className={`flex-shrink-0 ${label}`} /> {item.nombreCliente || 'Sin nombre'}
+                    <span className={`font-normal break-all ${label}`}>· {item.telefonoCliente}</span>
                   </p>
                   {item.direccion && (
-                    <p className={`text-sm mt-1 flex items-center gap-1.5 ${label}`}>
-                      <MapPin size={14} /> {item.direccion}
+                    <p className={`text-sm mt-1 flex items-start gap-1.5 ${label}`}>
+                      <MapPin size={14} className="flex-shrink-0 mt-0.5" />
+                      <span className="min-w-0 break-words">{item.direccion}</span>
                     </p>
                   )}
                 </div>
-                <span className={`text-xs whitespace-nowrap flex items-center gap-1 ${label}`}>
+                <span className={`text-xs whitespace-nowrap flex items-center gap-1 flex-shrink-0 ${label}`}>
                   <Clock size={12} /> {tiempoDesde(item.createdAt)}
                 </span>
               </div>
               {item.explicacionCaso && (
                 <p className={`text-xs mb-4 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>{item.explicacionCaso}</p>
               )}
-              <div className="flex gap-2">
+              {/* En teléfono los tres controles no entran en una fila: el monto va arriba a lo ancho
+                  y los dos botones abajo, mitad y mitad. Desde sm vuelven a la misma línea. Alto de
+                  48px para poder tocarlos con el dedo, y el monto en text-base porque con menos de
+                  16px el navegador del teléfono hace zoom solo al enfocarlo. */}
+              <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   type="number"
+                  inputMode="decimal"
                   placeholder="Monto Uber ($)"
                   value={montos[item.id] || ''}
                   onChange={(e) => setMontos((m) => ({ ...m, [item.id]: e.target.value }))}
-                  className={`flex-1 rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors ${input}`}
+                  onWheel={(e) => e.target.blur()}
+                  className={`w-full sm:flex-1 h-12 rounded-xl border px-3.5 text-base sm:text-sm outline-none transition-colors ${input}`}
                 />
-                <button
-                  onClick={() => confirmar(item)}
-                  disabled={enviando[item.id]}
-                  className="px-4 py-2.5 rounded-xl font-bold text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-50 flex items-center gap-1.5"
-                  style={{ background: '#6366f1' }}
-                >
-                  <Check size={15} /> Confirmar
-                </button>
-                <button
-                  onClick={() => noLlegamos(item)}
-                  disabled={enviando[item.id]}
-                  className={`px-4 py-2.5 rounded-xl font-bold text-sm transition-opacity hover:opacity-90 disabled:opacity-50 flex items-center gap-1.5 border ${dm ? 'border-red-500/40 text-red-400' : 'border-red-300 text-red-600'}`}
-                >
-                  <X size={15} /> No llegamos
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => confirmar(item)}
+                    disabled={enviando[item.id]}
+                    className="flex-1 sm:flex-none px-4 h-12 rounded-xl font-bold text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-1.5 whitespace-nowrap"
+                    style={{ background: '#6366f1' }}
+                  >
+                    <Check size={15} /> Confirmar
+                  </button>
+                  <button
+                    onClick={() => noLlegamos(item)}
+                    disabled={enviando[item.id]}
+                    className={`flex-1 sm:flex-none px-4 h-12 rounded-xl font-bold text-sm transition-opacity hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-1.5 whitespace-nowrap border ${dm ? 'border-red-500/40 text-red-400' : 'border-red-300 text-red-600'}`}
+                  >
+                    <X size={15} /> No llegamos
+                  </button>
+                </div>
               </div>
             </div>
           ))}
@@ -207,10 +217,10 @@ export default function CotizarUberPage() {
             <h3 className={`text-xs font-bold uppercase tracking-wide mb-3 ${label}`}>Últimas resueltas</h3>
             <div className={`rounded-2xl border overflow-hidden ${card}`}>
               {resueltas.map((item) => (
-                <div key={item.id} className={`px-4 py-3 text-sm flex items-center justify-between border-b last:border-b-0 ${dm ? 'border-white/[0.04]' : 'border-zinc-100'}`}>
-                  <span>{item.nombreCliente || item.telefonoCliente}</span>
-                  <span className={label}>{item.noLlegamos ? 'No llegamos' : item.montoUber != null ? `${Number(item.montoUber).toLocaleString('es-AR')}` : '—'}</span>
-                  <span className={`text-xs ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>{ESTADO_LABEL[item.estado] || item.estado}</span>
+                <div key={item.id} className={`px-4 py-3 text-sm flex items-center gap-3 border-b last:border-b-0 ${dm ? 'border-white/[0.04]' : 'border-zinc-100'}`}>
+                  <span className="flex-1 min-w-0 truncate">{item.nombreCliente || item.telefonoCliente}</span>
+                  <span className={`flex-shrink-0 font-semibold ${label}`}>{item.noLlegamos ? 'No llegamos' : item.montoUber != null ? `${Number(item.montoUber).toLocaleString('es-AR')}` : '—'}</span>
+                  <span className={`text-xs flex-shrink-0 text-right w-20 sm:w-28 ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>{ESTADO_LABEL[item.estado] || item.estado}</span>
                 </div>
               ))}
             </div>

@@ -1917,8 +1917,12 @@ export default function PedidosPage() {
             { key: 'finalizado', label: 'Finalizado', count: finalizados.length },
           ].map(s => (
             <button key={s.key} onClick={() => setSection(s.key)}
-              className={`flex-1 h-11 rounded-lg text-xs font-bold transition-all active:scale-[0.97] whitespace-nowrap px-2 ${section === s.key ? (dm ? 'bg-white/[0.1] text-zinc-100' : 'bg-white text-zinc-900 shadow-sm') : `text-zinc-500 ${dm ? 'lg:hover:text-zinc-300' : 'lg:hover:text-zinc-700'}`}`}>
-              {s.label}{s.count > 0 ? ` (${s.count})` : ''}
+              className={`flex-1 min-w-0 h-11 rounded-lg text-xs font-bold transition-all active:scale-[0.97] px-1 sm:px-2 ${section === s.key ? (dm ? 'bg-white/[0.1] text-zinc-100' : 'bg-white text-zinc-900 shadow-sm') : `text-zinc-500 ${dm ? 'lg:hover:text-zinc-300' : 'lg:hover:text-zinc-700'}`}`}>
+              {/* En teléfono las cuatro pestañas con el número al lado no entran y la última queda
+                  cortada contra el borde: ahí el número va debajo. Desde sm vuelve al renglón. */}
+              <span className="block truncate leading-tight sm:hidden">{s.label}</span>
+              {s.count > 0 && <span className="block text-[10px] font-semibold opacity-70 leading-tight sm:hidden">{s.count}</span>}
+              <span className="hidden sm:inline whitespace-nowrap">{s.label}{s.count > 0 ? ` (${s.count})` : ''}</span>
             </button>
           ))}
         </div>
