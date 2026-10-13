@@ -661,7 +661,7 @@ exports.webhook = functions.https.onRequest({ secrets: ARCA_SECRETS }, async (re
                 // En ambos casos el pedido se crea igual que si alguien lo tipeara a mano en /pedidos
                 // (misma colección, mismos campos), pero con tipoEnvio ya asignado — nunca se infiere
                 // del texto del pedido en sí, que acá nunca arranca con ninguna de esas palabras clave.
-                const ETIQUETA_TIPO_ENVIO = { moto: 'MOTOMENSAJERÍA', uber: 'UBER', retiro: 'RETIRO' };
+                const ETIQUETA_TIPO_ENVIO = { moto: 'MOTOMENSAJERÍA', uber: 'UBER', retiro: 'RETIRO', correo: 'CORREO' };
 
                 const pendingPedidoSnap = await db.collection('pending_pedido').doc(numeroRemitente).get();
                 if (pendingPedidoSnap.exists) {
@@ -689,10 +689,15 @@ exports.webhook = functions.https.onRequest({ secrets: ARCA_SECRETS }, async (re
                 // Variantes aceptadas por tipo — normalizarParaComparar ya saca tildes/mayúsculas, así
                 // que "Retiró" y "RETIRO" quedan iguales solas; acá solo hace falta listar las palabras
                 // realmente distintas (singular/plural, con o sin "moto" pegado, etc.).
+                // Los de correo cargados por acá no traen los datos de Vía Cargo (DNI, localidad, CP,
+                // sucursal o domicilio) — esos solo los arma el bot cuando los pide por chat. Igual
+                // caen en la columna Correo de /pedidos, que reconoce tanto los que tienen esos datos
+                // como los que llegan marcados con tipoEnvio "correo".
                 const PALABRAS_TIPO_ENVIO = {
                     moto:   ["motomensajeria", "motomensajerias", "motomensajero", "motomensajeros", "moto mensajeria", "moto"],
                     uber:   ["uber"],
                     retiro: ["retiro", "retiros", "retira"],
+                    correo: ["correo", "correos", "via cargo", "viacargo"],
                 };
                 const primeraLineaNorm = normalizarParaComparar(lineasPedido[0] || "");
                 const tipoEnvioComando = Object.keys(PALABRAS_TIPO_ENVIO)
