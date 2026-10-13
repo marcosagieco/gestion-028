@@ -9,7 +9,7 @@
 // de que existiera esto (o si esa llamada falló en su momento), costoMotomensajeriaDe cae a un
 // estimado gratis en línea recta, marcado con exacto:false para que la pantalla lo aclare.
 import { DEPOSITO_ORIGEN } from './zonas';
-import { getDrivingDistanceKm } from './routesApi';
+import { getRouteDistanceKm } from './routesApi';
 
 const TARIFA_POR_KM = 1000;
 const MINIMO_POR_ENVIO = 3000;
@@ -35,12 +35,11 @@ export function costoMotomensajeriaEstimado(direccion) {
   return { km, monto: aplicarTarifa(km), exacto: false };
 }
 
-// Medición real por calle (Routes API, modo auto — ver comentario en getDrivingDistanceKm sobre
-// por qué no es modo moto). Async porque llama a Google — se usa una sola vez por envío, nunca
-// para pintar la pantalla.
+// Medición real por calle (Routes API, modo moto — ver comentario en getRouteDistanceKm). Async
+// porque llama a Google — se usa una sola vez por envío, nunca para pintar la pantalla.
 export async function medirCostoMotomensajeriaReal(direccion) {
   if (typeof direccion?.lat !== 'number' || typeof direccion?.lng !== 'number') return null;
-  const km = await getDrivingDistanceKm(DEPOSITO_ORIGEN, direccion);
+  const km = await getRouteDistanceKm(DEPOSITO_ORIGEN, direccion);
   if (km === null) return null;
   return { km, monto: aplicarTarifa(km), exacto: true };
 }

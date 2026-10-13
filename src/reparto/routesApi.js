@@ -2,7 +2,7 @@
 // Matrix. Cada llamada de acá factura, así que quien importa este módulo es responsable de no
 // llamarlo más que en los momentos puntuales que definimos (ver recorridoEngine.js): abrir el
 // panel de reparto, marcar una entrega, entrar un pedido nuevo al recorrido, o reordenar a mano.
-// Nunca en cada render ni por cada tick de GPS. Mismo criterio para getDrivingDistanceKm de acá
+// Nunca en cada render ni por cada tick de GPS. Mismo criterio para getRouteDistanceKm de acá
 // abajo — se llama UNA vez por envío al marcar "Entregado" (ver reparto/motomensajeria.js), nunca
 // en cada render del historial.
 
@@ -12,7 +12,7 @@ const toWaypoint = (stop) => ({ location: { latLng: { latitude: stop.lat, longit
 
 // Haversine: distancia en línea recta entre dos puntos lat/lng, en kilómetros. Se usa acá solo
 // para ELEGIR el destino fijo (ver optimizeStopOrder) — no para medir plata ni kilómetros reales,
-// eso lo hace getDrivingDistanceKm.
+// eso lo hace getRouteDistanceKm.
 function distanciaKmLineaRecta(a, b) {
   const R = 6371;
   const toRad = (deg) => (deg * Math.PI) / 180;
@@ -86,12 +86,20 @@ export async function optimizeStopOrder(origin, stops) {
 
 // Distancia real por calle entre dos puntos — la usa la plata de la motomensajería (ver
 // reparto/motomensajeria.js), que necesita los km que realmente se manejan, no la línea recta.
-// A propósito en modo DRIVE (auto), no TWO_WHEELER (moto): Google Maps no ofrece un modo "moto" en
-// la app común en Argentina, así que el dueño del negocio solo puede chequear a mano en modo auto
-// — para que el número de acá coincida con lo que él ve, se pide lo mismo que él puede verificar.
+//
+// Modo TWO_WHEELER (moto) por decisión del dueño (12/10/2026): el reparto se hace en moto y quiere
+// que se pague lo que la moto realmente maneja. La app de Google Maps SÍ tiene modo moto en
+// Argentina (comprobado: Libertador 6299 → Potosí 4135 da 8,9 km en moto contra 9,55 que daba acá
+// midiendo en auto), así que este modo es además el que se puede verificar a mano: para chequear un
+// envío, en Maps hay que elegir la pestaña de la moto, no la del auto.
+//
+// routingPreference TRAFFIC_AWARE: sin este campo, Routes API usa TRAFFIC_UNAWARE (su valor por
+// defecto), que arma la ruta ignorando el tránsito y elige un camino distinto del que recomienda
+// la app de Google Maps, que sí mira el tránsito del momento.
+//
 // Pide solo distanceMeters, el field mask más chico posible. Devuelve null (no tira error) si
 // Google no devolvió una ruta válida, para que quien llama pueda caer a un estimado.
-export async function getDrivingDistanceKm(origin, destino) {
+export async function getRouteDistanceKm(origin, destino) {
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
   if (!apiKey) throw new Error('Falta VITE_GOOGLE_MAPS_API_KEY en el entorno');
 
@@ -105,7 +113,8 @@ export async function getDrivingDistanceKm(origin, destino) {
     body: JSON.stringify({
       origin: toWaypoint(origin),
       destination: toWaypoint(destino),
-      travelMode: 'DRIVE',
+      travelMode: 'TWO_WHEELER',
+      routingPreference: 'TRAFFIC_AWARE',
     }),
   });
 
