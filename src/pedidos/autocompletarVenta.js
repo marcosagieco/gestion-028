@@ -283,10 +283,10 @@ export function armarPrefillFinalizar(pedido, sellableItems, hoy, aliasDelDia = 
     origen.pago = !!alias;
   }
 
-  // Los pedidos del bot los vende el bot. Los cargados a mano los atendió una persona y el mensaje
-  // no dice quién, así que ese queda para elegir.
-  const vendedor = delBot ? '028 Import' : '';
-  if (vendedor) origen.vendedor = true;
+  // Siempre 028 Import por defecto, sea un pedido del bot o uno cargado a mano: es lo que casi
+  // siempre va. Sigue siendo un desplegable, así que si lo vendió otra persona se cambia.
+  const vendedor = '028 Import';
+  origen.vendedor = true;
 
   return {
     form: {

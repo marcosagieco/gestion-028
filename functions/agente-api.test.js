@@ -87,7 +87,22 @@ const fakeAxios = {
     }
     return { headers: { "content-type": "image/jpeg" }, data: Buffer.from("foto") }; // descarga del comprobante
   },
-  async post(url, body) { postsAN8n.push({ url, body }); return { status: 200 }; },
+  // Routes API: el backend le pregunta a Google los km REALES por calle para cobrar el envío de moto
+  // con la misma vara con la que se le paga al motomensajero. Acá se responde con la línea recta por
+  // 1,4 (el factor real medido sobre las entregas), para que las cuentas del test sean deterministas
+  // y no cuente como aviso a n8n — postsAN8n es solo para los avisos de cotización de Uber.
+  async post(url, body) {
+    if (String(url).includes("routes.googleapis.com")) {
+      const o = body.origin.location.latLng, d = body.destination.location.latLng;
+      const rad = (g) => (g * Math.PI) / 180;
+      const h = Math.sin(rad(d.latitude - o.latitude) / 2) ** 2 +
+        Math.cos(rad(o.latitude)) * Math.cos(rad(d.latitude)) * Math.sin(rad(d.longitude - o.longitude) / 2) ** 2;
+      const km = 2 * 6371 * Math.asin(Math.sqrt(h)) * 1.4;
+      return { status: 200, data: { routes: [{ distanceMeters: Math.round(km * 1000) }] } };
+    }
+    postsAN8n.push({ url, body });
+    return { status: 200 };
+  },
 };
 
 function mockear(nombre, exp) {

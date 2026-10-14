@@ -491,6 +491,41 @@ function haversineKm(a, b) {
   return 2 * 6371 * Math.asin(Math.sqrt(h));
 }
 
+// Kilómetros REALES por calle entre el depósito y un punto, con la misma vara con la que se le paga
+// al motomensajero en /reparto (Routes API, moto, con tránsito — ver src/reparto/routesApi.js).
+//
+// Antes el envío se le cobraba al cliente por la distancia EN LÍNEA RECTA, mientras que a la moto se
+// le pagaba por la calle. La calle es un 39% más larga (medido sobre 131 entregas reales): el cliente
+// pagaba 1 y la moto cobraba 1,39, así que cada envío en moto perdía plata sola — $1.439 en el envío
+// típico, $304.789 en 126 entregas. Midiendo las dos puntas igual, el envío queda neutro.
+//
+// Si Google no contesta, se cae a la línea recta multiplicada por ese mismo factor: es menos exacto,
+// pero no vuelve a dejar el cobro sistemáticamente corto.
+const FACTOR_CALLE = 1.4;
+
+async function kmPorCalle(destino) {
+  try {
+    const { data } = await axios.post(
+      "https://routes.googleapis.com/directions/v2:computeRoutes",
+      {
+        origin: { location: { latLng: { latitude: DEPOSITO.lat, longitude: DEPOSITO.lng } } },
+        destination: { location: { latLng: { latitude: destino.lat, longitude: destino.lng } } },
+        travelMode: "TWO_WHEELER",
+        routingPreference: "TRAFFIC_AWARE",
+      },
+      {
+        headers: { "X-Goog-Api-Key": GOOGLE_MAPS_KEY, "X-Goog-FieldMask": "routes.distanceMeters" },
+        timeout: 8000,
+      }
+    );
+    const metros = data.routes && data.routes[0] && data.routes[0].distanceMeters;
+    return typeof metros === "number" ? metros / 1000 : null;
+  } catch (e) {
+    console.error("[agente-api] Routes API no respondió, se usa el estimado:", e.message);
+    return null;
+  }
+}
+
 // Ubica la dirección y resuelve todo lo que depende de ella. La moto cubre CABA entera y el
 // Corredor Norte (zona B); en toda esa zona se puede pagar al recibir. null si Google no la ubica.
 async function ubicar(direccion) {
@@ -508,9 +543,10 @@ async function ubicar(direccion) {
   const zona = barrios.map((b) => BARRIO_A_ZONA[b]).find(Boolean) || null;
   const esCABA = componentes.some((c) => NOMBRES_CABA.has(normalizar(c.long_name)) || NOMBRES_CABA.has(normalizar(c.short_name)));
   const { lat, lng } = r.geometry.location;
-  const km = Math.round(haversineKm(DEPOSITO, { lat, lng }) * 10) / 10;
+  const kmCalle = await kmPorCalle({ lat, lng });
+  const km = Math.round((kmCalle !== null ? kmCalle : haversineKm(DEPOSITO, { lat, lng }) * FACTOR_CALLE) * 10) / 10;
   return {
-    lat, lng, zona, km, esCABA,
+    lat, lng, zona, km, esCABA, kmExacto: kmCalle !== null,
     cubiertoMoto: esCABA || zona === "B",
     monto: Math.max(Math.round(km * TARIFA_POR_KM), MINIMO_ENVIO),
   };

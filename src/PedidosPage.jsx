@@ -54,6 +54,15 @@ const getTodayDate = () => {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 };
 
+// Día (YYYY-MM-DD, en hora local) en que se subió el pedido. createdAt se guarda en UTC: tomarle los
+// primeros 10 caracteres mandaría a "mañana" todo pedido subido después de las 21:00 en Argentina,
+// por eso se pasa por Date y se lee en hora local.
+const fechaDeSubida = (pedido) => {
+  const d = new Date(pedido?.createdAt);
+  if (isNaN(d.getTime())) return getTodayDate();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 const safeDateStr = (dateStr, options) => {
   if (!dateStr) return 'Sin fecha';
   const d = new Date(dateStr);
@@ -1513,7 +1522,10 @@ export default function PedidosPage() {
   // productos buscados y confirmados contra el stock real, unidades, precio unitario, envío, medio
   // de pago y vendedor. Queda todo editable y marcado, para revisar en vez de tipear de cero.
   const handleAbrirFinalizar = (pedido) => {
-    const prefill = armarPrefillFinalizar(pedido, sellableItems, getTodayDate(), aliasActivo);
+    // La venta se anota en el día en que se subió el pedido, no en el día en que se carga: con una
+    // pila de pedidos entregados esperando, cargarlos hoy los metería a todos en la fecha de hoy y
+    // movería la facturación de días anteriores. Si el pedido no trae fecha, se usa hoy.
+    const prefill = armarPrefillFinalizar(pedido, sellableItems, fechaDeSubida(pedido), aliasActivo);
     setFinalizarForm(prefill.form);
     setFinalizarItems(prefill.items);
     setFinalizarPagos(prefill.pagos);

@@ -15,7 +15,7 @@ import { CSS as DndCSS } from '@dnd-kit/utilities';
 
 import ProjectionChart from './ProjectionChart';
 import MetricSlider from './MetricSlider';
-import { buildDailySeries, buildFullHistoryDailySeries, buildRatioSeries, computeProjection, PROJECTION_CUTOFF_DATE } from './projectionEngine';
+import { buildDailySeries, buildRatioSeries, computeProjection, PROJECTION_CUTOFF_DATE } from './projectionEngine';
 import { REPARTIDORES, repartidorConfig, repartidorDe } from './reparto/repartidores';
 import { useCodigosBarra, registrarCodigoBarra } from './escaneo/datos';
 
@@ -166,22 +166,11 @@ async function descargarComprobantesZIP(lista) {
   return { guardados, fallados: conFoto.length - guardados };
 }
 
-// --- Proyección del Negocio (Inicio): horizonte hasta fin de año, elegible por el usuario en la tarjeta acumulada ---
-const PROJECTION_YEAR_END_DATE = '2026-12-31';
-
 // Fecha desde la que el gasto diario de Meta Ads se descuenta automáticamente de la billetera LEMON
 // como un Gasto más (ver sync de Meta Ads → Gastos). No es retroactivo a propósito: el historial y
 // el saldo de Lemon anteriores a esta fecha no se tocan.
 const META_ADS_AUTO_EXPENSE_CUTOFF_DATE = '2026-08-19';
 const toDateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-const daysUntilDate = (targetDateStr) => {
-  const [y, m, d] = targetDateStr.split('-').map(Number);
-  const target = new Date(y, m - 1, d, 12, 0, 0);
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  yesterday.setHours(12, 0, 0, 0);
-  return Math.max(14, Math.ceil((target - yesterday) / 86400000));
-};
 
 // --- TARJETAS DE INICIO: metadata + orden por defecto (editable en "Personalizar Inicio") ---
 const HOME_CARD_META = {
@@ -4127,7 +4116,9 @@ export default function App() {
   const [consignmentEntryDraft, setConsignmentEntryDraft] = useState({ unitPrice: '', dueDate: '', note: '' });
   const [addProductOrderId, setAddProductOrderId] = useState(null); // id de la entrega (ticketId) a la que se le está agregando un producto
   const [addProductDraft, setAddProductDraft] = useState({ batchId: '', itemId: '', quantity: 1, unitPrice: '' });
-  const [salesSort, setSalesSort] = useState({ key: 'createdAt', direction: 'desc' });
+  // Por defecto, por fecha de la venta (la que se ve en la columna), no por el orden en que se cargó:
+  // una venta del lunes cargada el miércoles tiene que aparecer en el lunes.
+  const [salesSort, setSalesSort] = useState({ key: 'date', direction: 'desc' });
   const [selectedSaleTickets, setSelectedSaleTickets] = useState({});
   const [salesDisplayLimit, setSalesDisplayLimit] = useState(120);
   // Historial de Ingresos (Gastos): arranca mostrando los últimos 10 nomás — carga y ocupa menos —
@@ -5457,84 +5448,7 @@ export default function App() {
       });
   }, [homeMetaDailyData, sales], isMetaAdsTab);
 
-  // --- Proyección de facturación (Inicio) y de Meta Ads, desde PROJECTION_CUTOFF_DATE ---
-  // Horizonte de la Proyección del Negocio (Inicio): hasta fin de año, aunque el tramo lejano sea poco probable
-  // (se aclara igual con banda ancha + badge "Estimación"). Meta Ads y las tarjetas chicas siguen con 60 días default.
-  const homeFarHorizonDays = daysUntilDate(PROJECTION_YEAR_END_DATE);
-
-  const isHomeTab = activeTab === 'home';
-
-  // Las 3 proyecciones de Inicio (Facturación/Unidades/Ganancia) analizan TODO el historial
-  // disponible (fullHistorySeries, sin corte de fecha) para detectar estacionalidad mensual real y
-  // ciclos recurrentes, además de la tendencia reciente (series, desde PROJECTION_CUTOFF_DATE) — y
-  // aplican el calendario comercial argentino (Día de la Madre, Black Friday, Aguinaldo, Fiestas,
-  // etc.) al tramo proyectado. Ver projectionEngine.js.
-  const homeRevenueProjection = useTabGatedMemo(() => {
-    const valueOf = (s) => s.totalSaleRaw || 0;
-    const filter = (s) => !s.isFalla && !s.isRobo;
-    const series = buildDailySeries(sales, { valueOf, filter });
-    const fullHistorySeries = buildFullHistoryDailySeries(sales, { valueOf, filter });
-    return computeProjection(series, { farHorizonDays: homeFarHorizonDays, fullHistorySeries, applySeasonalEvents: true });
-  }, [sales, homeFarHorizonDays], isHomeTab);
-
-  const homeUnitsProjection = useTabGatedMemo(() => {
-    const valueOf = (s) => s.quantity || 0;
-    const filter = (s) => !s.isFalla && !s.isRobo;
-    const series = buildDailySeries(sales, { valueOf, filter });
-    const fullHistorySeries = buildFullHistoryDailySeries(sales, { valueOf, filter });
-    return computeProjection(series, { farHorizonDays: homeFarHorizonDays, fullHistorySeries, applySeasonalEvents: true });
-  }, [sales, homeFarHorizonDays], isHomeTab);
-
-  const homeProfitProjection = useTabGatedMemo(() => {
-    const valueOf = (s) => {
-      const shippingProfit = s.shippingProfit != null ? s.shippingProfit : ((s.clientShippingCharge || 0) - (s.shippingCostArs || 0));
-      return (s.totalSaleRaw || 0) - ((s.costArsAtSale || 0) * (s.quantity || 0)) + shippingProfit;
-    };
-    const filter = (s) => !s.isFalla && !s.isRobo;
-    const series = buildDailySeries(sales, { valueOf, filter });
-    const fullHistorySeries = buildFullHistoryDailySeries(sales, { valueOf, filter });
-    return computeProjection(series, { farHorizonDays: homeFarHorizonDays, fullHistorySeries, applySeasonalEvents: true });
-  }, [sales, homeFarHorizonDays], isHomeTab);
-
-  // Totales de todos los tiempos (sin límite de corte), para la tarjeta "histórico completo + proyectado a fecha"
-  const homeAllTimeTotals = useTabGatedMemo(() => {
-    let revenue = 0, units = 0, profit = 0;
-    sales.forEach((s) => {
-      if (s.isFalla || s.isRobo) return;
-      const rev = s.totalSaleRaw || 0;
-      const qty = s.quantity || 0;
-      const shippingProfit = s.shippingProfit != null ? s.shippingProfit : ((s.clientShippingCharge || 0) - (s.shippingCostArs || 0));
-      revenue += rev;
-      units += qty;
-      profit += rev - ((s.costArsAtSale || 0) * qty) + shippingProfit;
-    });
-    return { revenue, units, profit };
-  }, [sales], isHomeTab);
-
-  const homeFailedProductsProjection = useTabGatedMemo(() => {
-    const series = buildDailySeries(sales, {
-      valueOf: (s) => s.failedValue ?? ((s.costArsAtSale || 0) * (s.quantity || 0)),
-      filter: (s) => !!s.isFalla,
-    });
-    return computeProjection(series);
-  }, [sales], isHomeTab);
-
-  const homeStolenProductsProjection = useTabGatedMemo(() => {
-    const series = buildDailySeries(sales, {
-      valueOf: (s) => s.stolenValue ?? ((s.costArsAtSale || 0) * (s.quantity || 0)),
-      filter: (s) => !!s.isRobo,
-    });
-    return computeProjection(series);
-  }, [sales], isHomeTab);
-
-  const homeFixedAdsClientsProjection = useTabGatedMemo(() => {
-    const series = buildDailySeries(sales, {
-      valueOf: () => 1,
-      filter: (s) => s.isNewClient === 'Clientes - Publicidad',
-    });
-    return computeProjection(series);
-  }, [sales], isHomeTab);
-
+  // --- Proyecciones de Meta Ads, desde PROJECTION_CUTOFF_DATE ---
   const metaAdsSpendProjection = useTabGatedMemo(() => {
     const series = buildDailySeries(metaAdsDailySinceCutoff, {
       dateOf: (d) => d.date_start,
@@ -6159,6 +6073,12 @@ export default function App() {
 
       if (valA < valB) return salesSort.direction === 'asc' ? -1 : 1;
       if (valA > valB) return salesSort.direction === 'asc' ? 1 : -1;
+      // Mismo día (o misma fecha exacta): desempata por orden de carga, así las ventas de un mismo
+      // día no quedan mezcladas al azar.
+      if (salesSort.key === 'date') {
+        const cA = safeDateTime(a.createdAt || a.date), cB = safeDateTime(b.createdAt || b.date);
+        if (cA !== cB) return salesSort.direction === 'asc' ? cA - cB : cB - cA;
+      }
       return 0;
     });
 
@@ -6281,6 +6201,13 @@ export default function App() {
       key,
       direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
     }));
+  };
+  // Selector de orden por fecha: al cambiar de criterio arranca por lo más nuevo; tocar el que ya
+  // está elegido invierte el sentido.
+  const elegirOrdenVentas = (key) => {
+    setSalesSort(prev => prev.key === key
+      ? { key, direction: prev.direction === 'desc' ? 'asc' : 'desc' }
+      : { key, direction: 'desc' });
   };
   
   const handleExportSales = () => {
@@ -8973,57 +8900,16 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                     ) : (
                         /* VISTA NORMAL */
                         <>
-                            {/* METRIC CARDS + PROYECCIÓN (slider de 2 páginas, drag horizontal). En modo
-                                edición se apaga el swipe del slider (dragDisabled) y se fuerza la página de
-                                tarjetas (key cambia => remonta en la página 0): si no, arrastrar una tarjeta
-                                para reordenarla competía con el gesto de deslizar hacia Proyección.
-                                DndContext/DragOverlay van ACÁ AFUERA, envolviendo el slider entero, y no
-                                adentro de renderHomeCardSectors: MetricSlider anima el swipe poniéndole
-                                `transform: translateX(...)` a su contenedor interno, y cualquier ancestro con
-                                `transform` rompe el `position: fixed` de DragOverlay (pasa a posicionarse
-                                relativo a ese contenedor trasladado en vez de a la ventana) — por eso la
-                                tarjeta arrastrada "salía disparada" lejos del cursor. Con DragOverlay afuera
-                                del slider, ya no hay ningún ancestro con transform de por medio.
+                            {/* TARJETAS DE MÉTRICAS. DndContext/DragOverlay envuelven las tarjetas desde acá
+                                afuera y no adentro de renderHomeCardSectors: DragOverlay usa position:fixed, y
+                                cualquier ancestro con `transform` lo rompe (la tarjeta arrastrada "sale
+                                disparada" lejos del cursor) — no envolver esto en nada que use transform.
                                 pt-3 (no mt) para no chocar en especificidad con el margen que ya pone
-                                space-y-5 entre este bloque y la tarjeta de Período de Análisis de arriba —
-                                se suman: separa un poco más tanto la vista de tarjetas como la de
-                                Proyección (viven en el mismo slider, así que ambas heredan el mismo gap). */}
+                                space-y-5 entre este bloque y la tarjeta de Período de Análisis de arriba. */}
                             <div className="pt-3">
                             <DndContext sensors={homeDndSensors} collisionDetection={homeCollisionDetection}
                               onDragStart={handleHomeDragStart} onDragOver={handleHomeDragOver} onDragEnd={handleHomeDragEnd}>
-                            <MetricSlider
-                              key={homeEditMode ? 'edit' : 'view'}
-                              darkMode={darkMode}
-                              ariaLabel="vistas de inicio"
-                              dragDisabled={homeEditMode}
-                              pages={[
-                                { id: 'metrics', content: renderHomeCardSectors(analysisData.baseStats, analysisData.prevBaseStats, { rangeStart: analysisData.rangeStart, rangeEnd: analysisData.rangeEnd, sparklines: sparklineData7d, editable: homeEditMode }) },
-                                { id: 'projection', content: (
-                                  <div className="space-y-4">
-                                    <ProjectionChart
-                                      darkMode={darkMode}
-                                      subtitle="Regresión lineal + promedio móvil 7d + estacionalidad semanal, desde el 1 de junio hasta el 31 de diciembre de 2026 — el tramo lejano es poco probable, se muestra igual con banda ancha"
-                                      views={[
-                                        { key: 'facturacion', label: 'Facturación', title: 'Facturación Proyectada', cumulativeLabel: 'Facturación histórica completa + proyectada a fecha', projection: homeRevenueProjection, valueFormatter: formatMoney, axisFormatter: formatCompact, allTimeTotal: homeAllTimeTotals.revenue },
-                                        { key: 'unidades', label: 'Unidades', title: 'Unidades Proyectadas', cumulativeLabel: 'Unidades históricas totales + proyectadas a fecha', projection: homeUnitsProjection, valueFormatter: (v) => `${Math.round(v).toLocaleString('es-AR')} uds`, axisFormatter: formatCompact, allTimeTotal: homeAllTimeTotals.units },
-                                        { key: 'ganancia', label: 'Ganancia', title: 'Ganancia Proyectada', cumulativeLabel: 'Ganancia histórica completa + proyectada a fecha', projection: homeProfitProjection, valueFormatter: formatMoney, axisFormatter: formatCompact, allTimeTotal: homeAllTimeTotals.profit },
-                                      ]}
-                                      cumulativeMinDate={toDateKey(new Date())}
-                                      cumulativeMaxDate={PROJECTION_YEAR_END_DATE}
-                                      cumulativeDefaultDate={PROJECTION_YEAR_END_DATE}
-                                    />
-                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                      <ProjectionChart darkMode={darkMode} compact title="Productos Fallados"
-                                        projection={homeFailedProductsProjection} valueFormatter={formatMoney} axisFormatter={formatCompact} />
-                                      <ProjectionChart darkMode={darkMode} compact title="Productos Robados"
-                                        projection={homeStolenProductsProjection} valueFormatter={formatMoney} axisFormatter={formatCompact} />
-                                      <ProjectionChart darkMode={darkMode} compact title="Clientes Fijos por Ads"
-                                        projection={homeFixedAdsClientsProjection} valueFormatter={(v) => `${v} cliente${v !== 1 ? 's' : ''}`} />
-                                    </div>
-                                  </div>
-                                ) },
-                              ]}
-                            />
+                            {renderHomeCardSectors(analysisData.baseStats, analysisData.prevBaseStats, { rangeStart: analysisData.rangeStart, rangeEnd: analysisData.rangeEnd, sparklines: sparklineData7d, editable: homeEditMode })}
                             <DragOverlay>
                                 {activeHomeDragId ? (
                                     <div style={{ opacity: 0.95, transform: 'scale(1.05)', boxShadow: '0 20px 40px rgba(0,0,0,0.4)', borderRadius: '1rem' }}>
@@ -10109,6 +9995,27 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         ))}
                     </div>
 
+                    <div className={`px-4 py-3 border-b flex items-center gap-1.5 flex-wrap ${darkMode ? 'bg-[#121212] border-[#1D1D1D]' : 'bg-zinc-50 border-zinc-200'}`}>
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mr-1">Ordenar:</span>
+                        {[
+                          { key: 'date', label: 'Fecha de venta' },
+                          { key: 'createdAt', label: 'Orden de carga' },
+                        ].map(o => {
+                          const activo = salesSort.key === o.key;
+                          return (
+                            <button key={o.key} onClick={() => elegirOrdenVentas(o.key)}
+                              title={activo ? 'Tocá de nuevo para invertir el orden' : undefined}
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                                activo
+                                  ? (darkMode ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40' : 'bg-indigo-50 text-indigo-700 border-indigo-300')
+                                  : (darkMode ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-400 hover:text-zinc-600')
+                              }`}>
+                              {o.label}{activo ? (salesSort.direction === 'desc' ? ' · más nuevas ↓' : ' · más viejas ↑') : ''}
+                            </button>
+                          );
+                        })}
+                    </div>
+
                     {selectedSalesSummary.salesCount > 0 && (
                       <div className={`px-4 py-3 border-b flex flex-col xl:flex-row xl:items-center justify-between gap-3 ${darkMode ? 'bg-red-500/10 border-red-500/20' : 'bg-red-50 border-red-100'}`}>
                         <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
@@ -10149,8 +10056,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                     className="w-4 h-4 accent-indigo-600 cursor-pointer disabled:opacity-30"
                                   />
                                 </th>
-                                <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors" onClick={() => toggleSort('createdAt')}>
-                                  <div className="flex items-center gap-1">Registro <span className="opacity-50">{salesSort.key === 'createdAt' ? (salesSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></div>
+                                <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors" onClick={() => elegirOrdenVentas('date')}>
+                                  <div className="flex items-center gap-1">Fecha <span className="opacity-50">{salesSort.key === 'date' ? (salesSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></div>
                                 </th>
                                 <th className="px-4 py-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors" onClick={() => toggleSort('productName')}>
                                   <div className="flex items-center gap-1">Operación <span className="opacity-50">{salesSort.key === 'productName' ? (salesSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></div>
