@@ -736,6 +736,75 @@ exports.agentCotizarEnvio = conClave(async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /agentBuscarCatalogo?consulta= — lo que hay de lo que pidió el cliente
+// ─────────────────────────────────────────────────────────────────────────────
+// El agente no recibe el catálogo entero en cada turno (se paga en cada respuesta): cuando necesita saber
+// si hay algo, a cuánto o en qué sabores, lo busca acá. Devuelve solo lo que coincide, leído de las mismas
+// listas del panel y con el mismo buscador que después cobra. Si el cliente pide la lista completa, el
+// agente manda la plantilla (eso no pasa por acá).
+const NOMBRE_LISTA = Object.fromEntries(Object.entries(LISTAS_DEL_PANEL).map(([nombre, campo]) => [campo, nombre]));
+// Palabras que no distinguen un producto ("¿qué vapes tenés?"): no cuentan para buscar.
+const PALABRAS_GENERICAS = new Set(["vape", "vapes", "vaper", "vapers", "pod", "pods", "descartable", "descartables", "thc", "nicotina",
+  "perfume", "perfumes", "accesorio", "accesorios", "stock", "precio", "precios", "lista", "catalogo", "hay", "tenes", "tienen", "tenian",
+  "que", "sabor", "sabores", "producto", "productos", "quiero", "busco", "uno", "una"]);
+
+// Los sabores con stock de un producto de precios (vapes y THC), o null si esa lista no tiene stock.
+function stockDeProducto(op, producto) {
+  const campo = STOCK_DE[producto.lista];
+  if (!campo || !textoDe(op[campo])) return null;
+  const modelos = parsearStock(op[campo]);
+  let hallado = buscarProducto(modelos, producto.nombre);
+  if (!hallado || !hallado.producto) {
+    const buscadas = palabras(producto.nombre);
+    const contenido = modelos.filter((m) => palabras(m.nombre).every((w) => coincidencia(w, buscadas) > 0))
+      .sort((a, b) => palabras(b.nombre).length - palabras(a.nombre).length)[0];
+    if (contenido) hallado = { producto: contenido };
+  }
+  if (!hallado || !hallado.producto) return [];
+  return hallado.producto.sabores.filter((s) => s.cantidad !== 0).map((s) => s.texto + (s.cantidad ? ` (${s.cantidad})` : ""));
+}
+
+function buscarEnCatalogo(op, consulta) {
+  const q = palabras(consulta).filter((w) => !PALABRAS_GENERICAS.has(w));
+  const productos = LISTAS_CON_PRECIO.flatMap((campo) => parsearProductos(op[campo]).map((p) => ({ ...p, lista: campo })));
+  const ofertas = parsearProductos(op.ofertasTexto);
+  const precios = (p) => Object.entries(p.precios).map(([n, m]) => `${n}x ${$(m)}`).join(", ");
+  const indice = Object.fromEntries(LISTAS_CON_PRECIO.map((campo) => [NOMBRE_LISTA[campo], parsearProductos(op[campo]).map((p) => p.nombre)]).filter(([, v]) => v.length));
+  const respuesta = { ok: true, consulta: String(consulta || ""), resultados: [] };
+  if (/mayor/i.test(consulta || "") && textoDe(op.preciosMayoristaTexto)) respuesta.listaMayorista = textoDe(op.preciosMayoristaTexto);
+  if (q.length) {
+    // Se busca en el nombre, la descripción y los sabores con stock ("watermelon" trae los modelos que lo tienen).
+    const puntaje = (p, sabores) => {
+      const enTodo = [p.nombre, ...(p.lineas || []), p.detalle, ...(sabores || [])].flatMap(palabras);
+      return q.filter((w) => coincidencia(w, enTodo) > 0).length / q.length;
+    };
+    let hallados = productos.map((p) => { const sabores = stockDeProducto(op, p); return { p, sabores, s: puntaje(p, sabores), mejor: buscarProducto([p], consulta) }; })
+      .filter((x) => x.s >= (q.length === 1 ? 1 : 0.5))
+      .sort((a, b) => b.s - a.s || (b.mejor ? 1 : 0) - (a.mejor ? 1 : 0));
+    // Si hay productos que coinciden con todo lo pedido, los parciales sobran ("ice king" no trae "Sweet King").
+    if (hallados.some((x) => x.s === 1)) hallados = hallados.filter((x) => x.s === 1);
+    respuesta.resultados = hallados.slice(0, 6).map(({ p, sabores }) => {
+      const r = { lista: NOMBRE_LISTA[p.lista], nombre: p.nombre, detalle: (p.lineas || []).filter((l) => l !== p.nombre).join(" · "), precios: precios(p) };
+      if (sabores) r.saboresConStock = sabores.length ? sabores : "sin stock";
+      const oferta = buscarProducto(ofertas, p.nombre);
+      if (oferta && oferta.producto) r.oferta = precios(oferta.producto);
+      return r;
+    });
+  }
+  if (!respuesta.resultados.length) {
+    respuesta.indice = indice;
+    respuesta.nota = q.length
+      ? `no encontré "${consulta}" en las listas de hoy: no digas que no hay sin ofrecer lo más parecido del índice`
+      : "consulta general: si quiere ver todo, mandá la plantilla de esa categoría; si no, preguntale qué busca";
+  }
+  return respuesta;
+}
+
+exports.agentBuscarCatalogo = conClave(async (req, res) => {
+  res.json(buscarEnCatalogo(await leerOperativo(), req.query.consulta));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // POST /agentPedido — calcula el resumen (preview: true) o carga el pedido
 // ─────────────────────────────────────────────────────────────────────────────
 const ENVIO_LABEL = { moto: "🛵 Moto mensajería", uber: "⚡ Envío flash (Uber)", correo: "📦 Correo (Vía Cargo)" };

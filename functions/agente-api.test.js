@@ -461,6 +461,30 @@ async function main() {
     ok("stock: toma el sabor exacto (Strawberry, no Strawberry Kiwi)", r8.status === 400 && /hay solo 1/.test(r8.body.error), r8.body);
     const r9 = await conStock({ producto: "Eclaire Lattafa", variante: "", cantidad: 1 });
     ok("stock: los perfumes no tienen lista de stock y se venden", r9.body.ok, r9.body);
+
+    // ── buscar_catalogo: el agente busca lo que pidió el cliente en vez de recibir el catálogo entero ──
+    const buscar = (consulta) => llamar(api.agentBuscarCatalogo, { query: { consulta } });
+    const b1 = await buscar("ice king");
+    const ik = b1.body.resultados[0] || {};
+    ok("catálogo: encuentra el Ice King con precio y sabores con stock", b1.body.ok && /ICE KING/.test(ik.nombre) && /1x \$26\.000/.test(ik.precios)
+      && Array.isArray(ik.saboresConStock) && ik.saboresConStock.some((s) => /Peach.*\(3\)/.test(s)) && !ik.saboresConStock.some((s) => /Strawberry Ice/.test(s)), b1.body);
+    const b2 = await buscar("tenes dozo?");
+    ok("catálogo: busca en THC y saca las palabras genéricas", b2.body.resultados.some((r) => r.lista === "PRECIOS_THC" && /DOZO/.test(r.nombre)), b2.body);
+    const b3 = await buscar("elfbar duke");
+    const duke = b3.body.resultados.find((r) => /DUKE/.test(r.nombre));
+    ok("catálogo: un modelo con precio pero sin stock dice sin stock", duke && duke.saboresConStock === "sin stock", b3.body);
+    const b4 = await buscar("eclaire");
+    ok("catálogo: perfumes sin lista de stock no traen sabores", b4.body.resultados[0] && !("saboresConStock" in b4.body.resultados[0]), b4.body);
+    const b5 = await buscar("producto inventado xyz");
+    ok("catálogo: si no encuentra nada devuelve el índice para ofrecer lo más parecido", !b5.body.resultados.length && b5.body.indice && b5.body.indice.PRECIOS_VAPES && /no encontré/.test(b5.body.nota), b5.body);
+    const b6 = await buscar("que vapes tenes");
+    ok("catálogo: una consulta general no busca, devuelve el índice", !b6.body.resultados.length && /plantilla/.test(b6.body.nota), b6.body);
+    ok("catálogo: devuelve pocos resultados, no la lista entera", (await buscar("elfbar")).body.resultados.length <= 6);
+    const b7 = await buscar("strawberry kiwi");
+    ok("catálogo: busca también por sabor con stock", b7.body.resultados.length >= 1 && /^IGNITE V400$/.test(b7.body.resultados[0].nombre)
+      && b7.body.resultados.every((r) => Array.isArray(r.saboresConStock) && r.saboresConStock.some((x) => /Strawberry Kiwi/.test(x))), b7.body);
+    const b8 = await buscar("strawberry ice");
+    ok("catálogo: un sabor en (0) no cuenta como disponible", !b8.body.resultados.some((r) => /ICE KING/.test(r.nombre) && r.s === 1) && !b8.body.resultados.some((r) => Array.isArray(r.saboresConStock) && r.saboresConStock.some((x) => /Strawberry Ice/.test(x))), b8.body);
     store["settings/operativo"] = operativo;
   }
 
