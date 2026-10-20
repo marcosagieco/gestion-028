@@ -595,6 +595,15 @@ async function main() {
     await api.onCotizacionUberConfirmada(evento({ estado: "pendiente" }, { estado: "no_llegamos", idConversacion: "78", noLlegamos: true }));
     ok("uber no llegamos: avisa a n8n sin monto", postsAN8n.length === 2 && postsAN8n[1].body.noLlegamos === true && postsAN8n[1].body.idConversacion === "78" && !("montoUber" in postsAN8n[1].body), postsAN8n);
     ok("uber no llegamos: queda procesado", store[idCot].estado === "procesado", store[idCot]);
+    ok("uber: sin settings/agente avisa al n8n de siempre", postsAN8n[0].url === "https://n8n.bunge.agenticsia.agency/webhook/cotizacion-uber-confirmada", postsAN8n[0].url);
+    // Mudanza de servidor: el n8n se cambia desde Firebase, sin redesplegar.
+    store["settings/agente"] = { n8nBase: "https://028-import-n8n.neoyey.easypanel.host/" };
+    await api.onCotizacionUberConfirmada(evento({ estado: "pendiente" }, { estado: "cotizado", idConversacion: "79", montoUber: 9000 }));
+    ok("uber: con settings/agente.n8nBase avisa a ese n8n", postsAN8n[2].url === "https://028-import-n8n.neoyey.easypanel.host/webhook/cotizacion-uber-confirmada", postsAN8n[2].url);
+    store["settings/agente"] = { n8nBase: "http://inseguro.com" };
+    await api.onCotizacionUberConfirmada(evento({ estado: "pendiente" }, { estado: "cotizado", idConversacion: "80", montoUber: 9000 }));
+    ok("uber: una dirección inválida se ignora", postsAN8n[3].url.startsWith("https://n8n.bunge.agenticsia.agency/"), postsAN8n[3].url);
+    delete store["settings/agente"];
   }
 
   // ── comprobante ──

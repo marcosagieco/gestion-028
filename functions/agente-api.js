@@ -23,7 +23,20 @@ const db = admin.firestore();
 
 const AGENT_API_KEY = process.env.AGENT_API_KEY || "";
 const GOOGLE_MAPS_KEY = process.env.GOOGLE_MAPS_KEY || "";
-const N8N_COTIZACION_UBER_WEBHOOK = "https://n8n.bunge.agenticsia.agency/webhook/cotizacion-uber-confirmada";
+// Adónde avisar cuando el depósito cotiza un Uber: al n8n que atiende el número. Se lee de
+// settings/agente.n8nBase para poder mudar el bot de servidor sin redesplegar; sin ese dato, el de siempre.
+const N8N_BASE_POR_DEFECTO = "https://n8n.bunge.agenticsia.agency";
+async function urlCotizacionUber() {
+  let base = N8N_BASE_POR_DEFECTO;
+  try {
+    const d = await db.collection("settings").doc("agente").get();
+    const delPanel = d.exists ? String(d.data().n8nBase || "").trim().replace(/\/+$/, "") : "";
+    if (/^https:\/\/[^\s/]+$/.test(delPanel)) base = delPanel;
+  } catch (e) {
+    console.error("[agente-api] no se pudo leer settings/agente, uso el n8n por defecto", e.message);
+  }
+  return base + "/webhook/cotizacion-uber-confirmada";
+}
 const STORAGE_BUCKET = "gestion-028.firebasestorage.app";
 const SERVE_COMPROBANTE_BASE = "https://us-central1-gestion-028.cloudfunctions.net/serveComprobante";
 
@@ -1211,7 +1224,7 @@ exports.onCotizacionUberConfirmada = onDocumentUpdated("cotizaciones_uber/{id}",
   const noLlegamos = cot.estado === "no_llegamos";
   try {
     await axios.post(
-      N8N_COTIZACION_UBER_WEBHOOK,
+      await urlCotizacionUber(),
       noLlegamos
         ? { idConversacion: cot.idConversacion, noLlegamos: true }
         : { idConversacion: cot.idConversacion, montoUber: cot.montoUber },
