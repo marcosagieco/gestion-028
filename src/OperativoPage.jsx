@@ -51,7 +51,7 @@ const SITUACIONES = [
 const ALIASES = [
   { id: 'alias1', label: 'Alias 1 — Lucio (028import.gl)' },
   { id: 'alias2', label: 'Alias 2 — Marcos (028import.gal2)' },
-  { id: 'alias3', label: 'Alias 3 — Financiera (CALMO.DURO.DIA)' },
+  { id: 'alias3', label: 'Alias 3 — Financiera (tamelake358sa.eluter)' },
 ];
 
 // Fechas "AAAA-MM-DD" en hora de Buenos Aires (las mismas que usa el backend).

@@ -62,7 +62,7 @@ Todo lo del día, en una sola llamada:
   `COMUNIDAD` se usa cuando piden aviso de reingreso/stock nuevo/ofertas, y también como cierre
   liviano cuando el cliente confirma que llegó todo bien. `COMPROBANTES_VALIDOS` es regla interna:
   incluye las tres cuentas: Lucio Felix Bunge/Galicia para alias1, Marcos Agustin Gieco/Galicia
-  para alias2 y Tame Lake S.A./Secpaynet para alias3. Identifica la cuenta activa y compara contra
+  para alias2 y Tame Lake S.A. (tamelake358sa.eluter) para alias3. Identifica la cuenta activa y compara contra
   los datos enviados al cliente, incluso si el alias cambia luego. No confirma acreditación bancaria.
   La diferencia de importe se tolera hasta $5.000 inclusive en ambos sentidos. Si supera ese
   rango se deriva; un destino explícitamente incorrecto o evidencia de edición se sigue revisando.

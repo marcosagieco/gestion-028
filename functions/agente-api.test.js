@@ -494,15 +494,15 @@ async function main() {
     for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
     store["settings/operativo"] = { ...store["settings/operativo"], situacion: "demora" };
     const r = await conHora("2026-09-22T15:00:00", () => llamar(api.agentEstadoOperativo));
-    ok("estado: manda el alias activo, nunca otro", r.body.plantillas.ALIAS.includes("CALMO.DURO.DIA") && r.body.plantillas.ALIAS.includes("CBU: 0000598201000000015014") && !/028import\.gal?2?/.test(r.body.plantillas.ALIAS), r.body.plantillas.ALIAS);
+    ok("estado: manda el alias activo, nunca otro", r.body.plantillas.ALIAS.includes("tamelake358sa.eluter") && r.body.plantillas.ALIAS.includes("CVU: 0000510400000000001348") && !/028import\.gal?2?/.test(r.body.plantillas.ALIAS), r.body.plantillas.ALIAS);
     ok("estado: manda las listas del panel", r.body.plantillas.PRECIOS_VAPES === LISTAS.preciosVapesTexto.trim(), null);
     ok("estado: demora del día y tandas independientes", /2 hs/.test(r.body.demora) && r.body.salidasMoto[0].hora === "15:30", r.body);
-    ok("estado: manda comunidad y regla de Secpaynet", /COMUNIDAD 028 IMPORT/.test(r.body.plantillas.COMUNIDAD) && /Secpaynet/.test(r.body.plantillas.COMPROBANTES_VALIDOS), r.body.plantillas);
+    ok("estado: manda comunidad y regla de Tame Lake", /COMUNIDAD 028 IMPORT/.test(r.body.plantillas.COMUNIDAD) && /30718603702/.test(r.body.plantillas.COMPROBANTES_VALIDOS), r.body.plantillas);
     const aliasGuardado = store["settings/operativo"].aliasActivo;
     for (const [alias, titular, cbu] of [
       ["alias1", "Lucio Felix Bunge", "0070194130004014092980"],
       ["alias2", "Marcos Agustin Gieco", "0070181130004057764295"],
-      ["alias3", "Tame Lake S.A.", "0000598201000000015014"],
+      ["alias3", "Tame Lake S.A.", "0000510400000000001348"],
     ]) {
       store["settings/operativo"].aliasActivo = alias;
       const estado = await llamar(api.agentEstadoOperativo);
