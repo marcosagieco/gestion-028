@@ -3739,11 +3739,16 @@ export default function App() {
     const hasta = new Date(y, m, 1, 0, 0, 0).toISOString();
     setComprobantesLoading(true);
     try {
-      const snap = await getDocs(query(collection(db, 'pedidos'), where('createdAt', '>=', desde), where('createdAt', '<', hasta)));
-      const lista = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter(tieneComprobante)
-        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      const [snap, sueltos] = await Promise.all([
+        getDocs(query(collection(db, 'pedidos'), where('createdAt', '>=', desde), where('createdAt', '<', hasta))),
+        getDocs(query(collection(db, 'comprobantes'), where('createdAt', '>=', desde), where('createdAt', '<', hasta))),
+      ]);
+      const lista = [
+        ...snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(tieneComprobante),
+        // Comprobantes que el bot guardó sin pedido (derivó, o el pedido se cargó a mano). Los que
+        // terminaron en un pedido (pedidoId) ya aparecen con ese pedido y no se repiten.
+        ...sueltos.docs.map(d => ({ id: d.id, ...d.data() })).filter(c => !c.pedidoId).map(c => ({ ...c, estado: 'sin pedido', total: null })),
+      ].sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
       comprobantesCacheRef.current[mes] = lista;
       setComprobantesDelMes(lista);
     } catch (e) {
