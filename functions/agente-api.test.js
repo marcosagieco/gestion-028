@@ -468,6 +468,9 @@ async function main() {
     const ik = b1.body.resultados[0] || {};
     ok("catálogo: encuentra el Ice King con precio y sabores con stock", b1.body.ok && /ICE KING/.test(ik.nombre) && /1x \$26\.000/.test(ik.precios)
       && Array.isArray(ik.saboresConStock) && ik.saboresConStock.some((s) => /Peach.*\(3\)/.test(s)) && !ik.saboresConStock.some((s) => /Strawberry Ice/.test(s)), b1.body);
+    const bloque = String(ik.bloqueStock || "");
+    ok("catálogo: trae el bloque de stock del modelo tal cual la plantilla, sin los agotados", /ICE KING/.test(bloque.split("\n")[0]) && bloque.split("\n")[1] === ""
+      && bloque.split("\n").slice(2).length === ik.saboresConStock.length && bloque.includes("(3)") && !/Strawberry Ice/.test(bloque), bloque);
     const b2 = await buscar("tenes dozo?");
     ok("catálogo: busca en THC y saca las palabras genéricas", b2.body.resultados.some((r) => r.lista === "PRECIOS_THC" && /DOZO/.test(r.nombre)), b2.body);
     const b3 = await buscar("elfbar duke");

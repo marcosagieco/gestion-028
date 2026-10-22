@@ -451,10 +451,10 @@ function parsearStock(texto) {
     if (esNombre(linea)) {
       // Un título sin sabores seguido de otro título es de sección ("DESCARTABLES THC"), no un modelo.
       if (modelos.length && !modelos[modelos.length - 1].sabores.length) modelos.pop();
-      modelos.push({ nombre: sinEmojis(linea), detalle: "", sabores: [] });
+      modelos.push({ nombre: sinEmojis(linea), titulo: linea, detalle: "", sabores: [] });
     } else if (modelos.length) {
       const cantidad = linea.match(/\((\d+)\)\s*$/);
-      modelos[modelos.length - 1].sabores.push({ texto: sinEmojis(linea.replace(/\(\d+\)\s*$/, "")), cantidad: cantidad ? Number(cantidad[1]) : null });
+      modelos[modelos.length - 1].sabores.push({ texto: sinEmojis(linea.replace(/\(\d+\)\s*$/, "")), cantidad: cantidad ? Number(cantidad[1]) : null, linea });
     }
   }
   return modelos;
@@ -748,8 +748,9 @@ const PALABRAS_GENERICAS = new Set(["vape", "vapes", "vaper", "vapers", "pod", "
   "perfume", "perfumes", "accesorio", "accesorios", "stock", "precio", "precios", "lista", "catalogo", "hay", "tenes", "tienen", "tenian",
   "que", "sabor", "sabores", "producto", "productos", "quiero", "busco", "uno", "una"]);
 
-// Los sabores con stock de un producto de precios (vapes y THC), o null si esa lista no tiene stock.
-function stockDeProducto(op, producto) {
+// El modelo de la lista de stock que corresponde a un producto de precios (vapes y THC): null si esa
+// lista no tiene stock cargado, undefined si el modelo no figura.
+function modeloDeStock(op, producto) {
   const campo = STOCK_DE[producto.lista];
   if (!campo || !textoDe(op[campo])) return null;
   const modelos = parsearStock(op[campo]);
@@ -760,8 +761,24 @@ function stockDeProducto(op, producto) {
       .sort((a, b) => palabras(b.nombre).length - palabras(a.nombre).length)[0];
     if (contenido) hallado = { producto: contenido };
   }
-  if (!hallado || !hallado.producto) return [];
-  return hallado.producto.sabores.filter((s) => s.cantidad !== 0).map((s) => s.texto + (s.cantidad ? ` (${s.cantidad})` : ""));
+  return hallado && hallado.producto ? hallado.producto : undefined;
+}
+
+// Los sabores con stock de un producto de precios, o null si esa lista no tiene stock.
+function stockDeProducto(op, producto) {
+  const modelo = modeloDeStock(op, producto);
+  if (modelo === null) return null;
+  if (!modelo) return [];
+  return modelo.sabores.filter((s) => s.cantidad !== 0).map((s) => s.texto + (s.cantidad ? ` (${s.cantidad})` : ""));
+}
+
+// El pedazo de la plantilla de stock de ese modelo, tal como lo escribió el depósito (título y un sabor
+// por renglón, con sus emojis), sin los sabores agotados: el agente lo copia en vez de reescribirlo.
+function bloqueDeStock(op, producto) {
+  const modelo = modeloDeStock(op, producto);
+  if (!modelo) return null;
+  const sabores = modelo.sabores.filter((s) => s.cantidad !== 0).map((s) => s.linea);
+  return sabores.length ? [modelo.titulo, "", ...sabores].join("\n") : null;
 }
 
 function buscarEnCatalogo(op, consulta) {
@@ -786,6 +803,8 @@ function buscarEnCatalogo(op, consulta) {
     respuesta.resultados = hallados.slice(0, 6).map(({ p, sabores }) => {
       const r = { lista: NOMBRE_LISTA[p.lista], nombre: p.nombre, detalle: (p.lineas || []).filter((l) => l !== p.nombre).join(" · "), precios: precios(p) };
       if (sabores) r.saboresConStock = sabores.length ? sabores : "sin stock";
+      const bloque = bloqueDeStock(op, p);
+      if (bloque) r.bloqueStock = bloque;
       const oferta = buscarProducto(ofertas, p.nombre);
       if (oferta && oferta.producto) r.oferta = precios(oferta.producto);
       return r;
