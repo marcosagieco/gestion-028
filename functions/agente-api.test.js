@@ -27,7 +27,7 @@ function docRef(col, id) {
     id,
     async get() { return { exists: k in store, data: () => store[k] && structuredClone(store[k]), id }; },
     async set(data) { store[k] = { ...data }; },
-    async update(data) { store[k] = { ...store[k], ...data }; },
+    async update(data) { if (!(k in store)) throw new Error("5 NOT_FOUND"); store[k] = { ...store[k], ...data }; }, // como Firestore: update no crea
   };
 }
 function colRef(col) {
@@ -636,6 +636,27 @@ async function main() {
     ok("serveComprobante: sin pedido -> 404", r.status === 404, r.body);
   }
 
+  // ── comprobantes sueltos: se guardan todos, se cargue o no el pedido ──
+  {
+    const guardar = (body) => llamar(api.agentGuardarComprobante, { method: "POST", body: { telefono: "+5492235861032", cliente: "Celina", idConversacion: 201, idMensaje: 9, ...body } });
+    const foto = await guardar({ url: "https://chatwoot/foto-vape.jpg", descripcion: "[Adjunto: Es un ELFBAR ICE KING, el texto visible dice 40K] tenes este ?" });
+    ok("suelto: una foto que no es comprobante no se guarda", foto.body.ok && foto.body.guardado === false, foto.body);
+    // Descripción real (22/10): el CVU quedó leído con un cero menos, pero el destinatario es Tame Lake.
+    const celina = "[Adjunto: Esto es un comprobante de pago.\n\n*   **Monto:** $65.990\n*   **Banco o App:** Mercado Pago\n*   **Número de operación:** 185563329942 (N.º de operación de Mercado Pago), XJ8G7V95717156KMNEMPYR (Código de identificación)\n*   **Titular:** Celina Luque Peluffo\n*   **Destinatario:** Tame Lake 358 Sa\n*   **CBU o CVU de destino:** CBU: 000051040000000001348\n*   **Alias visible:** No aplica\n*   **Fecha:** 22/octubre/2026 a las 14:56.] [Link de la url fuente: https://chatwoot/x.jpg]";
+    const r = await guardar({ url: "https://chatwoot/x.jpg", descripcion: celina });
+    const doc = store[`comprobantes/${r.body.id}`];
+    ok("suelto: guarda el comprobante con sus datos", r.body.guardado && doc.comprobante.numero === "185563329942" && doc.comprobante.monto === 65990 && doc.comprobante.nombre === "Celina Luque Peluffo" && doc.telefono === "5492235861032" && doc.pedidoId === null, doc);
+    ok("suelto: reconoce la cuenta aunque el CVU se haya leído mal", doc.cuentaCobro === "alias3", doc.cuentaCobro);
+    ok("suelto: copia la foto a Storage y la sirve por serveComprobante", doc.comprobanteImagen.url.endsWith(`?comprobante=${r.body.id}`) && guardadoEnStorage.some((p) => p.includes(`sueltos/${r.body.id}.jpg`)), doc.comprobanteImagen);
+    const otra = await guardar({ url: "https://chatwoot/x.jpg", descripcion: celina });
+    ok("suelto: el mismo comprobante no se guarda dos veces", otra.body.reutilizado && otra.body.id === r.body.id, otra.body);
+    const santander = await guardar({ url: "https://chatwoot/santander.pdf", descripcion: "Es un comprobante de pago:\n\n*   **Monto:** $37.990,00\n*   **Banco o app:** Santander\n*   **Número de operación:** 96401936\n*   **Titular:** No especificado directamente como \"titular\"\n*   **Destinatario:** Lucio Felix Bunge\n*   **CBU o CVU de destino:** 0070194130004014092980" });
+    const ds = store[`comprobantes/${santander.body.id}`];
+    ok("suelto: monto con decimales, sin titular y otra cuenta", ds.comprobante.monto === 37990 && ds.comprobante.numero === "96401936" && ds.comprobante.nombre === null && ds.cuentaCobro === "alias1", ds);
+    const sirve = await llamar(api.serveComprobante, { query: { comprobante: "no-existe" } });
+    ok("serveComprobante: suelto inexistente -> 404", sirve.status === 404, sirve.body);
+  }
+
   // Reglas nuevas: pagos, mayorista, tandas elegidas y modificacion atomica.
   await conHora("2026-10-06T09:00:00", async () => {
     for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
@@ -741,6 +762,12 @@ async function main() {
     const retry = await conHora("2026-10-06T20:30:00", () => pedido({ idConversacion: "800", idMensajeOrigen: "8001", medioPago: "al recibir", salidaSeleccionada: primera }));
     ok("reintento despues de salida devuelve pedido existente", retry.body.reutilizado && retry.body.pedidoId === inicial.body.pedidoId && count() === 1, retry.body);
   });
+
+  // El comprobante suelto de https://chatwoot/x.jpg quedó vinculado al pedido que se cargó con esa URL.
+  {
+    const suelto = Object.entries(store).find(([k, v]) => k.startsWith("comprobantes/") && v.comprobante?.numero === "185563329942")?.[1];
+    ok("suelto: crear_pedido lo vincula al pedido", !!suelto?.pedidoId, suelto);
+  }
 
   const fallas = resultados.filter((r) => !r.ok);
   for (const r of resultados) console.log(`${r.ok ? "OK  " : "FALLA"} - ${r.nombre}${r.ok ? "" : "\n        " + JSON.stringify(r.detalle).slice(0, 600)}`);

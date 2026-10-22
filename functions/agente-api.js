@@ -1198,6 +1198,9 @@ exports.agentPedido = conClave(async (req, res) => {
         tx.set(pedidoGuardado, { ...data, comprobantesAdicionales: data.comprobantesAdicionales.map((p) => String(p.numero) === String(pagoAdicional.numero) ? { ...p, imagen } : p) });
       });
     } else if (imagen) await pedidoGuardado.update({ comprobanteImagen: imagen });
+    // El mismo comprobante ya quedó guardado como suelto al llegar: se vincula a este pedido.
+    await db.collection("comprobantes").doc(idComprobanteSuelto(b.comprobanteUrl)).update({ pedidoId: pedidoGuardado.id })
+      .catch(() => { /* no estaba guardado como suelto: no hay nada que vincular */ });
   }
 
   res.json({ ok: true, pedidoId: pedidoGuardado.id, mensaje, total, salida: cuando, reutilizado: false, modificado: !!pedidoEditarRef });
@@ -1205,26 +1208,108 @@ exports.agentPedido = conClave(async (req, res) => {
 
 const EXTENSIONES = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic", "application/pdf": "pdf" };
 
+// Baja el archivo del adjunto y lo guarda en Storage como comprobantes/AAAA/MM/<nombre>.<ext>.
+async function guardarArchivoComprobante(url, nombre) {
+  const resp = await axios.get(url, { responseType: "arraybuffer", timeout: 15000, maxContentLength: 15 * 1024 * 1024 });
+  const tipo = String(resp.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+  if (!EXTENSIONES[tipo]) return null;
+  const path = `comprobantes/${new Date().toISOString().slice(0, 7).replace("-", "/")}/${nombre}.${EXTENSIONES[tipo]}`;
+  await admin.storage().bucket(STORAGE_BUCKET).file(path).save(Buffer.from(resp.data), { contentType: tipo });
+  return { path, contentType: tipo };
+}
+
 async function copiarComprobante(url, pedidoId, adicionalId = null) {
   try {
-    const resp = await axios.get(url, { responseType: "arraybuffer", timeout: 15000, maxContentLength: 15 * 1024 * 1024 });
-    const tipo = String(resp.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
-    if (!EXTENSIONES[tipo]) return null;
-    const path = `comprobantes/${new Date().toISOString().slice(0, 7).replace("-", "/")}/${pedidoId}${adicionalId ? "-" + adicionalId : ""}.${EXTENSIONES[tipo]}`;
-    await admin.storage().bucket(STORAGE_BUCKET).file(path).save(Buffer.from(resp.data), { contentType: tipo });
-    return { url: `${SERVE_COMPROBANTE_BASE}?pedido=${pedidoId}${adicionalId ? "&adicional=" + adicionalId : ""}`, path, contentType: tipo };
+    const archivo = await guardarArchivoComprobante(url, `${pedidoId}${adicionalId ? "-" + adicionalId : ""}`);
+    return archivo && { url: `${SERVE_COMPROBANTE_BASE}?pedido=${pedidoId}${adicionalId ? "&adicional=" + adicionalId : ""}`, ...archivo };
   } catch (e) {
     console.error("[agente-api] no se pudo copiar el comprobante", e.message);
     return null;
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Comprobantes sueltos: todos los que manda un cliente quedan guardados en "comprobantes", se cargue o
+// no el pedido (si el bot deriva o el pedido se carga a mano, Lucio igual los manda a la financiera).
+// El id sale de la URL del adjunto: el mismo comprobante no se guarda dos veces y, cuando crear_pedido
+// recibe esa URL, lo vincula al pedido (pedidoId) y el panel deja de mostrarlo como suelto.
+// ─────────────────────────────────────────────────────────────────────────────
+const idComprobanteSuelto = (url) => `cw-${hashCorto(String(url).trim())}`;
+
+// Cada cuenta del negocio, por los datos que aparecen como destino en un comprobante.
+const CUENTAS_COMPROBANTE = [
+  { alias: "alias3", claves: ["0000510400000000001348", "tame lake", "tamelake"] },
+  { alias: "alias2", claves: ["0070181130004057764295", "gieco"] },
+  { alias: "alias1", claves: ["0070194130004014092980", "bunge"] },
+];
+
+// La descripción la arma el bot al leer la imagen, con renglones "Campo: valor" ("**Monto:** $65.990",
+// "**Número de operación:** 185563329942", "**Titular:** ...", "**Destinatario:** ...").
+function datosDeComprobante(descripcion) {
+  const texto = String(descripcion || "");
+  const campo = (nombre) => {
+    const m = texto.match(new RegExp(`${nombre}[^:\\n]*:\\**\\s*([^\\n]+)`, "i"));
+    return m ? m[1].replace(/\*+/g, "").trim() : null;
+  };
+  const montoTexto = campo("Monto");
+  const montoDigitos = montoTexto ? montoTexto.replace(/[^\d,]/g, "").replace(/,\d{1,2}$/, "").replace(/,/g, "") : "";
+  const monto = montoDigitos ? Number(montoDigitos) : null;
+  const numero = (campo("N[uú]mero de operaci[oó]n") || "").match(/\d{6,}/)?.[0] || null;
+  const titular = campo("Titular");
+  const nombre = titular && !/^no (especificad|visible|aparece|figura)/i.test(titular) ? titular.slice(0, 80) : null;
+  const destino = normalizar(`${campo("Destinatario") || ""} ${campo("CBU o CVU") || ""}`) + " " + `${campo("CBU o CVU") || ""}`.replace(/\D/g, " ");
+  const cuenta = CUENTAS_COMPROBANTE.find((c) => c.claves.some((k) => destino.includes(k)));
+  return {
+    esComprobante: /comprobante de pago/i.test(texto) || !!(monto && numero),
+    monto: Number.isFinite(monto) && monto > 0 ? monto : null,
+    numero,
+    nombre,
+    cuentaCobro: cuenta ? cuenta.alias : null,
+  };
+}
+
+// POST /agentGuardarComprobante — lo llama el bot con cada imagen o PDF que manda un cliente, antes de
+// responder. Si la descripción no es de un comprobante, no guarda nada.
+// Body: { url, descripcion, telefono, cliente, idConversacion, idMensaje }
+exports.agentGuardarComprobante = conClave(async (req, res) => {
+  const b = req.body || {};
+  const url = String(b.url || "").trim();
+  if (!/^https:\/\//.test(url)) return rechazar(res, "falta la url del adjunto");
+  const datos = datosDeComprobante(b.descripcion);
+  if (!datos.esComprobante) return res.json({ ok: true, guardado: false });
+  const ref = db.collection("comprobantes").doc(idComprobanteSuelto(url));
+  if ((await ref.get()).exists) return res.json({ ok: true, guardado: true, id: ref.id, reutilizado: true });
+  let archivo = null;
+  try {
+    archivo = await guardarArchivoComprobante(url, `sueltos/${ref.id}`);
+  } catch (e) {
+    console.error("[agente-api] no se pudo guardar el comprobante suelto", e.message);
+  }
+  await ref.set({
+    createdAt: new Date().toISOString(),
+    origen: "bot_n8n",
+    cliente: String(b.cliente || "").slice(0, 80) || null,
+    telefono: normalizarTelefono(b.telefono) || null,
+    idConversacion: b.idConversacion != null ? String(b.idConversacion) : null,
+    idMensaje: b.idMensaje != null ? String(b.idMensaje) : null,
+    comprobante: { numero: datos.numero, monto: datos.monto, nombre: datos.nombre },
+    cuentaCobro: datos.cuentaCobro,
+    descripcion: String(b.descripcion || "").slice(0, 2000),
+    comprobanteImagen: archivo ? { url: `${SERVE_COMPROBANTE_BASE}?comprobante=${ref.id}`, ...archivo } : null,
+    pedidoId: null,
+  });
+  res.json({ ok: true, guardado: true, id: ref.id });
+});
+
 // GET /serveComprobante?pedido= — la foto del comprobante para el panel. Sin clave a propósito,
 // igual que servePdf: el panel la muestra con un <img>. La "clave" es el id aleatorio del pedido.
+// Con ?comprobante=<id> sirve un comprobante suelto (colección "comprobantes").
 exports.serveComprobante = functions.https.onRequest(async (req, res) => {
   const pedidoId = String(req.query.pedido || "").trim();
-  const snap = pedidoId ? await db.collection("pedidos").doc(pedidoId).get() : null;
-  const img = snap && snap.exists && (req.query.adicional
+  const sueltoId = String(req.query.comprobante || "").trim();
+  const snap = sueltoId ? await db.collection("comprobantes").doc(sueltoId).get()
+    : pedidoId ? await db.collection("pedidos").doc(pedidoId).get() : null;
+  const img = snap && snap.exists && (!sueltoId && req.query.adicional
     ? snap.data().comprobantesAdicionales?.find((p) => hashCorto(p.numero) === req.query.adicional)?.imagen
     : snap.data().comprobanteImagen);
   if (!img || !img.path) return res.status(404).send("ese pedido no tiene comprobante guardado");
