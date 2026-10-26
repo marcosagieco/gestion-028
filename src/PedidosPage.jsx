@@ -1,17 +1,17 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { initializeFirestore, getFirestore, collection, query, orderBy, onSnapshot, addDoc, updateDoc, deleteDoc, doc, runTransaction, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
+import { initializeFirestore, getFirestore, collection, query, orderBy, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, getDoc, doc, runTransaction, deleteField, arrayUnion, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 import {
   ClipboardList, Plus, Clock, AlertTriangle, XCircle, CheckCircle, ChevronRight,
   ChevronDown, ChevronUp, History, Save, Moon, Sun, PartyPopper, Search, Trash2, Download,
-  Bike, Car, MapPin, PackageCheck, Store, Archive, Pencil, Loader2, Mail
+  Bike, Car, MapPin, PackageCheck, Store, Archive, Pencil, Loader2, Mail, ScanBarcode
 } from 'lucide-react';
 import AddressAutocomplete from './reparto/AddressAutocomplete';
 import { armarPrefillFinalizar, rankearItemsEnStock } from './pedidos/autocompletarVenta';
 import { REPARTIDORES, repartidorDe, nombreRepartidor } from './reparto/repartidores';
 import { ZONAS } from './reparto/zonas';
-import { useCodigosBarra, derivarProductosConocidos, registrarCodigoBarra, agregarAEscaneo } from './escaneo/datos';
+import { rid, useCodigosBarra, derivarProductosConocidos, registrarCodigoBarra, agregarAEscaneo } from './escaneo/datos';
 import { CajaEscaneo, RegistrarCodigoModal, FilaEscaneada } from './escaneo/componentes';
 import AccesosRapidos from './navegacion/AccesosRapidos';
 
@@ -102,7 +102,12 @@ const minutesSince = (dateStr) => {
 // pedidos que arma el bot quedan con tipoEnvio 'retiro' + datosCorreo, porque el paquete sale del
 // depósito igual que un retiro. Los que se clasifican a mano acá no tienen datosCorreo, así que
 // se marcan con tipoEnvio 'correo'. Cualquiera de las dos formas cuenta como correo.
-const esPedidoCorreo = (p) => p?.datosCorreo != null || p?.tipoEnvio === 'correo';
+// Los de correo salen del depósito en moto, igual que un envío de moto: el depósito carga la
+// dirección del correo/sucursal a la que va (cambia según el caso, por eso no hay una fija), elige con
+// qué motomensajero sale y al tocar "Listo" entra a su recorrido. Desde ahí el pedido queda con
+// tipoEnvio 'moto' (así lo ven /reparto-tarde, /reparto-noche y el depósito sin tocar nada de esas
+// pantallas) y despachoInterno 'moto_a_via_cargo', que es lo que lo sigue identificando como correo.
+const esPedidoCorreo = (p) => p?.datosCorreo != null || p?.tipoEnvio === 'correo' || p?.despachoInterno === 'moto_a_via_cargo';
 
 // Lee SOLO la primera palabra del mensaje para decidir el tipo de envío — nunca se parsea nada
 // más del texto. Si no arranca con "moto"/"uber"/"retiro"/"correo", tipoEnvio queda null y el
@@ -267,23 +272,23 @@ function ConfirmMiniModal({ dm, text, confirmLabel = 'Sí, ya lo empaqueté', on
   );
 }
 
-// Pantalla de escaneo que se abre al tocar "Listo" en un pendiente, antes de confirmarlo armado —
-// pide escanear lo que se va a empaquetar, usando las mismas piezas que /escaner (ver
-// escaneo/componentes.jsx y escaneo/datos.js: un código nuevo pide una vez qué producto es y queda
-// aprendido para siempre). Al confirmar, guarda un registro en `salidasDeposito` ya atado a ESTE
-// pedido (acá no hace falta buscarlo como en /escaner — ya se sabe cuál es) y recién después llama
-// a `onConfirmar`, que es la acción real de marcar armado (la pasa el que usa este modal).
+// Escaneo de un pedido MIENTRAS se arma: se abre con el botón "Escanear productos" de cada pendiente,
+// separado de "Listo". Antes el escaneo se pedía recién al tocar "Listo", pero a esa altura el
+// paquete ya estaba cerrado y no había nada que escanear — así que se escanea antes, producto por
+// producto a medida que entra en la bolsa, y "Listo" queda solo para avisar que está armado.
 //
-// Por defecto no se puede confirmar sin haber escaneado al menos un producto — es lo que se pidió:
-// "que tengan que escanear". La salida de emergencia de abajo (chica, bajo contraste a propósito)
-// es para cuando la lectora falla o un código no se puede leer: pide una segunda confirmación y deja
-// pasar sin escanear, para que un problema con la lectora nunca trabe la operación del depósito.
-function EscanearEmpaqueModal({ dm, pedido, db, codigosBarra, productosConocidos, onConfirmar, onCancelar }) {
-  const [sesion, setSesion] = useState([]);
+// Usa las mismas piezas que /escaner (un código nuevo pide una vez qué producto es y queda aprendido
+// para siempre). Al guardar deja dos cosas: el registro en `salidasDeposito` con id fijo por pedido
+// (`pedido_<id>`, así volver a escanear lo corrige en vez de duplicarlo) y la marca en el propio
+// pedido (`escaneadoAt` + `escaneoItems`), que es lo que muestra el "Escaneado" en la tarjeta y
+// permite reabrirlo con lo ya escaneado precargado.
+function EscanearEmpaqueModal({ dm, pedido, db, codigosBarra, productosConocidos, onCerrar }) {
+  const [sesion, setSesion] = useState(() => (pedido.escaneoItems || []).map(it => ({
+    uid: rid(), codigo: it.codigo, product: it.product, variant: it.variant, cantidad: it.cantidad, costo: '',
+  })));
   const [codigoSinRegistrar, setCodigoSinRegistrar] = useState(null);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
-  const [confirmandoSinEscanear, setConfirmandoSinEscanear] = useState(false);
 
   const handleScan = (codigoCrudo) => {
     const codigo = codigoCrudo.trim();
@@ -302,20 +307,23 @@ function EscanearEmpaqueModal({ dm, pedido, db, codigosBarra, productosConocidos
   const cambiarFila = (uid, patch) => setSesion(s => s.map(it => it.uid === uid ? { ...it, ...patch } : it));
   const quitarFila = (uid) => setSesion(s => s.filter(it => it.uid !== uid));
 
-  const confirmar = async () => {
+  const guardar = async () => {
     if (sesion.length === 0 || guardando) return;
     setGuardando(true);
     setError('');
     try {
-      await addDoc(collection(db, 'salidasDeposito'), {
+      const ahora = new Date().toISOString();
+      const items = sesion.map(it => ({ codigo: it.codigo, product: it.product, variant: it.variant, cantidad: parseInt(it.cantidad) || 0 }));
+      await setDoc(doc(db, 'salidasDeposito', `pedido_${pedido.id}`), {
         pedidoId: pedido.id,
         clienteTexto: pedido.cliente || (pedido.mensaje || '').split('\n')[0].slice(0, 60),
-        items: sesion.map(it => ({ codigo: it.codigo, product: it.product, variant: it.variant, cantidad: parseInt(it.cantidad) || 0 })),
-        createdAt: new Date().toISOString(),
+        items,
+        createdAt: ahora,
       });
-      onConfirmar();
+      await updateDoc(doc(db, 'pedidos', pedido.id), { escaneadoAt: ahora, escaneoItems: items });
+      onCerrar();
     } catch (e) {
-      setError('No se pudo guardar el registro de salida: ' + e.message);
+      setError('No se pudo guardar el escaneo: ' + e.message);
     } finally {
       setGuardando(false);
     }
@@ -324,8 +332,8 @@ function EscanearEmpaqueModal({ dm, pedido, db, codigosBarra, productosConocidos
   return (
     <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center p-0 sm:p-4" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)' }}>
       <div className={`w-full sm:max-w-md sm:rounded-3xl rounded-t-3xl border-t sm:border p-5 max-h-[88vh] flex flex-col ${dm ? 'bg-[#161616] border-white/[0.1]' : 'bg-white border-zinc-200'}`}>
-        <p className={`text-lg font-black ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>Escaneá lo que vas a empaquetar</p>
-        <p className={`text-xs mt-1 mb-4 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>Antes de marcarlo armado, escaneá cada producto que metés en la bolsa.</p>
+        <p className={`text-lg font-black ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>Escaneá lo que va en este pedido</p>
+        <p className={`text-xs mt-1 mb-4 ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>Escaneá cada producto a medida que lo metés en la bolsa. Cuando lo cierres, marcalo "Listo" como siempre.</p>
 
         <CajaEscaneo dm={dm} onScan={handleScan} disabled={!!codigoSinRegistrar} />
 
@@ -340,18 +348,13 @@ function EscanearEmpaqueModal({ dm, pedido, db, codigosBarra, productosConocidos
 
         {error && <p className="text-xs font-semibold text-red-500 mb-2">{error}</p>}
 
-        <button onClick={confirmar} disabled={sesion.length === 0 || guardando}
+        <button onClick={guardar} disabled={sesion.length === 0 || guardando}
           className="w-full h-14 rounded-2xl font-black text-base text-white bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-          {guardando ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle size={18} />} Listo, ya lo empaqueté
+          {guardando ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle size={18} />} Guardar escaneo
         </button>
-        <button onClick={onCancelar} disabled={guardando}
+        <button onClick={onCerrar} disabled={guardando}
           className={`w-full h-10 mt-1.5 rounded-xl font-bold text-sm disabled:opacity-40 ${dm ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>
-          Todavía no
-        </button>
-
-        <button onClick={() => setConfirmandoSinEscanear(true)} disabled={guardando}
-          className={`text-[11px] font-semibold mt-3 text-center disabled:opacity-40 ${dm ? 'text-zinc-600 hover:text-zinc-400' : 'text-zinc-400 hover:text-zinc-600'}`}>
-          ¿No podés escanear? Marcar como armado sin escanear
+          Cerrar sin guardar
         </button>
       </div>
 
@@ -359,11 +362,40 @@ function EscanearEmpaqueModal({ dm, pedido, db, codigosBarra, productosConocidos
         <RegistrarCodigoModal dm={dm} codigo={codigoSinRegistrar} productosConocidos={productosConocidos}
           onGuardar={registrarCodigo} onCancelar={() => setCodigoSinRegistrar(null)} />
       )}
-      {confirmandoSinEscanear && (
-        <ConfirmMiniModal dm={dm} text="¿Seguro que querés marcarlo armado SIN escanear nada? Esto no va a quedar registrado en Salida."
-          confirmLabel="Sí, marcar sin escanear" onConfirm={onConfirmar} onCancel={() => setConfirmandoSinEscanear(false)} />
-      )}
     </div>
+  );
+}
+
+// Confirmación de "Listo": si el pedido no se escaneó, lo avisa pero deja seguir — nunca traba al
+// depósito (por ejemplo si la lectora no anda), solo evita que se olviden de escanear sin darse cuenta.
+const textoConfirmarArmado = (conEscaneo, pedido) => (conEscaneo && !pedido.escaneadoAt)
+  ? 'Este pedido todavía no se escaneó. ¿Lo marcás como armado igual?'
+  : '¿Confirmás que armaste y empaquetaste este pedido?';
+const labelConfirmarArmado = (conEscaneo, pedido) => (conEscaneo && !pedido.escaneadoAt)
+  ? 'Sí, marcar armado sin escanear'
+  : 'Sí, ya lo empaqueté';
+
+// Botón "Escanear productos" de cada pendiente. Si el pedido ya se escaneó, muestra cuántos productos
+// tiene y al tocarlo lo reabre con lo escaneado precargado, para corregir o sumar.
+function BotonEscanear({ pedido, dm, db, codigosBarra, productosConocidos }) {
+  const [abierto, setAbierto] = useState(false);
+  const escaneado = !!pedido.escaneadoAt;
+  const unidades = (pedido.escaneoItems || []).reduce((s, it) => s + (parseInt(it.cantidad) || 0), 0);
+  return (
+    <>
+      <button onClick={() => setAbierto(true)}
+        className={`w-full h-12 rounded-2xl font-bold text-sm border-2 transition-all active:scale-[0.97] flex items-center justify-center gap-2 ${escaneado
+          ? (dm ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' : 'border-emerald-300 bg-emerald-50 text-emerald-700')
+          : (dm ? 'border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20' : 'border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100')}`}>
+        {escaneado
+          ? <><CheckCircle size={16} /> Escaneado · {unidades} producto{unidades === 1 ? '' : 's'} — tocá para editar</>
+          : <><ScanBarcode size={16} /> Escanear productos</>}
+      </button>
+      {abierto && (
+        <EscanearEmpaqueModal dm={dm} pedido={pedido} db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
+          onCerrar={() => setAbierto(false)} />
+      )}
+    </>
   );
 }
 
@@ -750,10 +782,9 @@ function EditableDireccion({ pedido, dm }) {
 // un solo pedido a la vez, bien grande, con un botón enorme para no errarle.
 // Se monta de nuevo cada vez que cambia el pedido en foco (el padre le pasa key={pedido.id}),
 // así el "entered" arranca en false y dispara la animación de crecimiento apenas se pinta.
-function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, onCancel, hideCancel = false, requireConfirm = false, extraAction, requireScan = false, db, codigosBarra, productosConocidos }) {
+function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, onCancel, hideCancel = false, requireConfirm = false, extraAction, conEscaneo = false, db, codigosBarra, productosConocidos }) {
   const [entered, setEntered] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
-  const [showScan, setShowScan] = useState(false);
   useEffect(() => {
     const raf = requestAnimationFrame(() => setEntered(true));
     return () => cancelAnimationFrame(raf);
@@ -812,7 +843,8 @@ function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, on
       <DetalleComercial pedido={pedido} dm={dm} />
 
       <div className="flex flex-col gap-2 mt-1">
-        <button onClick={() => requireScan ? setShowScan(true) : (requireConfirm ? setShowConfirm(true) : onAction())}
+        {conEscaneo && <BotonEscanear pedido={pedido} dm={dm} db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos} />}
+        <button onClick={() => (conEscaneo || requireConfirm) ? setShowConfirm(true) : onAction()}
           className={`w-full h-16 rounded-2xl font-black text-lg text-white transition-all active:scale-[0.97] ${actionColor}`}>
           {actionLabel}
         </button>
@@ -830,12 +862,8 @@ function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, on
         )}
       </div>
       {showConfirm && (
-        <ConfirmMiniModal dm={dm} text="¿Confirmás que armaste y empaquetaste este pedido?"
+        <ConfirmMiniModal dm={dm} text={textoConfirmarArmado(conEscaneo, pedido)} confirmLabel={labelConfirmarArmado(conEscaneo, pedido)}
           onConfirm={() => { setShowConfirm(false); onAction(); }} onCancel={() => setShowConfirm(false)} />
-      )}
-      {showScan && (
-        <EscanearEmpaqueModal dm={dm} pedido={pedido} db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
-          onConfirmar={() => { setShowScan(false); onAction(); }} onCancelar={() => setShowScan(false)} />
       )}
     </div>
   );
@@ -911,7 +939,7 @@ function MotoPendienteCard({ pedido, dm, onListo, onCancel, db, codigosBarra, pr
 
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-1.5">
-          <label className={`text-xs font-semibold flex items-center gap-1.5 ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}><MapPin size={13}/> Dirección</label>
+          <label className={`text-xs font-semibold flex items-center gap-1.5 ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}><MapPin size={13}/> {esPedidoCorreo(pedido) ? 'Dirección del correo / sucursal a la que lo lleva la moto' : 'Dirección'}</label>
           <AddressAutocomplete dm={dm} value={direccionTexto}
             onChange={text => { setDireccionTexto(text); setDireccionData(null); }}
             onSelect={data => {
@@ -975,6 +1003,7 @@ function MotoPendienteCard({ pedido, dm, onListo, onCancel, db, codigosBarra, pr
       </div>
 
       <div className="flex flex-col gap-2 mt-1">
+        <BotonEscanear pedido={pedido} dm={dm} db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos} />
         <button onClick={() => setShowConfirm(true)} disabled={!puedeConfirmar}
           className="w-full h-16 rounded-2xl font-black text-lg text-white transition-all active:scale-[0.97] bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed">
           {saving ? 'Guardando...' : `Listo · ${nombreRepartidor(repartidorSel)}`}
@@ -985,8 +1014,8 @@ function MotoPendienteCard({ pedido, dm, onListo, onCancel, db, codigosBarra, pr
         </button>
       </div>
       {showConfirm && (
-        <EscanearEmpaqueModal dm={dm} pedido={pedido} db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
-          onConfirmar={() => { setShowConfirm(false); handleListo(); }} onCancelar={() => setShowConfirm(false)} />
+        <ConfirmMiniModal dm={dm} text={textoConfirmarArmado(true, pedido)} confirmLabel={labelConfirmarArmado(true, pedido)}
+          onConfirm={() => { setShowConfirm(false); handleListo(); }} onCancel={() => setShowConfirm(false)} />
       )}
     </div>
   );
@@ -1106,11 +1135,11 @@ function PendienteGrupo({ titulo, icon: Icon, list, dm, focusId, onFocus, onList
       <span className={`text-[11px] font-black uppercase tracking-widest px-1 flex items-center gap-1.5 ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>
         <Icon size={13}/> {titulo} ({list.length})
       </span>
-      {focus.tipoEnvio === 'moto' ? (
+      {(focus.tipoEnvio === 'moto' || esPedidoCorreo(focus)) ? (
         <MotoPendienteCard key={focus.id} pedido={focus} dm={dm} db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
           onListo={(direccion, repartidorId) => onListoMoto(focus, direccion, repartidorId)} onCancel={() => onCancel(focus)} />
       ) : (
-        <FocusCard key={focus.id} pedido={focus} dm={dm} eyebrow="Próximo a armar" actionLabel="Listo" requireScan
+        <FocusCard key={focus.id} pedido={focus} dm={dm} eyebrow="Próximo a armar" actionLabel="Listo" conEscaneo
           db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
           actionColor="bg-emerald-500 hover:bg-emerald-400"
           onAction={() => onListoUber(focus)} onCancel={() => onCancel(focus)} />
@@ -1122,17 +1151,60 @@ function PendienteGrupo({ titulo, icon: Icon, list, dm, focusId, onFocus, onList
 
 // Una tarjeta de Finalizado — extraída de adentro del .map para poder reusarla en cada grupo de
 // FinalizadoGrupo (antes vivía inline, duplicada por canal habría sido un embole de mantener).
-function FinalizadoCard({ p, dm, isExpanded, onToggleExpand, onEliminar }) {
+// Cuánta plata entra a cada billetera por una venta cerrada desde /pedidos. Es la ÚNICA cuenta: la
+// usa "finalizar" para acreditar y "Editar venta" para devolver lo acreditado, así las dos nunca
+// pueden calcular distinto. Reglas (detalladas en handleConfirmarFinalizar): Alias 4 y los pedidos de
+// moto entran completos, envío incluido; efectivo entra solo por el producto; el resto de los alias
+// entra con el producto más la ganancia del envío. El envío se reparte a prorrata entre los pagos.
+// Una línea de venta puede ser Normal, Falla o Robo — mismo criterio que el bot de WhatsApp y que
+// Gestión: falla y robo descuentan el stock pero no son venta real (precio 0, no suman a la plata ni a
+// la facturación) y guardan el costo de esas unidades como pérdida (failedValue / stolenValue).
+const TIPOS_LINEA = [
+  { valor: 'normal', label: 'Normal' },
+  { valor: 'falla', label: 'Falla' },
+  { valor: 'robo', label: 'Robo' },
+];
+const esPerdida = (it) => it.tipo === 'falla' || it.tipo === 'robo';
+
+const BILLETERA_POR_MEDIO = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', alias4: 'CUENTA_RECAUDADORA', efectivo: 'EFECTIVO' };
+const NOMBRE_BILLETERA = { GALICIA: 'Galicia (Alias 1)', GALICIA_GIECO: 'Galicia Gieco (Alias 2)', MERCADO_PAGO: 'Mercado Pago (Alias 3)', CUENTA_RECAUDADORA: 'Recaudadora (Alias 4)', EFECTIVO: 'Efectivo' };
+function acreditacionesPorBilletera({ pagos, totalProductos, envioCobrado, costoEnvio, esMoto }) {
+  const gananciaEnvio = (envioCobrado && costoEnvio) ? (envioCobrado - costoEnvio) : 0;
+  const totalConEnvio = totalProductos + envioCobrado;
+  const out = {};
+  for (const pago of pagos || []) {
+    const billetera = BILLETERA_POR_MEDIO[pago.medioPago];
+    if (!billetera) continue;
+    const fraccion = totalConEnvio > 0 ? pago.monto / totalConEnvio : 0;
+    const parteProducto = pago.monto - envioCobrado * fraccion;
+    const monto = (pago.medioPago === 'alias4' || esMoto) ? pago.monto
+      : pago.medioPago === 'efectivo' ? parteProducto
+      : parteProducto + Math.max(0, gananciaEnvio * fraccion);
+    out[billetera] = (out[billetera] || 0) + monto;
+  }
+  return out;
+}
+
+function FinalizadoCard({ p, dm, isExpanded, onToggleExpand, onEliminar, onEditar }) {
   return (
     <div className={`rounded-2xl border p-4 transition-colors ${dm ? 'bg-[#141414] border-white/[0.07] lg:hover:border-white/[0.14]' : 'bg-white border-zinc-200 lg:hover:border-zinc-300'}`}>
       <div className="flex items-center justify-between gap-2 mb-1.5">
         <div className={`text-xs font-bold flex items-center gap-1.5 ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>
           <Clock size={12}/>{timeAgoStr(p.createdAt)}
         </div>
-        <button onClick={() => onEliminar(p)} title="Borrar para siempre"
-          className={`p-1.5 rounded-lg transition-colors active:scale-90 ${dm ? 'text-zinc-600 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-500 hover:bg-red-50'}`}>
-          <Trash2 size={14}/>
-        </button>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {p.venta && (
+            <button onClick={() => onEditar(p)} disabled={!!p.venta.factura?.cae}
+              title={p.venta.factura?.cae ? 'Ya tiene factura emitida: no se puede editar' : 'Corregir alias, productos, envío o fecha'}
+              className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold transition-colors active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed ${dm ? 'text-indigo-300 hover:bg-indigo-500/10' : 'text-indigo-600 hover:bg-indigo-50'}`}>
+              <Pencil size={12}/> Editar
+            </button>
+          )}
+          <button onClick={() => onEliminar(p)} title="Borrar para siempre"
+            className={`p-1.5 rounded-lg transition-colors active:scale-90 ${dm ? 'text-zinc-600 hover:text-red-400 hover:bg-red-500/10' : 'text-zinc-400 hover:text-red-500 hover:bg-red-50'}`}>
+            <Trash2 size={14}/>
+          </button>
+        </div>
       </div>
       <p className={`text-base leading-snug whitespace-pre-wrap font-semibold ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{p.mensaje}</p>
       <button onClick={() => onToggleExpand(p.id)}
@@ -1146,7 +1218,7 @@ function FinalizadoCard({ p, dm, isExpanded, onToggleExpand, onEliminar }) {
               viejo con un solo producto guardado directo en venta.producto/unidades/precio. */}
           {(p.venta.items || [{ producto: p.venta.producto, unidades: p.venta.unidades, precio: p.venta.precio }]).map((it, idx) => (
             <div key={idx} className={idx > 0 ? `pt-2 mt-1 border-t space-y-2 ${dm ? 'border-white/[0.06]' : 'border-zinc-200'}` : 'space-y-2'}>
-              <div className="flex justify-between gap-3"><span className="opacity-60">Producto</span><span className="font-bold text-right">{it.producto}</span></div>
+              <div className="flex justify-between gap-3"><span className="opacity-60">Producto</span><span className="font-bold text-right">{it.producto}{it.tipo === 'falla' && <span className="ml-1.5 text-[10px] font-black uppercase text-red-400">Falla</span>}{it.tipo === 'robo' && <span className="ml-1.5 text-[10px] font-black uppercase text-orange-400">Robo</span>}</span></div>
               {it.unidades != null && <div className="flex justify-between gap-3"><span className="opacity-60">Unidades</span><span className="font-bold">{it.unidades}</span></div>}
               <div className="flex justify-between gap-3"><span className="opacity-60">{it.unidades != null ? 'Precio unitario' : 'Precio'}</span><span className="font-bold">{formatMoney(it.precio)}</span></div>
               {it.unidades != null && <div className="flex justify-between gap-3"><span className="opacity-60">Total</span><span className="font-bold">{formatMoney(it.precio * it.unidades)}</span></div>}
@@ -1186,7 +1258,7 @@ function FinalizadoCard({ p, dm, isExpanded, onToggleExpand, onEliminar }) {
 
 // Un grupo de Finalizado por canal (Moto/Uber/Retiro) — mismo criterio visual que PendienteGrupo:
 // encabezado con ícono + nombre + cantidad, para poder mirar cada canal por separado.
-function FinalizadoGrupo({ titulo, icon: Icon, list, dm, expandedId, onToggleExpand, onEliminar }) {
+function FinalizadoGrupo({ titulo, icon: Icon, list, dm, expandedId, onToggleExpand, onEliminar, onEditar }) {
   if (list.length === 0) {
     return (
       <div className="space-y-3">
@@ -1204,7 +1276,7 @@ function FinalizadoGrupo({ titulo, icon: Icon, list, dm, expandedId, onToggleExp
       </span>
       <div className="space-y-3">
         {list.map(p => (
-          <FinalizadoCard key={p.id} p={p} dm={dm} isExpanded={expandedId === p.id} onToggleExpand={onToggleExpand} onEliminar={onEliminar} />
+          <FinalizadoCard key={p.id} p={p} dm={dm} isExpanded={expandedId === p.id} onToggleExpand={onToggleExpand} onEliminar={onEliminar} onEditar={onEditar} />
         ))}
       </div>
     </div>
@@ -1231,11 +1303,15 @@ export default function PedidosPage() {
   const [cancelTarget, setCancelTarget] = useState(null);
   const [cancelMotivo, setCancelMotivo] = useState('');
   const [finalizarTarget, setFinalizarTarget] = useState(null);
+  // true mientras el formulario de "Cargar venta" está corrigiendo una venta YA cerrada (Editar en
+  // Finalizado). Guarda también lo que se le había acreditado a cada billetera, para mostrar en el
+  // formulario cuánta plata se va a mover entre cuentas antes de guardar.
+  const [editandoVenta, setEditandoVenta] = useState(null);
   const [finalizarForm, setFinalizarForm] = useState({ tipoCliente: '', vendedor: '', envioCliente: '', costoEnvio: '', fecha: getTodayDate() });
   // Líneas de producto de la venta que se está por cerrar — arranca con una sola, pero se puede
   // sumar más (a veces se vende más de una marca/producto en el mismo pedido). Cada línea tiene su
   // propio autocompletar de stock, cantidad y precio, independiente de las demás.
-  const nuevaLineaProducto = () => ({ uid: Math.random().toString(36).slice(2), producto: '', selectedProductItem: null, unidades: '1', precio: '' });
+  const nuevaLineaProducto = () => ({ uid: Math.random().toString(36).slice(2), producto: '', selectedProductItem: null, unidades: '1', precio: '', tipo: 'normal' });
   const [finalizarItems, setFinalizarItems] = useState(() => [nuevaLineaProducto()]);
   // Medios de pago de la venta que se está por cerrar — arranca con uno solo (el caso de siempre:
   // todo por el mismo medio). Si el cliente pagó parte por un lado y parte por otro (ej. mitad
@@ -1353,7 +1429,7 @@ export default function PedidosPage() {
   // Mismos clasificados, separados por tipo — se usan solo en la vista de PC para mostrar moto,
   // uber y retiro en bloques separados en vez de mezclados en una sola cola (en celular sigue
   // todo junto).
-  const pendientesMoto = useMemo(() => pendientesClasificados.filter(p => p.tipoEnvio === 'moto'), [pendientesClasificados]);
+  const pendientesMoto = useMemo(() => pendientesClasificados.filter(p => p.tipoEnvio === 'moto' && !esPedidoCorreo(p)), [pendientesClasificados]);
   const pendientesUber = useMemo(() => pendientesClasificados.filter(p => p.tipoEnvio === 'uber'), [pendientesClasificados]);
   const pendientesRetiro = useMemo(() => pendientesClasificados.filter(p => p.tipoEnvio === 'retiro' && !esPedidoCorreo(p)), [pendientesClasificados]);
   const pendientesCorreo = useMemo(() => pendientesClasificados.filter(esPedidoCorreo), [pendientesClasificados]);
@@ -1389,7 +1465,7 @@ export default function PedidosPage() {
   // Mismo criterio que pendientesMoto/Uber/Retiro: separados por tipo de envío, para que Finalizado
   // se pueda mirar por canal igual que Pendiente. "Sin tipo" son pedidos viejos de antes de que
   // existiera tipoEnvio — se muestra solo si hay alguno, no es un canal real.
-  const finalizadosMoto = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'moto'), [finalizadosFiltrados]);
+  const finalizadosMoto = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'moto' && !esPedidoCorreo(p)), [finalizadosFiltrados]);
   const finalizadosUber = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'uber'), [finalizadosFiltrados]);
   const finalizadosRetiro = useMemo(() => finalizadosFiltrados.filter(p => p.tipoEnvio === 'retiro' && !esPedidoCorreo(p)), [finalizadosFiltrados]);
   const finalizadosCorreo = useMemo(() => finalizadosFiltrados.filter(esPedidoCorreo), [finalizadosFiltrados]);
@@ -1442,14 +1518,16 @@ export default function PedidosPage() {
   // el pedido entra directo a SU recorrido y solo él lo ve en su pantalla.
   const handleMarcarArmadoMoto = async (pedido, direccion, repartidorId) => {
     try {
+      const esCorreo = esPedidoCorreo(pedido);
       await updateDoc(doc(db, 'pedidos', pedido.id), {
         estado: 'armado',
         armadoAt: new Date().toISOString(),
         direccion,
         repartidor: repartidorId || repartidorDe(pedido),
+        ...(esCorreo ? { tipoEnvio: 'moto', despachoInterno: 'moto_a_via_cargo' } : {}),
       });
       setFocusPendienteId(null);
-      showToast(`Pedido armado, ya entra al recorrido de ${nombreRepartidor(repartidorId || repartidorDe(pedido))}`);
+      showToast(`${esCorreo ? 'Correo armado' : 'Pedido armado'}, ya entra al recorrido de ${nombreRepartidor(repartidorId || repartidorDe(pedido))}`);
     } catch (e) {
       showToast('Error: ' + e.message, 'error');
     }
@@ -1556,10 +1634,10 @@ export default function PedidosPage() {
 
   const finalizarItemEsValido = (it) => {
     const qty = parseInt(it.unidades) || 0;
-    if (!it.selectedProductItem || qty <= 0 || it.precio === '') return false;
+    if (!it.selectedProductItem || qty <= 0 || (!esPerdida(it) && it.precio === '')) return false;
     return (finalizarQtyPorItemId[it.selectedProductItem.itemId] || 0) <= it.selectedProductItem.currentStock;
   };
-  const finalizarTotalGeneral = finalizarItems.reduce((sum, it) => sum + (parseFloat(it.precio) || 0) * (parseInt(it.unidades) || 0), 0);
+  const finalizarTotalGeneral = finalizarItems.reduce((sum, it) => esPerdida(it) ? sum : sum + (parseFloat(it.precio) || 0) * (parseInt(it.unidades) || 0), 0);
   const finalizarMontoEnvioSeguro = finalizarEnvioSeguro ? ENVIO_SEGURO_PRECIO : 0;
   // Total a repartir entre los medios de pago: productos + envío cobrado + envío seguro si lo pagó.
   const finalizarEnvioCobrado = (finalizarForm.envioCliente !== '' ? (parseFloat(finalizarForm.envioCliente) || 0) : 0) + finalizarMontoEnvioSeguro;
@@ -1583,6 +1661,23 @@ export default function PedidosPage() {
   // Con dos o más, cada uno necesita su monto y entre todos tienen que sumar el total exacto — y
   // como máximo uno puede ser Alias 1/2, porque facturar dos veces la misma venta no está soportado.
   const finalizarPagosDivididos = finalizarPagos.length > 1;
+  // Solo al editar una venta cerrada: cuánto se resta y cuánto se suma en cada billetera al guardar
+  // (lo que se había acreditado contra lo que se acreditaría con los datos de ahora), para ver el
+  // movimiento de plata antes de apretar Guardar.
+  const movimientoBilleteras = (() => {
+    if (!editandoVenta) return [];
+    const nuevo = acreditacionesPorBilletera({
+      pagos: finalizarPagos.map(p => ({ medioPago: p.medioPago, monto: finalizarPagosDivididos ? (parseFloat(p.monto) || 0) : finalizarTotalConEnvio })),
+      totalProductos: finalizarTotalGeneral,
+      envioCobrado: finalizarEnvioCobrado,
+      costoEnvio: finalizarEsMoto ? finalizarEnvioSolo : (finalizarForm.costoEnvio !== '' ? (parseFloat(finalizarForm.costoEnvio) || 0) : 0),
+      esMoto: finalizarEsMoto,
+    });
+    const antes = editandoVenta.acreditadoAntes || {};
+    return [...new Set([...Object.keys(antes), ...Object.keys(nuevo)])]
+      .map(b => ({ billetera: b, delta: Math.round((nuevo[b] || 0) - (antes[b] || 0)) }))
+      .filter(m => m.delta !== 0);
+  })();
   const finalizarPagosSuma = finalizarPagos.reduce((s, p) => s + (parseFloat(p.monto) || 0), 0);
   const finalizarPagosAliasFacturables = finalizarPagos.filter(p => p.medioPago === 'alias1' || p.medioPago === 'alias2').length;
   const finalizarPagosValido = finalizarPagos.length > 0 && finalizarPagos.every(p => p.medioPago) &&
@@ -1600,10 +1695,141 @@ export default function PedidosPage() {
   // producto: se crea una venta por línea (todas con el mismo ticketId, para que quede agrupado
   // como un solo pedido en Ventas) y se descuenta cada lote una sola vez al final, acumulando los
   // descuentos localmente por si dos líneas tocan el mismo lote.
+  const validacion = (msg) => { const e = new Error(msg); e.esValidacion = true; return e; };
+
+  // Abre el mismo formulario de "Cargar venta", pero lleno con la venta ya cerrada, para corregir lo
+  // que haga falta (alias, productos, unidades, precios, envío, fecha, vendedor). Las ventas
+  // facturadas no se tocan: la factura ya se presentó en ARCA y quedaría distinta de la venta.
+  const handleAbrirEditarVenta = async (pedido) => {
+    const venta = pedido.venta;
+    if (!venta) return;
+    if (venta.factura?.cae) { showToast('Este pedido ya tiene factura emitida en ARCA: no se puede editar desde acá.', 'error'); return; }
+    try {
+      const ventas = [];
+      for (const it of venta.items || []) {
+        if (!it.saleId) continue;
+        const snap = await getDoc(doc(db, 'sales', it.saleId));
+        if (snap.exists()) ventas.push(snap.data());
+      }
+      if (ventas.length === 0) { showToast('No encontré las ventas de este pedido (puede que se hayan borrado desde Gestión).', 'error'); return; }
+      const lineas = ventas.map(v => {
+        const enLote = (batches.find(b => b.id === v.batchId)?.items || []).find(x => x.id === v.itemId);
+        const label = v.variant ? `${v.productName} - ${v.variant}` : v.productName;
+        return {
+          uid: rid(),
+          producto: label,
+          // El stock disponible incluye lo de esta misma venta, que vuelve al lote al guardar.
+          selectedProductItem: { batchId: v.batchId, batchName: v.batchName, itemId: v.itemId, product: v.productName, variant: v.variant || '', costArs: v.costArsAtSale || 0, currentStock: (enLote?.currentStock || 0) + (v.quantity || 0), label },
+          unidades: String(v.quantity || 1),
+          tipo: v.isFalla ? 'falla' : v.isRobo ? 'robo' : 'normal',
+          precio: (v.isFalla || v.isRobo) ? '' : String(v.unitPrice || 0),
+        };
+      });
+      const pagos = (venta.pagos && venta.pagos.length > 0 ? venta.pagos : [{ medioPago: venta.medioPago || '', monto: '' }])
+        .map(pg => ({ uid: rid(), medioPago: pg.medioPago === 'mixto' ? '' : pg.medioPago, monto: venta.pagos && venta.pagos.length > 1 ? String(pg.monto) : '' }));
+      const fechaVenta = new Date(ventas[0].date);
+      const fecha = isNaN(fechaVenta.getTime()) ? fechaDeSubida(pedido)
+        : `${fechaVenta.getFullYear()}-${String(fechaVenta.getMonth() + 1).padStart(2, '0')}-${String(fechaVenta.getDate()).padStart(2, '0')}`;
+      const envioSinSeguro = (venta.envioCliente || 0) - (venta.montoEnvioSeguro || 0);
+      const totalProductos = (venta.items || []).reduce((sum, it) => sum + (it.precio || 0) * (it.unidades || 1), 0);
+      setFinalizarForm({
+        tipoCliente: venta.tipoCliente || 'Frecuente',
+        vendedor: venta.vendedor || '028 Import',
+        envioCliente: envioSinSeguro > 0 ? String(envioSinSeguro) : '',
+        costoEnvio: venta.costoEnvio != null ? String(venta.costoEnvio) : '',
+        fecha,
+      });
+      setFinalizarItems(lineas);
+      setFinalizarPagos(pagos);
+      setFinalizarEnvioSeguro(!!venta.envioSeguro);
+      setFinalizarTotalEsperado(null);
+      setFinalizarOrigen({ items: null, envio: false, pago: false, vendedor: false, sinMatch: 0 });
+      setEditandoVenta({ acreditadoAntes: acreditadoDeVenta(pedido, venta, totalProductos) });
+      setFinalizarTarget(pedido);
+    } catch (e) {
+      showToast('No se pudo abrir la venta para editar: ' + e.message, 'error');
+    }
+  };
+
+  // Lo que se le sumó a cada billetera al cerrar esta venta. Las ventas cerradas desde ahora lo
+  // guardan tal cual (venta.acreditado); las anteriores se recalculan con la misma regla de hoy.
+  const acreditadoDeVenta = (pedido, venta, totalProductos) => venta.acreditado || acreditacionesPorBilletera({
+    pagos: venta.pagos && venta.pagos.length > 0 ? venta.pagos : [{ medioPago: venta.medioPago, monto: totalProductos + (venta.envioCliente || 0) }],
+    totalProductos,
+    envioCobrado: venta.envioCliente || 0,
+    costoEnvio: venta.costoEnvio || 0,
+    esMoto: pedido.tipoEnvio === 'moto',
+  });
+
+  // Deshace TODO lo que hizo "finalizar": devuelve el stock a cada lote, borra las ventas, resta de
+  // cada billetera lo acreditado y vuelve el pedido a Entregado (moto) o Armado. Una sola
+  // transacción: o se revierte completo o no se toca nada. La venta vieja queda copiada en
+  // historialEdiciones del pedido, para poder ver después qué se cambió y cuándo.
+  const revertirVentaDePedido = async (pedidoId) => {
+    await runTransaction(db, async (t) => {
+      const pedidoRef = doc(db, 'pedidos', pedidoId);
+      const pedidoSnap = await t.get(pedidoRef);
+      if (!pedidoSnap.exists()) throw validacion('El pedido ya no existe.');
+      const pedido = pedidoSnap.data();
+      const venta = pedido.venta;
+      if (pedido.estado !== 'finalizado' || !venta) throw validacion('Este pedido ya no está finalizado. Recargá la página.');
+      if (venta.factura?.cae) throw validacion('Este pedido ya tiene factura emitida en ARCA: no se puede editar.');
+
+      // --- lecturas ---
+      const ventas = [];
+      for (const it of venta.items || []) {
+        if (!it.saleId) continue;
+        const snap = await t.get(doc(db, 'sales', it.saleId));
+        if (snap.exists()) ventas.push({ id: it.saleId, ...snap.data() });
+      }
+      const lotes = {};
+      for (const batchId of [...new Set(ventas.map(v => v.batchId).filter(Boolean))]) {
+        const snap = await t.get(doc(db, 'batches', batchId));
+        if (snap.exists()) lotes[batchId] = (snap.data().items || []).map(x => ({ ...x }));
+      }
+      const walletsRef = doc(db, 'settings', 'wallets');
+      const walletsSnap = await t.get(walletsRef);
+
+      // --- escrituras ---
+      for (const v of ventas) {
+        const item = lotes[v.batchId]?.find(x => x.id === v.itemId);
+        if (item) item.currentStock = (item.currentStock || 0) + (v.quantity || 0);
+        t.delete(doc(db, 'sales', v.id));
+      }
+      for (const [batchId, items] of Object.entries(lotes)) t.update(doc(db, 'batches', batchId), { items });
+
+      const totalProductos = (venta.items || []).reduce((sum, it) => sum + (it.precio || 0) * (it.unidades || 1), 0);
+      const acreditado = acreditadoDeVenta(pedido, venta, totalProductos);
+      if (Object.keys(acreditado).length > 0) {
+        const actual = walletsSnap.exists() ? walletsSnap.data() : {};
+        const patch = {};
+        for (const [billetera, monto] of Object.entries(acreditado)) patch[billetera] = (actual[billetera] || 0) - monto;
+        t.set(walletsRef, patch, { merge: true });
+      }
+
+      t.update(pedidoRef, {
+        estado: pedido.entregadoEn ? 'entregado' : 'armado',
+        venta: deleteField(),
+        finalizadoAt: deleteField(),
+        historialEdiciones: arrayUnion({ editadoAt: new Date().toISOString(), ventaAnterior: venta }),
+      });
+    });
+  };
+
+  const cerrarFormularioVenta = () => { setFinalizarTarget(null); setEditandoVenta(null); };
+
   const handleConfirmarFinalizar = async () => {
     if (!finalizarTarget || !finalizarValido || savingFinalizar) return;
     setSavingFinalizar(true);
     try {
+      // Editar venta = deshacer la venta anterior completa y cargar esta en su lugar, por el mismo
+      // camino de siempre. Si la carga nueva falla después de revertir (ej. sin stock del producto
+      // nuevo), el pedido queda sin venta y con el formulario abierto: se corrige y se guarda de
+      // nuevo, y como editandoVenta ya está en null, ese reintento no vuelve a revertir nada.
+      if (editandoVenta) {
+        await revertirVentaDePedido(finalizarTarget.id);
+        setEditandoVenta(null);
+      }
       const shippingCostArs = finalizarEsMoto
         ? finalizarEnvioSolo
         : (finalizarForm.costoEnvio !== '' ? (parseFloat(finalizarForm.costoEnvio) || 0) : 0);
@@ -1674,8 +1900,11 @@ export default function PedidosPage() {
         const items = [];
         for (const it of finalizarItems) {
           const qty = parseInt(it.unidades) || 0;
-          const unitPrice = parseFloat(it.precio) || 0;
+          const esFalla = it.tipo === 'falla';
+          const esRobo = it.tipo === 'robo';
+          const unitPrice = (esFalla || esRobo) ? 0 : (parseFloat(it.precio) || 0);
           const totalSaleRaw = unitPrice * qty;
+          const costoPerdido = (it.selectedProductItem.costArs || 0) * qty;
           totalGeneral += totalSaleRaw;
 
           // doc(collection(...)) sin id reserva una referencia nueva sin escribir nada — es la
@@ -1702,10 +1931,10 @@ export default function PedidosPage() {
             isNewClient: finalizarForm.tipoCliente,
             clientName: '',
             ticketId,
-            isFalla: false,
-            failedValue: 0,
-            isRobo: false,
-            stolenValue: 0,
+            isFalla: esFalla,
+            failedValue: esFalla ? costoPerdido : 0,
+            isRobo: esRobo,
+            stolenValue: esRobo ? costoPerdido : 0,
             seller: finalizarForm.vendedor,
             createdAt: nowIso,
             date: dateStr,
@@ -1714,7 +1943,7 @@ export default function PedidosPage() {
           const item = batchDocs[it.selectedProductItem.batchId].find(x => x.id === it.selectedProductItem.itemId);
           item.currentStock = Math.max(0, (item.currentStock || 0) - qty);
 
-          items.push({ producto: it.selectedProductItem.label, unidades: qty, precio: unitPrice, saleId: saleRef.id });
+          items.push({ producto: it.selectedProductItem.label, unidades: qty, precio: unitPrice, saleId: saleRef.id, tipo: esFalla ? 'falla' : esRobo ? 'robo' : 'normal' });
         }
 
         for (const bId of batchIds) {
@@ -1735,29 +1964,21 @@ export default function PedidosPage() {
       // junta toda en la cuenta y al motomensajero se le paga aparte, juntando varios días, en vez de que él
       // se quede con el envío directo como en otros canales. Uber y Retiro (la sección "Armado") NO
       // cambian: siguen entrando solo con la ganancia del envío, como siempre.
-      const aliasWalletMap = { alias1: 'GALICIA', alias2: 'GALICIA_GIECO', alias3: 'MERCADO_PAGO', alias4: 'CUENTA_RECAUDADORA', efectivo: 'EFECTIVO' };
-      const esMoto = finalizarTarget.tipoEnvio === 'moto';
-      const totalGrand = totalSaleRawGeneral + clientShippingCharge;
-      for (const pago of pagosLimpios) {
-        const wName = aliasWalletMap[pago.medioPago];
-        if (!wName) continue;
-        const fraction = totalGrand > 0 ? pago.monto / totalGrand : 0;
-        const shippingChargeShare = clientShippingCharge * fraction;
-        const shippingProfitShare = shippingProfit * fraction;
-        const productShare = pago.monto - shippingChargeShare;
-        // Efectivo entra SOLO por el producto (salvo en moto, ver arriba): cuando una venta en
-        // efectivo lleva envío, esa plata va entera a la motomensajería que reparte, no queda un
-        // peso para el negocio, así que no tiene por qué sumar a la caja. Alias 4 y moto entran
-        // completos (envío incluido) y el resto de los alias (fuera de moto) entran con la
-        // ganancia neta del envío — ver comentario de arriba.
-        const wAmount = (pago.medioPago === 'alias4' || esMoto) ? pago.monto
-          : pago.medioPago === 'efectivo' ? productShare
-          : (productShare + Math.max(0, shippingProfitShare));
+      const acreditado = acreditacionesPorBilletera({
+        pagos: pagosLimpios,
+        totalProductos: totalSaleRawGeneral,
+        envioCobrado: clientShippingCharge,
+        costoEnvio: shippingCostArs,
+        esMoto: finalizarTarget.tipoEnvio === 'moto',
+      });
+      if (Object.keys(acreditado).length > 0) {
         const walletsRef = doc(db, 'settings', 'wallets');
         await runTransaction(db, async (t) => {
           const wSnap = await t.get(walletsRef);
-          const current = wSnap.exists() ? (wSnap.data()[wName] || 0) : 0;
-          t.set(walletsRef, { [wName]: current + wAmount }, { merge: true });
+          const actual = wSnap.exists() ? wSnap.data() : {};
+          const patch = {};
+          for (const [billetera, monto] of Object.entries(acreditado)) patch[billetera] = (actual[billetera] || 0) + monto;
+          t.set(walletsRef, patch, { merge: true });
         });
       }
 
@@ -1776,6 +1997,8 @@ export default function PedidosPage() {
           costoEnvio: shippingCostArs || null,
           envioSeguro: finalizarEnvioSeguro,
           montoEnvioSeguro: finalizarMontoEnvioSeguro || null,
+          // Lo que efectivamente se sumó a cada billetera: "Editar venta" lo resta tal cual al corregir.
+          acreditado,
         },
       });
 
@@ -1954,11 +2177,11 @@ export default function PedidosPage() {
                     const rest = pendientesClasificados.filter(p => p.id !== focus.id);
                     return (
                       <>
-                        {focus.tipoEnvio === 'moto' ? (
+                        {(focus.tipoEnvio === 'moto' || esPedidoCorreo(focus)) ? (
                           <MotoPendienteCard key={focus.id} pedido={focus} dm={dm} db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
                             onListo={(direccion, repartidorId) => handleMarcarArmadoMoto(focus, direccion, repartidorId)} onCancel={() => setCancelTarget(focus)} />
                         ) : (
-                          <FocusCard key={focus.id} pedido={focus} dm={dm} eyebrow="Próximo a armar" actionLabel="Listo" requireScan
+                          <FocusCard key={focus.id} pedido={focus} dm={dm} eyebrow="Próximo a armar" actionLabel="Listo" conEscaneo
                             db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos}
                             actionColor="bg-emerald-500 hover:bg-emerald-400"
                             onAction={() => handleMarcarArmado(focus)} onCancel={() => setCancelTarget(focus)} />
@@ -2065,24 +2288,24 @@ export default function PedidosPage() {
                 <>
                 <div className="space-y-6 lg:hidden">
                   <FinalizadoGrupo titulo="Moto" icon={Bike} list={finalizadosMoto} dm={dm}
-                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} onEditar={handleAbrirEditarVenta} />
                   <FinalizadoGrupo titulo="Uber" icon={Car} list={finalizadosUber} dm={dm}
-                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} onEditar={handleAbrirEditarVenta} />
                   <FinalizadoGrupo titulo="Retiro" icon={Store} list={finalizadosRetiro} dm={dm}
-                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} onEditar={handleAbrirEditarVenta} />
                   <FinalizadoGrupo titulo="Correo" icon={Mail} list={finalizadosCorreo} dm={dm}
-                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} onEditar={handleAbrirEditarVenta} />
                 </div>
 
                 <div className="hidden lg:grid lg:grid-cols-2 xl:grid-cols-4 lg:gap-6 lg:items-start">
                   <FinalizadoGrupo titulo="Moto" icon={Bike} list={finalizadosMoto} dm={dm}
-                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} onEditar={handleAbrirEditarVenta} />
                   <FinalizadoGrupo titulo="Uber" icon={Car} list={finalizadosUber} dm={dm}
-                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} onEditar={handleAbrirEditarVenta} />
                   <FinalizadoGrupo titulo="Retiro" icon={Store} list={finalizadosRetiro} dm={dm}
-                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} onEditar={handleAbrirEditarVenta} />
                   <FinalizadoGrupo titulo="Correo" icon={Mail} list={finalizadosCorreo} dm={dm}
-                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                    expandedId={expandedFinalizadoId} onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} onEditar={handleAbrirEditarVenta} />
                 </div>
                 </>
                 )}
@@ -2095,7 +2318,7 @@ export default function PedidosPage() {
                     <div className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 xl:grid-cols-3 lg:gap-3 lg:items-start">
                       {finalizadosSinTipo.map(p => (
                         <FinalizadoCard key={p.id} p={p} dm={dm} isExpanded={expandedFinalizadoId === p.id}
-                          onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} />
+                          onToggleExpand={id => setExpandedFinalizadoId(cur => cur === id ? null : id)} onEliminar={handleEliminarPedido} onEditar={handleAbrirEditarVenta} />
                       ))}
                     </div>
                   </div>
@@ -2238,12 +2461,26 @@ export default function PedidosPage() {
       {finalizarTarget && (
         <div className={sheetOverlayClass}
           style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(2px)' }}
-          onClick={() => { if (!savingFinalizar) setFinalizarTarget(null); }}>
+          onClick={() => { if (!savingFinalizar) cerrarFormularioVenta(); }}>
           <div onClick={e => e.stopPropagation()} className={sheetShellClassWide} style={sheetShellStyle}>
             {sheetHandle}
             <div className={`px-5 pb-4 border-b flex-shrink-0 ${dm ? 'border-white/[0.06]' : 'border-zinc-100'}`}>
-              <h3 className={`font-bold text-base ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>Finalizar pedido</h3>
-              <p className="text-[11px] text-zinc-500 mt-0.5">Cargá los datos de la venta para cerrar el pedido</p>
+              <h3 className={`font-bold text-base ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{editandoVenta ? 'Editar venta' : 'Finalizar pedido'}</h3>
+              <p className="text-[11px] text-zinc-500 mt-0.5">{editandoVenta
+                ? 'Corregí lo que haga falta. Al guardar se deshace la venta anterior (vuelve el stock y la plata) y se carga esta en su lugar.'
+                : 'Cargá los datos de la venta para cerrar el pedido'}</p>
+              {editandoVenta && (
+                <div className={`mt-2.5 rounded-xl border px-3 py-2 text-xs ${dm ? 'border-indigo-500/25 bg-indigo-500/[0.06] text-indigo-200' : 'border-indigo-200 bg-indigo-50 text-indigo-800'}`}>
+                  <span className="font-bold">Movimiento de plata al guardar: </span>
+                  {movimientoBilleteras.length === 0
+                    ? 'ninguno, las billeteras quedan igual.'
+                    : movimientoBilleteras.map((m, i) => (
+                      <span key={m.billetera} className="font-semibold">
+                        {i > 0 ? ' · ' : ''}{NOMBRE_BILLETERA[m.billetera] || m.billetera} {m.delta > 0 ? '+' : '−'}{formatMoney(Math.abs(m.delta))}
+                      </span>
+                    ))}
+                </div>
+              )}
             </div>
             <div className="p-5 space-y-4 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-x-4 lg:gap-y-4 overflow-y-auto custom-scrollbar">
               <div className="lg:col-span-2">
@@ -2425,6 +2662,21 @@ export default function PedidosPage() {
                         />
                       </div>
 
+                      <div className="flex gap-1.5">
+                        {TIPOS_LINEA.map(op => {
+                          const activo = (it.tipo || 'normal') === op.valor;
+                          return (
+                            <button key={op.valor} type="button" onClick={() => actualizarFinalizarItem(it.uid, { tipo: op.valor })}
+                              className={`flex-1 h-9 rounded-lg text-xs font-bold border transition-all active:scale-[0.97] ${activo
+                                ? (op.valor === 'normal' ? (dm ? 'bg-white/[0.1] border-white/[0.15] text-zinc-100' : 'bg-zinc-800 border-zinc-800 text-white')
+                                  : op.valor === 'falla' ? 'bg-red-500 border-red-500 text-white' : 'bg-orange-500 border-orange-500 text-white')
+                                : (dm ? 'border-white/[0.08] text-zinc-500 hover:text-zinc-300' : 'border-zinc-200 text-zinc-500 hover:text-zinc-700')}`}>
+                              {op.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+
                       <div className="grid grid-cols-2 gap-3">
                         <div className="flex flex-col gap-1.5">
                           <label className={`text-xs font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>Unidades</label>
@@ -2439,9 +2691,10 @@ export default function PedidosPage() {
                           <label className={`text-xs font-semibold ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>Precio unitario</label>
                           <div className="relative">
                             <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none"><span className={`text-base font-medium ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>$</span></div>
-                            <input type="number" inputMode="decimal" value={it.precio} onChange={e => actualizarFinalizarItem(it.uid, { precio: e.target.value })}
+                            <input type="number" inputMode="decimal" value={esPerdida(it) ? '' : it.precio} onChange={e => actualizarFinalizarItem(it.uid, { precio: e.target.value })}
+                              disabled={esPerdida(it)} placeholder={esPerdida(it) ? 'no se cobra' : ''}
                               onWheel={e => e.target.blur()}
-                              className={`h-12 border rounded-xl pl-8 pr-3.5 w-full text-base outline-none transition-all ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100 focus:border-[#6366f1]/50 focus:ring-1 focus:ring-[#6366f1]/10' : 'bg-white border-zinc-200 text-zinc-900 focus:border-blue-400 focus:ring-1 focus:ring-blue-100'}`}
+                              className={`h-12 border rounded-xl pl-8 pr-3.5 w-full text-base outline-none transition-all disabled:opacity-40 ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100 focus:border-[#6366f1]/50 focus:ring-1 focus:ring-[#6366f1]/10' : 'bg-white border-zinc-200 text-zinc-900 focus:border-blue-400 focus:ring-1 focus:ring-blue-100'}`}
                             />
                           </div>
                         </div>
@@ -2449,7 +2702,12 @@ export default function PedidosPage() {
                       {excedeStock && (
                         <p className="text-xs font-semibold text-red-400">Solo hay {it.selectedProductItem.currentStock} en stock{finalizarQtyPorItemId[it.selectedProductItem.itemId] !== unidadesNum ? ' (contando lo que ya pediste de esto en otra línea)' : ''}</p>
                       )}
-                      {it.precio !== '' && unidadesNum > 0 && (
+                      {esPerdida(it) && unidadesNum > 0 && it.selectedProductItem && (
+                        <p className={`text-xs font-semibold ${it.tipo === 'falla' ? 'text-red-400' : 'text-orange-400'}`}>
+                          {it.tipo === 'falla' ? 'Falla' : 'Robo'}: sale del stock pero no suma a la venta — pérdida de {formatMoney((it.selectedProductItem.costArs || 0) * unidadesNum)} al costo
+                        </p>
+                      )}
+                      {!esPerdida(it) && it.precio !== '' && unidadesNum > 0 && (
                         <p className={`text-xs font-semibold ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>Total: {formatMoney((parseFloat(it.precio) || 0) * unidadesNum)}</p>
                       )}
                     </div>
@@ -2528,9 +2786,9 @@ export default function PedidosPage() {
             <div className="p-5 pt-3 border-t flex-shrink-0 flex flex-col lg:flex-row-reverse gap-2" style={{ paddingBottom: 'max(1.25rem, env(safe-area-inset-bottom))' }}>
               <button onClick={handleConfirmarFinalizar} disabled={!finalizarValido || savingFinalizar}
                 className="w-full lg:w-auto lg:px-8 h-14 rounded-xl font-black text-base bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-all active:scale-[0.98] flex items-center justify-center gap-2">
-                <CheckCircle size={18}/> {savingFinalizar ? 'Guardando...' : 'Guardar y finalizar'}
+                <CheckCircle size={18}/> {savingFinalizar ? 'Guardando...' : (editandoVenta ? 'Guardar cambios' : 'Guardar y finalizar')}
               </button>
-              <button onClick={() => setFinalizarTarget(null)} disabled={savingFinalizar}
+              <button onClick={cerrarFormularioVenta} disabled={savingFinalizar}
                 className={`w-full lg:w-auto lg:px-6 h-11 lg:h-14 rounded-xl font-bold text-sm transition-all disabled:opacity-40 ${dm ? 'text-zinc-400 hover:text-zinc-200 lg:hover:bg-white/[0.06]' : 'text-zinc-500 hover:text-zinc-700 lg:hover:bg-zinc-100'}`}>
                 Cancelar
               </button>
