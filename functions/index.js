@@ -1910,3 +1910,6 @@ function esParecido(usuarioTexto, bdTexto) {
 
 // --- Endpoints del agente de IA (ver agente-api.js - todo aditivo, no toca nada de arriba) ---
 Object.assign(exports, require("./agente-api"));
+
+// Un lote se termina solo al quedarse sin unidades (y se reabre si las recupera) — ver lotes-auto.js.
+exports.onLoteActualizado = require("./lotes-auto").onLoteActualizado;
