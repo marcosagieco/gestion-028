@@ -36,7 +36,7 @@ if (!db) db = getFirestore(fbApp);
 
 const DOC_REF = () => doc(db, 'settings', 'operativo');
 
-// Cada opcion mapea a una frase fija que usa el bot (DEMORAS en functions/agente-api.js).
+// Cada opcion mapea a una frase fija que usa el bot (DEMORAS en functions/bot/salidas.js).
 // El staff solo elige una — el bot nunca ve texto libre.
 const SITUACIONES = [
   { id: 'sin_demora',    label: 'Sin demora',          hint: 'los envios salen normal' },

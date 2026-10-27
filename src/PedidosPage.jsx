@@ -143,7 +143,7 @@ const PEDIDO_VENDEDOR_OPTIONS = [
   { value: 'Bautista', label: 'Bauti' },
   { value: 'Jeronimo', label: 'Jero' },
 ];
-// Precio del envío seguro — igual que PRECIO_ENVIO_SEGURO en functions/agente-api.js, que es el
+// Precio del envío seguro — igual que PRECIO_ENVIO_SEGURO en functions/bot/envios.js, que es el
 // que le cobra el bot al cliente. Si allá cambia, hay que cambiarlo acá.
 const ENVIO_SEGURO_PRECIO = 1990;
 

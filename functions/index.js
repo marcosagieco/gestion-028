@@ -1908,5 +1908,5 @@ function esParecido(usuarioTexto, bdTexto) {
     return true;
 }  
 
-// --- Endpoints del agente de IA (ver agente-api.js - todo aditivo, no toca nada de arriba) ---
-Object.assign(exports, require("./agente-api"));
+// --- Backend del bot de WhatsApp (functions/bot, contrato en AGENTE_API.md) ---
+Object.assign(exports, require("./bot"));

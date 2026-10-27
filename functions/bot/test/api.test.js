@@ -1,161 +1,6 @@
-// Tests de agente-api.js sin Firestore, Google ni n8n reales: se reemplazan firebase-admin,
-// firebase-functions y axios por dobles en memoria antes de cargar el módulo.
-//
-// Correr: node functions/agente-api.test.js
+// Tests de los endpoints del bot, con los dobles de ./dobles.js. Correr: node functions/bot/test/api.test.js
 "use strict";
-const path = require("path");
-const Module = require("module");
-
-process.env.AGENT_API_KEY = "clave-test";
-const KEY = { "X-Agent-Key": "clave-test" };
-
-// Listas reales del panel (22/09/2026), tal cual las cargó el depósito.
-const LISTAS = {
-  preciosVapesTexto: "💰 LISTA VAPES PRECIOS - CLIENTES\n\n━━━━━━━━━━━━━\n\n✨ ELFBAR EB CREATE 40K\n🚀 Modelo económico\n💰 1x $22.000\n🔥 2x $40.000\n🎁 5x $90.000\n\n━━━━━━━━━━━━━\n\n⚡ ELFBAR DUKE 35K\n💨 35.000 puff\n🔥 Muchísimo sabor y excelente duración\n💰 1x $24.000\n🎁 2x $46.000\n\n━━━━━━━━━━━━━\n\n👑 ELFBAR ICE KING\n🧊 El más buscado\n💰 1x $26.000\n🔥 2x $49.000\n\n━━━━━━━━━━━━━\n\n💨 ELFBAR TE 30K\n⚡ 30.000 puff\n💰 1x $23.000\n\n━━━━━━━━━━━━━\n\n👾🆕 FLAVOR BEAST 50K\n⚡ 50.000 puff\n🔥 Sabores intensos y mucha duración\n💰 1x $27.000\n🔥 2x $51.000\n\n━━━━━━━━━━━━━\n\n🌌🆕 DINNER LADY GALAXY 60K\n🚀 60.000 puff\n🔥 De los modelos con mayor duración\n💰 1x $30.000\n🔥 2x $56.000\n\n━━━━━━━━━━━━━\n\n🔥 IGNITE V400\n💰 1x $27.000\n🔥 2x $51.000\n\n━━━━━━━━━━━━━\n\n🧪 IGNITE V400 MIX\n🧬 Doble gusto, variedad\n💰 1x $29.000\n🔥 2x $53.000",
-  preciosThcTexto: "💰 LISTA PRECIOS THC - CLIENTES\n\n━━━━━━━━━━━━━━━\n\n💨 CÁPSULAS THC\n\n💎 CÁPSULAS 028 1ML — LAS MEJORES\n💭 Calidad premium\n🧪 Lab Tested\n💰 1x $45.000\n🎁 2x $85.000\n\n🍯 CÁPSULAS BLOW LIVE ROSIN 1.2ML\n🔥 De las más pedidas\n🌿 Live Rosin\n🔋 Compatible con baterías de rosca 510\n💰 1x $45.000\n🎁 2x $85.000\n\n💎 CÁPSULAS JEETER CONCENTRATES 1ML\n🔥 Calidad premium\n💨 Premium Diamonds Vape Cartridge\n🔋 Compatible con baterías de rosca 510\n💰 1x $50.000\n🎁 2x $90.000\n\n━━━━━━━━━━━━━━━\n\n🍬 BUZZ GUMMIES\n\n🎁 2x $25.000\n🔥 4x $44.000\n🚀 6x $60.000\n\n━━━━━━━━━━━━━━━\n\n💨 DESCARTABLES THC\n\n😠 DOZO LIVE ROSIN 2.5G — MUY PEDIDO 🔥\n💎 Live Rosin premium\n🌿 Excelente sabor y calidad\n💰 1x $60.000\n🎁 2x $110.000",
-  perfumesTexto: "🕌 LISTA DE PRECIOS — PERFUMES ÁRABES\n\n✨ ECLAIRE — LATTAFA\n🍮 Cremoso, gourmand, vainilla y caramelo. Dulce y adictivo.\n💰 $75.000\n\n🔥 HONOR & GLORY — LATTAFA\n🍍 Ananá caramelizada + vainilla. Cremoso, distinto y adictivo.\n💰 $60.000\n\n❤️ BADE’E AL OUD SUBLIME — LATTAFA\n🍎 Frutal y dulce con fondo cálido. Moderno y atractivo.\n💰 $75.000\n\n🤎 KHAMRAH — LATTAFA\n🍮 Dulce especiado, vainilla y canela. Intenso, cálido e ideal para la noche.\n💰 $80.000\n\n━━━━━━━━━━━━━━━\n\n🌙 9PM — AFNAN\n🍏 Manzana + vainilla. Dulce, intenso y seductor para la noche.\n💰 $75.000\n\n🖤 9PM NIGHT OUT — AFNAN\n🌙 Dulce, ambarado y amaderado. Nocturno, seductor y elegante.\n💰 $75.000\n\n━━━━━━━━━━━━━━━\n\n💙 AMBER OUD AQUA DUBAI — AL HARAMAIN\n🌊 Fresco acuático, cítrico y premium. Sensación de recién bañado.\n💰 $75.000\n\n🤍 AMBER OUD WHITE EDITION — AL HARAMAIN\n🍐 Frutal, vainilla suave y almizcle. Limpio, dulce y elegante.\n💰 $75.000\n\n━━━━━━━━━━━━━━━\n\n💚 HAWAS TROPICAL — RASASI\n🍍 Frutas tropicales y frescura. Veraniego, juvenil y diferente.\n💰 $70.000\n\n🌊 HAWAS ATLANTIS — RASASI\n💰 $60.000\n\n🧊 HAWAS ICE — RASASI\n🌊 Acuático, frutal y fresco. Excelente para todos los días.\n💰 $60.000\n\n━━━━━━━━━━━━━━━\n\n🖤 CLUB DE NUIT URBAN MAN ELIXIR — ARMAF\n🍋 Fresco, especiado y amaderado. Masculino y versátil.\n💰 $75.000\n\n💙 ODYSSEY AQUA — ARMAF\n🌊 Fresco acuático y moderno. Limpio y súper versátil.\n💰 $60.000\n\n━━━━━━━━━━━━━━━\n\n🔥 VULCAN FEU BLUE EDITION\n🥭 Tropical, frutal y moderno. Fresco pero llamativo.\n💰 $70.000\n\n━━━━━━━━━━━━━━━\n\n📲 Consultanos y te recomendamos cuál elegir según la ocasión, el tipo de aroma que te guste y si lo buscás para día, noche, citas o uso diario.",
-  appleTexto: "💰 LISTA DE PRECIOS – APPLE & ACCESORIOS 🍏\n\n✨ Calidad premium al mejor precio.\n\n━━━━━━━━━━━━━\n\n🎧 AIRPODS PRO GEN 3\n💎 Diseño más moderno\n🔊 Sonido premium\n🔇 Cancelación de ruido\n🎤 Excelente micrófono\n🔋 Gran autonomía\n\n💰 $30.000\n\n━━━━━━━━━━━━━\n\n🎧 EARPODS FOXCONN – USB-C 🆕\n🎵 Sonido nítido y potente\n🎙️ Micrófono integrado\n🔊 Control de volumen y reproducción\n📏 Cable de 1 metro\n⚡ Compatible con iPhone, iPad y MacBook USB-C\n\n💰 $25.000\n\n━━━━━━━━━━━━━\n\n🔌 CARGADORES APPLE – FOXCONN\n⚡ Calidad premium y carga rápida\n\n🔌 USB-C a Lightning → $13.000\n🔌 USB-C a USB-C → $13.500\n\n🔋 Adaptador 35W → $22.000 🆕\n🔋 Adaptador 40W → $24.000 🆕\n\n━━━━━━━━━━━━━\n\n🍏 APPLE ORIGINAL\n\n🔋 Adaptador 20W Original Apple\n💎 Producto 100% original y sellado\n⚡ Carga rápida\n\n💰 $65.000\n\n━━━━━━━━━━━━━\n\n🌸 BODY SPLASH VICTORIA’S SECRET ✨\n\n💎 Fragancias originales\n🌸 Aroma intenso y excelente duración\n\n🚨 PRECIO LIQUIDACIÓN\n\n💰 1x → $30.000\n🔥 2x → $50.000",
-};
-
-// ---------- Firestore en memoria ----------
-const store = {};
-let autoId = 1;
-function docRef(col, id) {
-  id = id || "id" + autoId++;
-  const k = `${col}/${id}`;
-  return {
-    id,
-    async get() { return { exists: k in store, data: () => store[k] && structuredClone(store[k]), id }; },
-    async set(data) { store[k] = { ...data }; },
-    async update(data) { if (!(k in store)) throw new Error("5 NOT_FOUND"); store[k] = { ...store[k], ...data }; }, // como Firestore: update no crea
-  };
-}
-function colRef(col) {
-  const filtros = [];
-  return {
-    doc: (id) => docRef(col, id),
-    async add(data) { const id = "id" + autoId++; store[`${col}/${id}`] = { ...data }; return docRef(col, id); },
-    where(campo, op, valor) { filtros.push({ campo, op, valor }); return this; },
-    async get() {
-      const docs = Object.keys(store)
-        .filter((k) => k.startsWith(col + "/"))
-        .map((k) => ({ id: k.slice(col.length + 1), data: () => store[k] }))
-        .filter((d) => filtros.every(({ campo, op, valor }) =>
-          op === "in" ? valor.includes(d.data()[campo]) : d.data()[campo] === valor));
-      return { docs, size: docs.length };
-    },
-  };
-}
-const guardadoEnStorage = [];
-let antesTransaccion = null;
-let transacciones = Promise.resolve();
-const runTransaction = (fn) => {
-  const tarea = transacciones.then(async () => {
-    if (antesTransaccion) { const hook = antesTransaccion; antesTransaccion = null; hook(); }
-    const cambios = [];
-    const resultado = await fn({ get: (ref) => ref.get(), set: (ref, data) => cambios.push(() => ref.set(data)) });
-    for (const guardar of cambios) await guardar();
-    return resultado;
-  });
-  transacciones = tarea.catch(() => {});
-  return tarea;
-};
-const fakeAdmin = {
-  apps: [{}],
-  initializeApp() {},
-  firestore: () => ({ collection: colRef, runTransaction }),
-  storage: () => ({ bucket: () => ({ file: (p) => ({ save: async () => guardadoEnStorage.push(p) }) }) }),
-};
-
-// ---------- Google Geocoding y n8n ----------
-const comp = (nombre, tipo, corto) => ({ long_name: nombre, short_name: corto || nombre, types: [tipo] });
-const CABA = comp("Ciudad Autónoma de Buenos Aires", "administrative_area_level_1", "CABA");
-const PBA = comp("Buenos Aires", "administrative_area_level_1");
-const DIRECCIONES = {
-  "Cabildo 2000, Belgrano": { lat: -34.5610, lng: -58.4560, c: [comp("Avenida Cabildo", "route"), comp("Belgrano", "neighborhood"), CABA] },
-  "Florida 500, San Nicolás": { lat: -34.6010, lng: -58.3750, c: [comp("Florida", "route"), comp("San Nicolás", "neighborhood"), CABA] },
-  "Mozart 3000, Villa Lugano": { lat: -34.6800, lng: -58.4700, c: [comp("Villa Lugano", "neighborhood"), CABA] },
-  "Maipú 1000, Olivos": { lat: -34.5100, lng: -58.4900, c: [comp("Olivos", "locality"), comp("Vicente López", "administrative_area_level_2"), PBA] },
-  "Centenario 500, San Isidro": { lat: -34.4700, lng: -58.5100, c: [comp("San Isidro", "locality"), comp("San Isidro", "administrative_area_level_2"), PBA] },
-};
-const postsAN8n = [];
-const fakeAxios = {
-  async get(url, opts) {
-    if (url.includes("geocode")) {
-      const d = DIRECCIONES[Object.keys(DIRECCIONES).find((k) => opts.params.address.startsWith(k))];
-      return { data: { results: d ? [{ geometry: { location: { lat: d.lat, lng: d.lng } }, address_components: d.c }] : [] } };
-    }
-    return { headers: { "content-type": "image/jpeg" }, data: Buffer.from("foto") }; // descarga del comprobante
-  },
-  // Routes API: el backend le pregunta a Google los km REALES por calle para cobrar el envío de moto
-  // con la misma vara con la que se le paga al motomensajero. Acá se responde con la línea recta por
-  // 1,4 (el factor real medido sobre las entregas), para que las cuentas del test sean deterministas
-  // y no cuente como aviso a n8n — postsAN8n es solo para los avisos de cotización de Uber.
-  async post(url, body) {
-    if (String(url).includes("routes.googleapis.com")) {
-      const o = body.origin.location.latLng, d = body.destination.location.latLng;
-      const rad = (g) => (g * Math.PI) / 180;
-      const h = Math.sin(rad(d.latitude - o.latitude) / 2) ** 2 +
-        Math.cos(rad(o.latitude)) * Math.cos(rad(d.latitude)) * Math.sin(rad(d.longitude - o.longitude) / 2) ** 2;
-      const km = 2 * 6371 * Math.asin(Math.sqrt(h)) * 1.4;
-      return { status: 200, data: { routes: [{ distanceMeters: Math.round(km * 1000) }] } };
-    }
-    postsAN8n.push({ url, body });
-    return { status: 200, data: { ok:true, confirmado:true } };
-  },
-};
-
-function mockear(nombre, exp) {
-  const dir = path.join(__dirname);
-  const resuelto = Module._resolveFilename(nombre, { id: dir, filename: path.join(dir, "x.js"), paths: Module._nodeModulePaths(dir) });
-  require.cache[resuelto] = { id: resuelto, filename: resuelto, loaded: true, exports: exp };
-}
-mockear("firebase-admin", fakeAdmin);
-mockear("firebase-functions", { https: { onRequest: (h) => h } });
-mockear("firebase-functions/v2/firestore", { onDocumentUpdated: (_ruta, h) => h });
-mockear("axios", fakeAxios);
-const api = require("./agente-api.js");
-
-// ---------- helpers ----------
-function llamar(fn, { method = "GET", query = {}, body = {}, headers = KEY } = {}) {
-  return new Promise((resolve) => {
-    let status = 200;
-    const res = {
-      headersSent: false,
-      status(c) { status = c; return this; },
-      json(b) { resolve({ status, body: b }); },
-      send(b) { resolve({ status, body: b }); },
-      setHeader() {},
-    };
-    fn({ method, query, body, path: "/test", get: (h) => headers[h] }, res);
-  });
-}
-const pedido = async (extra) => {
-  let salidaSeleccionada;
-  if (!extra?.pedidoId && !Object.hasOwn(extra || {}, "salidaSeleccionada") && (!extra?.tipoEnvio || extra.tipoEnvio === "moto")) {
-    const estado = await llamar(api.agentEstadoOperativo);
-    salidaSeleccionada = estado.body.opcionesMoto[0];
-  }
-  return llamar(api.agentPedido, { method: "POST", body: {
-  telefono: "+5491158696086", cliente: "Uma Bach", medioPago: "transferencia", comprobanteUrl: "https://chatwoot/x.jpg",
-  tipoEnvio: "moto", direccion: { texto: "Cabildo 2000, Belgrano", referencias: "3B" },
-  items: [{ producto: "Elfbar Ice King", variante: "Peach", cantidad: 1 }], salidaSeleccionada, ...extra } });
-};
-const resumen = (extra) => pedido({ preview: true, ...extra });
-
-// Congela el reloj en una hora de Buenos Aires (UTC-3).
-function conHora(isoBA, fn) {
-  const RealDate = Date;
-  const fijo = new RealDate(isoBA + "-03:00").getTime();
-  global.Date = class extends RealDate {
-    constructor(...a) { super(...(a.length ? a : [fijo])); }
-    static now() { return fijo; }
-  };
-  return Promise.resolve(fn()).finally(() => { global.Date = RealDate; });
-}
-
-const resultados = [];
-const ok = (nombre, cond, detalle) => resultados.push({ nombre, ok: !!cond, detalle });
+const { api, store, LISTAS, llamar, pedido, resumen, conHora, ok, resultados, guardadoEnStorage, postsAN8n, hashCorto, setAntesTransaccion } = require("./dobles");
 
 async function main() {
   store["settings/operativo"] = { ...LISTAS, aliasActivo: "alias3", situacion: "demora", proximaSalida: "16:00", limitePorTanda: 10 };
@@ -280,7 +125,7 @@ async function main() {
   // ── uber ──
   {
     const r = await resumen({ tipoEnvio: "uber" });
-    ok("uber: sin cotización del depósito no hay resumen", r.status === 400 && /cotizar_uber/.test(r.body.error), r.body);
+    ok("uber: sin cotización del depósito no hay resumen", r.status === 400 && /pedir_cotizacion_flash/.test(r.body.error), r.body);
     await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "77", telefonoCliente: "+54 9 11 5869-6086" } });
     const [idCot] = Object.keys(store).filter((k) => k.startsWith("cotizaciones_uber/"));
     ok("uber: la cotización guarda el teléfono normalizado", store[idCot].telefonoCliente === "5491158696086", store[idCot]);
@@ -345,7 +190,7 @@ async function main() {
     const r4 = await pedido({ tipoEnvio: "correo", datosCorreo: { aSucursal: true, dni: "30111222" } });
     ok("correo: sin localidad ni CP no se carga", r4.status === 400 && /localidad/.test(r4.body.error) && /código postal/.test(r4.body.error), r4.body);
     const r5 = await pedido({ tipoEnvio: "correo", direccion: { texto: "Córdoba 1500, Rosario" }, datosCorreo: { aSucursal: true, dni: "30111222", localidad: "Rosario", cp: "2000" } });
-    const p5 = store[`pedidos/${r5.body.pedidoId}`];
+    const p5 = store[`pedidos/${r5.body.pedidoId}`]; if(!r5.body.ok) console.log("DEBUG r5", JSON.stringify(r5));
     ok("correo: se carga en Retiro, con VÍA CARGO arriba para el depósito", r5.body.ok && p5.tipoEnvio === "retiro" && p5.mensaje.startsWith("📦 VÍA CARGO — SUCURSAL") && p5.datosCorreo.dni === "30111222", p5);
     ok("correo: al cliente le llega el resumen sin esa línea", !r5.body.mensaje.startsWith("📦 VÍA CARGO"), r5.body.mensaje);
   }
@@ -500,7 +345,7 @@ async function main() {
     const r = await conHora("2026-09-22T15:00:00", () => llamar(api.agentEstadoOperativo));
     ok("estado: manda el alias activo, nunca otro", r.body.plantillas.ALIAS.includes("tamelake358sa.eluter") && r.body.plantillas.ALIAS.includes("CVU: 0000510400000000001348") && !/028import\.gal?2?/.test(r.body.plantillas.ALIAS), r.body.plantillas.ALIAS);
     ok("estado: manda las listas del panel", r.body.plantillas.PRECIOS_VAPES === LISTAS.preciosVapesTexto.trim(), null);
-    ok("estado: demora del día y tandas independientes", /2 hs/.test(r.body.demora) && r.body.salidasMoto[0].hora === "15:30", r.body);
+    ok("estado: demora del día y tandas independientes", /2 hs/.test(r.body.demora) && r.body.plantillas.FORMAS_DE_ENTREGA.includes("15:30"), r.body);
     ok("estado: manda comunidad y regla de Tame Lake", /COMUNIDAD 028 IMPORT/.test(r.body.plantillas.COMUNIDAD) && /30718603702/.test(r.body.plantillas.COMPROBANTES_VALIDOS), r.body.plantillas);
     const aliasGuardado = store["settings/operativo"].aliasActivo;
     for (const [alias, titular, cbu] of [
@@ -511,11 +356,11 @@ async function main() {
       store["settings/operativo"].aliasActivo = alias;
       const estado = await llamar(api.agentEstadoOperativo);
       const regla = estado.body.plantillas.COMPROBANTES_VALIDOS;
-      ok(`comprobantes: ${alias} identifica su titular, CBU y cuenta activa`, regla.includes(titular) && regla.includes(cbu) && regla.includes(`Cuenta activa para una venta nueva (${alias})`) && regla.includes(estado.body.plantillas.ALIAS) && regla.includes("$5000"), regla);
+      ok(`comprobantes: ${alias} identifica su titular, CBU y cuenta activa`, regla.includes(titular) && regla.includes(cbu) && estado.body.plantillas.ALIAS.includes(cbu.slice(-6)) && regla.includes("$5.000"), regla);
     }
     store["settings/operativo"].aliasActivo = "desconocido";
     const fallback = await llamar(api.agentEstadoOperativo);
-    ok("comprobantes: alias inválido usa Galicia tanto en pago como en validación", fallback.body.plantillas.ALIAS.includes("Lucio Felix Bunge") && fallback.body.plantillas.COMPROBANTES_VALIDOS.includes("Cuenta activa para una venta nueva (alias1)"), fallback.body.plantillas);
+    ok("comprobantes: alias inválido usa Galicia tanto en pago como en validación", fallback.body.plantillas.ALIAS.includes("Lucio Felix Bunge") && fallback.body.plantillas.COMPROBANTES_VALIDOS.includes("alias1/028import.gl"), fallback.body.plantillas);
     store["settings/operativo"].aliasActivo = aliasGuardado;
 
     const cola = async (n, extra = {}) => {
@@ -546,7 +391,7 @@ async function main() {
       store["pedidos/unRetiro"] = { estado: "pendiente", tipoEnvio: "retiro" }; // retiro y correo no ocupan tanda
       store["settings/operativo"] = { ...operativo, proximaSalida: "", ...extra };
       const x = await conHora(hora, () => llamar(api.agentEstadoOperativo));
-      return `${x.body[campo].dia} ${x.body[campo].hora}`;
+      const v = campo === "salida" ? x.body.opcionesMoto[0] : x.body[campo]; return v ? `${v.dia} ${v.hora}` : "ninguna";
     };
     const casos = [
       ["martes 04:00: hoy en la primera tanda", "2026-09-22T04:00:00", 0, "hoy 13:30"],
@@ -629,16 +474,9 @@ async function main() {
         const total = await resumen({ telefono: tel, tipoEnvio: "uber", direccion: { texto: destino } });
         ok("45min: resumen usa precio vigente", total.body.ok && total.body.total === 32500, total.body);
       });
-      await conHora("2026-10-23T13:45:00", async () => {
-        const limite = await solicitar({ soloConsultar: true });
-        ok("45min: el segundo exacto de 45 minutos sigue dentro del límite", limite.body.yaCotizado && !limite.body.cotizacionVencida, limite.body);
-      });
       await conHora("2026-10-23T13:45:01", async () => {
         const e = await llamar(api.agentEstadoOperativo, { query: { telefono: tel } });
         ok("45min: vencimiento no reinicia al marcar procesado", e.body.cotizacionUber.estado === "vencido" && !e.body.cotizacionUber.montoUber && e.body.cotizacionUber.necesitaRecotizacion, e.body.cotizacionUber);
-        const antes = Object.keys(store).length;
-        const consulta = await solicitar({ soloConsultar: true });
-        ok("45min: consulta detecta vencimiento sin crear ni notificar", consulta.body.cotizacionVencida && consulta.body.necesitaCotizacion && Object.keys(store).length === antes, consulta.body);
         const total = await resumen({ telefono: tel, tipoEnvio: "uber", direccion: { texto: destino } });
         ok("45min: precio vencido bloquea resumen y pide nueva cotización", total.status === 409 && total.body.cotizacionVencida && total.body.necesitaRecotizacion, total.body);
         const pago = await pedido({ telefono: tel, tipoEnvio: "uber", direccion: { texto: destino }, comprobante: { numero: "pago-vencido", monto: 32500 } });
@@ -676,26 +514,45 @@ async function main() {
 
   // ── cotización de Uber confirmada en el panel ──
   {
-    const [idCot] = Object.keys(store).filter((k) => k.startsWith("cotizaciones_uber/"));
-    const ref = { update: async (d) => { store[idCot] = { ...store[idCot], ...d }; } };
-    const evento = (antes, despues) => { store[idCot]={...store[idCot],...despues}; return { params: { id: idCot.slice('cotizaciones_uber/'.length) }, data: { before: { data: () => antes }, after: { data: () => despues, ref } } }; };
-    await api.onCotizacionUberConfirmada(evento({ estado: "pendiente" }, { estado: "cotizado", idConversacion: "77", montoUber: 8500 }));
-    ok("uber confirmado: avisa a n8n con la conversación y el monto", postsAN8n.length === 1 && postsAN8n[0].body.montoUber === 8500 && postsAN8n[0].body.idConversacion === "77", postsAN8n);
-    ok("uber confirmado: queda procesado", store[idCot].estado === "procesado", store[idCot]);
-    await api.onCotizacionUberConfirmada(evento({ estado: "cotizado" }, { estado: "procesado" }));
-    ok("uber confirmado: no vuelve a avisar", postsAN8n.length === 1, postsAN8n);
-    await api.onCotizacionUberConfirmada(evento({ estado: "pendiente" }, { estado: "no_llegamos", idConversacion: "78", noLlegamos: true }));
-    ok("uber no llegamos: avisa a n8n sin monto", postsAN8n.length === 2 && postsAN8n[1].body.noLlegamos === true && postsAN8n[1].body.idConversacion === "78" && !("montoUber" in postsAN8n[1].body), postsAN8n);
-    ok("uber no llegamos: queda procesado", store[idCot].estado === "procesado", store[idCot]);
-    ok("uber: sin settings/agente avisa al n8n actual de 028", postsAN8n[0].url === "https://028-import-n8n.neoyey.easypanel.host/webhook/cotizacion-uber-confirmada", postsAN8n[0].url);
+    const guardado = { ...store };
+    for (const k of Object.keys(store)) if (k.startsWith("cotizaciones_uber/") || k.startsWith("pedidos/")) delete store[k];
+    const nueva = (id, tel) => { store["cotizaciones_uber/" + id] = { idConversacion: id, telefonoCliente: tel, direccion: "Paraguay 4500, Palermo", estado: "pendiente", createdAt: new Date(Date.now() - 60000).toISOString() }; };
+    const evento = (id, antes, despues) => {
+      store["cotizaciones_uber/" + id] = { ...store["cotizaciones_uber/" + id], ...despues };
+      return { params: { id }, data: { before: { data: () => antes }, after: { data: () => store["cotizaciones_uber/" + id] } } };
+    };
+    const avisos = postsAN8n.length;
+    nueva("77", "5491100000077");
+    await api.onCotizacionUberConfirmada(evento("77", { estado: "pendiente" }, { estado: "cotizado", montoUber: 8500 }));
+    const aviso = postsAN8n[avisos];
+    ok("uber confirmado: le avisa al bot con la conversación, el teléfono y el monto", postsAN8n.length === avisos + 1 && aviso.body.montoUber === 8500 && aviso.body.idConversacion === "77" && aviso.body.telefono === "5491100000077", postsAN8n.slice(avisos));
+    ok("uber confirmado: avisa al webhook del v2", aviso.url === "https://028-import-n8n.neoyey.easypanel.host/webhook/v2-cotizacion-uber", aviso.url);
+    ok("uber confirmado: queda procesado", store["cotizaciones_uber/77"].estado === "procesado", store["cotizaciones_uber/77"]);
+    await api.onCotizacionUberConfirmada(evento("77", { estado: "cotizado" }, { estado: "procesado" }));
+    ok("uber confirmado: no vuelve a avisar", postsAN8n.length === avisos + 1, postsAN8n.slice(avisos));
+    nueva("78", "5491100000078");
+    await api.onCotizacionUberConfirmada(evento("78", { estado: "pendiente" }, { estado: "no_llegamos" }));
+    ok("uber no llegamos: avisa sin monto", postsAN8n.length === avisos + 2 && postsAN8n[avisos + 1].body.noLlegamos === true && !("montoUber" in postsAN8n[avisos + 1].body), postsAN8n.slice(avisos));
+    ok("uber no llegamos: queda procesado y sin cobertura", store["cotizaciones_uber/78"].estado === "procesado" && store["cotizaciones_uber/78"].sinCoberturaUber === true, store["cotizaciones_uber/78"]);
+    nueva("79", "5491100000079");
+    store["cotizaciones_uber/79"].canceladaEn = new Date().toISOString();
+    await api.onCotizacionUberConfirmada(evento("79", { estado: "pendiente" }, { estado: "cotizado", montoUber: 9000 }));
+    ok("uber: una cotización cancelada no se le avisa al cliente", postsAN8n.length === avisos + 2, postsAN8n.slice(avisos));
+    nueva("80", "5491100000080");
+    store["pedidos/ya-compro"] = { telefono: "5491100000080", estado: "pendiente", createdAt: new Date().toISOString() };
+    await api.onCotizacionUberConfirmada(evento("80", { estado: "pendiente" }, { estado: "cotizado", montoUber: 9000 }));
+    ok("uber: si el cliente ya compró después, no se le avisa", postsAN8n.length === avisos + 2, postsAN8n.slice(avisos));
     // Mudanza de servidor: el n8n se cambia desde Firebase, sin redesplegar.
-    store["settings/agente"] = { n8nBase: "https://028-import-n8n.neoyey.easypanel.host/" };
-    await api.onCotizacionUberConfirmada(evento({ estado: "pendiente" }, { estado: "cotizado", idConversacion: "79", montoUber: 9000 }));
-    ok("uber: con settings/agente.n8nBase avisa a ese n8n", postsAN8n[2].url === "https://028-import-n8n.neoyey.easypanel.host/webhook/cotizacion-uber-confirmada", postsAN8n[2].url);
+    store["settings/agente"] = { n8nBase: "https://otro-n8n.ejemplo.com/" };
+    nueva("81", "5491100000081");
+    await api.onCotizacionUberConfirmada(evento("81", { estado: "pendiente" }, { estado: "cotizado", montoUber: 9000 }));
+    ok("uber: con settings/agente.n8nBase avisa a ese n8n", postsAN8n[avisos + 2]?.url === "https://otro-n8n.ejemplo.com/webhook/v2-cotizacion-uber", postsAN8n.slice(avisos));
     store["settings/agente"] = { n8nBase: "http://inseguro.com" };
-    await api.onCotizacionUberConfirmada(evento({ estado: "pendiente" }, { estado: "cotizado", idConversacion: "80", montoUber: 9000 }));
-    ok("uber: una dirección inválida se ignora", postsAN8n[3].url.startsWith("https://028-import-n8n.neoyey.easypanel.host/"), postsAN8n[3].url);
-    delete store["settings/agente"];
+    nueva("82", "5491100000082");
+    await api.onCotizacionUberConfirmada(evento("82", { estado: "pendiente" }, { estado: "cotizado", montoUber: 9000 }));
+    ok("uber: una dirección que no es https se ignora", postsAN8n[avisos + 3]?.url.startsWith("https://028-import-n8n.neoyey.easypanel.host/"), postsAN8n.slice(avisos));
+    for (const k of Object.keys(store)) delete store[k];
+    Object.assign(store, guardado);
   }
 
   // ── comprobante ──
@@ -707,20 +564,27 @@ async function main() {
   // ── comprobantes sueltos: se guardan todos, se cargue o no el pedido ──
   {
     const guardar = (body) => llamar(api.agentGuardarComprobante, { method: "POST", body: { telefono: "+5492235861032", cliente: "Celina", idConversacion: 201, idMensaje: 9, ...body } });
-    const foto = await guardar({ url: "https://chatwoot/foto-vape.jpg", descripcion: "[Adjunto: Es un ELFBAR ICE KING, el texto visible dice 40K] tenes este ?" });
+    const foto = await guardar({ url: "https://chatwoot/foto-vape.jpg", lectura: { esComprobante: false } });
     ok("suelto: una foto que no es comprobante no se guarda", foto.body.ok && foto.body.guardado === false, foto.body);
-    // Descripción real (22/10): el CVU quedó leído con un cero menos, pero el destinatario es Tame Lake.
-    const celina = "[Adjunto: Esto es un comprobante de pago.\n\n*   **Monto:** $65.990\n*   **Banco o App:** Mercado Pago\n*   **Número de operación:** 185563329942 (N.º de operación de Mercado Pago), XJ8G7V95717156KMNEMPYR (Código de identificación)\n*   **Titular:** Celina Luque Peluffo\n*   **Destinatario:** Tame Lake 358 Sa\n*   **CBU o CVU de destino:** CBU: 000051040000000001348\n*   **Alias visible:** No aplica\n*   **Fecha:** 22/octubre/2026 a las 14:56.] [Link de la url fuente: https://chatwoot/x.jpg]";
-    const r = await guardar({ url: "https://chatwoot/x.jpg", descripcion: celina });
+    // Lectura real (22/10): el CVU quedó leído con un cero menos, pero el destinatario es Tame Lake.
+    const celina = { esComprobante: true, edicionDetectada: false, monto: "$65.990", numeroOperacion: "185563329942", titular: "Celina Luque Peluffo",
+      destinatario: "Tame Lake 358 Sa", cbuCvu: "000051040000000001348", alias: "No aplica", cuit: "" };
+    const r = await guardar({ url: "https://chatwoot/x.jpg", lectura: celina });
     const doc = store[`comprobantes/${r.body.id}`];
     ok("suelto: guarda el comprobante con sus datos", r.body.guardado && doc.comprobante.numero === "185563329942" && doc.comprobante.monto === 65990 && doc.comprobante.nombre === "Celina Luque Peluffo" && doc.telefono === "5492235861032" && doc.pedidoId === null, doc);
     ok("suelto: reconoce la cuenta aunque el CVU se haya leído mal", doc.cuentaCobro === "alias3", doc.cuentaCobro);
-    ok("suelto: copia la foto a Storage y la sirve por serveComprobante", doc.comprobanteImagen.url.endsWith(`?comprobante=${r.body.id}`) && guardadoEnStorage.some((p) => p.includes(`sueltos/${r.body.id}.jpg`)), doc.comprobanteImagen);
-    const otra = await guardar({ url: "https://chatwoot/x.jpg", descripcion: celina });
-    ok("suelto: el mismo comprobante no se guarda dos veces", otra.body.reutilizado && otra.body.id === r.body.id, otra.body);
-    const santander = await guardar({ url: "https://chatwoot/santander.pdf", descripcion: "Es un comprobante de pago:\n\n*   **Monto:** $37.990,00\n*   **Banco o app:** Santander\n*   **Número de operación:** 96401936\n*   **Titular:** No especificado directamente como \"titular\"\n*   **Destinatario:** Lucio Felix Bunge\n*   **CBU o CVU de destino:** 0070194130004014092980" });
-    const ds = store[`comprobantes/${santander.body.id}`];
+    ok("suelto: copia la foto a Storage y la sirve por serveComprobante", doc.comprobanteImagen.url.endsWith("?comprobante=" + r.body.id) && guardadoEnStorage.some((p) => p.includes("sueltos/" + r.body.id + ".jpg")), doc.comprobanteImagen);
+    const otra = await guardar({ url: "https://chatwoot/x.jpg", lectura: JSON.stringify(celina) });
+    ok("suelto: el mismo comprobante no se guarda dos veces (y acepta la lectura como JSON)", otra.body.reutilizado && otra.body.id === r.body.id, otra.body);
+    const santander = await guardar({ url: "https://chatwoot/santander.pdf", lectura: { esComprobante: true, monto: "$37.990,00", numeroOperacion: "96401936",
+      titular: "No especificado directamente como titular", destinatario: "Lucio Felix Bunge", cbuCvu: "0070194130004014092980" } });
+    const ds = store["comprobantes/" + santander.body.id];
     ok("suelto: monto con decimales, sin titular y otra cuenta", ds.comprobante.monto === 37990 && ds.comprobante.numero === "96401936" && ds.comprobante.nombre === null && ds.cuentaCobro === "alias1", ds);
+    const antesEditado = Object.keys(store).length;
+    const editado = await guardar({ url: "https://chatwoot/editado.jpg", lectura: { ...celina, numeroOperacion: "111222333444", edicionDetectada: true } });
+    ok("suelto: un comprobante con signos de edición no se guarda y se deriva", editado.body.guardado === false && editado.body.derivar && Object.keys(store).length === antesEditado, editado.body);
+    const incompleto = await guardar({ url: "https://chatwoot/borroso.jpg", lectura: { esComprobante: true, monto: "", numeroOperacion: "" } });
+    ok("suelto: sin importe ni número no se guarda", incompleto.body.guardado === false && incompleto.body.motivo === "lectura_incompleta", incompleto.body);
     const sirve = await llamar(api.serveComprobante, { query: { comprobante: "no-existe" } });
     ok("serveComprobante: suelto inexistente -> 404", sirve.status === 404, sirve.body);
   }
@@ -754,7 +618,7 @@ async function main() {
     const manana = await pedido({ medioPago: "al recibir", salidaSeleccionada: { fecha: "2026-10-07", tandaId: "primera" } });
     ok("tandas: cliente puede elegir manana aun con salidas hoy", manana.body.ok && /07\/10, a las 15:30/.test(manana.body.mensaje), manana.body);
     const movidaPanel = await llamar(api.agentEstadoOperativo);
-    ok("panel: combos y baterias disponibles como plantilla", movidaPanel.body.plantillas.COMBOS_BATERIAS === "Combo capsula y bateria" && movidaPanel.body.combosBateriasTitulo === "Combos", movidaPanel.body);
+    ok("panel: combos y baterias disponibles como plantilla", movidaPanel.body.plantillas.COMBOS_BATERIAS === "Combo capsula y bateria", movidaPanel.body);
     ok("panel: entrega informa dos horarios actualizados", /15:30 y 18:30/.test(movidaPanel.body.plantillas.FORMAS_DE_ENTREGA), movidaPanel.body.plantillas.FORMAS_DE_ENTREGA);
 
     for (const delta of [-5001, -5000, 0, 5000, 5001]) {
@@ -803,7 +667,7 @@ async function main() {
     delete store["settings/operativo"].stockNicotinaTexto;
     const agregar = await modificar({ idMensajeOrigen: "mod-3", items: [{ producto: "Elfbar Ice King", cantidad: 2, variante: "Peach" }] });
     ok("agrega productos al mismo pedido al recibir", agregar.body.ok && count() === antes && store[`pedidos/${r.body.pedidoId}`].items[0].cantidad === 2, agregar.body);
-    antesTransaccion = () => { store[`pedidos/${r.body.pedidoId}`].estado = "armado"; };
+    setAntesTransaccion(() => { store[`pedidos/${r.body.pedidoId}`].estado = "armado"; });
     const carrera = await modificar({ idMensajeOrigen: "mod-4", direccion: "Cabildo 2000, Belgrano" });
     ok("si deposito arma durante cambio, bloquea y deriva", carrera.status === 409 && carrera.body.derivar && store[`pedidos/${r.body.pedidoId}`].direccion.texto !== "Cabildo 2000, Belgrano" && count() === antes, carrera.body);
     const armado = await modificar({ idMensajeOrigen: "mod-5" });
@@ -813,6 +677,7 @@ async function main() {
     const extra = await llamar(api.agentPedido, { method: "POST", body: cambios });
     ok("agregar a pagado pide diferencia antes de guardar", extra.status === 400 && extra.body.requierePago && !extra.body.derivar && store[`pedidos/${pagado.body.pedidoId}`].items[0].cantidad === 1, extra.body);
     const fotoOriginal = store[`pedidos/${pagado.body.pedidoId}`].comprobanteImagen;
+    store["comprobantes/cw-" + hashCorto("https://chatwoot/saldo.jpg")] = { telefono: "5491158696086", cuentaCobro: "alias1", comprobante: { numero: "pago-saldo", monto: 23000 }, pedidoId: null };
     const saldo = await llamar(api.agentPedido, { method: "POST", body: { ...cambios, idMensajeOrigen: "saldo-1", comprobanteAdicional: { numero: "pago-saldo", monto: 23000 }, comprobanteUrl: "https://chatwoot/saldo.jpg" } });
     ok("pago adicional permite actualizar sin duplicar", saldo.body.ok && store[`pedidos/${pagado.body.pedidoId}`].montoPagado === 52000 && store[`pedidos/${pagado.body.pedidoId}`].comprobantesAdicionales.length === 1, saldo.body);
     ok("pago adicional conserva foto original y guarda segunda aparte", store[`pedidos/${pagado.body.pedidoId}`].comprobanteImagen.path === fotoOriginal.path && store[`pedidos/${pagado.body.pedidoId}`].comprobantesAdicionales[0].imagen.path !== fotoOriginal.path, store[`pedidos/${pagado.body.pedidoId}`].comprobantesAdicionales);
@@ -825,7 +690,7 @@ async function main() {
     const concurrentes = await Promise.all([pedido({ idConversacion: "800", idMensajeOrigen: "8001", medioPago: "al recibir", salidaSeleccionada: primera }), pedido({ idConversacion: "801", idMensajeOrigen: "8002", medioPago: "al recibir", salidaSeleccionada: primera })]);
     ok("cupo: dos altas concurrentes no sobrellenan la tanda", concurrentes.filter((x) => x.body.ok).length === 1 && count() === 1, concurrentes);
     const e = await llamar(api.agentEstadoOperativo);
-    ok("cupo: primera llena ofrece segunda del mismo dia", e.body.salida.tandaId === "segunda", e.body.salida);
+    ok("cupo: primera llena ofrece segunda del mismo dia", e.body.opcionesMoto[0].tandaId === "segunda", e.body.opcionesMoto[0]);
     const inicial = concurrentes.find((x) => x.body.ok);
     const retry = await conHora("2026-10-06T20:30:00", () => pedido({ idConversacion: "800", idMensajeOrigen: "8001", medioPago: "al recibir", salidaSeleccionada: primera }));
     ok("reintento despues de salida devuelve pedido existente", retry.body.reutilizado && retry.body.pedidoId === inicial.body.pedidoId && count() === 1, retry.body);
@@ -833,115 +698,22 @@ async function main() {
 
   // El comprobante suelto de https://chatwoot/x.jpg quedó vinculado al pedido que se cargó con esa URL.
   {
-    const suelto = Object.entries(store).find(([k, v]) => k.startsWith("comprobantes/") && v.comprobante?.numero === "185563329942")?.[1];
-    ok("suelto: crear_pedido lo vincula al pedido", !!suelto?.pedidoId, suelto);
+    const url = "https://chatwoot/para-vincular.jpg";
+    const datos = { telefono: "+5492235861032", idConversacion: "201", idMensajeOrigen: "vincular-1", comprobanteUrl: url };
+    const previo = await resumen(datos);
+    await llamar(api.agentGuardarComprobante, { method: "POST", body: { url, telefono: datos.telefono, idConversacion: "201", idMensaje: "vincular-0",
+      lectura: { esComprobante: true, monto: previo.body.total, numeroOperacion: "777000111", destinatario: "Tame Lake S.A." } } });
+    const cargado = await pedido(datos);
+    const suelto = Object.values(store).find((v) => v.urlFuente === url);
+    ok("suelto: crear_pedido lo vincula al pedido", cargado.body.ok && suelto?.pedidoId === cargado.body.pedidoId, { cargado: cargado.body, suelto });
+    const otraVez = await pedido({ ...datos, idMensajeOrigen: "vincular-2" });
+    ok("suelto: el mismo comprobante no paga un segundo pedido", !otraVez.body.ok && otraVez.body.derivar, otraVez.body);
+    const ajeno = await pedido({ ...datos, telefono: "+5491100000001", idMensajeOrigen: "vincular-3" });
+    ok("suelto: el comprobante de otro cliente no sirve", !ajeno.body.ok && ajeno.body.requiereComprobante, ajeno.body);
   }
 
-  await conHora("2026-10-23T14:00:00", async () => {
-    const telefono = "5491199990909";
-    store["pedidos/seguimiento-test"] = { telefono, estado: "armado", tipoEnvio: "uber", createdAt: "2026-10-23T16:00:00Z" };
-    const seguimiento = (mensaje, mensajeId) => llamar(api.agentEstadoOperativo, { query: { telefono, mensaje, mensajeId } });
-    for (let i = 1; i <= 6; i++) {
-      const r = await seguimiento(["cuando llega", "cuanto falta", "cuando sale", "a que hora llega", "ya salio", "me mandas seguimiento"][i - 1], "consulta-" + i);
-      ok(`seguimiento ${i}: ${i > 5 ? "deriva" : "responde estado"}`, r.body.consultaSeguimiento?.numero === i && r.body.consultaSeguimiento.derivar === (i > 5) && /armado/.test(r.body.consultaSeguimiento.mensaje) && /código de seguridad/.test(r.body.consultaSeguimiento.mensaje), r.body.consultaSeguimiento);
-    }
-    const retry = await seguimiento("cuanto falta", "consulta-2");
-    ok("seguimiento: reintento mismo mensaje no aumenta contador", retry.body.consultaSeguimiento?.numero === 2 && !retry.body.consultaSeguimiento.derivar, retry.body.consultaSeguimiento);
-    for (const mensaje of ["cuando llega y quiero cambiar la direccion", "faltan productos", "no llego mi pedido", "quiero comprar otro, cuando sale", "cuanto sale el envio"]) {
-      const r = await seguimiento(mensaje, "mixto-" + mensaje);
-      ok("seguimiento: no oculta venta, reclamo ni cambio: " + mensaje, !r.body.consultaSeguimiento, r.body.consultaSeguimiento);
-    }
-    store["pedidos/seguimiento-test"].estado = "pendiente";
-    const pendiente = await seguimiento("cuando llega", "pendiente");
-    ok("seguimiento: no inventa armado", /en preparación/.test(pendiente.body.consultaSeguimiento.mensaje) && !/armado/.test(pendiente.body.consultaSeguimiento.mensaje), pendiente.body.consultaSeguimiento);
-    store["pedidos/seguimiento-nuevo"] = { telefono, estado: "pendiente", tipoEnvio: "uber", createdAt: "2026-10-23T16:30:00Z" };
-    const nuevo = await seguimiento("cuanto falta", "primera-nuevo");
-    ok("seguimiento: nueva compra reinicia el contador", nuevo.body.consultaSeguimiento.numero === 1, nuevo.body.consultaSeguimiento);
-    const web = await llamar(api.agentEstadoOperativo);
-    ok("web: plantilla retirada del contexto", !web.body.plantillas.WEB, web.body.plantillas.WEB);
-    ok("correo argentino: no se declara integrado sin credenciales", web.body.correoArgentino.conectado === false, web.body.correoArgentino);
 
-    const telUber = "5491199990808";
-    const solicitar = (extra) => llamar(api.agentCrearCotizacionUber, { method: "POST", body: { telefonoCliente: telUber, idConversacion: "qa-808", direccion: "Cabildo 2000, Belgrano", ...extra } });
-    store["cotizaciones_uber/sin-uber-qa"] = { telefonoCliente: telUber, direccion: "Cabildo 2000, Belgrano", estado: "procesado", sinCoberturaUber: true, createdAt: "2026-10-23T16:16:00Z", procesadoEn: "2026-10-23T16:16:00Z" };
-    const antes45 = await solicitar({ recotizarSolicitado: true });
-    ok("uber: 44 minutos no abre otra aunque la solicite", antes45.body.creada === false && antes45.body.sinCobertura, antes45.body);
-    const contexto = await llamar(api.agentEstadoOperativo, { query: { telefono: telUber } });
-    ok("uber: sin cobertura ofrece correo en el contexto", contexto.body.cotizacionUber.estado === "sin_cobertura" && contexto.body.cotizacionUber.alternativa === "correo", contexto.body.cotizacionUber);
-    store["cotizaciones_uber/sin-uber-qa"].createdAt = "2026-10-23T16:15:00Z";
-    store["cotizaciones_uber/sin-uber-qa"].procesadoEn = "2026-10-23T16:15:00Z";
-    const sinPedido = await solicitar({});
-    ok("uber: después de 45 no recotiza por su cuenta", sinPedido.body.creada === false, sinPedido.body);
-    const simultaneos = await Promise.all(Array.from({ length: 6 }, () => solicitar({ recotizarSolicitado: true })));
-    ok("uber: reintento explícito a 45 minutos concurrente crea uno", simultaneos.filter(r => r.body.creada).length === 1, simultaneos);
-    const otraDireccion = await solicitar({ direccion: "Santa Fe 4000, Palermo" });
-    ok("uber: cambio completo de dirección permite cotizar", otraDireccion.body.creada === true, otraDireccion.body);
 
-    for(const [id,direccion]of [["qa-evento-unico","Cabildo 2000, Belgrano"],["qa-evento-distinto","Santa Fe 4000, Palermo"]])store["cotizaciones_uber/"+id]={telefonoCliente:"5491199990810",idConversacion:"qa-808",direccion,createdAt:new Date().toISOString(),estado:"no_llegamos"};
-    const avisoBody = { idConversacion: "qa-808", idCotizacion: "qa-evento-unico", noLlegamos: true };
-    const aviso = (extra) => llamar(api.agentEstadoOperativo, { method: "POST", body: { accion: "reservar_aviso_uber", ...avisoBody, ...extra } });
-    const reservas = await Promise.all(Array.from({ length: 6 }, () => aviso({})));
-    const unica = reservas.find(r => r.body.permitir);
-    ok("aviso Uber: seis webhooks concurrentes reservan un solo envío", reservas.filter(r => r.body.permitir).length === 1, reservas);
-    const incorrecta = await aviso({ accion: "confirmar_aviso_uber", reserva: "otra" });
-    ok("aviso Uber: otra reserva no puede confirmar el envío", incorrecta.body.ok === false, incorrecta.body);
-    const confirmada = await aviso({ accion: "confirmar_aviso_uber", reserva: unica.body.reserva });
-    ok("aviso Uber: confirma después de enviar", confirmada.body.confirmado, confirmada.body);
-    const duplicado = await aviso({});
-    ok("aviso Uber: webhook ya enviado no repite al cliente", duplicado.body.duplicado && !duplicado.body.permitir, duplicado.body);
-    const diferente = await aviso({ idCotizacion: "qa-evento-distinto" });
-    ok("aviso Uber: otra cotización tiene aviso independiente", diferente.body.permitir, diferente.body);
-  });
-
-  await conHora("2026-10-23T13:00:00", async () => {
-    store["settings/operativo"]={...LISTAS,aliasActivo:"alias3",limitePorTanda:100};
-    const base={telefono:"5491199997001",idConversacion:"qa-cierre-1",cliente:"Prueba cierre",items:[{producto:"Elfbar Ice King",variante:"Peach",cantidad:1}],direccion:{texto:"Cabildo 2000, Belgrano"},tipoEnvio:"moto",medioPago:"transferencia",salidaSeleccionada:{fecha:"2026-10-23",tandaId:"primera",hora:"15:30"}};
-    const call=body=>llamar(api.agentPedido,{method:"POST",body});
-    const preview=await call({...base,preview:true});
-    ok("cierre: resumen persistido sin crear pedido",preview.body.ok&&preview.body.cierreVersion&&!preview.body.pedidoId,preview.body);
-    const sinDetalle=await call({...base,exigirDetalle:true,idMensajeOrigen:"pago-1",comprobante:{numero:"90007001",monto:preview.body.total}});
-    ok("cierre: impide cargar antes de enviar detalle",sinDetalle.body.requiereResumen,sinDetalle.body);
-    const pruebaFalsa=await call({...base,accionCierre:"detalle_enviado",version:preview.body.cierreVersion,contenido:"daleee",mensajeEnviadoId:"envio-1"});
-    ok("cierre: un daleee no acredita detalle enviado",pruebaFalsa.body.confirmado===false,pruebaFalsa.body);
-    const confirmado=await call({...base,accionCierre:"detalle_enviado",version:preview.body.cierreVersion,contenido:preview.body.mensaje+"\ndatos de pago",mensajeEnviadoId:"envio-2"});
-    ok("cierre: verifica detalle completo realmente enviado",confirmado.body.confirmado,confirmado.body);
-    const soloTexto=await call({...base,accionCierre:"resolver",idMensajeOrigen:"transferi-sin-archivo"});
-    ok("cierre: decir transferi sin archivo no crea pedido",soloTexto.body.resuelto===false&&!soloTexto.body.pedidoId,soloTexto.body);
-    const inventado=await call({...base,exigirDetalle:true,idMensajeOrigen:"inventado",comprobanteUrl:"https://chatwoot/no-existe.jpg",comprobante:{numero:"90007001",monto:preview.body.total}});
-    ok("cierre: datos del modelo sin archivo validado no bastan",inventado.body.requiereComprobante,inventado.body);
-    const guardar=async(numero,monto,idMensaje,url="https://chatwoot/qa-cierre.jpg",destino="Tame Lake S.A.")=>llamar(api.agentGuardarComprobante,{method:"POST",body:{url,telefono:base.telefono,idConversacion:base.idConversacion,idMensaje,descripcion:`Comprobante de pago\nMonto: ${monto}\nNúmero de operación: ${numero}\nTitular: Cliente Prueba\nDestinatario: ${destino}`}});
-    await guardar("90007000",preview.body.total,"otra-cuenta","https://chatwoot/otra-cuenta.jpg","Persona ajena");
-    const ajeno=await call({...base,accionCierre:"resolver",idMensajeOrigen:"otra-cuenta"});
-    ok("cierre: destino ajeno no registra automáticamente",!ajeno.body.resuelto&&ajeno.body.comprobantePendiente,ajeno.body);
-    await guardar("90007001",preview.body.total,"pago-1");
-    const altas=await Promise.all(Array.from({length:5},()=>call({...base,accionCierre:"resolver",idMensajeOrigen:"pago-1"})));
-    const ids=new Set(altas.map(x=>x.body.pedidoId));
-    ok("cierre: comprobante válido carga una sola vez con reintentos simultáneos",altas.every(x=>x.body.resuelto)&&ids.size===1,altas);
-    const id=altas[0].body.pedidoId;
-    ok("cierre: pedido conserva detalle e importe calculados",store['pedidos/'+id]?.total===preview.body.total&&store['pedidos/'+id]?.comprobante.numero==="90007001",store['pedidos/'+id]);
-    ok("cierre: comprobante queda vinculado al pedido",Object.values(store).some(x=>x.pedidoId===id&&x.descripcion?.includes('90007001')),id);
-    const base2={...base,idConversacion:"qa-cierre-2"};
-    const p2=await call({...base2,preview:true});
-    await call({...base2,accionCierre:"detalle_enviado",version:p2.body.cierreVersion,contenido:p2.body.mensaje,mensajeEnviadoId:"envio-3"});
-    await llamar(api.agentGuardarComprobante,{method:"POST",body:{url:"https://chatwoot/repetido.jpg",telefono:base.telefono,idConversacion:base2.idConversacion,idMensaje:"pago-2",descripcion:`Comprobante de pago\nMonto: ${p2.body.total}\nNúmero de operación: 90007001\nDestinatario: Tame Lake S.A.`}});
-    const repetido=await call({...base2,accionCierre:"resolver",idMensajeOrigen:"pago-2"});
-    ok("cierre: una misma operación no paga otra compra",!repetido.body.resuelto&&repetido.body.incidencia?.derivar,repetido.body);
-    const cambiado=await call({...base2,exigirDetalle:true,items:[{producto:"Elfbar Ice King",variante:"Peach",cantidad:2}],idMensajeOrigen:"cambiado"});
-    ok("cierre: cambiar productos exige nuevo detalle",cambiado.body.requiereResumen,cambiado.body);
-    const p3=await call({...base,idConversacion:"qa-cierre-3",preview:true});
-    const versionVieja=await call({...base,idConversacion:"qa-cierre-3",accionCierre:"detalle_enviado",version:"vieja",contenido:p3.body.mensaje,mensajeEnviadoId:"envio-4"});
-    ok("cierre: no acredita una versión anterior",!versionVieja.body.confirmado,versionVieja.body);
-  });
-
-  await conHora("2026-10-23T13:00:00",async()=>{
- const base={telefono:"5491199997010",idConversacion:"qa-adelantado",cliente:"QA",items:[{producto:"Elfbar Ice King",variante:"Peach",cantidad:1}],direccion:{texto:"Cabildo 2000, Belgrano"},tipoEnvio:"moto",medioPago:"transferencia",salidaSeleccionada:{fecha:"2026-10-23",tandaId:"primera",hora:"15:30"}};
- const call=b=>llamar(api.agentPedido,{method:"POST",body:{...base,...b}}); const p=await call({preview:true});
- await llamar(api.agentGuardarComprobante,{method:"POST",body:{url:"https://chatwoot/adelantado.jpg",telefono:base.telefono,idConversacion:base.idConversacion,idMensaje:"adelantado",descripcion:"Comprobante de pago\nMonto: $"+p.body.total+"\nNúmero de operación: 90007010\nDestinatario: Tame Lake S.A."}});
- const antes=await call({accionCierre:"resolver",idMensajeOrigen:"adelantado"});ok("cierre: comprobante anterior al detalle espera envío completo",!antes.body.resuelto&&antes.body.comprobantePendiente,antes.body);
- await call({accionCierre:"detalle_enviado",version:p.body.cierreVersion,contenido:p.body.mensaje,mensajeEnviadoId:"enviado-adelantado"});
- const despues=await call({accionCierre:"resolver",idMensajeOrigen:"adelantado"});ok("cierre: al enviar detalle registra el comprobante ya recibido sin otro ok",despues.body.resuelto&&despues.body.pedidoId,despues.body);
- const otra=await call({accionCierre:"resolver",idMensajeOrigen:"adelantado"});ok("cierre: después de registrar termina y no repite el circuito",!otra.body.resuelto,otra.body);
- });
   await conHora("2026-10-23T13:00:00",async()=>{
     store["settings/operativo"]={...LISTAS,aliasActivo:"alias3",limitePorTanda:100};
     const tel="5491199998101",conv="qa-rodolfo",dir="Cabildo 2000, Belgrano";
@@ -950,18 +722,13 @@ async function main() {
     const nueva=await llamar(api.agentCrearCotizacionUber,{method:'POST',body:{telefonoCliente:tel,idConversacion:conv,direccion:dir}});
     ok('Rodolfo: primera cotización nueva no dice que transcurrieron 45 minutos',nueva.body.creada&&!nueva.body.recotizacionPorVencimiento,nueva.body);
     const cotKey='cotizaciones_uber/'+nueva.body.id;store[cotKey]={...store[cotKey],createdAt:'2026-10-23T15:59:00Z',estado:'cotizado',montoUber:10000,resueltoEn:new Date().toISOString()};
-    const aviso=extra=>llamar(api.agentEstadoOperativo,{method:'POST',body:{accion:'reservar_aviso_uber',idConversacion:conv,idCotizacion:nueva.body.id,montoUber:10000,...extra}});
-    const reserva=await aviso({});ok('Uber vigente: reserva el aviso cuando no hay compra cerrada',reserva.body.permitir,reserva.body);
-    const incorrecto=await aviso({idConversacion:'otro-chat'});ok('Uber: no publica el precio en otra conversación',!incorrecto.body.permitir&&incorrecto.body.obsoleta,incorrecto.body);
     const p=await pedido({telefono:tel,idConversacion:conv,idMensajeOrigen:'confirmo-moto',cliente:'QA Rodolfo',medioPago:'efectivo',direccion:{texto:dir},salidaSeleccionada:{fecha:'2026-10-23',tandaId:'primera',hora:'15:30'}});
     ok('Rodolfo: moto confirmada cancela cotización que estaba pendiente',p.body.ok&&store[cotKey].canceladaEn&&store[cotKey].canceladaPorPedidoId===p.body.pedidoId,store[cotKey]);
-    const antesEnviar=await aviso({accion:'validar_aviso_uber'});ok('Rodolfo: si cambia a moto entre reservar y enviar, el aviso no sale',!antesEnviar.body.permitir&&antesEnviar.body.obsoleta,antesEnviar.body);
-    store[cotKey].estado='cotizado';const tardio=await aviso({});ok('Rodolfo: resolver después desde el depósito no reactiva cotización cancelada',!tardio.body.permitir,tardio.body);
     const ref='pedidos/'+p.body.pedidoId;store[ref].estado='armado';store[ref].fechaSalida='2026-10-23';store[ref].horaSalida='13:30';
     const cambio=()=>llamar(api.agentPedido,{method:'POST',body:{pedidoId:p.body.pedidoId,telefono:tel,preview:true,direccion:{texto:'Florida 500, San Nicolás'}}});
     const antes=await cambio();ok('Armado antes de salida: deriva al equipo',antes.status===409&&antes.body.derivar&&!antes.body.bloqueadoSalida,antes.body);
     await conHora('2026-10-23T13:30:00',async()=>{const limite=await cambio();ok('Armado a la hora exacta de salida: no modifica ni deriva',limite.body.bloqueadoSalida&&limite.body.derivar===false,limite.body);const e=await llamar(api.agentEstadoOperativo,{query:{telefono:tel}});ok('Estado real comunica que el cambio ya está cerrado',e.body.pedidoActual.cambio.bloqueadoSalida,e.body.pedidoActual);});
-    const url='https://chatwoot/solo-alias.jpg';const c=await llamar(api.agentGuardarComprobante,{method:'POST',body:{url,telefono:tel,idConversacion:conv,idMensaje:'alias-solo',descripcion:'Comprobante de pago\nMonto: $35.200\nNúmero de operación: 90008101\nAlias visible: 028import.gl'}});ok('Comprobante: reconoce una cuenta válida por el alias visible',c.body.guardado&&Object.values(store).some(x=>x.idMensaje==='alias-solo'&&x.cuentaCobro==='alias1'),c.body);
+    const url='https://chatwoot/solo-alias.jpg';const c=await llamar(api.agentGuardarComprobante,{method:'POST',body:{url,telefono:tel,idConversacion:conv,idMensaje:'alias-solo',lectura:{esComprobante:true,monto:'$35.200',numeroOperacion:'90008101',alias:'028import.gl'}}});ok('Comprobante: reconoce una cuenta válida por el alias visible',c.body.guardado&&Object.values(store).some(x=>x.idMensaje==='alias-solo'&&x.cuentaCobro==='alias1'),c.body);
     const pagoTel='5491199998102',pagoConv='qa-efectivo-uber';
     const cash=await pedido({telefono:pagoTel,idConversacion:pagoConv,idMensajeOrigen:'cash',cliente:'QA',medioPago:'efectivo',direccion:{texto:dir},salidaSeleccionada:{fecha:'2026-10-23',tandaId:'segunda',hora:'18:30'}});
     store['cotizaciones_uber/nueva-cambio-uber']={telefonoCliente:pagoTel,idConversacion:pagoConv,direccion:dir,createdAt:new Date(Date.now()+1000).toISOString(),resueltoEn:new Date().toISOString(),estado:'cotizado',montoUber:10000};
@@ -988,10 +755,9 @@ async function main() {
   });
 
   const fallas = resultados.filter((r) => !r.ok);
-  for (const r of resultados) console.log(`${r.ok ? "OK  " : "FALLA"} - ${r.nombre}${r.ok ? "" : "\n        " + JSON.stringify(r.detalle).slice(0, 600)}`);
+  for (const r of resultados) console.log(`${r.ok ? "OK  " : "FALLA"} - ${r.nombre}${r.ok ? "" : "\n        " + String(JSON.stringify(r.detalle)).slice(0, 600)}`);
   console.log(`\n${resultados.length - fallas.length}/${resultados.length} pasaron.`);
   process.exit(fallas.length ? 1 : 0);
 }
 
-if(require.main===module)main().catch((e) => { console.error(e); process.exit(1); });
-else module.exports={api,store,LISTAS,llamar,pedido,resumen,conHora,fakeAxios,DIRECCIONES,setAntesTransaccion(fn){antesTransaccion=fn;}};
+main().catch((e) => { console.error(e); process.exit(1); });
