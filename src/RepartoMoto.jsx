@@ -46,9 +46,9 @@ try {
 } catch { db = getFirestore(fbApp); }
 if (!db) db = getFirestore(fbApp);
 
-// Avisa al agente de IA (n8n) que el repartidor llegó o entregó el pedido, para que le escriba al
-// cliente. Fire-and-forget: nunca bloquea ni rompe el flujo del repartidor.
-const N8N_ENTREGA_WEBHOOK = 'https://n8n.bunge.agenticsia.agency/webhook/entrega-cliente';
+// Avisa al bot (n8n de 028, flujo "028 v2 - aviso de entrega en moto") que el repartidor llegó o
+// entregó el pedido, para que le escriba al cliente. Fire-and-forget: nunca bloquea ni rompe el flujo del repartidor.
+const N8N_ENTREGA_WEBHOOK = 'https://028-import-n8n.neoyey.easypanel.host/webhook/v2-entrega-cliente';
 function notificarEntregaAgente(pedido, evento) {
   if (!pedido?.telefono) return; // solo los pedidos del bot tienen el teléfono del cliente
   fetch(N8N_ENTREGA_WEBHOOK, {
