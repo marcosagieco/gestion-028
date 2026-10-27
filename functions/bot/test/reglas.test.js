@@ -41,6 +41,13 @@ async function main() {
   ok("cotizar: cuatro TE sin combo son $92.000", cuatro.body.totalProductos === 92000, cuatro.body);
   const sinSabor = await post(api.agentCotizarProductos, { items: [{ producto: "ELFBAR TE 30K", cantidad: 4 }] });
   ok("cotizar: para consultar el precio alcanza el modelo, sin sabor", sinSabor.body.totalProductos === 92000, sinSabor.body);
+  // Así está la lista real: el precio de antes tachado y el del combo en negrita.
+  limpiar({ ...LISTAS, preciosVapesTexto: "🥊 *TYSON 7.500*\n💨 7.500 puff\n💰 1x $12.000\n🔥 2x ~$24.000~ *$18.000*\n🎁 5x ~$60.000~ *$40.000* ¡REGALADO!", stockNicotinaTexto: "STOCK\nTYSON 7.500\nStrawberry Banana (6)\nCool Mint (2)" });
+  const tachado = await post(api.agentCotizarProductos, { items: [{ producto: "Tyson", variante: "Strawberry Banana", cantidad: 2 }] });
+  ok("cotizar: el precio tachado no cuenta, 2 Tyson son $18.000", tachado.body.totalProductos === 18000, tachado.body);
+  const tachadoCinco = await post(api.agentCotizarProductos, { items: [{ producto: "Tyson", variante: "Strawberry Banana", cantidad: 5 }] });
+  ok("cotizar: 5 Tyson son el combo de $40.000", tachadoCinco.body.totalProductos === 40000, tachadoCinco.body);
+  limpiar({ ...LISTAS, stockNicotinaTexto: "STOCK\nELFBAR TE 30K\nBubbaloo Grape (5)" });
   const repetidos = await post(api.agentCotizarProductos, { items: [{ producto: "ELFBAR TE 30K", variante: "Bubbaloo Grape", cantidad: 3 }, { producto: "ELFBAR TE 30K", variante: "Bubbaloo Grape", cantidad: 3 }] });
   ok("cotizar: suma el stock de renglones repetidos del mismo sabor", repetidos.body.ok === false && /hay solo 5/.test(repetidos.body.error), repetidos.body);
   for (const cantidad of [0, -1, 1.5, Infinity]) {

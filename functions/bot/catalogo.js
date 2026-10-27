@@ -53,7 +53,8 @@ function parsearProductos(texto) {
   let vienePrecio = false;
   let actual = null; // el producto que está recibiendo renglones de precio
   for (const cruda of String(texto || "").split("\n")) {
-    const linea = cruda.trim();
+    // Lo tachado (~$24.000~) es el precio de antes: el que vale es el que sigue (*$18.000*).
+    const linea = cruda.replace(/~[^~\n]*~/g, "").replace(/\s{2,}/g, " ").trim();
     if (!linea) continue;
     if (SEPARADOR_RE.test(linea)) {
       nombres = [];
