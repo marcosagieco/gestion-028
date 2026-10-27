@@ -195,23 +195,63 @@ Si se agrega un producto a un pedido transferido y falta más de $5.000, no se a
 recibir `comprobanteAdicional: {numero, monto}` por el saldo. No se suma el mismo comprobante dos veces.
 Los reintentos del mismo `idMensajeOrigen` reutilizan el cambio ya aplicado.
 
-## Cotización de Uber
+## Cotización de Uber (publicación 25/10/2026)
 
-1. El agente deriva con motivo `cotizar_uber` → n8n llama a POST `/agentCrearCotizacionUber`
-   `{ idConversacion, telefonoCliente, nombreCliente, direccion, explicacionCaso }`.
-   Si ya existe una cotización reciente para ese teléfono y esa misma dirección (menos de 30 min),
-   responde `{ ok: true, yaCotizado: true, montoUber, mensaje }`: usá ese monto y no vuelvas a pedir
-   cotización. Si ya hay una pendiente reciente para esa misma dirección, responde
-   `{ ok: true, yaPendiente: true, id, mensaje }`: no crees otra ni le digas al cliente que vas a
-   cotizar de nuevo. Si pasaron más de 30 min o cambió la dirección, puede crear una nueva.
-2. El depósito carga el monto en `/cotizar-uber` (estado `cotizado`).
-3. El trigger `onCotizacionUberConfirmada` manda `{ idConversacion, montoUber }` al webhook
-   `cotizacion-uber-confirmada` de n8n (con `X-Agent-Key`) y marca la cotización `procesado`.
-   n8n le manda el precio al cliente y reactiva el bot.
-4. Si el Uber no llega, el depósito toca "No llegamos" (estado `no_llegamos`): el trigger manda
-   `{ idConversacion, noLlegamos: true }` al mismo webhook y n8n le avisa al cliente solo eso
-   ("hoy por Uber no llegamos") y reactiva el bot.
+1. `agentCrearCotizacionUber` recibe conversación, teléfono, dirección, explicación y un `pedido` opcional con los datos conocidos de la compra. Reutiliza una cotización vigente de la misma compra y destino; no duplica una pendiente. La vigencia del precio es de **45 minutos desde su aviso**, no 30.
+2. Depósito resuelve la cotización en `/cotizar-uber`. El trigger `onCotizacionUberConfirmada` envía `idCotizacion`, `idConversacion` y `montoUber` al n8n actual de 028.
+3. n8n valida y reserva el aviso, recupera la compra actual de Chatwoot y llama a POST `/agentPrepararDetalleUber` con `{idCotizacion,pedido}`. El servidor conserva identidad y destino de la cotización y calcula con listas y stock vigentes. Devuelve `contenido`, `total`, `cierreVersion`, `telefono`, `idConversacion` y `detalleListo:true` cuando el detalle está completo. El contenido incluye el resumen entero y el alias activo. Si falta algo, devuelve una pregunta concreta y no solicita un pago sin total calculado.
+4. n8n envía el contenido y llama a `agentPedido` con `accionCierre:detalle_enviado`, la versión, el ID y el contenido efectivamente enviado. La cotización queda informada solo después de la confirmación del circuito. Un webhook recibido con HTTP 200 no prueba el envío. Los fallos se reintentan con reserva para evitar avisos repetidos.
+5. El comprobante se guarda antes de resolver el cierre. Se acepta lectura estructurada del archivo; el texto del cliente junto al adjunto no constituye evidencia. `accionCierre:resolver` usa el cierre calculado y el comprobante válido de la misma conversación posterior al detalle; también encuentra la foto cuando otro mensaje llegó después dentro de la agrupación de mensajes. Registra una única vez y devuelve `resuelto:true,pedidoId` únicamente con alta confirmada.
+6. `no_llegamos` conserva el aviso de falta de cobertura. Una cotización cancelada, sustituida o usada por una compra registrada no vuelve a abrirla.
+
+## Cotización de productos y control de turnos (25/10/2026)
+
+- POST `/agentCotizarProductos`: `{items:[{producto,variante?,cantidad}],medioPago?,mayorista?}`. No requiere datos personales ni entrega. Devuelve importes calculados, combos aplicados y `incluyeEnvio:false`; valida cantidades y stock. No registra ni reserva pedidos.
+- POST `/agentTurno`: controla `registrar`, `validar`, `reservar_salida`, `pausar` y `liberar` por conversación. Las herramientas pasan `turno:{idConversacion,idMensaje,ejecucionId}` forzado por n8n. Un turno reemplazado o pausado no puede escribir un pedido ni enviar una respuesta.
+- El resumen de moto persiste la `salidaSeleccionada` que mostró. Una confirmación afirmativa posterior, incluida la aceptación de esa misma hora, puede registrar efectivo/al recibir sin repetir el detalle.
 
 ## GET `/serveComprobante?pedido=<id>`
 
 La foto del comprobante de un pedido, para el panel. Sin clave, igual que `servePdf`.
+
+### Validación y contrato del comprobante (corrección posterior del 25/10)
+
+`agentGuardarComprobante` admite `lectura` estructurada y `descripcion` canónica derivadas de la misma lectura del archivo. El texto escrito por el cliente no se mezcla en esa descripción. Con `soloValidar:true` devuelve `guardable`, `datos` y `versionLectura` sin descargar el archivo ni persistir comprobantes/pedidos. La validación confirma los datos del archivo; no acredita un ingreso bancario.
+
+Después de publicar, comprobar el tráfico efectivo de Cloud Run con `node automation/n8n/verificar-despliegue-bot.cjs`; en las funciones del bot debe apuntar a la revisión indicada por Cloud Functions. Se corrigieron fijaciones a versiones antiguas que hacían que un despliegue exitoso siguiera atendiendo con código anterior.
+
+## Estado actual e historial (25/10/2026)
+
+GET agentEstadoOperativo distingue pedidoActual de pedidoHistorico. El historial no bloquea nuevas compras ni dispara por sí solo seguimiento automático. consultaPedidoHistorico autoriza contextualizar una consulta explícita sobre una compra anterior; el prompt omite sus detalles para consultas de stock y nuevas compras. Un pedido agendado a futuro sigue siendo actual aunque se haya creado antes. La antigüedad no cambia el estado guardado ni prueba entrega. El reparto en calle debe corresponder al día de ese pedido.
+
+Las respuestas de stock usan los nombres PLANTILLA:STOCK_NICOTINA y PLANTILLA:STOCK_THC (o PERFUMES/APPLE_ACCESORIOS) para expandir el texto original del panel. No se sustituyen por listas reescritas por el modelo; las preguntas de compra y consultas mixtas conservan su atención específica.
+
+### Separación entre crear y modificar (25/10/2026)
+
+La herramienta crear_pedido fuerza operacion:crear. agentPedido rechaza que esa operación incluya pedidoId de otra compra. Un registro pendiente/armado antiguo no habilita un cambio de la compra actual: responde pedido_anterior, derivar:false y continuarCompra:true. El agente corrige la selección de herramienta y atiende la intención real del cliente; un reclamo nunca genera por sí solo un pedido nuevo.
+
+Para probar el recorrido de clientes recurrentes: `node functions/agente-flujo-recompra.test.js`. Cubre los flujos de Uber con comprobante y moto en efectivo, con un pedido histórico en el mismo teléfono y sin duplicaciones.
+
+## Atención estandarizada (26/10/2026)
+
+agentEstadoOperativo acepta idConversacion y devuelve atencionEnvios (horarios, próximas salidas y aviso con clave estable) y atencionConversacion (comunidadEnviada y avisosHorarioEnviados). Las plantillas STOCK_NICOTINA/STOCK_THC conservan formato sin precios; STOCK_PERFUMES/STOCK_APPLE_ACCESORIOS son proyecciones de los catálogos existentes sin importes.
+
+agentBuscarCatalogo acepta sinPrecios:true. La herramienta de n8n fuerza este valor según el texto real del cliente, sin tratar el contenido OCR de un adjunto como consulta de precios. El contrato anterior conserva precios por defecto para otros consumidores.
+
+agentTurno admite accion:registrar_salida con idConversacion, idMensajeSalida numérico y flags opcionales comunidadEnviada/avisoHorarioClave. Se llama después del envío exitoso; rechaza mensajes sin ID y conserva las marcas previas. No registra pedidos ni modifica pagos.
+
+Pedir alias después del detalle devuelve solo ALIAS, con cierreVersion:null. El primer mensaje válido del detalle se conserva al reenviarlo para no invalidar comprobantes enviados entre ambas copias. El cierre registrado confirma y agradece una vez; solo reenvía el detalle si el cliente lo pide. Pruebas: functions/agente-estandarizacion.test.js. Ver ESTANDAR_BOT_028_2026-10-26.md.
+
+## Horario coordinado de Uber — 26/10/2026
+
+Restaurada la aclaración «Podés coordinar un horario de envío, sujeto a disponibilidad» en FORMAS_DE_ENTREGA. El bot explica que Uber permite coordinar horario sin exigir cotización para una consulta general. Conserva horaSolicitada en cotización, detalle y pedido; diferencia «retomo a las 15» de «envío a las 16:30». No inventa una reserva ni ofrece un aviso automático. Moto conserva sus tandas y las excepciones de horarios del panel siguen vigentes.
+
+Verificación: 309 pruebas API y 54 regresiones aprobadas; cuatro comprobaciones del horario y su conservación en el detalle; dos casos probados con el modelo real en n8n sin mensajes a clientes ni pedidos. Servidor: agentestadooperativo-00068-som recibe 100 % del tráfico y devuelve la plantilla actualizada. Principal activo: b0cb3d2f-ff25-44cb-ae2c-5836be6f297f. Se conservaron el orden, las notas y los cambios visuales del borrador revisado; no cambiaron conexiones ni herramientas.
+
+## Formato físico de descartables y cápsulas — 26/10/2026
+
+Datos confirmados por el negocio: DOZO y BLOW son descartables completos con batería integrada; no son cápsulas intercambiables ni se conectan a un pen. Las cápsulas Cookies, Muha y 028 usan una batería compatible con su conector; no se deduce compatibilidad universal porque el cliente haya usado Big Chief. Un sabor Cookies and Cream de DOZO no cambia su formato.
+
+agentBuscarCatalogo incorpora fichaProducto para los modelos identificados de PRECIOS_THC: tipoDispositivo, bateriaIntegrada, capsulaIntercambiable, requierePenExterno y compatibilidadPen. Se retiran indicaciones contradictorias de rosca/conexión del detalle de DOZO/BLOW. La clasificación no se aplica a combos completos ni a otras categorías. No determina stock ni precios y no modifica pedidos. La plantilla de stock conserva su formato.
+
+Las instrucciones del agente corrigen la explicación antigua del encastre y prevalecen sobre aquella memoria. Pruebas: 11 comprobaciones específicas, 309 de API y 54 regresiones aprobadas. Dos casos del modelo real comprobaron corrección de DOZO ante la referencia a Big Chief y descripción de BLOW; no enviaron mensajes a clientes ni realizaron operaciones comerciales. La consulta HTTP de producción verificó las fichas de DOZO, BLOW y Cookies y las instrucciones activas de ambos agentes. Principal vigente: fd5aa5ce-67c4-4b5b-b588-2eb1220dc4a7. Fuente: functions/agente-fichas-productos.js y functions/agente-prompt.js.

@@ -101,7 +101,7 @@ const fakeAxios = {
       return { status: 200, data: { routes: [{ distanceMeters: Math.round(km * 1000) }] } };
     }
     postsAN8n.push({ url, body });
-    return { status: 200 };
+    return { status: 200, data: { ok:true, confirmado:true } };
   },
 };
 
@@ -288,14 +288,14 @@ async function main() {
     ok("uber: si ya hay cotización pendiente no crea otra", rPend.body.yaPendiente && Object.keys(store).filter((k) => k.startsWith("cotizaciones_uber/")).length === 1, rPend.body);
     store[idCot] = { ...store[idCot], estado: "cotizado", montoUber: 8500, resueltoEn: new Date(Date.now() - 4 * 3600e3).toISOString() };
     const r2 = await resumen({ tipoEnvio: "uber" });
-    ok("uber: una cotización de hace 4 hs ya no vale", r2.status === 400, r2.body);
+    ok("uber: un precio de hace 4 horas bloquea el resumen y exige recotizar", r2.status === 409 && r2.body.cotizacionVencida && r2.body.necesitaRecotizacion, r2.body);
     store[idCot].resueltoEn = new Date().toISOString();
     const rVig = await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "77c", telefonoCliente: "+54 9 11 5869-6086" } });
-    ok("uber: si ya hay cotización reciente devuelve el monto y no recotiza", rVig.body.yaCotizado && rVig.body.montoUber === 8500 && /Usá ese monto/.test(rVig.body.mensaje), rVig.body);
+    ok("uber: si ya hay cotización reciente devuelve el monto y no recotiza", rVig.body.yaCotizado && rVig.body.montoUber === 8500 && /vigente/.test(rVig.body.mensaje), rVig.body);
     const rOld = await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "88", telefonoCliente: "+54 9 11 2222-3333", direccion: "Cabildo 2000, Belgrano" } });
     store[`cotizaciones_uber/${rOld.body.id}`].createdAt = new Date(Date.now() - 31 * 60 * 1000).toISOString();
     const rOld2 = await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "88b", telefonoCliente: "+54 9 11 2222-3333", direccion: "Cabildo 2000, Belgrano" } });
-    ok("uber: después de 30 min permite recotizar la misma dirección", rOld2.body.ok && !rOld2.body.yaPendiente && rOld2.body.id !== rOld.body.id, rOld2.body);
+    ok("uber: después de 30 min no crea otra cotización para la misma compra", rOld2.body.ok && rOld2.body.yaPendiente && rOld2.body.id === rOld.body.id, rOld2.body);
     const rDir = await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "99", telefonoCliente: "+54 9 11 3333-4444", direccion: "Cabildo 2000, Belgrano" } });
     const rDir2 = await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "99b", telefonoCliente: "+54 9 11 3333-4444", direccion: "Lacroze 2542, Colegiales" } });
     ok("uber: si cambia la dirección permite una nueva cotización aunque sea reciente", rDir2.body.ok && !rDir2.body.yaPendiente && rDir2.body.id !== rDir.body.id, rDir2.body);
@@ -320,7 +320,7 @@ async function main() {
     ok("uber: permite programar una salida futura dentro del horario", r5.body.ok && /19:00 \(horario pedido por el cliente\)/.test(r5.body.mensaje), r5.body);
     const r6 = await conHora("2026-09-22T14:00:00", () => resumen({ tipoEnvio: "uber", horaSolicitada: "13:00" }));
     ok("uber: rechaza una hora programada fuera del horario", r6.status === 400 && /13:30 y 20:00/.test(r6.body.error), r6.body);
-    const r7 = await conHora("2026-09-22T20:00:00", () => resumen({ tipoEnvio: "uber", horaSolicitada: "20:00" }));
+    const r7 = await conHora("2026-09-22T20:00:00", async () => { const viejo = store[idCot].resueltoEn; store[idCot].resueltoEn = new Date().toISOString(); const r = await resumen({ tipoEnvio: "uber", horaSolicitada: "20:00" }); store[idCot].resueltoEn = viejo; return r; });
     ok("uber: a las 20:00 ya no permite programar para hoy", r7.status === 400 && /hoy ya no/.test(r7.body.error), r7.body);
     const r8 = await resumen({ tipoEnvio: "moto", horaSolicitada: "19:00" });
     ok("moto: no acepta la hora programada de Uber", r8.status === 400 && /solo se puede programar para Uber/.test(r8.body.error), r8.body);
@@ -406,6 +406,7 @@ async function main() {
     const estadoPendiente = await llamar(api.agentEstadoOperativo, { query: { telefono: "+54 9 11 5869-6086" } });
     ok("estado: un pedido pendiente nunca figura en camino", estadoPendiente.body.pedidoActual?.estado === "pendiente" && /todavía no figura como despachado/.test(estadoPendiente.body.pedidoActual.descripcion) && !estadoPendiente.body.pedidoActual.puedeAfirmarEnCamino, estadoPendiente.body.pedidoActual);
     store[`pedidos/${r1.body.pedidoId}`].estado = "armado";
+    store[`pedidos/${r1.body.pedidoId}`].fechaSalida = new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Argentina/Buenos_Aires',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
     // El reparto que le toca depende de la hora (15:30 o 18:30): se pone en la calle ese.
     store[`recorridos/${p.repartidor === "moto2" ? "activo_moto2" : "activo"}`] = { estado: "en_calle", salidaEn: new Date().toISOString() };
     const estadoEnCalle = await llamar(api.agentEstadoOperativo, { query: { telefono: "5491158696086" } });
@@ -549,17 +550,17 @@ async function main() {
     };
     const casos = [
       ["martes 04:00: hoy en la primera tanda", "2026-09-22T04:00:00", 0, "hoy 13:30"],
-      ["miércoles 04:00: hoy 14:00", "2026-09-23T04:00:00", 0, "hoy 14:00"],
+      ["miércoles 04:00: hoy 13:30", "2026-09-23T04:00:00", 0, "hoy 13:30"],
       ["domingo 04:00: hoy 17:00", "2026-10-04T04:00:00", 0, "hoy 17:00"],
       ["domingo 17:10: también cada 30 min", "2026-10-04T17:10:00", 0, "hoy 17:30"],
       ["16:50 con 9 en cola: entra en la de las 17:00", "2026-09-22T16:50:00", 9, "hoy 17:00"],
       ["16:50 con 10 en cola: tanda llena, sale 17:30", "2026-09-22T16:50:00", 10, "hoy 17:30"],
       ["16:50 con 25 en cola: dos tandas llenas, sale 18:00", "2026-09-22T16:50:00", 25, "hoy 18:00"],
       ["19:59: todavía entra en la de las 20:00", "2026-09-22T19:59:00", 0, "hoy 20:00"],
-      ["20:00: ya sale mañana", "2026-09-22T20:00:00", 0, "mañana 14:00"],
-      ["martes 21:00: mañana miércoles 14:00", "2026-09-22T21:00:00", 0, "mañana 14:00"],
+      ["20:00: ya sale mañana", "2026-09-22T20:00:00", 0, "mañana 13:30"],
+      ["martes 21:00: mañana miércoles 13:30", "2026-09-22T21:00:00", 0, "mañana 13:30"],
       ["sábado 22:00: mañana domingo 17:00", "2026-10-03T22:00:00", 0, "mañana 17:00"],
-      ["19:40 con 30 en cola: hoy no entra, mañana en la tercera", "2026-09-22T19:40:00", 30, "mañana 15:00"],
+      ["19:40 con 30 en cola: hoy no entra, mañana en la tercera", "2026-09-22T19:40:00", 30, "mañana 14:30"],
       ["domingo 27/9 sin despacho: sábado 22:00 sale el lunes", "2026-09-26T22:00:00", 0, "el lunes 13:30"],
       ["domingo 27/9 sin despacho: el domingo al mediodía sale mañana (lunes)", "2026-09-27T12:00:00", 0, "mañana 13:30"],
       ["sábado 26/9 a la tarde sale hoy igual", "2026-09-26T15:10:00", 0, "hoy 15:30"],
@@ -577,7 +578,7 @@ async function main() {
     const d4 = await salidaCon("2026-09-27T12:00:00", 0, { salidasMoto: { primera: "16:00", segunda: "19:00" } }, "salida");
     ok("moto: un dia sin despacho respeta las nuevas tandas del panel", d4 === "mañana 16:00", d4);
     const s1 = await salidaCon("2026-09-22T15:00:00", 0, { situacion: "solo_manana" });
-    ok("salida: si el panel dice que hoy no sale más, mañana", s1 === "mañana 14:00", s1);
+    ok("salida: si el panel dice que hoy no sale más, mañana", s1 === "mañana 13:30", s1);
     const s2 = await salidaCon("2026-09-22T16:50:00", 3, { limitePorTanda: 3 });
     ok("salida: usa el límite por tanda del panel", s2 === "hoy 17:30", s2);
 
@@ -600,7 +601,7 @@ async function main() {
     const u2 = await salidaCon("2026-09-22T16:50:00", 10, { proximaSalida: "18:00" }, "salidaUber");
     ok("salida: el Uber respeta el cupo de la tanda", u2 === "hoy 17:30", u2);
     const u3 = await salidaCon("2026-09-22T20:00:00", 0, {}, "salidaUber");
-    ok("salida: el Uber desde las 20:00 sale mañana", u3 === "mañana 14:00", u3);
+    ok("salida: el Uber desde las 20:00 sale mañana", u3 === "mañana 13:30", u3);
 
     for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
     for (const [k, v] of guardados) store[k] = v;
@@ -609,11 +610,75 @@ async function main() {
     ok("salida: el pedido guarda fecha y hora de primera tanda", /🕐 Sale hoy, 22\/09, a las 15:30/.test(r.body.mensaje) && store[`pedidos/${r.body.pedidoId}`].fechaSalida === "2026-09-22", r.body);
   }
 
+  // Cotizaciones con vencimiento: reloj, historial, renovación y concurrencia.
+  {
+    const guardado = structuredClone(store);
+    try {
+      for (const k of Object.keys(store)) delete store[k];
+      store["settings/operativo"] = { ...LISTAS, aliasActivo: "alias3" };
+      const tel = "5491176441787", destino = "Paraguay 4194, Palermo";
+      const args = { idConversacion: "212", telefonoCliente: tel, direccion: destino };
+      const solicitar = (extra) => llamar(api.agentCrearCotizacionUber, { method: "POST", body: { ...args, ...extra } });
+      store["cotizaciones_uber/actual"] = { ...args, telefonoCliente: tel, estado: "procesado", montoUber: 6500, createdAt: "2026-10-23T15:50:00Z", resueltoEn: "2026-10-23T16:00:00Z", procesadoEn: "2026-10-23T16:00:02Z" };
+      store["cotizaciones_uber/ajeno"] = { ...store["cotizaciones_uber/actual"], telefonoCliente: "5491132961912", montoUber: 20000 };
+      await conHora("2026-10-23T13:44:59", async () => {
+        const e = await llamar(api.agentEstadoOperativo, { query: { telefono: tel } });
+        ok("45min: antes de vencer muestra 6500 y fecha de vencimiento", e.body.cotizacionUber.estado === "cotizado" && e.body.cotizacionUber.montoUber === 6500 && e.body.cotizacionUber.venceEn === "2026-10-23T16:45:00.000Z", e.body.cotizacionUber);
+        const precio = await solicitar({});
+        ok("45min: no duplica ni mezcla teléfonos con conversación migrada", precio.body.creada === false && precio.body.yaCotizado && precio.body.montoUber === 6500, precio.body);
+        const total = await resumen({ telefono: tel, tipoEnvio: "uber", direccion: { texto: destino } });
+        ok("45min: resumen usa precio vigente", total.body.ok && total.body.total === 32500, total.body);
+      });
+      await conHora("2026-10-23T13:45:00", async () => {
+        const limite = await solicitar({ soloConsultar: true });
+        ok("45min: el segundo exacto de 45 minutos sigue dentro del límite", limite.body.yaCotizado && !limite.body.cotizacionVencida, limite.body);
+      });
+      await conHora("2026-10-23T13:45:01", async () => {
+        const e = await llamar(api.agentEstadoOperativo, { query: { telefono: tel } });
+        ok("45min: vencimiento no reinicia al marcar procesado", e.body.cotizacionUber.estado === "vencido" && !e.body.cotizacionUber.montoUber && e.body.cotizacionUber.necesitaRecotizacion, e.body.cotizacionUber);
+        const antes = Object.keys(store).length;
+        const consulta = await solicitar({ soloConsultar: true });
+        ok("45min: consulta detecta vencimiento sin crear ni notificar", consulta.body.cotizacionVencida && consulta.body.necesitaCotizacion && Object.keys(store).length === antes, consulta.body);
+        const total = await resumen({ telefono: tel, tipoEnvio: "uber", direccion: { texto: destino } });
+        ok("45min: precio vencido bloquea resumen y pide nueva cotización", total.status === 409 && total.body.cotizacionVencida && total.body.necesitaRecotizacion, total.body);
+        const pago = await pedido({ telefono: tel, tipoEnvio: "uber", direccion: { texto: destino }, comprobante: { numero: "pago-vencido", monto: 32500 } });
+        ok("45min: si ya envió pago deriva sin cobrar diferencia ni crear venta", pago.status === 409 && pago.body.derivar && pago.body.motivo === "pago_cotizacion_vencida" && !Object.keys(store).some(k => k.startsWith("pedidos/")), pago.body);
+        const seis = await Promise.all(Array.from({ length: 6 }, () => solicitar({})));
+        ok("45min: seis renovaciones simultáneas crean una sola", seis.filter(x => x.body.creada).length === 1 && new Set(seis.map(x => x.body.id)).size === 1, seis.map(x => x.body));
+        const nueva = seis.find(x => x.body.creada).body;
+        ok("45min: nueva solicitud incluye el aviso exacto de vencimiento", nueva.recotizacionPorVencimiento && nueva.mensaje === "como pasaron más de 45 minutos, te tengo que cotizar el Uber de vuelta", nueva);
+        const e2 = await llamar(api.agentEstadoOperativo, { query: { telefono: tel } });
+        ok("45min: renovación pendiente reemplaza el precio anterior", e2.body.cotizacionUber.estado === "pendiente" && !e2.body.cotizacionUber.montoUber, e2.body.cotizacionUber);
+        const repetida = await solicitar({});
+        ok("45min: mensaje repetido no abre otra ni repite el aviso", repetida.body.yaPendiente && repetida.body.creada === false && !repetida.body.recotizacionPorVencimiento, repetida.body);
+        store["cotizaciones_uber/" + nueva.id] = { ...store["cotizaciones_uber/" + nueva.id], estado: "procesado", montoUber: 7200, resueltoEn: "2026-10-23T16:46:00Z" };
+        await conHora("2026-10-23T13:47:00", async () => {
+          const n = await solicitar({});
+          ok("45min: renovación resuelta usa el precio nuevo, no uno histórico", n.body.yaCotizado && n.body.montoUber === 7200, n.body);
+          const t = await resumen({ telefono: tel, tipoEnvio: "uber", direccion: { texto: destino } });
+          ok("45min: el total usa los 7200 de la renovación", t.body.ok && t.body.total === 33200, t.body);
+          const ref = await solicitar({ direccion: destino + ", piso 3, para las 18:00 con seguro" });
+          ok("45min: piso, seguro y horario no duplican una cotización vigente", ref.body.yaCotizado && ref.body.montoUber === 7200, ref.body);
+          const otra = await solicitar({ direccion: "Paraguay 4500, Palermo" });
+          ok("45min: cambio completo de altura habilita nueva cotización", otra.body.creada && otra.body.id !== nueva.id, otra.body);
+        });
+      });
+      for (const k of Object.keys(store)) if (k.startsWith("cotizaciones_uber/") && k !== "cotizaciones_uber/actual" && k !== "cotizaciones_uber/ajeno") delete store[k];
+      await conHora("2026-10-26T13:40:00", async () => {
+        const viejo = await solicitar({});
+        ok("compra nueva: después de varios días no arrastra el aviso de vencimiento histórico", viejo.body.creada && !viejo.body.recotizacionPorVencimiento && !viejo.body.montoUber, viejo.body);
+      });
+    } finally {
+      for (const k of Object.keys(store)) delete store[k];
+      Object.assign(store, guardado);
+    }
+  }
+
   // ── cotización de Uber confirmada en el panel ──
   {
     const [idCot] = Object.keys(store).filter((k) => k.startsWith("cotizaciones_uber/"));
     const ref = { update: async (d) => { store[idCot] = { ...store[idCot], ...d }; } };
-    const evento = (antes, despues) => ({ params: { id: idCot }, data: { before: { data: () => antes }, after: { data: () => despues, ref } } });
+    const evento = (antes, despues) => { store[idCot]={...store[idCot],...despues}; return { params: { id: idCot.slice('cotizaciones_uber/'.length) }, data: { before: { data: () => antes }, after: { data: () => despues, ref } } }; };
     await api.onCotizacionUberConfirmada(evento({ estado: "pendiente" }, { estado: "cotizado", idConversacion: "77", montoUber: 8500 }));
     ok("uber confirmado: avisa a n8n con la conversación y el monto", postsAN8n.length === 1 && postsAN8n[0].body.montoUber === 8500 && postsAN8n[0].body.idConversacion === "77", postsAN8n);
     ok("uber confirmado: queda procesado", store[idCot].estado === "procesado", store[idCot]);
@@ -622,14 +687,14 @@ async function main() {
     await api.onCotizacionUberConfirmada(evento({ estado: "pendiente" }, { estado: "no_llegamos", idConversacion: "78", noLlegamos: true }));
     ok("uber no llegamos: avisa a n8n sin monto", postsAN8n.length === 2 && postsAN8n[1].body.noLlegamos === true && postsAN8n[1].body.idConversacion === "78" && !("montoUber" in postsAN8n[1].body), postsAN8n);
     ok("uber no llegamos: queda procesado", store[idCot].estado === "procesado", store[idCot]);
-    ok("uber: sin settings/agente avisa al n8n de siempre", postsAN8n[0].url === "https://n8n.bunge.agenticsia.agency/webhook/cotizacion-uber-confirmada", postsAN8n[0].url);
+    ok("uber: sin settings/agente avisa al n8n actual de 028", postsAN8n[0].url === "https://028-import-n8n.neoyey.easypanel.host/webhook/cotizacion-uber-confirmada", postsAN8n[0].url);
     // Mudanza de servidor: el n8n se cambia desde Firebase, sin redesplegar.
     store["settings/agente"] = { n8nBase: "https://028-import-n8n.neoyey.easypanel.host/" };
     await api.onCotizacionUberConfirmada(evento({ estado: "pendiente" }, { estado: "cotizado", idConversacion: "79", montoUber: 9000 }));
     ok("uber: con settings/agente.n8nBase avisa a ese n8n", postsAN8n[2].url === "https://028-import-n8n.neoyey.easypanel.host/webhook/cotizacion-uber-confirmada", postsAN8n[2].url);
     store["settings/agente"] = { n8nBase: "http://inseguro.com" };
     await api.onCotizacionUberConfirmada(evento({ estado: "pendiente" }, { estado: "cotizado", idConversacion: "80", montoUber: 9000 }));
-    ok("uber: una dirección inválida se ignora", postsAN8n[3].url.startsWith("https://n8n.bunge.agenticsia.agency/"), postsAN8n[3].url);
+    ok("uber: una dirección inválida se ignora", postsAN8n[3].url.startsWith("https://028-import-n8n.neoyey.easypanel.host/"), postsAN8n[3].url);
     delete store["settings/agente"];
   }
 
@@ -672,8 +737,8 @@ async function main() {
     ok("tandas: guarda segunda elegida, fecha y hora en detalle", r.body.ok && guardado.fechaSalida === selection.fecha && guardado.tandaSalida === "segunda" && guardado.horaSalida === "18:30" && /06\/10, a las 18:30/.test(guardado.mensaje), r.body);
     ok("tandas: segunda se asigna al reparto moto2", guardado.repartidor === "moto2", guardado.repartidor);
     guardado.estado = "armado";
-    store["recorridos/activo"] = { estado: "en_calle" };
-    store["recorridos/activo_moto2"] = { estado: "preparando" };
+    store["recorridos/activo"] = { estado: "en_calle",salidaEn:new Date().toISOString() };
+    store["recorridos/activo_moto2"] = { estado: "preparando",salidaEn:new Date().toISOString() };
     const primeraEnCalle = await llamar(api.agentEstadoOperativo, { query: { telefono: "5491158696086" } });
     ok("estado: primera moto en calle no despacha pedidos de segunda", !primeraEnCalle.body.pedidoActual.puedeAfirmarEnCamino, primeraEnCalle.body.pedidoActual);
     store["recorridos/activo_moto2"].estado = "en_calle";
@@ -772,10 +837,161 @@ async function main() {
     ok("suelto: crear_pedido lo vincula al pedido", !!suelto?.pedidoId, suelto);
   }
 
+  await conHora("2026-10-23T14:00:00", async () => {
+    const telefono = "5491199990909";
+    store["pedidos/seguimiento-test"] = { telefono, estado: "armado", tipoEnvio: "uber", createdAt: "2026-10-23T16:00:00Z" };
+    const seguimiento = (mensaje, mensajeId) => llamar(api.agentEstadoOperativo, { query: { telefono, mensaje, mensajeId } });
+    for (let i = 1; i <= 6; i++) {
+      const r = await seguimiento(["cuando llega", "cuanto falta", "cuando sale", "a que hora llega", "ya salio", "me mandas seguimiento"][i - 1], "consulta-" + i);
+      ok(`seguimiento ${i}: ${i > 5 ? "deriva" : "responde estado"}`, r.body.consultaSeguimiento?.numero === i && r.body.consultaSeguimiento.derivar === (i > 5) && /armado/.test(r.body.consultaSeguimiento.mensaje) && /código de seguridad/.test(r.body.consultaSeguimiento.mensaje), r.body.consultaSeguimiento);
+    }
+    const retry = await seguimiento("cuanto falta", "consulta-2");
+    ok("seguimiento: reintento mismo mensaje no aumenta contador", retry.body.consultaSeguimiento?.numero === 2 && !retry.body.consultaSeguimiento.derivar, retry.body.consultaSeguimiento);
+    for (const mensaje of ["cuando llega y quiero cambiar la direccion", "faltan productos", "no llego mi pedido", "quiero comprar otro, cuando sale", "cuanto sale el envio"]) {
+      const r = await seguimiento(mensaje, "mixto-" + mensaje);
+      ok("seguimiento: no oculta venta, reclamo ni cambio: " + mensaje, !r.body.consultaSeguimiento, r.body.consultaSeguimiento);
+    }
+    store["pedidos/seguimiento-test"].estado = "pendiente";
+    const pendiente = await seguimiento("cuando llega", "pendiente");
+    ok("seguimiento: no inventa armado", /en preparación/.test(pendiente.body.consultaSeguimiento.mensaje) && !/armado/.test(pendiente.body.consultaSeguimiento.mensaje), pendiente.body.consultaSeguimiento);
+    store["pedidos/seguimiento-nuevo"] = { telefono, estado: "pendiente", tipoEnvio: "uber", createdAt: "2026-10-23T16:30:00Z" };
+    const nuevo = await seguimiento("cuanto falta", "primera-nuevo");
+    ok("seguimiento: nueva compra reinicia el contador", nuevo.body.consultaSeguimiento.numero === 1, nuevo.body.consultaSeguimiento);
+    const web = await llamar(api.agentEstadoOperativo);
+    ok("web: plantilla retirada del contexto", !web.body.plantillas.WEB, web.body.plantillas.WEB);
+    ok("correo argentino: no se declara integrado sin credenciales", web.body.correoArgentino.conectado === false, web.body.correoArgentino);
+
+    const telUber = "5491199990808";
+    const solicitar = (extra) => llamar(api.agentCrearCotizacionUber, { method: "POST", body: { telefonoCliente: telUber, idConversacion: "qa-808", direccion: "Cabildo 2000, Belgrano", ...extra } });
+    store["cotizaciones_uber/sin-uber-qa"] = { telefonoCliente: telUber, direccion: "Cabildo 2000, Belgrano", estado: "procesado", sinCoberturaUber: true, createdAt: "2026-10-23T16:16:00Z", procesadoEn: "2026-10-23T16:16:00Z" };
+    const antes45 = await solicitar({ recotizarSolicitado: true });
+    ok("uber: 44 minutos no abre otra aunque la solicite", antes45.body.creada === false && antes45.body.sinCobertura, antes45.body);
+    const contexto = await llamar(api.agentEstadoOperativo, { query: { telefono: telUber } });
+    ok("uber: sin cobertura ofrece correo en el contexto", contexto.body.cotizacionUber.estado === "sin_cobertura" && contexto.body.cotizacionUber.alternativa === "correo", contexto.body.cotizacionUber);
+    store["cotizaciones_uber/sin-uber-qa"].createdAt = "2026-10-23T16:15:00Z";
+    store["cotizaciones_uber/sin-uber-qa"].procesadoEn = "2026-10-23T16:15:00Z";
+    const sinPedido = await solicitar({});
+    ok("uber: después de 45 no recotiza por su cuenta", sinPedido.body.creada === false, sinPedido.body);
+    const simultaneos = await Promise.all(Array.from({ length: 6 }, () => solicitar({ recotizarSolicitado: true })));
+    ok("uber: reintento explícito a 45 minutos concurrente crea uno", simultaneos.filter(r => r.body.creada).length === 1, simultaneos);
+    const otraDireccion = await solicitar({ direccion: "Santa Fe 4000, Palermo" });
+    ok("uber: cambio completo de dirección permite cotizar", otraDireccion.body.creada === true, otraDireccion.body);
+
+    for(const [id,direccion]of [["qa-evento-unico","Cabildo 2000, Belgrano"],["qa-evento-distinto","Santa Fe 4000, Palermo"]])store["cotizaciones_uber/"+id]={telefonoCliente:"5491199990810",idConversacion:"qa-808",direccion,createdAt:new Date().toISOString(),estado:"no_llegamos"};
+    const avisoBody = { idConversacion: "qa-808", idCotizacion: "qa-evento-unico", noLlegamos: true };
+    const aviso = (extra) => llamar(api.agentEstadoOperativo, { method: "POST", body: { accion: "reservar_aviso_uber", ...avisoBody, ...extra } });
+    const reservas = await Promise.all(Array.from({ length: 6 }, () => aviso({})));
+    const unica = reservas.find(r => r.body.permitir);
+    ok("aviso Uber: seis webhooks concurrentes reservan un solo envío", reservas.filter(r => r.body.permitir).length === 1, reservas);
+    const incorrecta = await aviso({ accion: "confirmar_aviso_uber", reserva: "otra" });
+    ok("aviso Uber: otra reserva no puede confirmar el envío", incorrecta.body.ok === false, incorrecta.body);
+    const confirmada = await aviso({ accion: "confirmar_aviso_uber", reserva: unica.body.reserva });
+    ok("aviso Uber: confirma después de enviar", confirmada.body.confirmado, confirmada.body);
+    const duplicado = await aviso({});
+    ok("aviso Uber: webhook ya enviado no repite al cliente", duplicado.body.duplicado && !duplicado.body.permitir, duplicado.body);
+    const diferente = await aviso({ idCotizacion: "qa-evento-distinto" });
+    ok("aviso Uber: otra cotización tiene aviso independiente", diferente.body.permitir, diferente.body);
+  });
+
+  await conHora("2026-10-23T13:00:00", async () => {
+    store["settings/operativo"]={...LISTAS,aliasActivo:"alias3",limitePorTanda:100};
+    const base={telefono:"5491199997001",idConversacion:"qa-cierre-1",cliente:"Prueba cierre",items:[{producto:"Elfbar Ice King",variante:"Peach",cantidad:1}],direccion:{texto:"Cabildo 2000, Belgrano"},tipoEnvio:"moto",medioPago:"transferencia",salidaSeleccionada:{fecha:"2026-10-23",tandaId:"primera",hora:"15:30"}};
+    const call=body=>llamar(api.agentPedido,{method:"POST",body});
+    const preview=await call({...base,preview:true});
+    ok("cierre: resumen persistido sin crear pedido",preview.body.ok&&preview.body.cierreVersion&&!preview.body.pedidoId,preview.body);
+    const sinDetalle=await call({...base,exigirDetalle:true,idMensajeOrigen:"pago-1",comprobante:{numero:"90007001",monto:preview.body.total}});
+    ok("cierre: impide cargar antes de enviar detalle",sinDetalle.body.requiereResumen,sinDetalle.body);
+    const pruebaFalsa=await call({...base,accionCierre:"detalle_enviado",version:preview.body.cierreVersion,contenido:"daleee",mensajeEnviadoId:"envio-1"});
+    ok("cierre: un daleee no acredita detalle enviado",pruebaFalsa.body.confirmado===false,pruebaFalsa.body);
+    const confirmado=await call({...base,accionCierre:"detalle_enviado",version:preview.body.cierreVersion,contenido:preview.body.mensaje+"\ndatos de pago",mensajeEnviadoId:"envio-2"});
+    ok("cierre: verifica detalle completo realmente enviado",confirmado.body.confirmado,confirmado.body);
+    const soloTexto=await call({...base,accionCierre:"resolver",idMensajeOrigen:"transferi-sin-archivo"});
+    ok("cierre: decir transferi sin archivo no crea pedido",soloTexto.body.resuelto===false&&!soloTexto.body.pedidoId,soloTexto.body);
+    const inventado=await call({...base,exigirDetalle:true,idMensajeOrigen:"inventado",comprobanteUrl:"https://chatwoot/no-existe.jpg",comprobante:{numero:"90007001",monto:preview.body.total}});
+    ok("cierre: datos del modelo sin archivo validado no bastan",inventado.body.requiereComprobante,inventado.body);
+    const guardar=async(numero,monto,idMensaje,url="https://chatwoot/qa-cierre.jpg",destino="Tame Lake S.A.")=>llamar(api.agentGuardarComprobante,{method:"POST",body:{url,telefono:base.telefono,idConversacion:base.idConversacion,idMensaje,descripcion:`Comprobante de pago\nMonto: ${monto}\nNúmero de operación: ${numero}\nTitular: Cliente Prueba\nDestinatario: ${destino}`}});
+    await guardar("90007000",preview.body.total,"otra-cuenta","https://chatwoot/otra-cuenta.jpg","Persona ajena");
+    const ajeno=await call({...base,accionCierre:"resolver",idMensajeOrigen:"otra-cuenta"});
+    ok("cierre: destino ajeno no registra automáticamente",!ajeno.body.resuelto&&ajeno.body.comprobantePendiente,ajeno.body);
+    await guardar("90007001",preview.body.total,"pago-1");
+    const altas=await Promise.all(Array.from({length:5},()=>call({...base,accionCierre:"resolver",idMensajeOrigen:"pago-1"})));
+    const ids=new Set(altas.map(x=>x.body.pedidoId));
+    ok("cierre: comprobante válido carga una sola vez con reintentos simultáneos",altas.every(x=>x.body.resuelto)&&ids.size===1,altas);
+    const id=altas[0].body.pedidoId;
+    ok("cierre: pedido conserva detalle e importe calculados",store['pedidos/'+id]?.total===preview.body.total&&store['pedidos/'+id]?.comprobante.numero==="90007001",store['pedidos/'+id]);
+    ok("cierre: comprobante queda vinculado al pedido",Object.values(store).some(x=>x.pedidoId===id&&x.descripcion?.includes('90007001')),id);
+    const base2={...base,idConversacion:"qa-cierre-2"};
+    const p2=await call({...base2,preview:true});
+    await call({...base2,accionCierre:"detalle_enviado",version:p2.body.cierreVersion,contenido:p2.body.mensaje,mensajeEnviadoId:"envio-3"});
+    await llamar(api.agentGuardarComprobante,{method:"POST",body:{url:"https://chatwoot/repetido.jpg",telefono:base.telefono,idConversacion:base2.idConversacion,idMensaje:"pago-2",descripcion:`Comprobante de pago\nMonto: ${p2.body.total}\nNúmero de operación: 90007001\nDestinatario: Tame Lake S.A.`}});
+    const repetido=await call({...base2,accionCierre:"resolver",idMensajeOrigen:"pago-2"});
+    ok("cierre: una misma operación no paga otra compra",!repetido.body.resuelto&&repetido.body.incidencia?.derivar,repetido.body);
+    const cambiado=await call({...base2,exigirDetalle:true,items:[{producto:"Elfbar Ice King",variante:"Peach",cantidad:2}],idMensajeOrigen:"cambiado"});
+    ok("cierre: cambiar productos exige nuevo detalle",cambiado.body.requiereResumen,cambiado.body);
+    const p3=await call({...base,idConversacion:"qa-cierre-3",preview:true});
+    const versionVieja=await call({...base,idConversacion:"qa-cierre-3",accionCierre:"detalle_enviado",version:"vieja",contenido:p3.body.mensaje,mensajeEnviadoId:"envio-4"});
+    ok("cierre: no acredita una versión anterior",!versionVieja.body.confirmado,versionVieja.body);
+  });
+
+  await conHora("2026-10-23T13:00:00",async()=>{
+ const base={telefono:"5491199997010",idConversacion:"qa-adelantado",cliente:"QA",items:[{producto:"Elfbar Ice King",variante:"Peach",cantidad:1}],direccion:{texto:"Cabildo 2000, Belgrano"},tipoEnvio:"moto",medioPago:"transferencia",salidaSeleccionada:{fecha:"2026-10-23",tandaId:"primera",hora:"15:30"}};
+ const call=b=>llamar(api.agentPedido,{method:"POST",body:{...base,...b}}); const p=await call({preview:true});
+ await llamar(api.agentGuardarComprobante,{method:"POST",body:{url:"https://chatwoot/adelantado.jpg",telefono:base.telefono,idConversacion:base.idConversacion,idMensaje:"adelantado",descripcion:"Comprobante de pago\nMonto: $"+p.body.total+"\nNúmero de operación: 90007010\nDestinatario: Tame Lake S.A."}});
+ const antes=await call({accionCierre:"resolver",idMensajeOrigen:"adelantado"});ok("cierre: comprobante anterior al detalle espera envío completo",!antes.body.resuelto&&antes.body.comprobantePendiente,antes.body);
+ await call({accionCierre:"detalle_enviado",version:p.body.cierreVersion,contenido:p.body.mensaje,mensajeEnviadoId:"enviado-adelantado"});
+ const despues=await call({accionCierre:"resolver",idMensajeOrigen:"adelantado"});ok("cierre: al enviar detalle registra el comprobante ya recibido sin otro ok",despues.body.resuelto&&despues.body.pedidoId,despues.body);
+ const otra=await call({accionCierre:"resolver",idMensajeOrigen:"adelantado"});ok("cierre: después de registrar termina y no repite el circuito",!otra.body.resuelto,otra.body);
+ });
+  await conHora("2026-10-23T13:00:00",async()=>{
+    store["settings/operativo"]={...LISTAS,aliasActivo:"alias3",limitePorTanda:100};
+    const tel="5491199998101",conv="qa-rodolfo",dir="Cabildo 2000, Belgrano";
+    store['cotizaciones_uber/historica-rodolfo']={telefonoCliente:tel,idConversacion:conv,direccion:dir,createdAt:'2026-10-15T18:00:00Z',resueltoEn:'2026-10-15T18:05:00Z',estado:'procesado',montoUber:10000};
+    const estado=await llamar(api.agentEstadoOperativo,{query:{telefono:tel}});ok('Rodolfo: cotización de ocho días no aparece como compra actual',!estado.body.cotizacionUber,estado.body);
+    const nueva=await llamar(api.agentCrearCotizacionUber,{method:'POST',body:{telefonoCliente:tel,idConversacion:conv,direccion:dir}});
+    ok('Rodolfo: primera cotización nueva no dice que transcurrieron 45 minutos',nueva.body.creada&&!nueva.body.recotizacionPorVencimiento,nueva.body);
+    const cotKey='cotizaciones_uber/'+nueva.body.id;store[cotKey]={...store[cotKey],createdAt:'2026-10-23T15:59:00Z',estado:'cotizado',montoUber:10000,resueltoEn:new Date().toISOString()};
+    const aviso=extra=>llamar(api.agentEstadoOperativo,{method:'POST',body:{accion:'reservar_aviso_uber',idConversacion:conv,idCotizacion:nueva.body.id,montoUber:10000,...extra}});
+    const reserva=await aviso({});ok('Uber vigente: reserva el aviso cuando no hay compra cerrada',reserva.body.permitir,reserva.body);
+    const incorrecto=await aviso({idConversacion:'otro-chat'});ok('Uber: no publica el precio en otra conversación',!incorrecto.body.permitir&&incorrecto.body.obsoleta,incorrecto.body);
+    const p=await pedido({telefono:tel,idConversacion:conv,idMensajeOrigen:'confirmo-moto',cliente:'QA Rodolfo',medioPago:'efectivo',direccion:{texto:dir},salidaSeleccionada:{fecha:'2026-10-23',tandaId:'primera',hora:'15:30'}});
+    ok('Rodolfo: moto confirmada cancela cotización que estaba pendiente',p.body.ok&&store[cotKey].canceladaEn&&store[cotKey].canceladaPorPedidoId===p.body.pedidoId,store[cotKey]);
+    const antesEnviar=await aviso({accion:'validar_aviso_uber'});ok('Rodolfo: si cambia a moto entre reservar y enviar, el aviso no sale',!antesEnviar.body.permitir&&antesEnviar.body.obsoleta,antesEnviar.body);
+    store[cotKey].estado='cotizado';const tardio=await aviso({});ok('Rodolfo: resolver después desde el depósito no reactiva cotización cancelada',!tardio.body.permitir,tardio.body);
+    const ref='pedidos/'+p.body.pedidoId;store[ref].estado='armado';store[ref].fechaSalida='2026-10-23';store[ref].horaSalida='13:30';
+    const cambio=()=>llamar(api.agentPedido,{method:'POST',body:{pedidoId:p.body.pedidoId,telefono:tel,preview:true,direccion:{texto:'Florida 500, San Nicolás'}}});
+    const antes=await cambio();ok('Armado antes de salida: deriva al equipo',antes.status===409&&antes.body.derivar&&!antes.body.bloqueadoSalida,antes.body);
+    await conHora('2026-10-23T13:30:00',async()=>{const limite=await cambio();ok('Armado a la hora exacta de salida: no modifica ni deriva',limite.body.bloqueadoSalida&&limite.body.derivar===false,limite.body);const e=await llamar(api.agentEstadoOperativo,{query:{telefono:tel}});ok('Estado real comunica que el cambio ya está cerrado',e.body.pedidoActual.cambio.bloqueadoSalida,e.body.pedidoActual);});
+    const url='https://chatwoot/solo-alias.jpg';const c=await llamar(api.agentGuardarComprobante,{method:'POST',body:{url,telefono:tel,idConversacion:conv,idMensaje:'alias-solo',descripcion:'Comprobante de pago\nMonto: $35.200\nNúmero de operación: 90008101\nAlias visible: 028import.gl'}});ok('Comprobante: reconoce una cuenta válida por el alias visible',c.body.guardado&&Object.values(store).some(x=>x.idMensaje==='alias-solo'&&x.cuentaCobro==='alias1'),c.body);
+    const pagoTel='5491199998102',pagoConv='qa-efectivo-uber';
+    const cash=await pedido({telefono:pagoTel,idConversacion:pagoConv,idMensajeOrigen:'cash',cliente:'QA',medioPago:'efectivo',direccion:{texto:dir},salidaSeleccionada:{fecha:'2026-10-23',tandaId:'segunda',hora:'18:30'}});
+    store['cotizaciones_uber/nueva-cambio-uber']={telefonoCliente:pagoTel,idConversacion:pagoConv,direccion:dir,createdAt:new Date(Date.now()+1000).toISOString(),resueltoEn:new Date().toISOString(),estado:'cotizado',montoUber:10000};
+    const prep=await llamar(api.agentPedido,{method:'POST',body:{telefono:pagoTel,pedidoId:cash.body.pedidoId,preview:true,tipoEnvio:'uber',medioPago:'transferencia'}});
+    ok('Moto efectivo a Uber: no descuenta dinero que no fue pagado',prep.body.ok&&prep.body.saldoPendiente===prep.body.total,prep.body);
+    const sinPago=await llamar(api.agentPedido,{method:'POST',body:{telefono:pagoTel,pedidoId:cash.body.pedidoId,tipoEnvio:'uber',medioPago:'transferencia'}});
+    ok('Moto efectivo a Uber: sin comprobante no cambia ni confirma pago',!sinPago.body.ok&&store['pedidos/'+cash.body.pedidoId].tipoEnvio==='moto',sinPago.body);
+    const fox=await llamar(api.agentBuscarCatalogo,{query:{consulta:'EarPods Foxconn'}});ok('Apple: Foxconn se informa sin certificar original Apple',fox.body.resultados.some(x=>/Foxconn según/.test(x.autenticidadDeclarada)&&/no equivale/.test(x.autenticidadDeclarada)),fox.body);
+    const sinOrigen=await llamar(api.agentBuscarCatalogo,{query:{consulta:'AirPods Pro'}});ok('Apple: no inventa el origen de un producto sin ficha',sinOrigen.body.resultados.some(x=>/no especificada/.test(x.autenticidadDeclarada)),sinOrigen.body);
+    const original=await llamar(api.agentBuscarCatalogo,{query:{consulta:'Adaptador 20W Original Apple'}});ok('Apple: distingue el original declarado en el catálogo',original.body.resultados.some(x=>/^original según/.test(x.autenticidadDeclarada)),original.body);
+    store['settings/operativo'].informacionProductosTexto='Modelo confirmado: adaptador 20W original sellado';const fichas=await llamar(api.agentBuscarCatalogo,{query:{consulta:'adaptador'}});ok('Productos: devuelve fichas verificadas cargadas por el equipo',fichas.body.informacionAdicionalProductos===store['settings/operativo'].informacionProductosTexto,fichas.body);
+    const gracias=await llamar(api.agentEstadoOperativo);ok('Reclamos: las 48 horas no generan rechazo absoluto de garantías',!/no podremos gestionar reclamos|no realizamos devoluciones/i.test(gracias.body.plantillas.GRACIAS)&&/equipo revisa/.test(gracias.body.plantillas.GRACIAS),gracias.body.plantillas.GRACIAS);
+  });
+  await conHora('2026-10-25T10:00:00',async()=>{
+    const op={...LISTAS,limitePorTanda:100};store['settings/operativo']=op;
+    for(const k of Object.keys(store))if(k.startsWith('pedidos/')&&store[k].estado==='pendiente')store[k].estado='entregado';
+    const e=()=>llamar(api.agentEstadoOperativo);
+    const normal=await e();ok('Domingo sin excepción conserva 17:00',normal.body.salidaUber.hora==='17:00',normal.body.salidaUber);
+    op.horariosUberPorFecha={'2026-10-25':{desde:'13:30',hasta:'18:00'}};const configurado=await e();ok('Domingo configurable por fecha desde 13:30',configurado.body.salidaUber.fecha==='2026-10-25'&&configurado.body.salidaUber.hora==='13:30',configurado.body.salidaUber);
+    op.horariosUberPorFecha['2026-10-25'].cerrado=true;const cerrado=await e();ok('Domingo sin Uber ofrece próxima fecha válida',cerrado.body.salidaUber.fecha==='2026-10-26'&&cerrado.body.salidaUber.hora==='13:30',cerrado.body.salidaUber);
+    op.horariosUberPorFecha['2026-10-25']={desde:'13:30',hasta:'16:00'};
+    await conHora('2026-10-25T16:01:00',async()=>{const fin=await e();ok('Respeta cierre especial del domingo',fin.body.salidaUber.fecha==='2026-10-26',fin.body.salidaUber);});
+    await conHora('2026-10-28T10:00:00',async()=>{const mier=await e();ok('Miércoles vuelve a 13:30',mier.body.salidaUber.hora==='13:30',mier.body.salidaUber);});
+  });
+
   const fallas = resultados.filter((r) => !r.ok);
   for (const r of resultados) console.log(`${r.ok ? "OK  " : "FALLA"} - ${r.nombre}${r.ok ? "" : "\n        " + JSON.stringify(r.detalle).slice(0, 600)}`);
   console.log(`\n${resultados.length - fallas.length}/${resultados.length} pasaron.`);
   process.exit(fallas.length ? 1 : 0);
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+if(require.main===module)main().catch((e) => { console.error(e); process.exit(1); });
+else module.exports={api,store,LISTAS,llamar,pedido,resumen,conHora,fakeAxios,DIRECCIONES,setAntesTransaccion(fn){antesTransaccion=fn;}};
