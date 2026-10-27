@@ -3435,6 +3435,8 @@ export default function App() {
   const [configError, setConfigError] = useState(false);
   
   const [expandedBatchId, setExpandedBatchId] = useState(null);
+  // Lotes: por defecto solo los activos; los terminados se ven tocando "Ver todos los lotes".
+  const [verTodosLotes, setVerTodosLotes] = useState(false);
   const [expandedWholesaleClient, setExpandedWholesaleClient] = useState(null);
   const [wholesaleSearch, setWholesaleSearch] = useState('');
   const [wholesaleSort, setWholesaleSort] = useState('revenue'); // 'revenue' | 'units' | 'lastDate' | 'name'
@@ -7074,10 +7076,10 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
         if (!window.confirm(`¿Confirmar que el stock se terminó el día ${manualFinalizeDate}?`)) return;
         const [year, month, day] = manualFinalizeDate.split('-').map(Number);
         const dateObj = new Date(year, month - 1, day, 12, 0, 0);
-        try { await updateDoc(doc(db, 'batches', batchId), { finalizedAt: dateObj.toISOString() }); showToast("Lote Finalizado", 'success'); } catch (e) { showToast("Error: " + e.message, 'error'); }
+        try { await updateDoc(doc(db, 'batches', batchId), { finalizedAt: dateObj.toISOString(), finalizadoAuto: false }); showToast("Lote Finalizado", 'success'); } catch (e) { showToast("Error: " + e.message, 'error'); }
     } else {
         if (!window.confirm("¿Reactivar este lote? Volverá a contar los días para el promedio diario.")) return;
-        try { await updateDoc(doc(db, 'batches', batchId), { finalizedAt: null }); showToast("Lote Reactivado", 'success'); } catch (e) { showToast("Error: " + e.message, 'error'); }
+        try { await updateDoc(doc(db, 'batches', batchId), { finalizedAt: null, finalizadoAuto: false }); showToast("Lote Reactivado", 'success'); } catch (e) { showToast("Error: " + e.message, 'error'); }
     }
   };
 
@@ -10495,15 +10497,30 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         <Button darkMode={darkMode} onClick={handleCreateBatch} className="shrink-0"><Plus size={16}/> Crear Lote</Button>
                       </div>
                   </div>
-                  <div className={`px-5 py-3 flex flex-wrap justify-end gap-2 bg-zinc-50 dark:bg-[#0B0B0B]`}>
+                  <div className={`px-5 py-3 flex flex-wrap justify-between items-center gap-2 bg-zinc-50 dark:bg-[#0B0B0B]`}>
+                      <button onClick={() => setVerTodosLotes(v => !v)}
+                        className={`h-9 px-3.5 rounded-lg text-sm font-semibold border transition-colors ${verTodosLotes
+                          ? (darkMode ? 'bg-indigo-500/15 border-indigo-500/40 text-indigo-300' : 'bg-indigo-50 border-indigo-300 text-indigo-700')
+                          : (darkMode ? 'border-white/[0.1] text-zinc-300 hover:bg-white/[0.05]' : 'border-zinc-300 text-zinc-700 hover:bg-zinc-100')}`}>
+                        {verTodosLotes
+                          ? 'Ver solo activos'
+                          : `Ver todos los lotes (${batches.filter(b => b.finalizedAt).length} terminados)`}
+                      </button>
+                      <div className="flex flex-wrap gap-2">
                       <Button darkMode={darkMode} onClick={() => copyAllBatchesToClipboard(true)} variant="outline" className="h-9"><Copy size={14}/> Copiar activos</Button>
                       <Button darkMode={darkMode} onClick={() => copyAllBatchesToClipboard(false)} variant="outline" className="h-9"><Copy size={14}/> Copiar todos</Button>
                       <Button darkMode={darkMode} onClick={handleExportBatches} variant="outline" className="h-9"><Download size={14}/> Bajar CSV Completo</Button>
+                      </div>
                   </div>
                 </Card>
 
                 <div className="grid grid-cols-1 gap-4">
-                  {batches.map((b) => (
+                  {!verTodosLotes && batches.every(b => b.finalizedAt) && (
+                    <div className={`rounded-2xl border-2 border-dashed p-8 text-center text-sm font-medium ${darkMode ? 'border-white/[0.08] text-zinc-500' : 'border-zinc-200 text-zinc-500'}`}>
+                      No hay lotes activos. Tocá "Ver todos los lotes" para ver los terminados.
+                    </div>
+                  )}
+                  {(verTodosLotes ? batches : batches.filter(b => !b.finalizedAt)).map((b) => (
                     <Card key={b.id} darkMode={darkMode} className={`p-0 overflow-hidden transition-all duration-300 group ${expandedBatchId === b.id ? 'ring-2 ring-indigo-500/50 border-transparent' : ''}`}>
                       <div className={`p-5 flex justify-between items-center cursor-pointer transition-colors ${darkMode ? 'hover:bg-[#161616]' : 'hover:bg-zinc-50'}`} onClick={() => setExpandedBatchId(expandedBatchId === b.id ? null : b.id)}>
                         <div className="flex items-center gap-4">

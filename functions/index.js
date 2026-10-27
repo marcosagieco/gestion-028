@@ -1910,3 +1910,6 @@ function esParecido(usuarioTexto, bdTexto) {
 
 // --- Backend del bot de WhatsApp (functions/bot, contrato en AGENTE_API.md) ---
 Object.assign(exports, require("./bot"));
+
+// Un lote se termina solo al quedarse sin unidades (y se reabre si las recupera) — ver lotes-auto.js.
+exports.onLoteActualizado = require("./lotes-auto").onLoteActualizado;
