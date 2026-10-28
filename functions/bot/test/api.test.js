@@ -486,6 +486,11 @@ async function main() {
         ok("45min: si ya transfirió carga con el precio que se le pasó", pago.body.ok && cargado?.valorEnvio === 6500 && cargado.total === 32500, pago.body);
         for (const k of Object.keys(store)) delete store[k];
         Object.assign(store, antesDelPago);
+        store["cotizaciones_uber/recotizando"] = { ...args, estado: "pendiente", montoUber: null, createdAt: "2026-10-23T16:46:00Z" };
+        const conPendiente = await pedido({ telefono: tel, tipoEnvio: "uber", direccion: { texto: destino }, comprobante: { numero: "pago-vencido-2", monto: 32500 } });
+        ok("45min: ya transfirió y hay recotización pendiente: carga con el precio que se le pasó", conPendiente.body.ok && store[`pedidos/${conPendiente.body.pedidoId}`]?.valorEnvio === 6500, conPendiente.body);
+        for (const k of Object.keys(store)) delete store[k];
+        Object.assign(store, antesDelPago);
         const seis = await Promise.all(Array.from({ length: 6 }, () => solicitar({})));
         ok("45min: seis renovaciones simultáneas crean una sola", seis.filter(x => x.body.creada).length === 1 && new Set(seis.map(x => x.body.id)).size === 1, seis.map(x => x.body));
         const nueva = seis.find(x => x.body.creada).body;

@@ -52,11 +52,16 @@ const ultima = (cotizaciones) => cotizaciones[cotizaciones.length - 1] || null;
 const conPrecioVigente = (c) => (Number(c?.montoUber) > 0 && !vencida(c) ? c : null);
 
 // El precio vigente para cobrar un pedido Uber a esa dirección: { monto } o { error, vencida }.
+// montoAnterior es el último precio que se le pasó al cliente (aunque haya vencido o haya una
+// recotización pendiente): con eso se carga el pedido si el cliente ya transfirió.
 async function precioParaElPedido(telefono, direccion) {
-  const c = ultima((await cotizacionesDeLaCompra(telefono, direccion)).cotizaciones);
+  const { cotizaciones } = await cotizacionesDeLaCompra(telefono, direccion);
+  const c = ultima(cotizaciones);
   if (conPrecioVigente(c)) return { monto: Number(c.montoUber) };
-  if (vencida(c)) return { vencida: true, montoAnterior: Number(c.montoUber), error: AVISO_VENCIDO + ". Pedí una nueva cotización con pedir_cotizacion_flash; no uses el importe anterior." };
-  return { error: "todavía no hay un precio de Uber vigente para esta compra y dirección: pedilo con pedir_cotizacion_flash" };
+  const conPrecio = [...cotizaciones].reverse().find((x) => Number(x.montoUber) > 0);
+  const montoAnterior = conPrecio ? Number(conPrecio.montoUber) : null;
+  if (vencida(c)) return { vencida: true, montoAnterior, error: AVISO_VENCIDO + ". Pedí una nueva cotización con pedir_cotizacion_flash; no uses el importe anterior." };
+  return { montoAnterior, error: "todavía no hay un precio de Uber vigente para esta compra y dirección: pedilo con pedir_cotizacion_flash" };
 }
 
 // Lo que sabe el agente de la cotización en curso (para el estado del día).

@@ -194,8 +194,8 @@ async function procesarPedido(entrada) {
     } else {
       const precio = await precioParaElPedido(telefono, dir.texto);
       // Si el cliente ya transfirió, el precio que se le pasó vale aunque hayan pasado los 45 minutos:
-      // se carga con ese precio. Sin pago, un precio vencido se vuelve a cotizar.
-      if (precio.vencida && !preview && urlsComprobantes.length) valorEnvio = precio.montoAnterior;
+      // se carga con ese precio (aunque ya haya una recotización pendiente). Sin pago, se vuelve a cotizar.
+      if (precio.montoAnterior && !precio.monto && !preview && urlsComprobantes.length) valorEnvio = precio.montoAnterior;
       else if (precio.vencida) return error(409, precio.error, { cotizacionVencida: true, necesitaRecotizacion: true });
       else if (precio.error) return faltaDato(precio.error, { necesitaCotizacion: true });
       else valorEnvio = precio.monto;
