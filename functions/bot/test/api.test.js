@@ -480,7 +480,7 @@ async function main() {
         const total = await resumen({ telefono: tel, tipoEnvio: "uber", direccion: { texto: destino } });
         ok("45min: precio vencido bloquea resumen y pide nueva cotización", total.status === 409 && total.body.cotizacionVencida && total.body.necesitaRecotizacion, total.body);
         const pago = await pedido({ telefono: tel, tipoEnvio: "uber", direccion: { texto: destino }, comprobante: { numero: "pago-vencido", monto: 32500 } });
-        ok("45min: si ya envió pago deriva sin cobrar diferencia ni crear venta", pago.status === 409 && pago.body.derivar && pago.body.motivo === "pago_cotizacion_vencida" && !Object.keys(store).some(k => k.startsWith("pedidos/")), pago.body);
+        ok("45min: si ya envió pago pide recotizar sin derivar ni crear venta", pago.status === 409 && !pago.body.derivar && pago.body.necesitaRecotizacion && /pedir_cotizacion_flash/.test(pago.body.error) && !Object.keys(store).some(k => k.startsWith("pedidos/")), pago.body);
         const seis = await Promise.all(Array.from({ length: 6 }, () => solicitar({})));
         ok("45min: seis renovaciones simultáneas crean una sola", seis.filter(x => x.body.creada).length === 1 && new Set(seis.map(x => x.body.id)).size === 1, seis.map(x => x.body));
         const nueva = seis.find(x => x.body.creada).body;
@@ -582,7 +582,7 @@ async function main() {
     ok("suelto: monto con decimales, sin titular y otra cuenta", ds.comprobante.monto === 37990 && ds.comprobante.numero === "96401936" && ds.comprobante.nombre === null && ds.cuentaCobro === "alias1", ds);
     const antesEditado = Object.keys(store).length;
     const editado = await guardar({ url: "https://chatwoot/editado.jpg", lectura: { ...celina, numeroOperacion: "111222333444", edicionDetectada: true } });
-    ok("suelto: un comprobante con signos de edición no se guarda y se deriva", editado.body.guardado === false && editado.body.derivar && Object.keys(store).length === antesEditado, editado.body);
+    ok("suelto: «parece editado» no frena: se guarda y queda anotado", editado.body.guardado === true && !editado.body.derivar && store["comprobantes/" + editado.body.id].posibleEdicion === true && Object.keys(store).length > antesEditado, editado.body);
     const incompleto = await guardar({ url: "https://chatwoot/borroso.jpg", lectura: { esComprobante: true, monto: "", numeroOperacion: "" } });
     ok("suelto: sin importe ni número no se guarda", incompleto.body.guardado === false && incompleto.body.motivo === "lectura_incompleta", incompleto.body);
     const sirve = await llamar(api.serveComprobante, { query: { comprobante: "no-existe" } });
@@ -623,7 +623,21 @@ async function main() {
 
     for (const delta of [-5001, -5000, 0, 5000, 5001]) {
       const pago = await pedido({ comprobante: { numero: `delta-${delta}`, monto: 29000 + delta } });
-      ok(`pagos: diferencia ${delta} ${Math.abs(delta) > 5000 ? "deriva" : "acepta"}`, Math.abs(delta) > 5000 ? pago.status === 400 && pago.body.derivar : pago.body.ok, pago.body);
+      const esperado = delta < -5000 ? "pide lo que falta" : delta > 5000 ? "carga y anota lo de más" : "acepta";
+      ok(`pagos: diferencia ${delta} ${esperado}`, !pago.body.derivar && (delta < -5000 ? pago.status === 400 && pago.body.requierePago && pago.body.faltante === -delta && /faltan \$5\.001/.test(pago.body.error)
+        : delta > 5000 ? pago.body.ok && store[`pedidos/${pago.body.pedidoId}`].pagoDeMas === delta && pago.body.pagoDeMas === delta : pago.body.ok && !pago.body.pagoDeMas), pago.body);
+    }
+    {
+      // Pagó en dos transferencias: con la primera sola falta plata; con las dos, se suman y se carga.
+      const uno = "https://chatwoot/parte-1.jpg", dos = "https://chatwoot/parte-2.jpg";
+      store["comprobantes/cw-" + hashCorto(uno)] = { telefono: "5491158696086", cuentaCobro: "alias3", comprobante: { numero: "parte-1001", monto: 20000 }, pedidoId: null };
+      store["comprobantes/cw-" + hashCorto(dos)] = { telefono: "5491158696086", cuentaCobro: "alias1", comprobante: { numero: "parte-1002", monto: 9000 }, pedidoId: null };
+      const falta = await pedido({ comprobanteUrl: uno, idMensajeOrigen: "partes-1" });
+      ok("dos transferencias: con una sola pide lo que falta", falta.status === 400 && falta.body.requierePago && falta.body.faltante === 9000 && !falta.body.derivar, falta.body);
+      const juntas = await pedido({ comprobanteUrl: uno, comprobanteUrls: [dos], idMensajeOrigen: "partes-2" });
+      const p = store[`pedidos/${juntas.body.pedidoId}`];
+      ok("dos transferencias: se suman y quedan las dos en el pedido", juntas.body.ok && p.montoPagado === 29000 && p.comprobantesAdicionales.length === 1 && p.comprobantesAdicionales[0].numero === "parte-1002"
+        && store["comprobantes/cw-" + hashCorto(dos)].pedidoId === juntas.body.pedidoId, { body: juntas.body, p });
     }
     for (const cantidad of [0, -1, 1.5, "abc"]) {
       const inv = await resumen({ items: [{ producto: "Elfbar Ice King", cantidad }] });
@@ -707,7 +721,7 @@ async function main() {
     const suelto = Object.values(store).find((v) => v.urlFuente === url);
     ok("suelto: crear_pedido lo vincula al pedido", cargado.body.ok && suelto?.pedidoId === cargado.body.pedidoId, { cargado: cargado.body, suelto });
     const otraVez = await pedido({ ...datos, idMensajeOrigen: "vincular-2" });
-    ok("suelto: el mismo comprobante no paga un segundo pedido", !otraVez.body.ok && otraVez.body.derivar, otraVez.body);
+    ok("suelto: el mismo comprobante no paga un segundo pedido (y lo pide sin derivar)", !otraVez.body.ok && !otraVez.body.derivar && otraVez.body.requiereComprobante && /ya se usó/.test(otraVez.body.error), otraVez.body);
     const ajeno = await pedido({ ...datos, telefono: "+5491100000001", idMensajeOrigen: "vincular-3" });
     ok("suelto: el comprobante de otro cliente no sirve", !ajeno.body.ok && ajeno.body.requiereComprobante, ajeno.body);
   }

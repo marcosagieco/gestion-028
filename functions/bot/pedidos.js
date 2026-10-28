@@ -69,8 +69,8 @@ async function comprobanteDelPago(url, telefono, idConversacion, pedidoId) {
   if (!c || c.telefono !== telefono || String(c.idConversacion ?? "") !== String(idConversacion ?? "")) {
     return { error: "Ese comprobante no está guardado para esta conversación: no confirmes el pedido ni el pago." };
   }
-  if (!c.cuentaCobro) return { error: "El comprobante no va a ninguna cuenta del negocio: derivá para que lo revise el equipo.", derivar: true };
-  if (c.pedidoId && c.pedidoId !== pedidoId) return { error: "Ese comprobante ya está vinculado a otro pedido; no se puede volver a usar.", derivar: true };
+  if (!c.cuentaCobro) return { error: "El comprobante no va a ninguna cuenta del negocio: decile al cliente que ese destino no es nuestro, mandale PLANTILLA:ALIAS y pedile el comprobante de la transferencia a esa cuenta." };
+  if (c.pedidoId && c.pedidoId !== pedidoId) return { error: "Ese comprobante ya se usó para otro pedido: decíselo al cliente y pedile el comprobante de esta compra." };
   if (!c.comprobante?.numero || !(c.comprobante.monto > 0)) return { error: "El comprobante no tiene número de operación e importe legibles: pedile otro." };
   return { comprobante: c.comprobante, cuentaCobro: c.cuentaCobro };
 }
@@ -151,6 +151,9 @@ async function procesarPedido(entrada) {
   const { tipoEnvio } = b;
   const medioPago = formaDePago(b.medioPago);
   const conComprobante = pagaAntes(medioPago);
+  // Todos los comprobantes de esta compra (si pagó en dos transferencias, los dos). Se suman.
+  const urlsComprobantes = [...new Set([entrada.comprobanteUrl, ...(Array.isArray(entrada.comprobanteUrls) ? entrada.comprobanteUrls : [])]
+    .map((u) => String(u || "").trim()).filter(Boolean))];
   const dir = armarDireccion(b.direccion);
   const correo = b.datosCorreo || {};
   const items = Array.isArray(b.items) ? b.items : [];
@@ -169,7 +172,7 @@ async function procesarPedido(entrada) {
   if (tipoEnvio === "correo" && typeof correo.aSucursal !== "boolean") faltan.push("si el correo va a sucursal o a domicilio");
   if (!preview) {
     if (!String(b.cliente || "").trim()) faltan.push("a nombre de quién va el pedido");
-    if (conComprobante && !anterior?.comprobante && !entrada.comprobanteUrl) faltan.push("el comprobante de pago");
+    if (conComprobante && !anterior?.comprobante && !urlsComprobantes.length) faltan.push("el comprobante de pago");
     if (tipoEnvio === "correo") {
       for (const [campo, label] of [["dni", "el DNI"], ["localidad", "la localidad"], ["cp", "el código postal"]]) {
         if (!String(correo[campo] || "").trim()) faltan.push(label);
@@ -191,8 +194,9 @@ async function procesarPedido(entrada) {
     } else {
       const precio = await precioParaElPedido(telefono, dir.texto);
       if (precio.vencida) {
-        // Si ya pagó con un precio que venció, lo revisa el equipo.
-        if (!preview && entrada.comprobanteUrl) return error(409, "El cliente ya envió un comprobante y la cotización del Uber venció: derivá al equipo para revisar ese pago.", { derivar: true, motivo: "pago_cotizacion_vencida" });
+        // Si ya pagó con un precio que venció, se vuelve a cotizar: el comprobante queda guardado y, con el
+        // precio nuevo, se carga el pedido (si cambió, el control del importe pide la diferencia).
+        if (!preview && urlsComprobantes.length) return error(409, "La cotización del Flash venció antes de cargar el pedido: pedí una nueva con pedir_cotizacion_flash y avisale al cliente que su comprobante quedó guardado. Cuando llegue el precio, volvé a llamar a crear_pedido con el mismo comprobante.", { cotizacionVencida: true, necesitaRecotizacion: true });
         return error(409, precio.error, { cotizacionVencida: true, necesitaRecotizacion: true });
       }
       if (precio.error) return faltaDato(precio.error, { necesitaCotizacion: true });
@@ -215,15 +219,19 @@ async function procesarPedido(entrada) {
         `Subtotal productos: USD ${subtotalUSD}`, "Total en pesos pendiente del valor del dolar mayorista del panel. El envio se cotiza en pesos por separado."].join("\n") });
   }
 
-  // ── El comprobante: el principal al cargar, o uno adicional si el cambio sube el total ──
+  // ── Los comprobantes: el primero es el principal; los demás, adicionales (otra transferencia de la
+  // misma compra, o la diferencia de un cambio que sube el total) ──
   let comprobante = anterior?.comprobante || null;
   let cuentaCobro = anterior?.cuentaCobro || null;
-  let pagoAdicional = null;
-  if (!preview && conComprobante && entrada.comprobanteUrl) {
-    const pago = await comprobanteDelPago(entrada.comprobanteUrl, telefono, b.idConversacion, anterior ? refAnterior.id : null);
-    if (pago.error) return error(400, pago.error, { requiereComprobante: true, derivar: pago.derivar === true });
-    if (anterior && anterior.comprobante && anterior.comprobante.numero !== pago.comprobante.numero) pagoAdicional = pago.comprobante;
-    else ({ comprobante, cuentaCobro } = pago);
+  const pagosAdicionales = [];
+  if (!preview && conComprobante) {
+    for (const url of urlsComprobantes) {
+      const pago = await comprobanteDelPago(url, telefono, b.idConversacion, anterior ? refAnterior.id : null);
+      if (pago.error) return error(400, pago.error, { requiereComprobante: true });
+      const numero = String(pago.comprobante.numero);
+      if (!comprobante) ({ comprobante, cuentaCobro } = pago);
+      else if (numero !== String(comprobante.numero) && !pagosAdicionales.some((p) => String(p.numero) === numero)) pagosAdicionales.push({ ...pago.comprobante, url, cuenta: pago.cuentaCobro });
+    }
   }
 
   const subtotal = lineas.reduce((s, l) => s + l.importe, 0);
@@ -259,17 +267,22 @@ async function procesarPedido(entrada) {
   // ── Pago: lo transferido tiene que coincidir con lo que había que transferir ──
   const esperado = medioPago === "mitad y mitad" ? aTransferir : total;
   const adicionales = anterior?.comprobantesAdicionales || [];
-  if (pagoAdicional && adicionales.some((p) => String(p.numero) === String(pagoAdicional.numero))) return faltaDato("ese comprobante adicional ya esta registrado: no lo sumes otra vez");
-  const pagado = anterior && !pagoAdicional && comprobante === anterior.comprobante
+  const nuevosAdicionales = pagosAdicionales.filter((p) => !adicionales.some((a) => String(a.numero) === String(p.numero)));
+  // Lo ya pagado (el principal más los adicionales anteriores) más lo que llega ahora.
+  const pagado = anterior && comprobante === anterior.comprobante
     ? Number(anterior.montoPagado ?? anterior.comprobante?.monto ?? anterior.montoTransferencia ?? 0)
     : comprobante ? Number(comprobante.monto) : 0;
-  const recibido = conComprobante ? pagado + (pagoAdicional ? Number(pagoAdicional.monto) : 0) : null;
+  const recibido = conComprobante ? pagado + nuevosAdicionales.reduce((s, p) => s + Number(p.monto), 0) : null;
   const diferencia = recibido !== null ? recibido - esperado : null;
   if (!preview && conComprobante) {
     if (anterior && recibido === 0) return faltaDato("El pedido anterior se pagaba al recibir y no tiene un pago previo registrado. Pedí la transferencia del total y el comprobante antes de cambiarlo a Uber o correo.", { requierePago: true });
-    if (anterior && diferencia < -TOLERANCIA_COMPROBANTE && !pagoAdicional) return faltaDato(`el cambio requiere un pago adicional de ${pesos(-diferencia)}: pide ese comprobante antes de modificar`, { requierePago: true });
-    if (Math.abs(diferencia) > TOLERANCIA_COMPROBANTE) return error(400, "el importe difiere en mas de $5.000 del monto a transferir: deriva para verificar", { derivar: true, motivo: "comprobante_dudoso", diferencia });
+    // Si falta plata, no se carga: el cliente transfiere lo que falta y se vuelve a llamar con todos los comprobantes.
+    if (diferencia < -TOLERANCIA_COMPROBANTE) {
+      return faltaDato(`Lo transferido (${pesos(recibido)}) no alcanza: faltan ${pesos(-diferencia)} para el total de ${pesos(esperado)}. Decile al cliente cuánto falta y pedile el comprobante de esa transferencia; después volvé a llamar con todos los comprobantes de la compra.`, { requierePago: true, faltante: -diferencia });
+    }
   }
+  // Lo que pagó de más (fuera de la tolerancia) queda anotado en el pedido para que el equipo lo devuelva.
+  const pagoDeMas = !preview && conComprobante && diferencia > TOLERANCIA_COMPROBANTE ? diferencia : 0;
 
   // Si sale hoy y falta poco para el cierre, el resumen lo avisa antes de que pague.
   const salidaHoy = preview && ["moto", "uber"].includes(tipoEnvio) && cuando?.fecha === fechaBA(new Date());
@@ -277,7 +290,7 @@ async function procesarPedido(entrada) {
   const mensaje = armarDetalle({
     preview, modificacion: !!anterior, cuando, horaPedida, tipoEnvio, lineas, mayorista, subtotal, subtotalUSD, dolar, valorEnvio, envioSeguro,
     montoDescuento, total, envioCorreo, despachoMayorista, dir, ubicacion, correo, cliente: b.cliente, telefono, medioPago, aTransferir,
-    comprobante, adicionales: [...adicionales, ...(pagoAdicional ? [pagoAdicional] : [])], pagaAntesDeCargar: conComprobante,
+    comprobante, adicionales: [...adicionales, ...nuevosAdicionales], pagaAntesDeCargar: conComprobante,
     avisoHorario: avisoHorario || null,
   });
 
@@ -329,20 +342,23 @@ async function procesarPedido(entrada) {
     cuentaCobro: conComprobante ? cuentaDeCobro(cuentaCobro, op) : null,
     comprobante: comprobante || null,
     montoPagado: conComprobante ? recibido : null,
-    comprobantesAdicionales: [...adicionales, ...(pagoAdicional ? [{ numero: String(pagoAdicional.numero), monto: Number(pagoAdicional.monto) }] : [])],
+    pagoDeMas: pagoDeMas || null,
+    comprobantesAdicionales: [...adicionales, ...nuevosAdicionales.map((p) => ({ numero: String(p.numero), monto: Number(p.monto) }))],
     comprobanteImagen: null,
     datosCorreo: esCorreo ? { dni: String(correo.dni).trim(), localidad: String(correo.localidad).trim(), cp: String(correo.cp).trim(), aSucursal: correo.aSucursal, valor: envioCorreo } : null,
   };
   // Un mismo pago (cuenta + número de operación) no puede quedar en dos pedidos.
-  const pagoNuevo = pagoAdicional || (!anterior || comprobante !== anterior.comprobante ? comprobante : null);
-  const numeroPago = String(pagoNuevo?.numero || "").replace(/\D/g, "");
-  const refPago = numeroPago ? db.collection("bot_pagos").doc(hashCorto(`${cuentaCobro || ""}|${numeroPago}`)) : null;
+  const pagosNuevos = [...(comprobante && (!anterior || comprobante !== anterior.comprobante) ? [{ ...comprobante, cuenta: cuentaCobro }] : []), ...nuevosAdicionales];
+  const refsPago = [...new Set(pagosNuevos.map((p) => `${p.cuenta || ""}|${String(p.numero || "").replace(/\D/g, "")}`).filter((k) => !k.endsWith("|")))]
+    .map((clave) => db.collection("bot_pagos").doc(hashCorto(clave)));
 
   const resultado = await db.runTransaction(async (tx) => {
     const actualSnap = await tx.get(ref);
     const actual = actualSnap.exists ? actualSnap.data() : null;
-    const pagoSnap = refPago ? await tx.get(refPago) : null;
-    if (pagoSnap?.exists && pagoSnap.data().pedidoId !== ref.id) return { pagoRepetido: true };
+    for (const refPago of refsPago) {
+      const pagoSnap = await tx.get(refPago);
+      if (pagoSnap.exists && pagoSnap.data().pedidoId !== ref.id) return { pagoRepetido: true };
+    }
     if (refAnterior) {
       if (actual?.estado !== "pendiente") return { bloqueado: restriccionCambio(actual) };
       if (actual.updatedAt !== anterior.updatedAt || actual.total !== anterior.total || actual.mensaje !== anterior.mensaje) return { conflicto: true };
@@ -357,7 +373,7 @@ async function procesarPedido(entrada) {
       if (!elegirSalida(disponibles, cuando, despachoMayorista)) return { sinCupo: true };
       tx.set(lock, { version: Number(lockSnap.exists ? lockSnap.data().version : 0) + 1 });
     }
-    if (refPago) tx.set(refPago, { pedidoId: ref.id, telefono, createdAt: ahora });
+    for (const refPago of refsPago) tx.set(refPago, { pedidoId: ref.id, telefono, createdAt: ahora });
     tx.set(ref, refAnterior ? {
       ...actual, ...pedido, estado: actual.estado, createdAt: actual.createdAt, idempotencia: actual.idempotencia,
       idMensajeOrigen: actual.idMensajeOrigen, cuentaCobro: actual.cuentaCobro || pedido.cuentaCobro, comprobanteImagen: actual.comprobanteImagen,
@@ -365,25 +381,36 @@ async function procesarPedido(entrada) {
     } : pedido);
     return {};
   });
-  if (resultado.pagoRepetido) return error(409, "Ese comprobante ya está vinculado a otro pedido; no se puede volver a usar.", { derivar: true, motivo: "comprobante_dudoso" });
+  if (resultado.pagoRepetido) return error(409, "Ese comprobante ya se usó para otro pedido: decíselo al cliente y pedile el comprobante de esta compra.", { requiereComprobante: true });
   if (resultado.bloqueado) return error(409, resultado.bloqueado.mensaje || "el depósito cambió el estado; no crees otro pedido", resultado.bloqueado);
   if (resultado.conflicto) return error(409, "el pedido cambio durante la modificacion: consulta el estado y vuelve a confirmar");
   if (resultado.sinCupo) return error(409, "la tanda elegida ya no esta disponible: consulta las salidas y pide elegir otra");
   if (resultado.reutilizado) return ok({ pedidoId: ref.id, mensaje: resultado.reutilizado.mensaje, total: resultado.reutilizado.total, reutilizado: true });
 
-  if (conComprobante && entrada.comprobanteUrl) {
-    const adicionalId = pagoAdicional ? hashCorto(pagoAdicional.numero) : null;
-    const imagen = await copiarAlPedido(entrada.comprobanteUrl, ref.id, adicionalId);
-    if (imagen && adicionalId) {
-      await db.runTransaction(async (tx) => {
-        const data = (await tx.get(ref)).data();
-        tx.set(ref, { ...data, comprobantesAdicionales: data.comprobantesAdicionales.map((p) => String(p.numero) === String(pagoAdicional.numero) ? { ...p, imagen } : p) });
-      });
-    } else if (imagen) await ref.update({ comprobanteImagen: imagen });
-    await vincularAlPedido(entrada.comprobanteUrl, ref.id);
+  // La foto de cada comprobante queda en el pedido (la del principal y la de cada adicional) y cada
+  // comprobante guardado queda vinculado al pedido.
+  if (conComprobante && urlsComprobantes.length) {
+    const principalNuevo = comprobante && (!anterior || comprobante !== anterior.comprobante);
+    for (const url of urlsComprobantes) {
+      const adicional = nuevosAdicionales.find((p) => p.url === url);
+      if (adicional) {
+        const imagen = await copiarAlPedido(url, ref.id, hashCorto(adicional.numero));
+        if (imagen) {
+          await db.runTransaction(async (tx) => {
+            const data = (await tx.get(ref)).data();
+            tx.set(ref, { ...data, comprobantesAdicionales: data.comprobantesAdicionales.map((p) => String(p.numero) === String(adicional.numero) ? { ...p, imagen } : p) });
+          });
+        }
+      } else if (principalNuevo && url === urlsComprobantes[0]) {
+        const imagen = await copiarAlPedido(url, ref.id);
+        if (imagen) await ref.update({ comprobanteImagen: imagen });
+      }
+      await vincularAlPedido(url, ref.id);
+    }
   }
   await cerrarCotizaciones(telefono, ref.id, tipoEnvio, dir.texto);
-  return ok({ pedidoId: ref.id, mensaje, total, salida: cuando, reutilizado: false, modificado: !!refAnterior, tipoEnvio });
+  return ok({ pedidoId: ref.id, mensaje, total, salida: cuando, reutilizado: false, modificado: !!refAnterior, tipoEnvio,
+    ...(pagoDeMas ? { pagoDeMas, nota: `El cliente transfirió ${pesos(pagoDeMas)} de más: avisale que quedó anotado y que el equipo se lo devuelve.` } : {}) });
 }
 
 const agentPedido = conClave(async (req, res) => {

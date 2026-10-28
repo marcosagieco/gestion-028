@@ -95,8 +95,9 @@ const agentGuardarComprobante = conClave(async (req, res) => {
   if (!/^https:\/\//.test(url)) return rechazar(res, "falta la url del adjunto");
   const datos = leerComprobante(b.lectura);
   if (!datos.esComprobante) return res.json({ ok: true, guardado: false, motivo: "no_es_comprobante" });
-  // Un comprobante editado o ilegible no se guarda como pago: el agente lo deriva o pide otro.
-  if (datos.edicionDetectada) return res.json({ ok: true, guardado: false, motivo: "posible_edicion", derivar: true });
+  // Un comprobante ilegible no se guarda como pago: el agente pide otro. Que «parezca editado» es una
+  // opinión del modelo que lee la imagen, no un dato: no frena nada y queda anotado para el equipo. El pago
+  // lo validan los datos (importe, cuenta del negocio y número de operación no repetido) al cargar el pedido.
   if (!datos.completo) return res.json({ ok: true, guardado: false, motivo: "lectura_incompleta" });
   const ref = db.collection("comprobantes").doc(idComprobante(url));
   const respuesta = { ok: true, guardado: true, id: ref.id, monto: datos.monto, numero: datos.numero, cuentaDelNegocio: !!datos.cuentaCobro };
@@ -116,6 +117,7 @@ const agentGuardarComprobante = conClave(async (req, res) => {
     idMensaje: b.idMensaje != null ? String(b.idMensaje) : null,
     comprobante: { numero: datos.numero, monto: datos.monto, nombre: datos.nombre },
     cuentaCobro: datos.cuentaCobro,
+    posibleEdicion: datos.edicionDetectada,
     descripcion: datos.descripcion,
     urlFuente: url,
     comprobanteImagen: archivo ? { url: `${SERVE_COMPROBANTE_BASE}?comprobante=${ref.id}`, ...archivo } : null,
