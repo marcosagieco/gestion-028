@@ -5,13 +5,13 @@
 //   consultas.js     agentBuscarCatalogo, agentCotizarProductos, agentCotizarEnvio
 //   pedidos.js       agentPedido            resumen, carga y cambio de pedidos
 //   comprobantes.js  agentGuardarComprobante, serveComprobante
-//   uber.js          agentCrearCotizacionUber, onCotizacionUberConfirmada
+//   uber.js          agentCrearCotizacionUber, agentAvisosCotizacionUber
 //
 // El resto de los archivos son las reglas que usan: catálogo, precios, envíos, salidas y seguimiento.
 "use strict";
 
 const { agentGuardarComprobante, serveComprobante } = require("./comprobantes");
-const { agentCrearCotizacionUber, onCotizacionUberConfirmada } = require("./uber");
+const { agentCrearCotizacionUber, agentAvisosCotizacionUber } = require("./uber");
 
 module.exports = {
   ...require("./estado"),
@@ -20,5 +20,5 @@ module.exports = {
   agentGuardarComprobante,
   serveComprobante,
   agentCrearCotizacionUber,
-  onCotizacionUberConfirmada,
+  agentAvisosCotizacionUber,
 };

@@ -23,7 +23,7 @@ total, salida, cupo y validación del pago. El backend no lee la conversación: 
 | `bot/consultas.js` | `agentBuscarCatalogo`, `agentCotizarProductos`, `agentCotizarEnvio` |
 | `bot/pedidos.js` | `agentPedido`: resumen, carga y cambio de pedidos |
 | `bot/comprobantes.js` | `agentGuardarComprobante`, `serveComprobante` y la tolerancia del pago |
-| `bot/uber.js` | `agentCrearCotizacionUber` y el trigger `onCotizacionUberConfirmada` |
+| `bot/uber.js` | `agentCrearCotizacionUber` y `agentAvisosCotizacionUber` |
 | `bot/catalogo.js` | Lectura de las listas del panel, búsqueda, stock y fichas THC |
 | `bot/precios.js` | Combos, lista mayorista, descuento por efectivo y formas de pago |
 | `bot/envios.js` | Ubicación, zonas, costo de la moto, correo y envío seguro |
@@ -132,22 +132,24 @@ Le pide al depósito el precio del Flash. Si ya hay un precio vigente (`yaCotiza
 (`yaPendiente`) o la dirección no tiene cobertura (`sinCobertura`), la devuelve sin crear otra. Una
 pendiente sin respuesta en 45 minutos, o un precio vencido, se vuelve a pedir.
 
-## Trigger `onCotizacionUberConfirmada`
+## GET/POST `agentAvisosCotizacionUber`
 
-Cuando el depósito carga el precio (`cotizado`) o avisa que no llega (`no_llegamos`), le avisa al bot
-por `POST <n8n>/webhook/v2-cotizacion-uber` con `{ idCotizacion, idConversacion, telefono, direccion, montoUber | noLlegamos }`.
-El n8n sale de `settings/agente.n8nBase` (por defecto el de 028).
+Cuando el depósito carga el precio (`cotizado`) o avisa que no llega (`no_llegamos`), el bot se lo
+avisa al cliente. El n8n lo busca cada minuto (el backend no llama al n8n: esa llamada se cortaba en el
+servidor y el cliente se quedaba sin el precio).
 
-- No avisa si la cotización dejó de ser la de la compra: cancelada, sustituida por otra o el cliente ya compró.
-- El bot tiene que responder `{ confirmado: true, enviadoEn }` cuando le mandó el mensaje al cliente.
-  Si no, el trigger reintenta y el panel la sigue mostrando como «Enviando al cliente…».
+- `GET` devuelve `{ avisos: [{ id, idConversacion, telefono, direccion, montoUber | noLlegamos }] }`: los
+  precios cargados hace menos de 45 minutos y los «no llegamos» de las últimas 24 horas. Una que ya no
+  corresponde avisar (venció sin avisarse, se canceló, se sustituyó o el cliente ya compró) queda
+  `procesado` con `avisoNoEnviado: true`, así el panel no la muestra como «Enviando al cliente…».
+- `POST { id, enviadoEn }` cuando el mensaje salió: queda `procesado` y el precio vale 45 minutos desde
+  `enviadoEn`. Si no se confirma, el siguiente minuto se vuelve a intentar.
 
 ## Lo que lee y escribe en Firestore
 
 | Colección | Uso |
 |---|---|
 | `settings/operativo` | Listas, salidas, cupo, alias activo, situación, días sin despacho (lo carga el depósito) |
-| `settings/agente` | `n8nBase` |
 | `pedidos` | Los pedidos del bot (`origen: "bot_n8n"`, `schemaVersion: 3`), con los mismos campos que usa el panel |
 | `comprobantes` | Los comprobantes recibidos, vinculados al pedido cuando se usan (`pedidoId`) |
 | `cotizaciones_uber` | Las cotizaciones del Flash (las ve y resuelve el depósito en /cotizar-uber) |

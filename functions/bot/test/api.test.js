@@ -1,6 +1,6 @@
 // Tests de los endpoints del bot, con los dobles de ./dobles.js. Correr: node functions/bot/test/api.test.js
 "use strict";
-const { api, store, LISTAS, llamar, pedido, resumen, conHora, ok, resultados, guardadoEnStorage, postsAN8n, hashCorto, setAntesTransaccion } = require("./dobles");
+const { api, store, LISTAS, llamar, pedido, resumen, conHora, ok, resultados, guardadoEnStorage, hashCorto, setAntesTransaccion } = require("./dobles");
 
 async function main() {
   store["settings/operativo"] = { ...LISTAS, aliasActivo: "alias3", situacion: "demora", proximaSalida: "16:00", limitePorTanda: 10 };
@@ -522,45 +522,32 @@ async function main() {
     }
   }
 
-  // ── cotización de Uber confirmada en el panel ──
+  // ── avisos de cotización de Uber: el bot los busca cada minuto ──
   {
     const guardado = { ...store };
     for (const k of Object.keys(store)) if (k.startsWith("cotizaciones_uber/") || k.startsWith("pedidos/")) delete store[k];
-    const nueva = (id, tel) => { store["cotizaciones_uber/" + id] = { idConversacion: id, telefonoCliente: tel, direccion: "Paraguay 4500, Palermo", estado: "pendiente", createdAt: new Date(Date.now() - 60000).toISOString() }; };
-    const evento = (id, antes, despues) => {
-      store["cotizaciones_uber/" + id] = { ...store["cotizaciones_uber/" + id], ...despues };
-      return { params: { id }, data: { before: { data: () => antes }, after: { data: () => store["cotizaciones_uber/" + id] } } };
-    };
-    const avisos = postsAN8n.length;
-    nueva("77", "5491100000077");
-    await api.onCotizacionUberConfirmada(evento("77", { estado: "pendiente" }, { estado: "cotizado", montoUber: 8500 }));
-    const aviso = postsAN8n[avisos];
-    ok("uber confirmado: le avisa al bot con la conversación, el teléfono y el monto", postsAN8n.length === avisos + 1 && aviso.body.montoUber === 8500 && aviso.body.idConversacion === "77" && aviso.body.telefono === "5491100000077", postsAN8n.slice(avisos));
-    ok("uber confirmado: avisa al webhook del v2", aviso.url === "https://028-import-n8n.neoyey.easypanel.host/webhook/v2-cotizacion-uber", aviso.url);
-    ok("uber confirmado: queda procesado", store["cotizaciones_uber/77"].estado === "procesado", store["cotizaciones_uber/77"]);
-    await api.onCotizacionUberConfirmada(evento("77", { estado: "cotizado" }, { estado: "procesado" }));
-    ok("uber confirmado: no vuelve a avisar", postsAN8n.length === avisos + 1, postsAN8n.slice(avisos));
-    nueva("78", "5491100000078");
-    await api.onCotizacionUberConfirmada(evento("78", { estado: "pendiente" }, { estado: "no_llegamos" }));
-    ok("uber no llegamos: avisa sin monto", postsAN8n.length === avisos + 2 && postsAN8n[avisos + 1].body.noLlegamos === true && !("montoUber" in postsAN8n[avisos + 1].body), postsAN8n.slice(avisos));
-    ok("uber no llegamos: queda procesado y sin cobertura", store["cotizaciones_uber/78"].estado === "procesado" && store["cotizaciones_uber/78"].sinCoberturaUber === true, store["cotizaciones_uber/78"]);
-    nueva("79", "5491100000079");
-    store["cotizaciones_uber/79"].canceladaEn = new Date().toISOString();
-    await api.onCotizacionUberConfirmada(evento("79", { estado: "pendiente" }, { estado: "cotizado", montoUber: 9000 }));
-    ok("uber: una cotización cancelada no se le avisa al cliente", postsAN8n.length === avisos + 2, postsAN8n.slice(avisos));
-    nueva("80", "5491100000080");
-    store["pedidos/ya-compro"] = { telefono: "5491100000080", estado: "pendiente", createdAt: new Date().toISOString() };
-    await api.onCotizacionUberConfirmada(evento("80", { estado: "pendiente" }, { estado: "cotizado", montoUber: 9000 }));
-    ok("uber: si el cliente ya compró después, no se le avisa", postsAN8n.length === avisos + 2, postsAN8n.slice(avisos));
-    // Mudanza de servidor: el n8n se cambia desde Firebase, sin redesplegar.
-    store["settings/agente"] = { n8nBase: "https://otro-n8n.ejemplo.com/" };
-    nueva("81", "5491100000081");
-    await api.onCotizacionUberConfirmada(evento("81", { estado: "pendiente" }, { estado: "cotizado", montoUber: 9000 }));
-    ok("uber: con settings/agente.n8nBase avisa a ese n8n", postsAN8n[avisos + 2]?.url === "https://otro-n8n.ejemplo.com/webhook/v2-cotizacion-uber", postsAN8n.slice(avisos));
-    store["settings/agente"] = { n8nBase: "http://inseguro.com" };
-    nueva("82", "5491100000082");
-    await api.onCotizacionUberConfirmada(evento("82", { estado: "pendiente" }, { estado: "cotizado", montoUber: 9000 }));
-    ok("uber: una dirección que no es https se ignora", postsAN8n[avisos + 3]?.url.startsWith("https://028-import-n8n.neoyey.easypanel.host/"), postsAN8n.slice(avisos));
+    const hace = (min) => new Date(Date.now() - min * 60000).toISOString();
+    const nueva = (id, tel, extra) => { store["cotizaciones_uber/" + id] = { idConversacion: id, telefonoCliente: tel, direccion: "Paraguay 4500, Palermo", createdAt: hace(10), ...extra }; };
+    const buscar = () => llamar(api.agentAvisosCotizacionUber, { method: "GET" });
+    const confirmar = (id) => llamar(api.agentAvisosCotizacionUber, { method: "POST", body: { id, enviadoEn: "2026-10-28T15:00:00.000Z" } });
+    nueva("77", "5491100000077", { estado: "cotizado", montoUber: 8500, resueltoEn: hace(2) });
+    nueva("78", "5491100000078", { estado: "no_llegamos", resueltoEn: hace(2) });
+    nueva("79", "5491100000079", { estado: "cotizado", montoUber: 9000, resueltoEn: hace(2), canceladaEn: hace(1) });
+    nueva("80", "5491100000080", { estado: "cotizado", montoUber: 9000, resueltoEn: hace(2) });
+    store["pedidos/ya-compro"] = { telefono: "5491100000080", estado: "pendiente", createdAt: hace(1) };
+    nueva("81", "5491100000081", { estado: "cotizado", montoUber: 9000, createdAt: hace(90), resueltoEn: hace(60) });
+    nueva("82", "5491100000082", { estado: "pendiente" });
+    const r = await buscar();
+    const ids = r.body.avisos.map((a) => a.id).sort();
+    ok("avisos uber: devuelve el precio con la conversación, el teléfono y el monto", r.body.avisos.find((a) => a.id === "77")?.montoUber === 8500 && r.body.avisos.find((a) => a.id === "77").idConversacion === "77", r.body);
+    ok("avisos uber: el «no llegamos» va sin monto", r.body.avisos.find((a) => a.id === "78")?.noLlegamos === true && !("montoUber" in r.body.avisos.find((a) => a.id === "78")), r.body);
+    ok("avisos uber: no avisa canceladas, ya compradas, vencidas ni pendientes", JSON.stringify(ids) === JSON.stringify(["77", "78"]), ids);
+    ok("avisos uber: la que venció sin avisar queda cerrada (el panel no la muestra «Enviando…»)", store["cotizaciones_uber/81"].estado === "procesado" && store["cotizaciones_uber/81"].avisoNoEnviado === true, store["cotizaciones_uber/81"]);
+    const c = await confirmar("77");
+    ok("avisos uber: al confirmar queda procesado y el precio vale desde el envío", c.body.marcado && store["cotizaciones_uber/77"].estado === "procesado" && store["cotizaciones_uber/77"].informadoEn === "2026-10-28T15:00:00.000Z", store["cotizaciones_uber/77"]);
+    await confirmar("78");
+    ok("avisos uber: no llegamos queda procesado y sin cobertura", store["cotizaciones_uber/78"].estado === "procesado" && store["cotizaciones_uber/78"].sinCoberturaUber === true, store["cotizaciones_uber/78"]);
+    ok("avisos uber: ya avisadas, no se vuelven a mandar", (await buscar()).body.avisos.length === 0 && (await confirmar("77")).body.marcado === false);
     for (const k of Object.keys(store)) delete store[k];
     Object.assign(store, guardado);
   }

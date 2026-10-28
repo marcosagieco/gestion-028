@@ -76,7 +76,6 @@ const DIRECCIONES = {
   "Maipú 1000, Olivos": { lat: -34.5100, lng: -58.4900, c: [comp("Olivos", "locality"), comp("Vicente López", "administrative_area_level_2"), PBA] },
   "Centenario 500, San Isidro": { lat: -34.4700, lng: -58.5100, c: [comp("San Isidro", "locality"), comp("San Isidro", "administrative_area_level_2"), PBA] },
 };
-const postsAN8n = [];
 const fakeAxios = {
   async get(url, opts) {
     if (url.includes("geocode")) {
@@ -87,8 +86,7 @@ const fakeAxios = {
   },
   // Routes API: el backend le pregunta a Google los km REALES por calle para cobrar el envío de moto
   // con la misma vara con la que se le paga al motomensajero. Acá se responde con la línea recta por
-  // 1,4 (el factor real medido sobre las entregas), para que las cuentas del test sean deterministas
-  // y no cuente como aviso a n8n — postsAN8n es solo para los avisos de cotización de Uber.
+  // 1,4 (el factor real medido sobre las entregas), para que las cuentas del test sean deterministas.
   async post(url, body) {
     if (String(url).includes("routes.googleapis.com")) {
       const o = body.origin.location.latLng, d = body.destination.location.latLng;
@@ -98,8 +96,7 @@ const fakeAxios = {
       const km = 2 * 6371 * Math.asin(Math.sqrt(h)) * 1.4;
       return { status: 200, data: { routes: [{ distanceMeters: Math.round(km * 1000) }] } };
     }
-    postsAN8n.push({ url, body });
-    return { status: 200, data: { ok:true, confirmado:true } };
+    throw new Error("POST inesperado en el test: " + url);
   },
 };
 
@@ -110,7 +107,6 @@ function mockear(nombre, exp) {
 }
 mockear("firebase-admin", fakeAdmin);
 mockear("firebase-functions", { https: { onRequest: (h) => h } });
-mockear("firebase-functions/v2/firestore", { onDocumentUpdated: (_ruta, h) => h });
 mockear("axios", fakeAxios);
 const api = require("..");
 
@@ -167,7 +163,7 @@ const resultados = [];
 const ok = (nombre, cond, detalle) => resultados.push({ nombre, ok: !!cond, detalle });
 
 module.exports = {
-  api, store, LISTAS, llamar, pedido, resumen, conHora, ok, resultados, guardadoEnStorage, postsAN8n, hashCorto: _hash,
+  api, store, LISTAS, llamar, pedido, resumen, conHora, ok, resultados, guardadoEnStorage, hashCorto: _hash,
   setAntesTransaccion(fn) { antesTransaccion = fn; },
   nuevoId: () => autoId++,
 };

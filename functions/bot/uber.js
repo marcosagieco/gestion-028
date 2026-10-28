@@ -1,11 +1,9 @@
 // Cotización del Flash (Uber). El agente la pide → el depósito carga el precio en /cotizar-uber → el
-// trigger le avisa al bot, que le pasa el precio al cliente. El precio vale 45 minutos desde que se
-// le informa; un pedido cargado cierra las cotizaciones de esa compra.
+// bot lo busca (cada minuto) y se lo pasa al cliente. El precio vale 45 minutos desde que se le
+// informa; un pedido cargado cierra las cotizaciones de esa compra.
 "use strict";
 
-const axios = require("axios");
-const { onDocumentUpdated } = require("firebase-functions/v2/firestore");
-const { db, AGENT_API_KEY } = require("./firebase");
+const { db } = require("./firebase");
 const { conClave, rechazar } = require("./http");
 const { normalizar, normalizarTelefono, hashCorto, pesos } = require("./texto");
 const { mismaDireccion } = require("./envios");
@@ -13,9 +11,6 @@ const { fechaBA } = require("./salidas");
 
 const VIGENCIA_MS = 45 * 60000;
 const AVISO_VENCIDO = "como pasaron más de 45 minutos, te tengo que cotizar el Uber de vuelta";
-// Adónde avisar: al n8n del bot. settings/agente.n8nBase permite mudarlo sin redesplegar.
-const N8N_POR_DEFECTO = "https://028-import-n8n.neoyey.easypanel.host";
-const WEBHOOK_AVISO = "/webhook/v2-cotizacion-uber";
 
 const fecha = (v) => Date.parse(v || "") || 0;
 const creada = (c) => fecha(c.createdAt) || fecha(c.resueltoEn);
@@ -141,40 +136,41 @@ async function sigueVigente(id, c) {
   return ultima((await cotizacionesDeLaCompra(c.telefonoCliente, c.direccion)).cotizaciones)?.id === id;
 }
 
-async function urlDelAviso() {
-  let base = N8N_POR_DEFECTO;
-  try {
-    const d = await db.collection("settings").doc("agente").get();
-    const delPanel = d.exists ? String(d.data().n8nBase || "").trim().replace(/\/+$/, "") : "";
-    if (/^https:\/\/[^\s/]+$/.test(delPanel)) base = delPanel;
-  } catch (e) {
-    console.error("[bot] no se pudo leer settings/agente, uso el n8n por defecto", e.message);
-  }
-  return base + WEBHOOK_AVISO;
-}
+const AVISO_NO_LLEGAMOS_MS = 24 * 3600000;
 
-// El depósito cargó el precio ("cotizado") o avisó que no llega ("no_llegamos"): se le avisa al bot.
-// El bot contesta { confirmado: true, enviadoEn } cuando le mandó el mensaje al cliente; si no, el
-// trigger reintenta y el panel lo sigue mostrando como "Enviando al cliente…".
-const onCotizacionUberConfirmada = onDocumentUpdated({ document: "cotizaciones_uber/{id}", retry: true, timeoutSeconds: 180 }, async (event) => {
-  const antes = event.data.before.data() || {};
-  const c = event.data.after.data() || {};
-  if (!["cotizado", "no_llegamos"].includes(c.estado) || antes.estado === c.estado) return;
-  const id = event.params.id;
-  if (!(await sigueVigente(id, c))) return;
-  const noLlegamos = c.estado === "no_llegamos";
-  const { data } = await axios.post(
-    await urlDelAviso(),
-    { idCotizacion: id, idConversacion: c.idConversacion, telefono: c.telefonoCliente, direccion: c.direccion, ...(noLlegamos ? { noLlegamos: true } : { montoUber: c.montoUber }) },
-    { headers: { "X-Agent-Key": AGENT_API_KEY }, timeout: 120000 }
-  );
-  if (data?.confirmado !== true) throw new Error("el bot no confirmó el aviso al cliente de la cotización " + id);
-  await db.runTransaction(async (tx) => {
+// GET /agentAvisosCotizacionUber — lo que el bot tiene que avisarle a cada cliente: los precios que cargó
+// el depósito hace menos de 45 minutos y los «no llegamos». El n8n lo consulta cada minuto: el backend
+// no llama al n8n, porque esa llamada se cortaba en el servidor y el cliente se quedaba sin el precio.
+// Una que ya no corresponde avisar (venció, se canceló o el cliente ya compró) queda procesada sin aviso.
+// POST /agentAvisosCotizacionUber { id, enviadoEn } — el bot ya se lo mandó al cliente: el precio vale
+// 45 minutos desde ese momento.
+const agentAvisosCotizacionUber = conClave(async (req, res) => {
+  const ahora = new Date().toISOString();
+  if (req.method === "POST") {
+    const id = String(req.body?.id || "").trim();
+    if (!id) return rechazar(res, "falta el id de la cotización");
     const ref = db.collection("cotizaciones_uber").doc(id);
-    const actual = await tx.get(ref);
-    if (!actual.exists || !["cotizado", "no_llegamos"].includes(actual.data().estado) || actual.data().canceladaEn) return;
-    tx.set(ref, { ...actual.data(), estado: "procesado", sinCoberturaUber: noLlegamos, procesadoEn: new Date().toISOString(), informadoEn: data.enviadoEn || new Date().toISOString() });
-  });
+    const marcado = await db.runTransaction(async (tx) => {
+      const actual = await tx.get(ref);
+      if (!actual.exists || !["cotizado", "no_llegamos"].includes(actual.data().estado) || actual.data().canceladaEn) return false;
+      tx.set(ref, { ...actual.data(), estado: "procesado", sinCoberturaUber: actual.data().estado === "no_llegamos", procesadoEn: ahora, informadoEn: String(req.body.enviadoEn || ahora) });
+      return true;
+    });
+    return res.json({ ok: true, marcado });
+  }
+  const snap = await db.collection("cotizaciones_uber").where("estado", "in", ["cotizado", "no_llegamos"]).get();
+  const avisos = [];
+  for (const d of snap.docs) {
+    const c = d.data();
+    const noLlegamos = c.estado === "no_llegamos";
+    const aTiempo = Date.now() - fecha(c.resueltoEn || c.createdAt) < (noLlegamos ? AVISO_NO_LLEGAMOS_MS : VIGENCIA_MS);
+    if (!aTiempo || !(await sigueVigente(d.id, c))) {
+      await db.collection("cotizaciones_uber").doc(d.id).update({ estado: "procesado", sinCoberturaUber: noLlegamos, procesadoEn: ahora, avisoNoEnviado: true });
+      continue;
+    }
+    avisos.push({ id: d.id, idConversacion: c.idConversacion, telefono: c.telefonoCliente, direccion: c.direccion || "", ...(noLlegamos ? { noLlegamos: true } : { montoUber: Number(c.montoUber) }) });
+  }
+  res.json({ ok: true, avisos });
 });
 
-module.exports = { precioParaElPedido, cotizacionEnCurso, cerrarCotizaciones, agentCrearCotizacionUber, onCotizacionUberConfirmada };
+module.exports = { precioParaElPedido, cotizacionEnCurso, cerrarCotizaciones, agentCrearCotizacionUber, agentAvisosCotizacionUber };
