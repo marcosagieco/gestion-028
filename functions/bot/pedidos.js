@@ -193,14 +193,12 @@ async function procesarPedido(entrada) {
       valorEnvio = anterior.valorEnvio; // un cambio de productos mantiene el Uber ya cotizado
     } else {
       const precio = await precioParaElPedido(telefono, dir.texto);
-      if (precio.vencida) {
-        // Si ya pagó con un precio que venció, se vuelve a cotizar: el comprobante queda guardado y, con el
-        // precio nuevo, se carga el pedido (si cambió, el control del importe pide la diferencia).
-        if (!preview && urlsComprobantes.length) return error(409, "La cotización del Flash venció antes de cargar el pedido: pedí una nueva con pedir_cotizacion_flash y avisale al cliente que su comprobante quedó guardado. Cuando llegue el precio, volvé a llamar a crear_pedido con el mismo comprobante.", { cotizacionVencida: true, necesitaRecotizacion: true });
-        return error(409, precio.error, { cotizacionVencida: true, necesitaRecotizacion: true });
-      }
-      if (precio.error) return faltaDato(precio.error, { necesitaCotizacion: true });
-      valorEnvio = precio.monto;
+      // Si el cliente ya transfirió, el precio que se le pasó vale aunque hayan pasado los 45 minutos:
+      // se carga con ese precio. Sin pago, un precio vencido se vuelve a cotizar.
+      if (precio.vencida && !preview && urlsComprobantes.length) valorEnvio = precio.montoAnterior;
+      else if (precio.vencida) return error(409, precio.error, { cotizacionVencida: true, necesitaRecotizacion: true });
+      else if (precio.error) return faltaDato(precio.error, { necesitaCotizacion: true });
+      else valorEnvio = precio.monto;
     }
   }
 

@@ -479,8 +479,13 @@ async function main() {
         ok("45min: vencimiento no reinicia al marcar procesado", e.body.cotizacionUber.estado === "vencido" && !e.body.cotizacionUber.montoUber && e.body.cotizacionUber.necesitaRecotizacion, e.body.cotizacionUber);
         const total = await resumen({ telefono: tel, tipoEnvio: "uber", direccion: { texto: destino } });
         ok("45min: precio vencido bloquea resumen y pide nueva cotización", total.status === 409 && total.body.cotizacionVencida && total.body.necesitaRecotizacion, total.body);
+        // Si ya transfirió, el precio que se le pasó vale: se carga con ese, sin recotizar.
+        const antesDelPago = structuredClone(store);
         const pago = await pedido({ telefono: tel, tipoEnvio: "uber", direccion: { texto: destino }, comprobante: { numero: "pago-vencido", monto: 32500 } });
-        ok("45min: si ya envió pago pide recotizar sin derivar ni crear venta", pago.status === 409 && !pago.body.derivar && pago.body.necesitaRecotizacion && /pedir_cotizacion_flash/.test(pago.body.error) && !Object.keys(store).some(k => k.startsWith("pedidos/")), pago.body);
+        const cargado = store[`pedidos/${pago.body.pedidoId}`];
+        ok("45min: si ya transfirió carga con el precio que se le pasó", pago.body.ok && cargado?.valorEnvio === 6500 && cargado.total === 32500, pago.body);
+        for (const k of Object.keys(store)) delete store[k];
+        Object.assign(store, antesDelPago);
         const seis = await Promise.all(Array.from({ length: 6 }, () => solicitar({})));
         ok("45min: seis renovaciones simultáneas crean una sola", seis.filter(x => x.body.creada).length === 1 && new Set(seis.map(x => x.body.id)).size === 1, seis.map(x => x.body));
         const nueva = seis.find(x => x.body.creada).body;

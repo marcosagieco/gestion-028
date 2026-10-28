@@ -55,7 +55,7 @@ const conPrecioVigente = (c) => (Number(c?.montoUber) > 0 && !vencida(c) ? c : n
 async function precioParaElPedido(telefono, direccion) {
   const c = ultima((await cotizacionesDeLaCompra(telefono, direccion)).cotizaciones);
   if (conPrecioVigente(c)) return { monto: Number(c.montoUber) };
-  if (vencida(c)) return { vencida: true, error: AVISO_VENCIDO + ". Pedí una nueva cotización con pedir_cotizacion_flash; no uses el importe anterior." };
+  if (vencida(c)) return { vencida: true, montoAnterior: Number(c.montoUber), error: AVISO_VENCIDO + ". Pedí una nueva cotización con pedir_cotizacion_flash; no uses el importe anterior." };
   return { error: "todavía no hay un precio de Uber vigente para esta compra y dirección: pedilo con pedir_cotizacion_flash" };
 }
 
