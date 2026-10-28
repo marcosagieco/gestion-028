@@ -89,7 +89,7 @@ uno («menta» en un modelo con Cool Mint y Winter Mint), el error pide pregunta
 | Pedido | Qué hace |
 |---|---|
 | `{ preview: true, ...compra }` | Calcula el resumen. No guarda nada |
-| `{ ...compra, comprobanteUrl? }` | Carga el pedido en el panel |
+| `{ ...compra, desdeCompra? }` | Carga el pedido en el panel |
 | `{ pedidoId, ...cambios, preview }` | Calcula (`preview`) o aplica un cambio a un pedido pendiente |
 
 `compra = { telefono, idConversacion, idMensajeOrigen, cliente, items, tipoEnvio (moto | uber | correo), direccion, salidaSeleccionada, horaSolicitada, medioPago, envioSeguro, datosCorreo, mayorista }`
@@ -100,12 +100,17 @@ uno («menta» en un modelo con Cool Mint y Winter Mint), el error pide pregunta
   `idMensajeOrigen`: si n8n reintenta, devuelve el mismo pedido con `reutilizado: true`.
 - **Moto:** exige `salidaSeleccionada` (una de `opcionesMoto`). El cupo se controla de nuevo al guardar.
 - **Uber:** usa el precio vigente que cargó el depósito. Sin precio: `400` con `necesitaCotizacion`.
-  Vencido (más de 45 minutos desde que se le informó): `409` con `necesitaRecotizacion`. Si además ya
-  pagó, deriva (`pago_cotizacion_vencida`). `horaSolicitada` programa el Uber a esa hora si se puede.
-- **Pago por transferencia o mitad y mitad:** `comprobanteUrl` tiene que ser un comprobante que ya
-  guardó `agentGuardarComprobante` en esta conversación. El número y el importe salen de ahí, nunca del
-  modelo. Tolerancia: $5.000 de más o de menos; si no, deriva (`comprobante_dudoso`). Un mismo
-  comprobante no paga dos pedidos.
+  Vencido (más de 45 minutos desde que se le informó): `409` con `necesitaRecotizacion`. Si ya pagó,
+  se carga con el último precio que se le pasó. `horaSolicitada` programa el Uber a esa hora si se puede.
+- **Pago por transferencia o mitad y mitad:** el backend toma los comprobantes de la compra: los que
+  guardó `agentGuardarComprobante` en esta conversación y teléfono, sin usar en ningún pedido, llegados
+  después del pedido que se cambia o, si es nuevo, después del último pedido, de `desdeCompra` (cuando
+  empezó la compra en el bot) y de las últimas 24 horas. El modelo no pasa links (los copiaba mal). El
+  número y el importe salen del comprobante guardado. Se suman todos; el primero es el principal y los
+  otros, adicionales. No cuentan los que van a otra cuenta, no se leen o ya pagaron otro pedido: si
+  ninguno sirve, `400` con `requiereComprobante` y qué decirle al cliente; si sirve alguno, la `nota` lo
+  avisa. Tolerancia: $5.000. Si falta más, `400` con `requierePago` y `faltante`; si sobra, se carga
+  con `pagoDeMas`. Un mismo pago no paga dos pedidos.
 - **Cambios:** solo de un pedido del bot, de ese cliente, en curso y pendiente. Uno armado deriva
   (`modificar_pedido_armado`), salvo que ya pasó la hora de salida (`bloqueadoSalida`). Uno de una
   compra anterior responde `continuarCompra` (`pedido_anterior`). Si el cambio sube el total de un
@@ -119,7 +124,7 @@ archivo, como objeto o JSON:
 
 - Guarda el comprobante en `comprobantes` (se cargue o no el pedido; el panel lo muestra como suelto).
 - Responde `{ guardado: true, id, monto, numero, cuentaDelNegocio }`, o `guardado: false` con `motivo`:
-  `no_es_comprobante`, `lectura_incompleta` o `posible_edicion` (este último con `derivar: true`).
+  `no_es_comprobante` o `lectura_incompleta`. Que parezca editado no frena: queda `posibleEdicion`.
 - La cuenta se reconoce por cualquiera de sus datos (titular, alias, CUIT o CBU/CVU).
 
 ## `serveComprobante` — `?pedido=` o `?comprobante=` (sin clave)

@@ -4,7 +4,7 @@
 //
 // POST /agentPedido
 //   { preview: true, ...compra }                  → el resumen, sin guardar nada
-//   { ...compra, comprobanteUrl }                 → carga el pedido
+//   { ...compra, desdeCompra }                    → carga el pedido, con los comprobantes de la compra
 //   { pedidoId, ...cambios, preview }             → calcula (preview) o aplica un cambio
 // compra = { telefono, idConversacion, idMensajeOrigen, cliente, items, tipoEnvio, direccion,
 //            salidaSeleccionada, horaSolicitada, medioPago, envioSeguro, datosCorreo, mayorista }
@@ -17,7 +17,7 @@ const { PAGO_LABEL, formaDePago, pagaAntes, descuentoEfectivo, cotizarProductos 
 const { PRECIO_ENVIO_SEGURO, CORREO, ubicar, armarDireccion, mismaDireccion } = require("./envios");
 const { fechaBA, corta, opcionesMoto, elegirSalida, pedidosMoto, pedidosEnCola, salidaUber, uberALaHora, avisoDeHorario } = require("./salidas");
 const { esPedidoEnCurso, restriccionCambio } = require("./seguimiento");
-const { TOLERANCIA_COMPROBANTE, comprobanteGuardado, copiarAlPedido, vincularAlPedido } = require("./comprobantes");
+const { TOLERANCIA_COMPROBANTE, comprobantesDeLaCompra, copiarAlPedido, vincularAlPedido } = require("./comprobantes");
 const { precioParaElPedido, cerrarCotizaciones } = require("./uber");
 
 const ENVIO_LABEL = { moto: "🛵 Moto mensajería", uber: "⚡ Envío flash (Uber)", correo: "📦 Correo (Vía Cargo)" };
@@ -62,17 +62,31 @@ function idDelPedidoNuevo(b, telefono) {
   return origen ? hashCorto(origen) : null;
 }
 
-// El comprobante del pago, tal como lo guardó agentGuardarComprobante al llegar. Los datos del pago
-// salen siempre de ahí, nunca de lo que escribió el modelo.
-async function comprobanteDelPago(url, telefono, idConversacion, pedidoId) {
-  const c = await comprobanteGuardado(url);
-  if (!c || c.telefono !== telefono || String(c.idConversacion ?? "") !== String(idConversacion ?? "")) {
-    return { error: "Ese comprobante no está guardado para esta conversación: no confirmes el pedido ni el pago." };
-  }
-  if (!c.cuentaCobro) return { error: "El comprobante no va a ninguna cuenta del negocio: decile al cliente que ese destino no es nuestro, mandale PLANTILLA:ALIAS y pedile el comprobante de la transferencia a esa cuenta." };
-  if (c.pedidoId && c.pedidoId !== pedidoId) return { error: "Ese comprobante ya se usó para otro pedido: decíselo al cliente y pedile el comprobante de esta compra." };
-  if (!c.comprobante?.numero || !(c.comprobante.monto > 0)) return { error: "El comprobante no tiene número de operación e importe legibles: pedile otro." };
-  return { comprobante: c.comprobante, cuentaCobro: c.cuentaCobro };
+// Desde cuándo cuentan los comprobantes de esta compra: los que llegaron después del pedido que se
+// cambia o, si es nuevo, después del último pedido del teléfono, del inicio de la compra que conoce el
+// bot (desdeCompra) y de las últimas 24 horas. Así no se cuenta el pago de una compra anterior.
+async function inicioDeLaCompra(telefono, anterior, desdeCompra) {
+  if (anterior) return Date.parse(anterior.createdAt || "") || 0;
+  const pedidos = await db.collection("pedidos").where("telefono", "==", telefono).get();
+  const ultimo = Math.max(0, ...pedidos.docs.map((d) => Date.parse(d.data().createdAt || "") || 0));
+  return Math.max(ultimo, Date.now() - 24 * 3600000, Date.parse(desdeCompra || "") || 0);
+}
+
+// Por qué un comprobante de la compra no sirve para pagarla (null si sirve). Los datos del pago salen
+// siempre del comprobante guardado, nunca de lo que escribió el modelo.
+const DESCARTE = {
+  ajeno: { error: "El comprobante no va a ninguna cuenta del negocio: decile al cliente que ese destino no es nuestro, mandale PLANTILLA:ALIAS y pedile el comprobante de la transferencia a esa cuenta.", corto: "uno va a una cuenta que no es del negocio" },
+  ilegible: { error: "En el comprobante no se leen el número de operación o el importe: pedile que lo mande de nuevo.", corto: "en uno no se leen el número de operación o el importe" },
+  usado: { error: "Ese comprobante ya se usó para otro pedido: decíselo al cliente y pedile el comprobante de esta compra.", corto: "uno ya se usó en otro pedido" },
+};
+async function descarte(c, pedidoId) {
+  if (!c.cuentaCobro) return "ajeno";
+  if (!String(c.comprobante?.numero || "").trim() || !(Number(c.comprobante.monto) > 0)) return "ilegible";
+  // La misma clave que guarda el pedido en bot_pagos (cuenta + dígitos del número de operación).
+  const digitos = String(c.comprobante.numero).replace(/\D/g, "");
+  if (!digitos) return null;
+  const pago = await db.collection("bot_pagos").doc(hashCorto(`${c.cuentaCobro}|${digitos}`)).get();
+  return pago.exists && pago.data().pedidoId !== pedidoId ? "usado" : null;
 }
 
 // El resumen que ve el cliente y que queda en el panel como texto del pedido.
@@ -151,9 +165,10 @@ async function procesarPedido(entrada) {
   const { tipoEnvio } = b;
   const medioPago = formaDePago(b.medioPago);
   const conComprobante = pagaAntes(medioPago);
-  // Todos los comprobantes de esta compra (si pagó en dos transferencias, los dos). Se suman.
-  const urlsComprobantes = [...new Set([entrada.comprobanteUrl, ...(Array.isArray(entrada.comprobanteUrls) ? entrada.comprobanteUrls : [])]
-    .map((u) => String(u || "").trim()).filter(Boolean))];
+  // Los comprobantes de esta compra los toma el sistema: los que mandó el cliente en esta charla y que
+  // todavía no están en ningún pedido (si pagó en dos transferencias, los dos, y se suman).
+  const candidatos = !preview && conComprobante
+    ? await comprobantesDeLaCompra(telefono, b.idConversacion, await inicioDeLaCompra(telefono, anterior, entrada.desdeCompra)) : [];
   const dir = armarDireccion(b.direccion);
   const correo = b.datosCorreo || {};
   const items = Array.isArray(b.items) ? b.items : [];
@@ -172,7 +187,7 @@ async function procesarPedido(entrada) {
   if (tipoEnvio === "correo" && typeof correo.aSucursal !== "boolean") faltan.push("si el correo va a sucursal o a domicilio");
   if (!preview) {
     if (!String(b.cliente || "").trim()) faltan.push("a nombre de quién va el pedido");
-    if (conComprobante && !anterior?.comprobante && !urlsComprobantes.length) faltan.push("el comprobante de pago");
+    if (conComprobante && !anterior?.comprobante && !candidatos.length) faltan.push("el comprobante de pago");
     if (tipoEnvio === "correo") {
       for (const [campo, label] of [["dni", "el DNI"], ["localidad", "la localidad"], ["cp", "el código postal"]]) {
         if (!String(correo[campo] || "").trim()) faltan.push(label);
@@ -195,7 +210,7 @@ async function procesarPedido(entrada) {
       const precio = await precioParaElPedido(telefono, dir.texto);
       // Si el cliente ya transfirió, el precio que se le pasó vale aunque hayan pasado los 45 minutos:
       // se carga con ese precio (aunque ya haya una recotización pendiente). Sin pago, se vuelve a cotizar.
-      if (precio.montoAnterior && !precio.monto && !preview && urlsComprobantes.length) valorEnvio = precio.montoAnterior;
+      if (precio.montoAnterior && !precio.monto && candidatos.length) valorEnvio = precio.montoAnterior;
       else if (precio.vencida) return error(409, precio.error, { cotizacionVencida: true, necesitaRecotizacion: true });
       else if (precio.error) return faltaDato(precio.error, { necesitaCotizacion: true });
       else valorEnvio = precio.monto;
@@ -221,16 +236,19 @@ async function procesarPedido(entrada) {
   // misma compra, o la diferencia de un cambio que sube el total) ──
   let comprobante = anterior?.comprobante || null;
   let cuentaCobro = anterior?.cuentaCobro || null;
-  const pagosAdicionales = [];
-  if (!preview && conComprobante) {
-    for (const url of urlsComprobantes) {
-      const pago = await comprobanteDelPago(url, telefono, b.idConversacion, anterior ? refAnterior.id : null);
-      if (pago.error) return error(400, pago.error, { requiereComprobante: true });
-      const numero = String(pago.comprobante.numero);
-      if (!comprobante) ({ comprobante, cuentaCobro } = pago);
-      else if (numero !== String(comprobante.numero) && !pagosAdicionales.some((p) => String(p.numero) === numero)) pagosAdicionales.push({ ...pago.comprobante, url, cuenta: pago.cuentaCobro });
-    }
+  let principal = null; // el comprobante guardado del pago principal, si llega ahora
+  const pagosAdicionales = [], usados = [], descartados = [];
+  for (const c of candidatos) {
+    const motivo = await descarte(c, refAnterior?.id);
+    if (motivo) { descartados.push(motivo); continue; }
+    usados.push(c); // también los repetidos (la misma operación mandada dos veces): quedan vinculados
+    const numero = String(c.comprobante.numero);
+    if (!comprobante) { comprobante = c.comprobante; cuentaCobro = c.cuentaCobro; principal = c; }
+    else if (numero !== String(comprobante.numero) && !pagosAdicionales.some((p) => String(p.numero) === numero)) pagosAdicionales.push({ ...c.comprobante, guardado: c, cuenta: c.cuentaCobro });
   }
+  if (!preview && conComprobante && !comprobante) return error(400, DESCARTE[descartados[descartados.length - 1]].error, { requiereComprobante: true });
+  const sinContar = [...new Set(descartados)].map((m) => DESCARTE[m].corto);
+  const avisoSinContar = sinContar.length ? ` No se tuvo en cuenta un comprobante de la charla: ${sinContar.join("; ")}.` : "";
 
   const subtotal = lineas.reduce((s, l) => s + l.importe, 0);
   const envioSeguro = tipoEnvio === "uber" && (b.envioSeguro === true || b.envioSeguro === "true");
@@ -276,7 +294,7 @@ async function procesarPedido(entrada) {
     if (anterior && recibido === 0) return faltaDato("El pedido anterior se pagaba al recibir y no tiene un pago previo registrado. Pedí la transferencia del total y el comprobante antes de cambiarlo a Uber o correo.", { requierePago: true });
     // Si falta plata, no se carga: el cliente transfiere lo que falta y se vuelve a llamar con todos los comprobantes.
     if (diferencia < -TOLERANCIA_COMPROBANTE) {
-      return faltaDato(`Lo transferido (${pesos(recibido)}) no alcanza: faltan ${pesos(-diferencia)} para el total de ${pesos(esperado)}. Decile al cliente cuánto falta y pedile el comprobante de esa transferencia; después volvé a llamar con todos los comprobantes de la compra.`, { requierePago: true, faltante: -diferencia });
+      return faltaDato(`Lo transferido (${pesos(recibido)}) no alcanza: faltan ${pesos(-diferencia)} para el total de ${pesos(esperado)}. Decile al cliente cuánto falta y pedile el comprobante de esa transferencia; cuando llegue, volvé a llamar a crear_pedido.${avisoSinContar}`, { requierePago: true, faltante: -diferencia });
     }
   }
   // Lo que pagó de más (fuera de la tolerancia) queda anotado en el pedido para que el equipo lo devuelva.
@@ -386,29 +404,25 @@ async function procesarPedido(entrada) {
   if (resultado.reutilizado) return ok({ pedidoId: ref.id, mensaje: resultado.reutilizado.mensaje, total: resultado.reutilizado.total, reutilizado: true });
 
   // La foto de cada comprobante queda en el pedido (la del principal y la de cada adicional) y cada
-  // comprobante guardado queda vinculado al pedido.
-  if (conComprobante && urlsComprobantes.length) {
-    const principalNuevo = comprobante && (!anterior || comprobante !== anterior.comprobante);
-    for (const url of urlsComprobantes) {
-      const adicional = nuevosAdicionales.find((p) => p.url === url);
-      if (adicional) {
-        const imagen = await copiarAlPedido(url, ref.id, hashCorto(adicional.numero));
-        if (imagen) {
-          await db.runTransaction(async (tx) => {
-            const data = (await tx.get(ref)).data();
-            tx.set(ref, { ...data, comprobantesAdicionales: data.comprobantesAdicionales.map((p) => String(p.numero) === String(adicional.numero) ? { ...p, imagen } : p) });
-          });
-        }
-      } else if (principalNuevo && url === urlsComprobantes[0]) {
-        const imagen = await copiarAlPedido(url, ref.id);
-        if (imagen) await ref.update({ comprobanteImagen: imagen });
-      }
-      await vincularAlPedido(url, ref.id);
+  // comprobante usado queda vinculado al pedido.
+  if (principal) {
+    const imagen = await copiarAlPedido(principal.urlFuente, ref.id);
+    if (imagen) await ref.update({ comprobanteImagen: imagen });
+  }
+  for (const adicional of nuevosAdicionales) {
+    const imagen = await copiarAlPedido(adicional.guardado.urlFuente, ref.id, hashCorto(adicional.numero));
+    if (imagen) {
+      await db.runTransaction(async (tx) => {
+        const data = (await tx.get(ref)).data();
+        tx.set(ref, { ...data, comprobantesAdicionales: data.comprobantesAdicionales.map((p) => String(p.numero) === String(adicional.numero) ? { ...p, imagen } : p) });
+      });
     }
   }
+  for (const c of usados) await vincularAlPedido(c.id, ref.id);
   await cerrarCotizaciones(telefono, ref.id, tipoEnvio, dir.texto);
+  const notas = [pagoDeMas ? `El cliente transfirió ${pesos(pagoDeMas)} de más: avisale que quedó anotado y que el equipo se lo devuelve.` : "", avisoSinContar.trim()].filter(Boolean);
   return ok({ pedidoId: ref.id, mensaje, total, salida: cuando, reutilizado: false, modificado: !!refAnterior, tipoEnvio,
-    ...(pagoDeMas ? { pagoDeMas, nota: `El cliente transfirió ${pesos(pagoDeMas)} de más: avisale que quedó anotado y que el equipo se lo devuelve.` } : {}) });
+    ...(pagoDeMas ? { pagoDeMas } : {}), ...(notas.length ? { nota: notas.join(" ") } : {}) });
 }
 
 const agentPedido = conClave(async (req, res) => {

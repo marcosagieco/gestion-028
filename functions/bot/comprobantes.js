@@ -1,7 +1,7 @@
 // Comprobantes de pago. Todos los que manda un cliente quedan guardados en "comprobantes", se cargue o
 // no el pedido (si el bot deriva o el pedido se carga a mano, igual se mandan a la financiera). El id
-// sale de la URL del adjunto: el mismo comprobante no se guarda dos veces y, cuando un pedido usa esa
-// URL, queda vinculado (pedidoId) y el panel deja de mostrarlo como suelto.
+// sale de la URL del adjunto: el mismo comprobante no se guarda dos veces. Al cargar el pedido se usan
+// los de la compra en curso y quedan vinculados (pedidoId): el panel deja de mostrarlos como sueltos.
 "use strict";
 
 const functions = require("firebase-functions");
@@ -75,16 +75,19 @@ async function copiarAlPedido(url, pedidoId, adicionalId = null) {
   }
 }
 
-// El comprobante guardado de un adjunto, o null.
-async function comprobanteGuardado(url) {
-  if (!url) return null;
-  const snap = await db.collection("comprobantes").doc(idComprobante(url)).get();
-  return snap.exists ? snap.data() : null;
+// Los comprobantes de la compra en curso: los que mandó el cliente en esta conversación desde
+// `desde` (ms) y que todavía no están en ningún pedido, del más viejo al más nuevo. Así el agente no
+// tiene que copiar el link del comprobante (lo copiaba mal y el cliente tenía que mandarlo otra vez).
+async function comprobantesDeLaCompra(telefono, idConversacion, desde) {
+  const snap = await db.collection("comprobantes").where("telefono", "==", telefono).get();
+  return snap.docs.map((d) => ({ ...d.data(), id: d.id }))
+    .filter((c) => !c.pedidoId && String(c.idConversacion ?? "") === String(idConversacion ?? "") && (Date.parse(c.createdAt || "") || 0) >= desde)
+    .sort((x, y) => String(x.createdAt).localeCompare(String(y.createdAt)));
 }
 
-async function vincularAlPedido(url, pedidoId) {
-  await db.collection("comprobantes").doc(idComprobante(url)).update({ pedidoId })
-    .catch(() => { /* no estaba guardado: no hay nada que vincular */ });
+async function vincularAlPedido(id, pedidoId) {
+  await db.collection("comprobantes").doc(id).update({ pedidoId })
+    .catch(() => { /* ya no existe: no hay nada que vincular */ });
 }
 
 // POST /agentGuardarComprobante — lo llama el bot con cada imagen o PDF que manda un cliente.
@@ -149,6 +152,6 @@ const serveComprobante = functions.https.onRequest(async (req, res) => {
 });
 
 module.exports = {
-  TOLERANCIA_COMPROBANTE, comprobanteGuardado, copiarAlPedido, vincularAlPedido,
+  TOLERANCIA_COMPROBANTE, comprobantesDeLaCompra, copiarAlPedido, vincularAlPedido,
   agentGuardarComprobante, serveComprobante,
 };

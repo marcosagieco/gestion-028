@@ -1,6 +1,6 @@
 // Tests de los endpoints del bot, con los dobles de ./dobles.js. Correr: node functions/bot/test/api.test.js
 "use strict";
-const { api, store, LISTAS, llamar, pedido, resumen, conHora, ok, resultados, guardadoEnStorage, hashCorto, setAntesTransaccion } = require("./dobles");
+const { api, store, LISTAS, llamar, pedido, resumen, conHora, ok, resultados, guardadoEnStorage, hashCorto, setAntesTransaccion, LLEGO_RECIEN } = require("./dobles");
 
 async function main() {
   store["settings/operativo"] = { ...LISTAS, aliasActivo: "alias3", situacion: "demora", proximaSalida: "16:00", limitePorTanda: 10 };
@@ -625,16 +625,34 @@ async function main() {
         : delta > 5000 ? pago.body.ok && store[`pedidos/${pago.body.pedidoId}`].pagoDeMas === delta && pago.body.pagoDeMas === delta : pago.body.ok && !pago.body.pagoDeMas), pago.body);
     }
     {
-      // Pagó en dos transferencias: con la primera sola falta plata; con las dos, se suman y se carga.
+      // Pagó en dos transferencias: con la primera sola falta plata; cuando llega la segunda, el sistema
+      // toma las dos de la charla, las suma y carga el pedido.
       const uno = "https://chatwoot/parte-1.jpg", dos = "https://chatwoot/parte-2.jpg";
-      store["comprobantes/cw-" + hashCorto(uno)] = { telefono: "5491158696086", cuentaCobro: "alias3", comprobante: { numero: "parte-1001", monto: 20000 }, pedidoId: null };
-      store["comprobantes/cw-" + hashCorto(dos)] = { telefono: "5491158696086", cuentaCobro: "alias1", comprobante: { numero: "parte-1002", monto: 9000 }, pedidoId: null };
-      const falta = await pedido({ comprobanteUrl: uno, idMensajeOrigen: "partes-1" });
+      const guardado = (url, numero, monto, cuentaCobro) => { store["comprobantes/cw-" + hashCorto(url)] = { telefono: "5491158696086", cuentaCobro, comprobante: { numero, monto }, urlFuente: url, createdAt: LLEGO_RECIEN, pedidoId: null }; };
+      guardado(uno, "parte-1001", 20000, "alias3");
+      const falta = await pedido({ comprobanteUrl: undefined, idMensajeOrigen: "partes-1" });
       ok("dos transferencias: con una sola pide lo que falta", falta.status === 400 && falta.body.requierePago && falta.body.faltante === 9000 && !falta.body.derivar, falta.body);
-      const juntas = await pedido({ comprobanteUrl: uno, comprobanteUrls: [dos], idMensajeOrigen: "partes-2" });
+      guardado(dos, "parte-1002", 9000, "alias1");
+      const juntas = await pedido({ comprobanteUrl: undefined, idMensajeOrigen: "partes-2" });
       const p = store[`pedidos/${juntas.body.pedidoId}`];
       ok("dos transferencias: se suman y quedan las dos en el pedido", juntas.body.ok && p.montoPagado === 29000 && p.comprobantesAdicionales.length === 1 && p.comprobantesAdicionales[0].numero === "parte-1002"
-        && store["comprobantes/cw-" + hashCorto(dos)].pedidoId === juntas.body.pedidoId, { body: juntas.body, p });
+        && store["comprobantes/cw-" + hashCorto(uno)].pedidoId === juntas.body.pedidoId && store["comprobantes/cw-" + hashCorto(dos)].pedidoId === juntas.body.pedidoId, { body: juntas.body, p });
+      guardado("https://chatwoot/ajeno.jpg", "ajeno-55501", 29000, null);
+      const ajena = await pedido({ comprobanteUrl: undefined, idMensajeOrigen: "partes-3" });
+      ok("comprobante a otra cuenta: no se cuenta y se le explica al cliente", !ajena.body.ok && ajena.body.requiereComprobante && /no va a ninguna cuenta del negocio/.test(ajena.body.error), ajena.body);
+      guardado("https://chatwoot/bueno.jpg", "bueno-55502", 29000, "alias2");
+      const conAjena = await pedido({ comprobanteUrl: undefined, idMensajeOrigen: "partes-4" });
+      ok("comprobante bueno después de uno ajeno: carga y avisa que el ajeno no contó", conAjena.body.ok && /cuenta que no es del negocio/.test(conAjena.body.nota), conAjena.body);
+      delete store["comprobantes/cw-" + hashCorto("https://chatwoot/ajeno.jpg")];
+      // Un comprobante sin usar de antes del último pedido, o de antes de que empezara esta compra, es de
+      // otra compra: no paga esta.
+      store["comprobantes/cw-viejo"] = { telefono: "5491158696086", cuentaCobro: "alias3", comprobante: { numero: "viejo-66601", monto: 29000 }, urlFuente: "https://chatwoot/viejo.jpg", createdAt: "2026-01-01T12:00:00.000Z", pedidoId: null };
+      const viejo = await pedido({ comprobanteUrl: undefined, idMensajeOrigen: "partes-5" });
+      ok("comprobante de una compra anterior: no paga esta", !viejo.body.ok && /falta el comprobante/.test(viejo.body.error), viejo.body);
+      store["comprobantes/cw-viejo"].createdAt = "2998-12-31T00:00:00.000Z";
+      const antesDeLaCompra = await pedido({ comprobanteUrl: undefined, idMensajeOrigen: "partes-6", desdeCompra: LLEGO_RECIEN });
+      ok("comprobante de antes de que empezara la compra: no paga esta", !antesDeLaCompra.body.ok && /falta el comprobante/.test(antesDeLaCompra.body.error), antesDeLaCompra.body);
+      delete store["comprobantes/cw-viejo"];
     }
     for (const cantidad of [0, -1, 1.5, "abc"]) {
       const inv = await resumen({ items: [{ producto: "Elfbar Ice King", cantidad }] });
@@ -688,11 +706,11 @@ async function main() {
     const extra = await llamar(api.agentPedido, { method: "POST", body: cambios });
     ok("agregar a pagado pide diferencia antes de guardar", extra.status === 400 && extra.body.requierePago && !extra.body.derivar && store[`pedidos/${pagado.body.pedidoId}`].items[0].cantidad === 1, extra.body);
     const fotoOriginal = store[`pedidos/${pagado.body.pedidoId}`].comprobanteImagen;
-    store["comprobantes/cw-" + hashCorto("https://chatwoot/saldo.jpg")] = { telefono: "5491158696086", cuentaCobro: "alias1", comprobante: { numero: "pago-saldo", monto: 23000 }, pedidoId: null };
-    const saldo = await llamar(api.agentPedido, { method: "POST", body: { ...cambios, idMensajeOrigen: "saldo-1", comprobanteAdicional: { numero: "pago-saldo", monto: 23000 }, comprobanteUrl: "https://chatwoot/saldo.jpg" } });
+    store["comprobantes/cw-" + hashCorto("https://chatwoot/saldo.jpg")] = { telefono: "5491158696086", cuentaCobro: "alias1", comprobante: { numero: "pago-saldo", monto: 23000 }, urlFuente: "https://chatwoot/saldo.jpg", createdAt: new Date().toISOString(), pedidoId: null };
+    const saldo = await llamar(api.agentPedido, { method: "POST", body: { ...cambios, idMensajeOrigen: "saldo-1" } });
     ok("pago adicional permite actualizar sin duplicar", saldo.body.ok && store[`pedidos/${pagado.body.pedidoId}`].montoPagado === 52000 && store[`pedidos/${pagado.body.pedidoId}`].comprobantesAdicionales.length === 1, saldo.body);
     ok("pago adicional conserva foto original y guarda segunda aparte", store[`pedidos/${pagado.body.pedidoId}`].comprobanteImagen.path === fotoOriginal.path && store[`pedidos/${pagado.body.pedidoId}`].comprobantesAdicionales[0].imagen.path !== fotoOriginal.path, store[`pedidos/${pagado.body.pedidoId}`].comprobantesAdicionales);
-    const saldoRetry = await llamar(api.agentPedido, { method: "POST", body: { ...cambios, idMensajeOrigen: "saldo-1", comprobanteAdicional: { numero: "pago-saldo", monto: 23000 } } });
+    const saldoRetry = await llamar(api.agentPedido, { method: "POST", body: { ...cambios, idMensajeOrigen: "saldo-1" } });
     ok("reintento no suma pago adicional dos veces", saldoRetry.body.reutilizado && store[`pedidos/${pagado.body.pedidoId}`].montoPagado === 52000, saldoRetry.body);
 
     for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
@@ -717,10 +735,13 @@ async function main() {
     const cargado = await pedido(datos);
     const suelto = Object.values(store).find((v) => v.urlFuente === url);
     ok("suelto: crear_pedido lo vincula al pedido", cargado.body.ok && suelto?.pedidoId === cargado.body.pedidoId, { cargado: cargado.body, suelto });
-    const otraVez = await pedido({ ...datos, idMensajeOrigen: "vincular-2" });
+    // El cliente vuelve a mandar la misma transferencia (otra captura) para otra compra.
+    store["comprobantes/cw-" + hashCorto(url + "?otra")] = { ...suelto, urlFuente: url + "?otra", createdAt: LLEGO_RECIEN, pedidoId: null };
+    const otraVez = await pedido({ ...datos, comprobanteUrl: undefined, idMensajeOrigen: "vincular-2" });
     ok("suelto: el mismo comprobante no paga un segundo pedido (y lo pide sin derivar)", !otraVez.body.ok && !otraVez.body.derivar && otraVez.body.requiereComprobante && /ya se usó/.test(otraVez.body.error), otraVez.body);
-    const ajeno = await pedido({ ...datos, telefono: "+5491100000001", idMensajeOrigen: "vincular-3" });
-    ok("suelto: el comprobante de otro cliente no sirve", !ajeno.body.ok && ajeno.body.requiereComprobante, ajeno.body);
+    delete store["comprobantes/cw-" + hashCorto(url + "?otra")];
+    const ajeno = await pedido({ ...datos, comprobanteUrl: undefined, telefono: "+5491100000001", idMensajeOrigen: "vincular-3" });
+    ok("suelto: el comprobante de otro cliente no sirve", !ajeno.body.ok && /comprobante/.test(ajeno.body.error), ajeno.body);
   }
 
 

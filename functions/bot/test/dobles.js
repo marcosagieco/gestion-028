@@ -127,6 +127,9 @@ function llamar(fn, { method = "GET", query = {}, body = {}, headers = KEY } = {
 // Como en el flujo real: si el pedido se paga antes, el comprobante ya quedó guardado al llegar
 // (agentGuardarComprobante) con el importe del resumen, salvo que el test diga otro.
 const { hashCorto: _hash, normalizarTelefono: _tel } = require('../texto');
+// Los tests mueven el reloj hacia atrás y hacia adelante: un comprobante recién llegado tiene que quedar
+// después de cualquier pedido anterior del mismo teléfono.
+const LLEGO_RECIEN = "2999-01-01T00:00:00.000Z";
 const pedido = async (extra) => {
   let salidaSeleccionada;
   if (!extra?.pedidoId && !Object.hasOwn(extra || {}, 'salidaSeleccionada') && (!extra?.tipoEnvio || extra.tipoEnvio === 'moto')) {
@@ -137,14 +140,22 @@ const pedido = async (extra) => {
     telefono: '+5491158696086', cliente: 'Uma Bach', medioPago: 'transferencia', comprobanteUrl: 'https://chatwoot/x-' + (autoId++) + '.jpg',
     tipoEnvio: 'moto', direccion: { texto: 'Cabildo 2000, Belgrano', referencias: '3B' },
     items: [{ producto: 'Elfbar Ice King', variante: 'Peach', cantidad: 1 }], salidaSeleccionada, ...extra };
+  // El comprobante lo guarda agentGuardarComprobante cuando llega; acá se simula ese guardado con
+  // comprobanteUrl (el backend lo encuentra por la conversación, no por la URL). Si el pedido no lo
+  // usó, se borra: cada llamada del test es una compra aparte.
   const clave = body.comprobanteUrl && 'comprobantes/cw-' + _hash(String(body.comprobanteUrl).trim());
+  let creado = false;
   if (!body.preview && clave && !store[clave] && /transfer|mitad/.test(String(body.medioPago))) {
     const r = await llamar(api.agentPedido, { method: 'POST', body: { ...body, preview: true } });
     const esperado = /mitad/.test(String(body.medioPago)) ? Math.ceil((r.body.total || 0) / 2) : (r.body.saldoPendiente || r.body.total);
     store[clave] = { telefono: _tel(body.telefono), idConversacion: body.idConversacion, cuentaCobro: body.cuentaCobro || 'alias3',
-      comprobante: { numero: body.comprobante?.numero || String(90000000 + autoId++), monto: body.comprobante?.monto ?? esperado }, pedidoId: null };
+      comprobante: { numero: body.comprobante?.numero || String(90000000 + autoId++), monto: body.comprobante?.monto ?? esperado },
+      urlFuente: body.comprobanteUrl, createdAt: LLEGO_RECIEN, pedidoId: null };
+    creado = true;
   }
-  return llamar(api.agentPedido, { method: 'POST', body });
+  const respuesta = await llamar(api.agentPedido, { method: 'POST', body });
+  if (creado && store[clave] && !store[clave].pedidoId) delete store[clave];
+  return respuesta;
 };
 const resumen = (extra) => pedido({ preview: true, ...extra });
 
@@ -163,7 +174,7 @@ const resultados = [];
 const ok = (nombre, cond, detalle) => resultados.push({ nombre, ok: !!cond, detalle });
 
 module.exports = {
-  api, store, LISTAS, llamar, pedido, resumen, conHora, ok, resultados, guardadoEnStorage, hashCorto: _hash,
+  api, store, LISTAS, llamar, pedido, resumen, conHora, ok, resultados, guardadoEnStorage, hashCorto: _hash, LLEGO_RECIEN,
   setAntesTransaccion(fn) { antesTransaccion = fn; },
   nuevoId: () => autoId++,
 };
