@@ -25,6 +25,7 @@ total, salida, cupo y validación del pago. El backend no lee la conversación: 
 | `bot/comprobantes.js` | `agentGuardarComprobante`, `serveComprobante` y la tolerancia del pago |
 | `bot/uber.js` | `agentCrearCotizacionUber` y `agentAvisosCotizacionUber` |
 | `bot/estadisticas.js` | `agentEstadisticasBot` |
+| `bot/web.js` | `actualizarInfoWebDiario`, `agentActualizarInfoWeb` y la `infoWeb` de `agentBuscarCatalogo` |
 | `bot/catalogo.js` | Lectura de las listas del panel, búsqueda, stock y fichas THC |
 | `bot/precios.js` | Combos, lista mayorista, descuento por efectivo y formas de pago |
 | `bot/envios.js` | Ubicación, zonas, costo de la moto, correo y envío seguro |
@@ -153,6 +154,15 @@ servidor y el cliente se quedaba sin el precio).
   `procesado` con `avisoNoEnviado: true`, así el panel no la muestra como «Enviando al cliente…».
 - `POST { id, enviadoEn }` cuando el mensaje salió: queda `procesado` y el precio vale 45 minutos desde
   `enviadoEn`. Si no se confirma, el siguiente minuto se vuelve a intentar.
+
+## Información de productos de la web — `actualizarInfoWebDiario` y POST `agentActualizarInfoWeb`
+
+Todos los días a las 6 (y cuando se llama `agentActualizarInfoWeb`) se lee el sitemap de 028import.com y
+los datos estructurados (JSON-LD) de cada producto, y queda en `settings/infoWeb`. Se guarda solo la
+descripción, sin los renglones de precios, promociones, stock, originalidad o garantía: eso sale del panel.
+Si no lee ningún producto, no pisa lo que había. `agentBuscarCatalogo` le suma a cada modelo `infoWeb`:
+`{ modelo, sabores? }` (las especificaciones del modelo y el perfil de los sabores buscados), solo si el
+modelo de la web coincide seguro con el del panel.
 
 ## POST `agentEstadisticasBot` — `{ dias: [{ dia, mensajes, clientes, resumenes, pedidos, clientesConPedido, abandonos, derivaciones }] }`
 

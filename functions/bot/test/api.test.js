@@ -1,6 +1,6 @@
 // Tests de los endpoints del bot, con los dobles de ./dobles.js. Correr: node functions/bot/test/api.test.js
 "use strict";
-const { api, store, LISTAS, llamar, pedido, resumen, conHora, ok, resultados, guardadoEnStorage, hashCorto, setAntesTransaccion, LLEGO_RECIEN } = require("./dobles");
+const { api, store, LISTAS, llamar, pedido, resumen, conHora, ok, resultados, guardadoEnStorage, hashCorto, setAntesTransaccion, LLEGO_RECIEN, paginasWeb } = require("./dobles");
 
 async function main() {
   store["settings/operativo"] = { ...LISTAS, aliasActivo: "alias3", situacion: "demora", proximaSalida: "16:00", limitePorTanda: 10 };
@@ -564,6 +564,36 @@ async function main() {
     const mal = await mandar([{ dia: "28/10" }]);
     ok("estadísticas: rechaza un día mal escrito", mal.status === 400, mal.body);
     delete store["bot_estadisticas/2026-10-28"];
+  }
+
+  // ── información de productos de la web (028import.com) ──
+  {
+    const web = require("../web");
+    const ld = (producto) => `<html><script type="application/ld+json">{"@type":"Store"}</script><script type="application/ld+json">${JSON.stringify(producto)}</script></html>`;
+    const limpia = web.limpiarDescripcion("🆕 FUME PRO 30K\n\n💨 Hasta 30.000 puffs\n💰 1x $25.000\n🔥 2x $50.000 $44.000\n━━━━━━\n🚀 028 IMPORT — IMPORTADOR DIRECTO");
+    ok("web: la descripción queda sin precios ni promociones", limpia === "🆕 FUME PRO 30K\n\n💨 Hasta 30.000 puffs", limpia);
+    const peach = { "@type": "Product", name: "PEACH", brand: { name: "ELFBAR ICE KING" },
+      description: "PEACH 🍑\n\nDurazno puro y dulce.\n\n⚙️ Especificaciones\n\n40.000 puffs\nNicotina: 5% (50 mg/ml)\nBatería: 850 mAh recargable\n\n🎯 Para quién es Para el que le gustan las frutas." };
+    const p = web.extraerProducto(ld(peach), "https://028import.com/producto/elfbar-ice-king-peach");
+    ok("web: lee modelo, sabor y descripción del JSON-LD", p.modelo === "ELFBAR ICE KING" && p.sabor === "PEACH" && /Durazno puro/.test(p.descripcion), p);
+    ok("web: una página sin producto no trae nada", web.extraerProducto("<html>nada</html>", "x") === null);
+    const info = web.infoWebDe([p], "Elfbar Ice King 40K", ["Peach (9)"]);
+    ok("web: el modelo del panel coincide con el de la web y trae sus especificaciones", /40.000 puffs/.test(info.modelo) && /850 mAh/.test(info.modelo) && !/Durazno/.test(info.modelo), info);
+    ok("web: trae el perfil del sabor que preguntó", info.sabores?.[0]?.sabor === "PEACH" && /Durazno puro/.test(info.sabores[0].descripcion), info);
+    ok("web: no mezcla modelos con una sola palabra en común", web.infoWebDe([{ ...p, modelo: "ELFBAR" }], "Elfbar Ice King 40K") === null && web.infoWebDe([p], "Elfbar Sweet King 40K") === null);
+
+    paginasWeb["https://028import.com/sitemap.xml"] = "<urlset><url><loc>https://028import.com/</loc></url><url><loc>https://028import.com/producto/elfbar-ice-king-peach</loc></url><url><loc>https://028import.com/producto/rota</loc></url></urlset>";
+    paginasWeb["https://028import.com/producto/elfbar-ice-king-peach"] = ld(peach);
+    const act = await llamar(api.agentActualizarInfoWeb, { method: "POST", body: {} });
+    ok("web: actualiza leyendo el sitemap y salteando las páginas que fallan", act.body.ok && act.body.productos === 1 && act.body.paginas === 2 && store["settings/infoWeb"].productos[0].sabor === "PEACH", act.body);
+    const busqueda = await llamar(api.agentBuscarCatalogo, { query: { consulta: "ice king peach" } });
+    const ice = busqueda.body.resultados.find((x) => /ice king/i.test(x.nombre));
+    ok("web: buscar_catalogo suma la info de la web al modelo", ice?.infoWeb && /850 mAh/.test(ice.infoWeb.modelo), busqueda.body);
+    delete paginasWeb["https://028import.com/producto/elfbar-ice-king-peach"];
+    paginasWeb["https://028import.com/sitemap.xml"] = "<urlset></urlset>";
+    const vacia = await llamar(api.agentActualizarInfoWeb, { method: "POST", body: {} });
+    ok("web: si no lee ningún producto, no pisa lo que había", vacia.status === 500 && store["settings/infoWeb"].productos.length === 1, vacia.body);
+    delete store["settings/infoWeb"];
   }
 
   // ── comprobante ──

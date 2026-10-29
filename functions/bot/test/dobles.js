@@ -76,8 +76,14 @@ const DIRECCIONES = {
   "Maipú 1000, Olivos": { lat: -34.5100, lng: -58.4900, c: [comp("Olivos", "locality"), comp("Vicente López", "administrative_area_level_2"), PBA] },
   "Centenario 500, San Isidro": { lat: -34.4700, lng: -58.5100, c: [comp("San Isidro", "locality"), comp("San Isidro", "administrative_area_level_2"), PBA] },
 };
+const paginasWeb = {};
 const fakeAxios = {
   async get(url, opts) {
+    // La web de 028 (028import.com): la arma cada test en paginasWeb.
+    if (String(url).startsWith("https://028import.com")) {
+      if (!(url in paginasWeb)) throw new Error("404 " + url);
+      return { data: paginasWeb[url] };
+    }
     if (url.includes("geocode")) {
       const d = DIRECCIONES[Object.keys(DIRECCIONES).find((k) => opts.params.address.startsWith(k))];
       return { data: { results: d ? [{ geometry: { location: { lat: d.lat, lng: d.lng } }, address_components: d.c }] : [] } };
@@ -108,6 +114,7 @@ function mockear(nombre, exp) {
 mockear("firebase-admin", fakeAdmin);
 mockear("firebase-functions", { https: { onRequest: (h) => h } });
 mockear("axios", fakeAxios);
+mockear("firebase-functions/v2/scheduler", { onSchedule: (_opciones, h) => h });
 const api = require("..");
 
 // ---------- helpers ----------
@@ -174,7 +181,7 @@ const resultados = [];
 const ok = (nombre, cond, detalle) => resultados.push({ nombre, ok: !!cond, detalle });
 
 module.exports = {
-  api, store, LISTAS, llamar, pedido, resumen, conHora, ok, resultados, guardadoEnStorage, hashCorto: _hash, LLEGO_RECIEN,
+  api, store, LISTAS, llamar, pedido, resumen, conHora, ok, resultados, guardadoEnStorage, hashCorto: _hash, LLEGO_RECIEN, paginasWeb,
   setAntesTransaccion(fn) { antesTransaccion = fn; },
   nuevoId: () => autoId++,
 };

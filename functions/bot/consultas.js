@@ -7,15 +7,23 @@ const { pesos } = require("./texto");
 const { buscarEnCatalogo } = require("./catalogo");
 const { formaDePago, descuentoEfectivo, cotizarProductos } = require("./precios");
 const { ubicar } = require("./envios");
+const { leerInfoWeb, infoWebDe } = require("./web");
 
 const leerOperativo = async () => (await db.collection("settings").doc("operativo").get()).data() || {};
 const datos = (req) => ({ ...req.query, ...(req.body && typeof req.body === "object" ? req.body : {}) });
 
 // /agentBuscarCatalogo — { consulta, sinPrecios }
+// A cada modelo se le suma lo que dice la web de él y de los sabores buscados (infoWeb): solo descripción.
 const agentBuscarCatalogo = conClave(async (req, res) => {
   const d = datos(req);
   const sinPrecios = d.sinPrecios === true || d.sinPrecios === "true" || d.sinPrecios === "1";
-  res.json(buscarEnCatalogo(await leerOperativo(), d.consulta, { conPrecios: !sinPrecios }));
+  const [op, web] = await Promise.all([leerOperativo(), leerInfoWeb().catch(() => [])]);
+  const r = buscarEnCatalogo(op, d.consulta, { conPrecios: !sinPrecios });
+  for (const x of r.resultados) {
+    const info = infoWebDe(web, x.nombre, x.saboresQueCoinciden || []);
+    if (info) x.infoWeb = info;
+  }
+  res.json(r);
 });
 
 // /agentCotizarProductos — { items: [{ producto, variante, cantidad }], medioPago, mayorista }
