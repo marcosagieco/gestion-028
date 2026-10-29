@@ -24,6 +24,7 @@ total, salida, cupo y validación del pago. El backend no lee la conversación: 
 | `bot/pedidos.js` | `agentPedido`: resumen, carga y cambio de pedidos |
 | `bot/comprobantes.js` | `agentGuardarComprobante`, `serveComprobante` y la tolerancia del pago |
 | `bot/uber.js` | `agentCrearCotizacionUber` y `agentAvisosCotizacionUber` |
+| `bot/estadisticas.js` | `agentEstadisticasBot` |
 | `bot/catalogo.js` | Lectura de las listas del panel, búsqueda, stock y fichas THC |
 | `bot/precios.js` | Combos, lista mayorista, descuento por efectivo y formas de pago |
 | `bot/envios.js` | Ubicación, zonas, costo de la moto, correo y envío seguro |
@@ -153,6 +154,12 @@ servidor y el cliente se quedaba sin el precio).
 - `POST { id, enviadoEn }` cuando el mensaje salió: queda `procesado` y el precio vale 45 minutos desde
   `enviadoEn`. Si no se confirma, el siguiente minuto se vuelve a intentar.
 
+## POST `agentEstadisticasBot` — `{ dias: [{ dia, mensajes, clientes, resumenes, pedidos, clientesConPedido, abandonos, derivaciones }] }`
+
+Los totales de cada día (`dia` en AAAA-MM-DD, hora de Buenos Aires) para el panel. Los cuenta n8n cada
+hora («028 v2 - estadísticas», con los eventos que anota el bot en `v2_eventos`) y los manda acá. Cada día
+se reemplaza entero en `bot_estadisticas/{dia}`. Lo que no es un entero positivo queda en 0.
+
 ## Lo que lee y escribe en Firestore
 
 | Colección | Uso |
@@ -161,5 +168,6 @@ servidor y el cliente se quedaba sin el precio).
 | `pedidos` | Los pedidos del bot (`origen: "bot_n8n"`, `schemaVersion: 3`), con los mismos campos que usa el panel |
 | `comprobantes` | Los comprobantes recibidos, vinculados al pedido cuando se usan (`pedidoId`) |
 | `cotizaciones_uber` | Las cotizaciones del Flash (las ve y resuelve el depósito en /cotizar-uber) |
+| `bot_estadisticas` | Los totales del bot por día (los manda n8n) |
 | `bot_tandas`, `bot_pagos` | Bloqueos: cupo de la tanda y un pago por pedido |
 | `recorridos` | Si el reparto salió (lo escribe /reparto) |

@@ -6,12 +6,14 @@
 //   pedidos.js       agentPedido            resumen, carga y cambio de pedidos
 //   comprobantes.js  agentGuardarComprobante, serveComprobante
 //   uber.js          agentCrearCotizacionUber, agentAvisosCotizacionUber
+//   estadisticas.js  agentEstadisticasBot   los totales del día que manda n8n, para el panel
 //
 // El resto de los archivos son las reglas que usan: catálogo, precios, envíos, salidas y seguimiento.
 "use strict";
 
 const { agentGuardarComprobante, serveComprobante } = require("./comprobantes");
 const { agentCrearCotizacionUber, agentAvisosCotizacionUber } = require("./uber");
+const { agentEstadisticasBot } = require("./estadisticas");
 
 module.exports = {
   ...require("./estado"),
@@ -21,4 +23,5 @@ module.exports = {
   serveComprobante,
   agentCrearCotizacionUber,
   agentAvisosCotizacionUber,
+  agentEstadisticasBot,
 };

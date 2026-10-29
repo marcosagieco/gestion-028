@@ -552,6 +552,20 @@ async function main() {
     Object.assign(store, guardado);
   }
 
+  // ── estadísticas del bot: las manda n8n cada hora ──
+  {
+    const mandar = (dias) => llamar(api.agentEstadisticasBot, { method: "POST", body: { dias } });
+    const r = await mandar([{ dia: "2026-10-28", mensajes: 120, clientes: 40, resumenes: 12, pedidos: 9, clientesConPedido: 8, abandonos: 4, derivaciones: { reclamo: 2, "precio mayorista!": 1 } }]);
+    const d = store["bot_estadisticas/2026-10-28"];
+    ok("estadísticas: guarda el día con sus contadores", r.body.ok && d.mensajes === 120 && d.clientes === 40 && d.pedidos === 9 && d.abandonos === 4, d);
+    ok("estadísticas: derivaciones por motivo y total", d.derivaciones.reclamo === 2 && d.derivaciones.preciomayorista === 1 && d.totalDerivaciones === 3, d.derivaciones);
+    await mandar([{ dia: "2026-10-28", mensajes: 130, clientes: -5, pedidos: "x" }]);
+    ok("estadísticas: el día se reemplaza entero y lo inválido queda en 0", store["bot_estadisticas/2026-10-28"].mensajes === 130 && store["bot_estadisticas/2026-10-28"].clientes === 0 && store["bot_estadisticas/2026-10-28"].pedidos === 0 && store["bot_estadisticas/2026-10-28"].totalDerivaciones === 0, store["bot_estadisticas/2026-10-28"]);
+    const mal = await mandar([{ dia: "28/10" }]);
+    ok("estadísticas: rechaza un día mal escrito", mal.status === 400, mal.body);
+    delete store["bot_estadisticas/2026-10-28"];
+  }
+
   // ── comprobante ──
   {
     const r = await llamar(api.serveComprobante, { query: {} });
