@@ -76,12 +76,13 @@ async function copiarAlPedido(url, pedidoId, adicionalId = null) {
 }
 
 // Los comprobantes de la compra en curso: los que mandó el cliente en esta conversación desde
-// `desde` (ms) y que todavía no están en ningún pedido, del más viejo al más nuevo. Así el agente no
+// `desde` (ms) y que todavía no están en ningún pedido, del más viejo al más nuevo. No cuentan los que
+// llegaron mientras atendía el equipo (conEquipo): esos pedidos los carga el equipo. Así el agente no
 // tiene que copiar el link del comprobante (lo copiaba mal y el cliente tenía que mandarlo otra vez).
 async function comprobantesDeLaCompra(telefono, idConversacion, desde) {
   const snap = await db.collection("comprobantes").where("telefono", "==", telefono).get();
   return snap.docs.map((d) => ({ ...d.data(), id: d.id }))
-    .filter((c) => !c.pedidoId && String(c.idConversacion ?? "") === String(idConversacion ?? "") && (Date.parse(c.createdAt || "") || 0) >= desde)
+    .filter((c) => !c.pedidoId && !c.conEquipo && String(c.idConversacion ?? "") === String(idConversacion ?? "") && (Date.parse(c.createdAt || "") || 0) >= desde)
     .sort((x, y) => String(x.createdAt).localeCompare(String(y.createdAt)));
 }
 
@@ -91,7 +92,9 @@ async function vincularAlPedido(id, pedidoId) {
 }
 
 // POST /agentGuardarComprobante — lo llama el bot con cada imagen o PDF que manda un cliente.
-// Body: { url, lectura, telefono, cliente, idConversacion, idMensaje }
+// Body: { url, lectura, telefono, cliente, idConversacion, idMensaje, conEquipo }
+// conEquipo: llegó mientras la charla la atendía el equipo (asignada a una persona o el bot en pausa). Ese
+// pedido lo carga el equipo a mano, así que el bot no usa el comprobante para cargar uno.
 const agentGuardarComprobante = conClave(async (req, res) => {
   const b = req.body || {};
   const url = String(b.url || "").trim();
@@ -104,7 +107,14 @@ const agentGuardarComprobante = conClave(async (req, res) => {
   if (!datos.completo) return res.json({ ok: true, guardado: false, motivo: "lectura_incompleta" });
   const ref = db.collection("comprobantes").doc(idComprobante(url));
   const respuesta = { ok: true, guardado: true, id: ref.id, monto: datos.monto, numero: datos.numero, cuentaDelNegocio: !!datos.cuentaCobro };
-  if ((await ref.get()).exists) return res.json({ ...respuesta, reutilizado: true });
+  const conEquipo = b.conEquipo === true || b.conEquipo === "true";
+  const existente = await ref.get();
+  if (existente.exists) {
+    // El mismo comprobante vuelve a llegar sin el equipo: la charla volvió al bot con el cliente esperando
+    // (nadie le contestó), así que ahora sí lo puede usar el bot.
+    if (existente.data().conEquipo && !conEquipo && !existente.data().pedidoId) await ref.update({ conEquipo: false });
+    return res.json({ ...respuesta, reutilizado: true });
+  }
   let archivo = null;
   try {
     archivo = await guardarArchivo(url, `sueltos/${ref.id}`);
@@ -121,6 +131,7 @@ const agentGuardarComprobante = conClave(async (req, res) => {
     comprobante: { numero: datos.numero, monto: datos.monto, nombre: datos.nombre },
     cuentaCobro: datos.cuentaCobro,
     posibleEdicion: datos.edicionDetectada,
+    conEquipo,
     descripcion: datos.descripcion,
     urlFuente: url,
     comprobanteImagen: archivo ? { url: `${SERVE_COMPROBANTE_BASE}?comprobante=${ref.id}`, ...archivo } : null,

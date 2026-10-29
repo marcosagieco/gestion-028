@@ -107,7 +107,7 @@ uno («menta» en un modelo con Cool Mint y Winter Mint), el error pide pregunta
   después del pedido que se cambia o, si es nuevo, después del último pedido, de `desdeCompra` (cuando
   empezó la compra en el bot) y de las últimas 24 horas. El modelo no pasa links (los copiaba mal). El
   número y el importe salen del comprobante guardado. Se suman todos; el primero es el principal y los
-  otros, adicionales. No cuentan los que van a otra cuenta, no se leen o ya pagaron otro pedido: si
+  otros, adicionales. No cuentan los que van a otra cuenta, no se leen, ya pagaron otro pedido o llegaron con el equipo atendiendo (`conEquipo`): si
   ninguno sirve, `400` con `requiereComprobante` y qué decirle al cliente; si sirve alguno, la `nota` lo
   avisa. Tolerancia: $5.000. Si falta más, `400` con `requierePago` y `faltante`; si sobra, se carga
   con `pagoDeMas`. Un mismo pago no paga dos pedidos.
@@ -116,13 +116,16 @@ uno («menta» en un modelo con Cool Mint y Winter Mint), el error pide pregunta
   compra anterior responde `continuarCompra` (`pedido_anterior`). Si el cambio sube el total de un
   pedido pagado, pide un comprobante adicional (`requierePago`).
 
-## `agentGuardarComprobante` — `{ url, lectura, telefono, cliente, idConversacion, idMensaje }`
+## `agentGuardarComprobante` — `{ url, lectura, telefono, cliente, idConversacion, idMensaje, conEquipo }`
 
 Lo llama el bot con cada imagen o PDF que manda un cliente. `lectura` es lo que leyó el modelo del
 archivo, como objeto o JSON:
 `{ esComprobante, edicionDetectada, monto, numeroOperacion, titular, destinatario, cbuCvu, alias, cuit }`.
 
 - Guarda el comprobante en `comprobantes` (se cargue o no el pedido; el panel lo muestra como suelto).
+- `conEquipo: true` si llegó mientras la charla la atendía el equipo (asignada a una persona o el bot en
+  pausa): ese pedido lo carga el equipo a mano y `agentPedido` no lo usa. Si el mismo comprobante vuelve a
+  llegar sin el equipo (la charla volvió al bot con el cliente esperando), se desmarca.
 - Responde `{ guardado: true, id, monto, numero, cuentaDelNegocio }`, o `guardado: false` con `motivo`:
   `no_es_comprobante` o `lectura_incompleta`. Que parezca editado no frena: queda `posibleEdicion`.
 - La cuenta se reconoce por cualquiera de sus datos (titular, alias, CUIT o CBU/CVU).

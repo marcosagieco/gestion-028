@@ -582,6 +582,13 @@ async function main() {
     ok("suelto: «parece editado» no frena: se guarda y queda anotado", editado.body.guardado === true && !editado.body.derivar && store["comprobantes/" + editado.body.id].posibleEdicion === true && Object.keys(store).length > antesEditado, editado.body);
     const incompleto = await guardar({ url: "https://chatwoot/borroso.jpg", lectura: { esComprobante: true, monto: "", numeroOperacion: "" } });
     ok("suelto: sin importe ni número no se guarda", incompleto.body.guardado === false && incompleto.body.motivo === "lectura_incompleta", incompleto.body);
+    // Llega mientras atiende el equipo: se guarda (para el panel y la financiera) marcado conEquipo.
+    const conEquipo = await guardar({ url: "https://chatwoot/con-equipo.jpg", conEquipo: true, lectura: { ...celina, numeroOperacion: "555000111222" } });
+    ok("suelto: con el equipo atendiendo se guarda marcado", conEquipo.body.guardado && store["comprobantes/" + conEquipo.body.id].conEquipo === true, store["comprobantes/" + conEquipo.body.id]);
+    // La charla volvió al bot con el cliente esperando: el mismo comprobante llega sin el equipo y se desmarca.
+    await guardar({ url: "https://chatwoot/con-equipo.jpg", lectura: { ...celina, numeroOperacion: "555000111222" } });
+    ok("suelto: si vuelve al bot sin respuesta del equipo, se desmarca", store["comprobantes/" + conEquipo.body.id].conEquipo === false, store["comprobantes/" + conEquipo.body.id]);
+    delete store["comprobantes/" + conEquipo.body.id];
     const sirve = await llamar(api.serveComprobante, { query: { comprobante: "no-existe" } });
     ok("serveComprobante: suelto inexistente -> 404", sirve.status === 404, sirve.body);
   }
@@ -653,6 +660,11 @@ async function main() {
       const antesDeLaCompra = await pedido({ comprobanteUrl: undefined, idMensajeOrigen: "partes-6", desdeCompra: LLEGO_RECIEN });
       ok("comprobante de antes de que empezara la compra: no paga esta", !antesDeLaCompra.body.ok && /falta el comprobante/.test(antesDeLaCompra.body.error), antesDeLaCompra.body);
       delete store["comprobantes/cw-viejo"];
+      // Uno que llegó mientras atendía el equipo: ese pedido lo carga el equipo a mano, el bot no lo usa.
+      store["comprobantes/cw-equipo"] = { telefono: "5491158696086", cuentaCobro: "alias3", comprobante: { numero: "equipo-77701", monto: 29000 }, urlFuente: "https://chatwoot/equipo.jpg", createdAt: LLEGO_RECIEN, conEquipo: true, pedidoId: null };
+      const delEquipo = await pedido({ comprobanteUrl: undefined, idMensajeOrigen: "partes-7" });
+      ok("comprobante que llegó con el equipo atendiendo: el bot no lo usa", !delEquipo.body.ok && /falta el comprobante/.test(delEquipo.body.error), delEquipo.body);
+      delete store["comprobantes/cw-equipo"];
     }
     for (const cantidad of [0, -1, 1.5, "abc"]) {
       const inv = await resumen({ items: [{ producto: "Elfbar Ice King", cantidad }] });
