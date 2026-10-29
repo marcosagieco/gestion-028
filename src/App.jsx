@@ -14,6 +14,7 @@ import { SortableContext, arrayMove, useSortable, rectSortingStrategy, verticalL
 import { CSS as DndCSS } from '@dnd-kit/utilities';
 
 import ProjectionChart from './ProjectionChart';
+import BotEstadisticas from './BotEstadisticas';
 import MetricSlider from './MetricSlider';
 import { buildDailySeries, buildRatioSeries, computeProjection, PROJECTION_CUTOFF_DATE } from './projectionEngine';
 import { REPARTIDORES, repartidorConfig, repartidorDe } from './reparto/repartidores';
@@ -8558,6 +8559,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       { id: 'analysis', icon: BarChart3, label: 'Análisis', shortLabel: 'Anál.' },
       { id: 'expenses', icon: Wallet, label: 'Gastos' },
       { id: 'comprobantes', icon: Receipt, label: 'Comprobantes', shortLabel: 'Compr.' },
+      { id: 'bot', icon: Bot, label: 'Bot WhatsApp', shortLabel: 'Bot' },
       { id: 'metaads', icon: Target, label: 'Meta Ads', shortLabel: 'Ads' },
       { id: 'team', icon: UserCog, label: 'Equipo 028', shortLabel: 'Equipo' },
   ];
@@ -13083,6 +13085,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
               </div>
             )}
+
+            {/* --- PESTAÑA BOT (estadísticas del bot de WhatsApp) --- */}
+            {activeTab === 'bot' && <BotEstadisticas db={db} darkMode={darkMode} />}
 
             {/* --- PESTAÑA COMPROBANTES (los comprobantes de pago que manda el cliente al bot) --- */}
             {activeTab === 'comprobantes' && (
