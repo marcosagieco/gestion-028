@@ -1,15 +1,14 @@
 // Las consultas del agente que no guardan nada: buscar en el catálogo, cotizar productos y cotizar el envío.
 "use strict";
 
-const { db } = require("./firebase");
 const { conClave, rechazar } = require("./http");
 const { pesos } = require("./texto");
 const { buscarEnCatalogo } = require("./catalogo");
 const { formaDePago, descuentoEfectivo, cotizarProductos } = require("./precios");
 const { ubicar } = require("./envios");
 const { leerInfoWeb, infoWebDe } = require("./web");
+const { leerOperativo } = require("./campania");
 
-const leerOperativo = async () => (await db.collection("settings").doc("operativo").get()).data() || {};
 const datos = (req) => ({ ...req.query, ...(req.body && typeof req.body === "object" ? req.body : {}) });
 
 // /agentBuscarCatalogo — { consulta, sinPrecios }
@@ -33,7 +32,8 @@ const agentCotizarProductos = conClave(async (req, res) => {
   const mayorista = d.mayorista === true;
   const medioPago = formaDePago(d.medioPago);
   let c;
-  try { c = cotizarProductos(await leerOperativo(), d.items, { mayorista, medioPago, permitirSinSabor: true }); }
+  const op = await leerOperativo();
+  try { c = cotizarProductos(op, d.items, { mayorista, medioPago, permitirSinSabor: true }); }
   catch (e) { return rechazar(res, e.message); }
   if (mayorista && !(c.dolarMayorista > 0)) {
     return res.json({ ok: true, moneda: "USD", subtotalUSD: c.subtotalUSD, necesitaTipoCambio: true,
@@ -42,14 +42,21 @@ const agentCotizarProductos = conClave(async (req, res) => {
   const descuento = medioPago === "efectivo" && !mayorista ? descuentoEfectivo(c.subtotal) : 0;
   const lineas = c.lineas.map((l) => `${l.cantidad}x ${l.producto}${l.variante ? " - " + l.variante : ""}: ${pesos(l.importe)}`);
   res.json({ ok: true, moneda: "ARS", items: c.lineas, subtotal: c.subtotal, montoDescuento: descuento, totalProductos: c.subtotal - descuento,
+    ...(op.campaniaActiva && c.conMysteryBox ? { conMysteryBox: true } : {}),
     mensaje: [...lineas, `Total de productos: ${pesos(c.subtotal - descuento)}${descuento ? " (incluye descuento por efectivo)" : ""}`].join("\n") });
 });
 
-// /agentCotizarEnvio — { direccion }: si llega la moto y cuánto sale.
+// /agentCotizarEnvio — { direccion }: si llega la moto y cuánto sale. Con una campaña con envío gratis y una
+// dirección de CABA, `envioGratis` dice desde cuánto (y si en el lanzamiento es gratis pagando por transferencia):
+// el total final lo calcula armar_resumen.
 const agentCotizarEnvio = conClave(async (req, res) => {
-  const u = await ubicar(datos(req).direccion);
+  const [u, op] = await Promise.all([ubicar(datos(req).direccion), leerOperativo()]);
   if (!u) return res.json({ ok: true, encontrada: false });
-  res.json({ ok: true, encontrada: true, cubiertoMoto: u.cubiertoMoto, monto: u.cubiertoMoto ? u.monto : null, km: u.km, zona: u.zona, admiteEfectivo: u.cubiertoMoto });
+  const c = op.campaniaActiva;
+  const envioGratis = c && u.esCABA && u.cubiertoMoto && (c.envioGratisDesde || c.enLanzamiento)
+    ? { campania: c.nombre, desde: c.envioGratisDesde, lanzamientoConTransferencia: c.enLanzamiento } : null;
+  res.json({ ok: true, encontrada: true, cubiertoMoto: u.cubiertoMoto, monto: u.cubiertoMoto ? u.monto : null, km: u.km, zona: u.zona, admiteEfectivo: u.cubiertoMoto,
+    ...(envioGratis ? { envioGratis } : {}) });
 });
 
 module.exports = { agentBuscarCatalogo, agentCotizarProductos, agentCotizarEnvio };

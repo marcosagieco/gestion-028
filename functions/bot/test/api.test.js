@@ -566,6 +566,51 @@ async function main() {
     delete store["bot_estadisticas/2026-10-28"];
   }
 
+  // ── campaña (CYBER 028): listas propias, precios por escalón y envío gratis, solo entre su inicio y su fin ──
+  {
+    const op = store["settings/operativo"];
+    const antes = structuredClone(op);
+    op.campania = {
+      activa: true, nombre: "CYBER 028", inicio: "2026-11-02T00:00", fin: "2026-11-04T23:59", lanzamientoHasta: "2026-11-02T04:00",
+      envioGratisDesde: 100000, mensaje: "Sorteo de $50.000 en la web: comprá y sumate a la comunidad.",
+      preciosVapesTexto: "💰 LISTA CYBER 028\n\n👑 ELFBAR ICE KING\n💰 1x $26.000\n🔥 2x $25.000 c/u\n🔥 3x $24.000 c/u\n🎁 5x $23.000 c/u",
+      mysteryBoxTexto: "🎁 MYSTERY BOX\n\n📦 MYSTERY BOX DESCARTABLES\nValuada en $69.000\n💰 $50.000",
+    };
+    const ice = (cantidad, extra = {}) => resumen({ items: [{ producto: "Elfbar Ice King", variante: "Peach", cantidad }], ...extra });
+    await conHora("2026-11-02T10:00:00", async () => {
+      const cuatro = await ice(4);
+      ok("cyber: 4 unidades pagan el precio de 3 c/u", cuatro.body.ok && /4x Elfbar Ice King - Peach: \$96\.000/i.test(cuatro.body.mensaje) && !/Envío gratis/.test(cuatro.body.mensaje), cuatro.body.mensaje);
+      const seis = await ice(6);
+      ok("cyber: 6 unidades pagan el de 5 c/u y desde $100.000 el envío es gratis en CABA", seis.body.ok && /\$138\.000/.test(seis.body.mensaje) && /🎁 Envío gratis \(CYBER 028/.test(seis.body.mensaje) && seis.body.total === 138000, seis.body.mensaje);
+      const olivos = await ice(6, { direccion: { texto: "Maipú 1000, Olivos" } });
+      ok("cyber: fuera de CABA el envío se cobra", olivos.body.ok && !/Envío gratis/.test(olivos.body.mensaje) && olivos.body.total > 138000, olivos.body.mensaje);
+      const caja = await resumen({ items: [{ producto: "Mystery Box Descartables", cantidad: 1 }] });
+      ok("cyber: la Mystery Box se cobra y tiene envío gratis en CABA", caja.body.ok && caja.body.total === 50000 && /Mystery Box/.test(caja.body.mensaje), caja.body.mensaje);
+      const estado = await llamar(api.agentEstadoOperativo);
+      ok("cyber: el estado del día trae la campaña y sus listas", estado.body.campania?.nombre === "CYBER 028" && /LISTA CYBER 028/.test(estado.body.plantillas.PRECIOS_VAPES) && /MYSTERY BOX DESCARTABLES/.test(estado.body.plantillas.MYSTERY_BOX) && /Sorteo/.test(estado.body.campania.mensaje), estado.body.campania);
+      const envio = await llamar(api.agentCotizarEnvio, { query: { direccion: "Cabildo 2000, Belgrano" } });
+      ok("cyber: cotizar el envío avisa desde cuánto es gratis", envio.body.envioGratis?.desde === 100000 && envio.body.envioGratis.campania === "CYBER 028", envio.body);
+    });
+    await conHora("2026-11-02T03:00:00", async () => {
+      const transferencia = await ice(1);
+      ok("cyber: en el lanzamiento, pagando por transferencia el envío es gratis sin mínimo", transferencia.body.ok && /lanzamiento/.test(transferencia.body.mensaje) && transferencia.body.total === 26000, transferencia.body.mensaje);
+      const efectivo = await ice(1, { medioPago: "efectivo" });
+      ok("cyber: en el lanzamiento, en efectivo se cobra el envío", efectivo.body.ok && !/Envío gratis/.test(efectivo.body.mensaje), efectivo.body.mensaje);
+    });
+    await conHora("2026-11-05T10:00:00", async () => {
+      const despues = await ice(4);
+      ok("cyber: cuando termina vuelven la lista y los combos de siempre", despues.body.ok && /\$98\.000/.test(despues.body.mensaje) && !/Envío gratis/.test(despues.body.mensaje), despues.body.mensaje);
+      const estado = await llamar(api.agentEstadoOperativo);
+      ok("cyber: terminada, el estado no trae campaña ni Mystery Box", estado.body.campania === null && !estado.body.plantillas.MYSTERY_BOX, estado.body.campania);
+    });
+    op.campania.activa = false;
+    await conHora("2026-11-02T10:00:00", async () => {
+      const apagada = await ice(4);
+      ok("cyber: apagada a mano no aplica aunque esté en fecha", apagada.body.ok && /\$98\.000/.test(apagada.body.mensaje), apagada.body.mensaje);
+    });
+    store["settings/operativo"] = antes;
+  }
+
   // ── información de productos de la web (028import.com) ──
   {
     const web = require("../web");

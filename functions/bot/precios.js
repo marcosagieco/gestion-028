@@ -38,7 +38,13 @@ const pagaAntes = (medioPago) => medioPago === "transferencia" || medioPago === 
 
 // Importe de N unidades con los combos de la lista: el más grande que entre y después los más
 // chicos. null si esa cantidad no se puede armar (ej. gummies que solo se venden de a 2).
-function importePorCantidad(precios, cantidad) {
+// Con precios por unidad ("3x $17.500 c/u"), todas las unidades valen el precio del escalón más alto al
+// que llega la cantidad: 4 unidades pagan el de 3 y 7, el de 5.
+function importePorCantidad(precios, cantidad, porUnidad = false) {
+  if (porUnidad) {
+    const escalon = Object.keys(precios).map(Number).sort((a, b) => b - a).find((n) => n <= cantidad);
+    return escalon ? Math.round((precios[escalon] / escalon) * cantidad) : null;
+  }
   let resto = cantidad;
   let importe = 0;
   for (const n of Object.keys(precios).map(Number).sort((a, b) => b - a)) {
@@ -124,7 +130,7 @@ function cotizarProductos(op, items, { mayorista = false, conservar = false, med
     const centavosUSD = mayorista ? precioMayorista(m.producto, cantidadTramo) : null;
     const importe = mayorista
       ? (centavosUSD === null ? null : Math.round(centavosUSD * m.cantidad * (dolarMayorista > 0 ? dolarMayorista : 1) / 100))
-      : importePorCantidad(m.precios, m.cantidad);
+      : importePorCantidad(m.precios, m.cantidad, m.producto.porUnidad === true);
     if (importe === null) {
       throw new Error(`"${nombre}" no se vende de a ${m.cantidad} (opciones: ${Object.keys(m.precios).map((n) => `${n}x`).join(", ")})`);
     }
@@ -136,7 +142,9 @@ function cotizarProductos(op, items, { mayorista = false, conservar = false, med
       resto -= l.importe;
     });
   }
-  return { lineas, subtotalUSD, dolarMayorista, subtotal: lineas.reduce((s, l) => s + l.importe, 0) };
+  // Si lleva una Mystery Box (lista de la campaña): tiene envío gratis en CABA (campania.js).
+  const conMysteryBox = [...modelos.values()].some((m) => m.producto.lista === "mysteryBoxTexto");
+  return { lineas, subtotalUSD, dolarMayorista, conMysteryBox, subtotal: lineas.reduce((s, l) => s + l.importe, 0) };
 }
 
 module.exports = { PAGO_LABEL, formaDePago, pagaAntes, descuentoEfectivo, TRAMOS_DESCUENTO_EFECTIVO, cotizarProductos, MINIMO_MAYORISTA };

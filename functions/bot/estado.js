@@ -12,6 +12,7 @@ const { horaBuenosAires, horarioUber, hhmmDe, corta, salidasMoto, opcionesMoto, 
 const { pedidoEnCurso } = require("./seguimiento");
 const { TOLERANCIA_COMPROBANTE } = require("./comprobantes");
 const { cotizacionEnCurso } = require("./uber");
+const { leerOperativo } = require("./campania");
 
 // Los datos de cobro de cada cuenta. Se le mandan al cliente con PLANTILLA:ALIAS, nunca los escribe el modelo.
 const ALIASES = {
@@ -58,7 +59,7 @@ function plantillasDelDia(op, salidaFlash) {
 }
 
 const agentEstadoOperativo = conClave(async (req, res) => {
-  const op = (await db.collection("settings").doc("operativo").get()).data() || {};
+  const op = await leerOperativo();
   const [enCola, motos, pedidoActual, cotizacionUber] = await Promise.all([
     pedidosEnCola(),
     pedidosMoto(),
@@ -76,6 +77,8 @@ const agentEstadoOperativo = conClave(async (req, res) => {
     mayorista: { minimoUnidades: MINIMO_MAYORISTA, agrupacion: op.mayoristaAgrupacion || "por_modelo", dolarEnPesos: Number(op.dolarMayorista) > 0 ? Number(op.dolarMayorista) : null, derivarSoloNegociacion: true },
     pedidoActual,
     cotizacionUber,
+    // La campaña que corre ahora (CYBER 028): el bot la menciona y sigue su mensaje.
+    campania: op.campaniaActiva,
     plantillas: plantillasDelDia(op, proximoUber),
   });
 });

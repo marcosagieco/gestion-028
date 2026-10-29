@@ -59,11 +59,29 @@ const hoyBA = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argent
 const DIAS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
 const fechaLinda = (f) => { const [a, m, d] = f.split('-').map(Number); return `${DIAS[new Date(a, m - 1, d).getDay()]} ${d}/${m}`; };
 
+// Campaña (por ejemplo CYBER 028): entre su inicio y su fin el bot usa estas listas en lugar de las de
+// siempre y aplica el envío gratis. Se prende y se apaga sola por la fecha (functions/bot/campania.js).
+const CAMPANIA_VACIA = {
+  activa: false, nombre: '', inicio: '', fin: '', lanzamientoHasta: '', envioGratisDesde: '', mensaje: '',
+  preciosVapesTexto: '', appleTexto: '', mysteryBoxTexto: '',
+};
+// "AAAA-MM-DDTHH:mm" de ahora en Buenos Aires, para comparar con las fechas de la campaña.
+const ahoraBA = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date()).replace(' ', 'T');
+const estadoCampania = (c) => {
+  if (!c.activa) return { texto: 'Apagada: el bot usa las listas de siempre.', color: 'text-zinc-500' };
+  if (!c.inicio || !c.fin) return { texto: 'Falta el inicio o el fin.', color: 'text-amber-500' };
+  const ahora = ahoraBA();
+  if (ahora < c.inicio) return { texto: 'Programada: arranca sola el ' + c.inicio.replace('T', ' a las ') + '.', color: 'text-sky-500' };
+  if (ahora > c.fin) return { texto: 'Terminó: el bot ya usa las listas de siempre.', color: 'text-zinc-500' };
+  return { texto: 'Activa ahora: el bot usa estas listas hasta el ' + c.fin.replace('T', ' a las ') + '.', color: 'text-emerald-500' };
+};
+
 const DEFAULTS = {
   situacion: 'sin_demora', salidasMoto: { primera: '15:30', segunda: '18:30' }, aliasActivo: 'alias1', limitePorTanda: 10, diasSinDespacho: [],
   stockNicotinaTexto: '', stockThcTexto: '',
   preciosVapesTexto: '', preciosThcTexto: '', perfumesTexto: '', appleTexto: '',
   preciosMayoristaTexto: '', ofertasTexto: '', combosBateriasTexto: '', combosBateriasTitulo: 'Combos y baterias', dolarMayorista: '',
+  campania: CAMPANIA_VACIA,
 };
 
 export default function OperativoPage() {
@@ -78,13 +96,15 @@ export default function OperativoPage() {
 
   useEffect(() => {
     const unsub = onSnapshot(DOC_REF(), (snap) => {
-      if (snap.exists()) setForm({ ...DEFAULTS, ...snap.data(), salidasMoto: { ...DEFAULTS.salidasMoto, ...snap.data().salidasMoto } });
+      if (snap.exists()) setForm({ ...DEFAULTS, ...snap.data(), salidasMoto: { ...DEFAULTS.salidasMoto, ...snap.data().salidasMoto }, campania: { ...CAMPANIA_VACIA, ...snap.data().campania } });
       setLoaded(true);
     }, () => setLoaded(true));
     return unsub;
   }, []);
 
   const set = (k, v) => { setForm((f) => ({ ...f, [k]: v })); setSavedAt(null); };
+  const setCampania = (k, v) => { setForm((f) => ({ ...f, campania: { ...f.campania, [k]: v } })); setSavedAt(null); };
+  const campania = form.campania || CAMPANIA_VACIA;
 
   // Los días que ya pasaron no se muestran ni se guardan.
   const diasSinDespacho = (form.diasSinDespacho || []).filter((d) => d >= hoyBA()).sort();
@@ -102,6 +122,10 @@ export default function OperativoPage() {
     }
     if (form.dolarMayorista != null && form.dolarMayorista !== '' && !(Number.isFinite(Number(form.dolarMayorista)) && Number(form.dolarMayorista) > 0)) {
       alert('El valor del dolar debe ser mayor que cero.');
+      return;
+    }
+    if (campania.activa && (!campania.inicio || !campania.fin || campania.inicio >= campania.fin)) {
+      alert('La campaña necesita un inicio y un fin, y el fin tiene que ser después del inicio.');
       return;
     }
     setSaving(true);
@@ -124,6 +148,16 @@ export default function OperativoPage() {
         combosBateriasTexto: (form.combosBateriasTexto || '').trim(),
         combosBateriasTitulo: (form.combosBateriasTitulo || '').trim() || 'Combos y baterias',
         dolarMayorista: Number(form.dolarMayorista) > 0 ? Number(form.dolarMayorista) : null,
+        campania: {
+          activa: campania.activa === true,
+          nombre: (campania.nombre || '').trim(),
+          inicio: campania.inicio || '', fin: campania.fin || '', lanzamientoHasta: campania.lanzamientoHasta || '',
+          envioGratisDesde: Number(campania.envioGratisDesde) > 0 ? Number(campania.envioGratisDesde) : null,
+          mensaje: (campania.mensaje || '').trim(),
+          preciosVapesTexto: (campania.preciosVapesTexto || '').trim(),
+          appleTexto: (campania.appleTexto || '').trim(),
+          mysteryBoxTexto: (campania.mysteryBoxTexto || '').trim(),
+        },
         actualizadoEn: new Date().toISOString(),
       }, { merge: true });
       setSavedAt(Date.now());
@@ -360,6 +394,60 @@ Hasta el domingo`}
             <textarea aria-label="Informacion de combos y baterias" value={form.combosBateriasTexto}
               onChange={(e) => set('combosBateriasTexto', e.target.value)} rows={8}
               className={`w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none font-mono ${input}`} />
+          </div>
+        </div>
+
+        {/* Campaña: listas y envío gratis que valen solo entre el inicio y el fin */}
+        <div className={`rounded-2xl border p-5 mt-5 ${card}`}>
+          <div className="flex items-start justify-between gap-4 flex-wrap mb-3">
+            <div>
+              <p className={`text-xs font-bold uppercase tracking-wide ${label}`}>Campaña (por ejemplo CYBER 028)</p>
+              <p className={`text-[11px] mt-1 max-w-2xl ${label}`}>
+                Entre el inicio y el fin, el bot usa estas listas en lugar de las de arriba y aplica el envío gratis en CABA (solo moto).
+                Se prende y se apaga sola por la fecha. Una lista vacía no reemplaza la de siempre.
+                Para precios por cantidad escribí <b>2x $25.000 c/u</b>: con <b>c/u</b>, todas las unidades valen el precio del escalón más alto al que llega (4 unidades pagan el de 3).
+              </p>
+              <p className={`text-xs font-bold mt-2 ${estadoCampania(campania).color}`}>{estadoCampania(campania).texto}</p>
+            </div>
+            <label className="flex items-center gap-2 text-sm font-bold cursor-pointer">
+              <input type="checkbox" checked={campania.activa === true} onChange={(e) => setCampania('activa', e.target.checked)} className="w-4 h-4" />
+              Campaña prendida
+            </label>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3 mb-4">
+            {[
+              ['nombre', 'Nombre', 'text', 'CYBER 028'],
+              ['inicio', 'Empieza', 'datetime-local'],
+              ['fin', 'Termina', 'datetime-local'],
+              ['lanzamientoHasta', 'Envío gratis sin mínimo hasta', 'datetime-local'],
+              ['envioGratisDesde', 'Envío gratis desde ($)', 'number', '100000'],
+            ].map(([campo, texto, tipo, ejemplo]) => (
+              <label key={campo} className={`block text-sm ${label}`}>{texto}
+                <input type={tipo} value={campania[campo] ?? ''} placeholder={ejemplo || ''} onChange={(e) => setCampania(campo, e.target.value)}
+                  className={`mt-2 w-full min-w-0 rounded-lg border px-3 py-2.5 text-sm outline-none ${input}`} />
+              </label>
+            ))}
+          </div>
+          <p className={`text-[11px] mb-4 ${label}`}>
+            «Envío gratis sin mínimo hasta»: desde que empieza hasta esa hora, el envío en CABA es gratis sin mínimo si paga por transferencia (el lanzamiento).
+            La Mystery Box siempre tiene envío gratis en CABA.
+          </p>
+          <label className={`block text-sm mb-4 ${label}`}>Qué tiene que saber y decir el bot (sorteo, comunidad, cómo se llama la campaña)
+            <textarea value={campania.mensaje} onChange={(e) => setCampania('mensaje', e.target.value)} rows={4}
+              placeholder={'CYBER 028, del lunes 2 al miércoles 4 de noviembre.\nSorteo: $50.000 para gastar en la web. Para participar: comprá durante el Cyber y sumate a la comunidad de WhatsApp.'}
+              className={`mt-2 w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none ${input}`} />
+          </label>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {[
+              ['preciosVapesTexto', 'Precios de descartables de la campaña'],
+              ['appleTexto', 'Apple y accesorios de la campaña (con los combos)'],
+              ['mysteryBoxTexto', 'Mystery Box'],
+            ].map(([campo, texto]) => (
+              <label key={campo} className={`block text-sm ${label}`}>{texto}
+                <textarea value={campania[campo]} onChange={(e) => setCampania(campo, e.target.value)} rows={10}
+                  className={`mt-2 w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none font-mono ${input}`} />
+              </label>
+            ))}
           </div>
         </div>
 

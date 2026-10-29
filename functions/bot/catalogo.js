@@ -22,6 +22,7 @@ const LISTAS_DEL_PANEL = {
   PRECIOS_MAYORISTA: "preciosMayoristaTexto",
   OFERTAS: "ofertasTexto",
   COMBOS_BATERIAS: "combosBateriasTexto",
+  MYSTERY_BOX: "mysteryBoxTexto", // solo durante una campaña (campania.js)
 };
 const NOMBRE_LISTA = Object.fromEntries(Object.entries(LISTAS_DEL_PANEL).map(([nombre, campo]) => [campo, nombre]));
 // Listas minoristas en pesos: todas menos las de stock, la mayorista (en USD, ver precios.js) y las
@@ -34,6 +35,7 @@ const STOCK_DE = { preciosVapesTexto: "stockNicotinaTexto", preciosThcTexto: "st
 const SEPARADOR_RE = /^[\s⸻━─—–=_-]+$/;
 const PRECIO_RE = /\$\s*([\d.,]+)/;
 const CANTIDAD_RE = /(\d+)\s*x\b/i;
+const PRECIO_POR_UNIDAD_RE = /c\s*\/\s*u\b|cada un[oa]/i;
 
 function esNombre(linea) {
   const letras = linea.match(/\p{L}/gu) || [];
@@ -79,8 +81,12 @@ function parsearProductos(texto) {
     const antes = linea.slice(0, precio.index);
     const cantidad = Number((antes.match(CANTIDAD_RE) || [])[1]) || 1;
     const nombreEnLinea = sinEmojis(antes.replace(CANTIDAD_RE, " "));
+    // "3x $17.500 c/u" es el precio de cada unidad desde 3: el producto se cobra por escalones (ver precios.js).
+    // precios guarda siempre el total de esa cantidad.
+    const porUnidad = PRECIO_POR_UNIDAD_RE.test(linea.slice(precio.index));
+    const total = porUnidad ? monto * cantidad : monto;
     if ((nombreEnLinea.match(/\p{L}/gu) || []).length >= 3) {
-      productos.push({ nombre: nombreEnLinea, detalle: [...nombres, ...detalles].join(" "), lineas: [nombreEnLinea], precios: { [cantidad]: monto } });
+      productos.push({ nombre: nombreEnLinea, detalle: [...nombres, ...detalles].join(" "), lineas: [nombreEnLinea], precios: { [cantidad]: total }, ...(porUnidad ? { porUnidad } : {}) });
       continue;
     }
     if (!actual) {
@@ -89,7 +95,8 @@ function parsearProductos(texto) {
       nombres = [];
       detalles = [];
     }
-    actual.precios[cantidad] = monto;
+    actual.precios[cantidad] = total;
+    if (porUnidad) actual.porUnidad = true;
   }
   return productos.filter((p) => p.nombre);
 }

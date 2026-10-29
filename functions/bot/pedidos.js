@@ -19,6 +19,7 @@ const { fechaBA, corta, opcionesMoto, elegirSalida, pedidosMoto, pedidosEnCola, 
 const { esPedidoEnCurso, restriccionCambio } = require("./seguimiento");
 const { TOLERANCIA_COMPROBANTE, comprobantesDeLaCompra, copiarAlPedido, vincularAlPedido } = require("./comprobantes");
 const { precioParaElPedido, cerrarCotizaciones } = require("./uber");
+const { leerOperativo, envioGratisDeCampania } = require("./campania");
 
 const ENVIO_LABEL = { moto: "🛵 Moto mensajería", uber: "⚡ Envío flash (Uber)", correo: "📦 Correo (Vía Cargo)" };
 const CUENTAS_DE_COBRO = ["alias1", "alias2", "alias3"];
@@ -93,7 +94,7 @@ async function descarte(c, pedidoId) {
 function armarDetalle(d) {
   const { preview, modificacion, cuando, horaPedida, tipoEnvio, lineas, mayorista, subtotal, subtotalUSD, dolar, valorEnvio, envioSeguro,
     montoDescuento, total, envioCorreo, despachoMayorista, dir, ubicacion, correo, cliente, telefono, medioPago, aTransferir, comprobante,
-    adicionales, pagaAntesDeCargar, avisoHorario } = d;
+    adicionales, pagaAntesDeCargar, avisoHorario, envioGratis } = d;
   // Si no sale hoy, va arriba de todo: la gente no lee el detalle y después se queja.
   const noSaleHoy = cuando && cuando.dia !== "hoy";
   const avisoNoRegistrado = !preview ? null
@@ -115,7 +116,7 @@ function armarDetalle(d) {
     "💰 TOTALES",
     `Subtotal: ${pesos(subtotal)}`,
     mayorista ? `Subtotal mayorista: USD ${subtotalUSD} — dolar: ${pesos(dolar)}` : null,
-    valorEnvio ? `Envío: ${pesos(valorEnvio)}` : null,
+    envioGratis ? `🎁 Envío gratis (${envioGratis})` : valorEnvio ? `Envío: ${pesos(valorEnvio)}` : null,
     envioSeguro ? `🛡️ Envío seguro: ${pesos(PRECIO_ENVIO_SEGURO)}` : null,
     montoDescuento ? `💵 Descuento por efectivo: -${pesos(montoDescuento)}` : null,
     `TOTAL A PAGAR: ${pesos(total)}`,
@@ -217,8 +218,8 @@ async function procesarPedido(entrada) {
     }
   }
 
-  // ── Precios, siempre de las listas del día ──
-  const op = (await db.collection("settings").doc("operativo").get()).data() || {};
+  // ── Precios, siempre de las listas del día (con la campaña que corra, si hay) ──
+  const op = await leerOperativo();
   const conservar = !!anterior && entrada.items === undefined;
   let cotizacion;
   try { cotizacion = cotizarProductos(op, items, { mayorista, conservar, medioPago }); }
@@ -251,6 +252,9 @@ async function procesarPedido(entrada) {
   const avisoSinContar = sinContar.length ? ` No se tuvo en cuenta un comprobante de la charla: ${sinContar.join("; ")}.` : "";
 
   const subtotal = lineas.reduce((s, l) => s + l.importe, 0);
+  // Envío gratis de la campaña (moto en CABA): se descuenta acá para que el resumen y el cobro coincidan.
+  const envioGratis = envioGratisDeCampania(op, { tipoEnvio, esCABA: ubicacion?.esCABA === true, subtotal, medioPago, conMysteryBox: cotizacion.conMysteryBox });
+  if (envioGratis) valorEnvio = 0;
   const envioSeguro = tipoEnvio === "uber" && (b.envioSeguro === true || b.envioSeguro === "true");
   const montoDescuento = medioPago === "efectivo" && !mayorista ? descuentoEfectivo(subtotal) : 0;
   const total = subtotal + valorEnvio + (envioSeguro ? PRECIO_ENVIO_SEGURO : 0) - montoDescuento;
@@ -305,7 +309,7 @@ async function procesarPedido(entrada) {
   const avisoHorario = salidaHoy ? avisoDeHorario(op, tipoEnvio === "moto" ? cuando : null, tipoEnvio === "uber" ? cuando : null).aviso?.texto : null;
   const mensaje = armarDetalle({
     preview, modificacion: !!anterior, cuando, horaPedida, tipoEnvio, lineas, mayorista, subtotal, subtotalUSD, dolar, valorEnvio, envioSeguro,
-    montoDescuento, total, envioCorreo, despachoMayorista, dir, ubicacion, correo, cliente: b.cliente, telefono, medioPago, aTransferir,
+    montoDescuento, total, envioCorreo, despachoMayorista, dir, ubicacion, correo, cliente: b.cliente, telefono, medioPago, aTransferir, envioGratis,
     comprobante, adicionales: [...adicionales, ...nuevosAdicionales], pagaAntesDeCargar: conComprobante,
     avisoHorario: avisoHorario || null,
   });
