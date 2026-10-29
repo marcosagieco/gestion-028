@@ -26,6 +26,7 @@ total, salida, cupo y validación del pago. El backend no lee la conversación: 
 | `bot/uber.js` | `agentCrearCotizacionUber` y `agentAvisosCotizacionUber` |
 | `bot/estadisticas.js` | `agentEstadisticasBot` |
 | `bot/web.js` | `actualizarInfoWebDiario`, `agentActualizarInfoWeb` y la `infoWeb` de `agentBuscarCatalogo` |
+| `bot/campania.js` | La campaña vigente (por ejemplo CYBER 028): sus listas y su envío gratis |
 | `bot/catalogo.js` | Lectura de las listas del panel, búsqueda, stock y fichas THC |
 | `bot/precios.js` | Combos, lista mayorista, descuento por efectivo y formas de pago |
 | `bot/envios.js` | Ubicación, zonas, costo de la moto, correo y envío seguro |
@@ -63,6 +64,22 @@ Lo del día, en una sola llamada, antes de cada respuesta del agente.
 - `plantillas`: las fijas (`FORMAS_DE_ENTREGA`, `ENVIO_SEGURO`, `DESCUENTO_EFECTIVO`, `COMUNIDAD`,
   `COMPROBANTES_VALIDOS`, `GRACIAS`, `CONFIANZA`), `ALIAS` con los datos de la cuenta activa, las listas
   del panel y las de stock sin precios (`STOCK_PERFUMES`, `STOCK_APPLE_ACCESORIOS`).
+- `campania`: la campaña que corre ahora, o `null` (ver «Campaña»).
+
+## Campaña — `settings/operativo.campania`
+
+El depósito la carga en `/operativo` (sección Campaña): `{ activa, nombre, inicio, fin, lanzamientoHasta,
+envioGratisDesde, mensaje, preciosVapesTexto, appleTexto, mysteryBoxTexto }`, con fechas `AAAA-MM-DDTHH:mm`
+en hora de Buenos Aires. Entre `inicio` y `fin`, con `activa`, todos los endpoints usan sus listas en lugar
+de las de siempre (una lista vacía no reemplaza nada) y `MYSTERY_BOX` existe como plantilla y lista con
+precio. Fuera de fecha vuelven solas las de siempre.
+
+- `agentEstadoOperativo.campania`: `{ nombre, inicio, fin, envioGratisDesde, enLanzamiento, lanzamientoHasta, mensaje }`.
+- Precios por escalón: un renglón `3x $17.500 c/u` es el precio de cada unidad desde 3. Todas las
+  unidades valen el del escalón más alto al que llega la cantidad (4 pagan el de 3).
+- Envío gratis, solo moto en CABA: con una Mystery Box, desde `envioGratisDesde` de productos o, hasta
+  `lanzamientoHasta`, pagando por transferencia. Lo aplica `agentPedido` (el resumen dice
+  «🎁 Envío gratis (motivo)»).
 
 ## `agentBuscarCatalogo` — `{ consulta, sinPrecios }`
 
@@ -78,13 +95,15 @@ Lo que hay de lo que pidió el cliente, con el mismo buscador que después cobra
 ## `agentCotizarProductos` — `{ items: [{ producto, variante, cantidad }], medioPago, mayorista }`
 
 Precio de los productos con los combos. Para cotizar alcanza el modelo; el sabor se exige al cargar.
-Responde `{ items, subtotal, montoDescuento, totalProductos, mensaje }`. Si un sabor puede ser más de
-uno («menta» en un modelo con Cool Mint y Winter Mint), el error pide preguntarle al cliente.
+Responde `{ items, subtotal, montoDescuento, totalProductos, mensaje }`, y `conMysteryBox: true` si
+lleva una caja de la campaña. Si un sabor puede ser más de uno («menta» en un modelo con Cool Mint y
+Winter Mint), el error pide preguntarle al cliente.
 
 ## `agentCotizarEnvio` — `{ direccion }`
 
 `{ encontrada, cubiertoMoto, monto, km, zona, admiteEfectivo }`. La moto cubre CABA y el Corredor Norte
-(zona B) y se cobra por kilómetro real por calle ($1.000/km, mínimo $3.000).
+(zona B) y se cobra por kilómetro real por calle ($1.000/km, mínimo $3.000). Con una campaña y una
+dirección de CABA suma `envioGratis: { campania, desde, lanzamientoConTransferencia, conMysteryBox }`.
 
 ## `agentPedido`
 
