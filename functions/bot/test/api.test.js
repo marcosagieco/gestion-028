@@ -574,22 +574,23 @@ async function main() {
       activa: true, nombre: "CYBER 028", inicio: "2026-11-02T00:00", fin: "2026-11-04T23:59", lanzamientoHasta: "2026-11-02T04:00",
       envioGratisDesde: 100000, mensaje: "Sorteo de $50.000 en la web: comprá y sumate a la comunidad.",
       preciosVapesTexto: "💰 LISTA CYBER 028\n\n👑 ELFBAR ICE KING\n💰 1x $26.000\n🔥 2x $25.000 c/u\n🔥 3x $24.000 c/u\n🎁 5x $23.000 c/u",
-      mysteryBoxTexto: "🎁 MYSTERY BOX\n\n📦 MYSTERY BOX DESCARTABLES\nValuada en $69.000\n💰 $50.000",
+      // La caja nombra lo que trae: "Ice King" sigue siendo el descartable suelto.
+      mysteryBoxTexto: "🎁 MYSTERY BOX\n\n━━━━━━━━━━━━━\n\n📦 MYSTERY BOX DE 50 MIL CAJA 1\nIce King + V500\n💰 ~$69.000~ *$50.000*",
     };
-    const ice = (cantidad, extra = {}) => resumen({ items: [{ producto: "Elfbar Ice King", variante: "Peach", cantidad }], ...extra });
+    const ice = (cantidad, extra = {}) => resumen({ items: [{ producto: "Ice King", variante: "Peach", cantidad }], ...extra });
     await conHora("2026-11-02T10:00:00", async () => {
       const cuatro = await ice(4);
-      ok("cyber: 4 unidades pagan el precio de 3 c/u", cuatro.body.ok && /4x Elfbar Ice King - Peach: \$96\.000/i.test(cuatro.body.mensaje) && !/Envío gratis/.test(cuatro.body.mensaje), cuatro.body.mensaje);
+      ok("cyber: 4 unidades pagan el precio de 3 c/u", cuatro.body.ok && /4x Ice King - Peach: \$96\.000/i.test(cuatro.body.mensaje) && !/Envío gratis/.test(cuatro.body.mensaje), cuatro.body.mensaje);
       const seis = await ice(6);
       ok("cyber: 6 unidades pagan el de 5 c/u y desde $100.000 el envío es gratis en CABA", seis.body.ok && /\$138\.000/.test(seis.body.mensaje) && /🎁 Envío gratis \(CYBER 028/.test(seis.body.mensaje) && seis.body.total === 138000, seis.body.mensaje);
       const olivos = await ice(6, { direccion: { texto: "Maipú 1000, Olivos" } });
       ok("cyber: fuera de CABA el envío se cobra", olivos.body.ok && !/Envío gratis/.test(olivos.body.mensaje) && olivos.body.total > 138000, olivos.body.mensaje);
-      const caja = await resumen({ items: [{ producto: "Mystery Box Descartables", cantidad: 1 }] });
+      const caja = await resumen({ items: [{ producto: "Mystery Box de 50 mil caja 1", cantidad: 1 }] });
       ok("cyber: la Mystery Box se cobra y tiene envío gratis en CABA", caja.body.ok && caja.body.total === 50000 && /Mystery Box/.test(caja.body.mensaje), caja.body.mensaje);
       const estado = await llamar(api.agentEstadoOperativo);
-      ok("cyber: el estado del día trae la campaña y sus listas", estado.body.campania?.nombre === "CYBER 028" && /LISTA CYBER 028/.test(estado.body.plantillas.PRECIOS_VAPES) && /MYSTERY BOX DESCARTABLES/.test(estado.body.plantillas.MYSTERY_BOX) && /Sorteo/.test(estado.body.campania.mensaje), estado.body.campania);
+      ok("cyber: el estado del día trae la campaña y sus listas", estado.body.campania?.nombre === "CYBER 028" && /LISTA CYBER 028/.test(estado.body.plantillas.PRECIOS_VAPES) && /MYSTERY BOX DE 50 MIL/.test(estado.body.plantillas.MYSTERY_BOX) && /Sorteo/.test(estado.body.campania.mensaje), estado.body.campania);
       const envio = await llamar(api.agentCotizarEnvio, { query: { direccion: "Cabildo 2000, Belgrano" } });
-      ok("cyber: cotizar el envío avisa desde cuánto es gratis", envio.body.envioGratis?.desde === 100000 && envio.body.envioGratis.campania === "CYBER 028", envio.body);
+      ok("cyber: cotizar el envío avisa desde cuánto es gratis", envio.body.envioGratis?.desde === 100000 && envio.body.envioGratis.campania === "CYBER 028" && envio.body.envioGratis.conMysteryBox === true, envio.body);
     });
     await conHora("2026-11-02T03:00:00", async () => {
       const transferencia = await ice(1);

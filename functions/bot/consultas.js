@@ -46,15 +46,16 @@ const agentCotizarProductos = conClave(async (req, res) => {
     mensaje: [...lineas, `Total de productos: ${pesos(c.subtotal - descuento)}${descuento ? " (incluye descuento por efectivo)" : ""}`].join("\n") });
 });
 
-// /agentCotizarEnvio — { direccion }: si llega la moto y cuánto sale. Con una campaña con envío gratis y una
-// dirección de CABA, `envioGratis` dice desde cuánto (y si en el lanzamiento es gratis pagando por transferencia):
+// /agentCotizarEnvio — { direccion }: si llega la moto y cuánto sale. Con una campaña y una dirección de CABA,
+// `envioGratis` dice cuándo el envío sale gratis (con Mystery Box, desde cuánto y si en el lanzamiento alcanza
+// con pagar por transferencia):
 // el total final lo calcula armar_resumen.
 const agentCotizarEnvio = conClave(async (req, res) => {
   const [u, op] = await Promise.all([ubicar(datos(req).direccion), leerOperativo()]);
   if (!u) return res.json({ ok: true, encontrada: false });
   const c = op.campaniaActiva;
-  const envioGratis = c && u.esCABA && u.cubiertoMoto && (c.envioGratisDesde || c.enLanzamiento)
-    ? { campania: c.nombre, desde: c.envioGratisDesde, lanzamientoConTransferencia: c.enLanzamiento } : null;
+  const envioGratis = c && u.esCABA && u.cubiertoMoto
+    ? { campania: c.nombre, desde: c.envioGratisDesde, lanzamientoConTransferencia: c.enLanzamiento, conMysteryBox: true } : null;
   res.json({ ok: true, encontrada: true, cubiertoMoto: u.cubiertoMoto, monto: u.cubiertoMoto ? u.monto : null, km: u.km, zona: u.zona, admiteEfectivo: u.cubiertoMoto,
     ...(envioGratis ? { envioGratis } : {}) });
 });

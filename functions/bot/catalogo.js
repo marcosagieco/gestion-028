@@ -126,7 +126,9 @@ function buscarProducto(productos, nombre) {
       // Pesa más cuánto del pedido está en el renglón que cuánto del renglón cubre el pedido: si no,
       // una descripción corta ("🌿 Live Rosin" de otra cápsula) le gana al nombre ("DOZO LIVE ROSIN 2.5G").
       const cubierto = enRenglon.filter((w) => coincidencia(w, q) > 0).length / enRenglon.length;
-      const puntaje = 2 * parecido + cubierto;
+      // El nombre del producto pesa más que su descripción: una caja o un combo que nombra lo que trae
+      // ("Hawas Tropical + 9PM") no le gana al producto suelto ("HAWAS TROPICAL — RASASI").
+      const puntaje = 2 * parecido + cubierto + (renglon === p.nombre ? 0.5 : 0);
       if (!mejor || puntaje > mejor.puntaje) mejor = { puntaje, renglon };
     }
     if (mejor) candidatos.push({ p, ...mejor });
