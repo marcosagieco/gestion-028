@@ -641,6 +641,7 @@ function DetalleComercial({ pedido, dm }) {
           {comp && fila('A nombre de', comp.nombre)}
           {dc && fila('DNI', dc.dni)}
           {dc && fila('Localidad', `${dc.localidad} (CP ${dc.cp})`)}
+          {pedido.publicidad && fila('Llegó por', `Anuncio${pedido.publicidad.red ? ' de ' + pedido.publicidad.red.charAt(0).toUpperCase() + pedido.publicidad.red.slice(1) : ''}${pedido.publicidad.titulo ? ` «${pedido.publicidad.titulo}»` : ''}`)}
 
           {/* Un PDF (o una foto HEIC) no se puede mostrar con <img>: se abre en otra pestaña. */}
           {img && img.url && (IMAGEN_WEB.includes(img.contentType) ? (

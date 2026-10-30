@@ -7,7 +7,18 @@ const { conClave, rechazar } = require("./http");
 
 const entero = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Math.round(Number(v)) : 0);
 
-// Lo que se guarda de un día: solo contadores (enteros) y las derivaciones por motivo.
+// Los clientes y pedidos de cada anuncio: { "Título del anuncio": { clientes, pedidos } }, hasta 30.
+function porAnuncioDe(v) {
+  const salida = {};
+  for (const [titulo, n] of Object.entries(v && typeof v === "object" ? v : {}).slice(0, 30)) {
+    // Firestore no acepta puntos ni barras en las claves de un mapa.
+    const clave = String(titulo).replace(/[./\\[\]*`~]/g, " ").replace(/\s+/g, " ").trim().slice(0, 100);
+    if (clave) salida[clave] = { clientes: entero(n?.clientes), pedidos: entero(n?.pedidos) };
+  }
+  return salida;
+}
+
+// Lo que se guarda de un día: solo contadores (enteros), las derivaciones por motivo y la publicidad.
 function delDia(d) {
   const derivaciones = {};
   for (const [motivo, n] of Object.entries(d.derivaciones && typeof d.derivaciones === "object" ? d.derivaciones : {})) {
@@ -24,11 +35,17 @@ function delDia(d) {
     abandonos: entero(d.abandonos),
     derivaciones,
     totalDerivaciones: Object.values(derivaciones).reduce((s, n) => s + n, 0),
+    clientesPublicidad: entero(d.clientesPublicidad),
+    pedidosPublicidad: entero(d.pedidosPublicidad),
+    porAnuncio: porAnuncioDe(d.porAnuncio),
   };
 }
 
 // POST /agentEstadisticasBot — { dias: [{ dia, mensajes, clientes, resumenes, pedidos, clientesConPedido,
-// abandonos, derivaciones: { motivo: n } }] }. Cada día se reemplaza entero (n8n manda los totales).
+// abandonos, derivaciones: { motivo: n }, clientesPublicidad, pedidosPublicidad,
+// porAnuncio: { titulo: { clientes, pedidos } } }] }. Cada día se reemplaza entero (n8n manda los totales).
+// clientesPublicidad: los que llegaron ese día por un anuncio. pedidosPublicidad: los pedidos de ese día de
+// clientes que llegaron por un anuncio en los 30 días anteriores.
 const agentEstadisticasBot = conClave(async (req, res) => {
   const dias = Array.isArray(req.body?.dias) ? req.body.dias : null;
   if (!dias || !dias.length || dias.length > 40) return rechazar(res, "dias tiene que ser una lista de 1 a 40 días");

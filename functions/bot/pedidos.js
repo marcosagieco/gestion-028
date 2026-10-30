@@ -7,7 +7,8 @@
 //   { ...compra, desdeCompra }                    → carga el pedido, con los comprobantes de la compra
 //   { pedidoId, ...cambios, preview }             → calcula (preview) o aplica un cambio
 // compra = { telefono, idConversacion, idMensajeOrigen, cliente, items, tipoEnvio, direccion,
-//            salidaSeleccionada, horaSolicitada, medioPago, envioSeguro, datosCorreo, mayorista }
+//            salidaSeleccionada, horaSolicitada, medioPago, envioSeguro, datosCorreo, mayorista, publicidad }
+// publicidad = { red, anuncioId, titulo, llegoEn }: el anuncio por el que llegó el cliente (lo detecta n8n).
 "use strict";
 
 const { db } = require("./firebase");
@@ -23,6 +24,17 @@ const { leerOperativo, envioGratisDeCampania } = require("./campania");
 
 const ENVIO_LABEL = { moto: "🛵 Moto mensajería", uber: "⚡ Envío flash (Uber)", correo: "📦 Correo (Vía Cargo)" };
 const CUENTAS_DE_COBRO = ["alias1", "alias2", "alias3"];
+
+// El anuncio del que vino el cliente, limpio, o null.
+function publicidadDe(p) {
+  if (!p || typeof p !== "object") return null;
+  const anuncioId = String(p.anuncioId || "").replace(/\D/g, "").slice(0, 30);
+  const titulo = String(p.titulo || "").trim().slice(0, 120);
+  if (!anuncioId && !titulo) return null;
+  const llegoEn = Date.parse(p.llegoEn || "");
+  return { red: String(p.red || "").trim().toLowerCase().slice(0, 20) || null, anuncioId: anuncioId || null, titulo: titulo || null,
+    llegoEn: Number.isFinite(llegoEn) ? new Date(llegoEn).toISOString() : null };
+}
 
 const ok = (body) => ({ status: 200, body: { ok: true, ...body } });
 const error = (status, error, extra = {}) => ({ status, body: { ok: false, error, ...extra } });
@@ -337,6 +349,8 @@ async function procesarPedido(entrada) {
     idConversacion: String(b.idConversacion || "").trim() || null,
     idMensajeOrigen: String(b.idMensajeOrigen || "").trim() || null,
     origen: "bot_n8n",
+    // Un cambio no toca el origen del pedido.
+    publicidad: refAnterior ? anterior.publicidad || null : publicidadDe(b.publicidad),
     schemaVersion: 3,
     idempotencia,
     cliente: String(b.cliente).trim(),

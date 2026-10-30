@@ -54,9 +54,17 @@ export default function BotEstadisticas({ db, darkMode }) {
     t.abandonos += d.abandonos || 0;
     t.derivaciones += d.totalDerivaciones || 0;
     for (const [motivo, n] of Object.entries(d.derivaciones || {})) t.porMotivo[motivo] = (t.porMotivo[motivo] || 0) + n;
+    t.clientesPublicidad += d.clientesPublicidad || 0;
+    t.pedidosPublicidad += d.pedidosPublicidad || 0;
+    for (const [titulo, n] of Object.entries(d.porAnuncio || {})) {
+      const a = t.porAnuncio[titulo] || (t.porAnuncio[titulo] = { clientes: 0, pedidos: 0 });
+      a.clientes += n.clientes || 0;
+      a.pedidos += n.pedidos || 0;
+    }
     return t;
-  }, { clientes: 0, mensajes: 0, resumenes: 0, pedidos: 0, clientesConPedido: 0, abandonos: 0, derivaciones: 0, porMotivo: {} }), [visibles]);
+  }, { clientes: 0, mensajes: 0, resumenes: 0, pedidos: 0, clientesConPedido: 0, abandonos: 0, derivaciones: 0, porMotivo: {}, clientesPublicidad: 0, pedidosPublicidad: 0, porAnuncio: {} }), [visibles]);
   const motivos = Object.entries(totales.porMotivo).sort((a, b) => b[1] - a[1]);
+  const anuncios = Object.entries(totales.porAnuncio).sort((a, b) => b[1].clientes - a[1].clientes);
 
   const tarjeta = `rounded-2xl border p-4 ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`;
   const fondo = darkMode ? { background: 'linear-gradient(145deg,#121212,#1A1A1A)' } : {};
@@ -153,6 +161,41 @@ export default function BotEstadisticas({ db, darkMode }) {
                   </li>
                 ))}
               </ul>
+            )}
+          </div>
+
+          <div className={tarjeta} style={fondo}>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Clientes que llegaron por publicidad</p>
+            <p className={`text-xs mt-1 ${suave}`}>
+              Los que escribieron desde un anuncio de Facebook o Instagram. Un pedido cuenta como de publicidad si el cliente llegó por un anuncio en los 30 días anteriores.
+            </p>
+            {totales.clientesPublicidad === 0 && totales.pedidosPublicidad === 0 ? (
+              <p className={`text-sm mt-2 ${suave}`}>Ningún cliente llegó por un anuncio en este período.</p>
+            ) : (
+              <>
+                <div className="grid grid-cols-3 gap-3 mt-3">
+                  {[
+                    { label: 'Llegaron por un anuncio', valor: String(totales.clientesPublicidad), color: 'text-indigo-400' },
+                    { label: 'Pedidos de publicidad', valor: String(totales.pedidosPublicidad), color: 'text-emerald-400' },
+                    { label: 'Compran de los que llegan', valor: porcentaje(totales.pedidosPublicidad, totales.clientesPublicidad), color: darkMode ? 'text-zinc-200' : 'text-zinc-800' },
+                  ].map((t) => (
+                    <div key={t.label}>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 leading-tight">{t.label}</p>
+                      <p className={`text-xl font-black mt-1 tracking-tight ${t.color}`}>{t.valor}</p>
+                    </div>
+                  ))}
+                </div>
+                {anuncios.length > 0 && (
+                  <ul className="mt-3 space-y-1.5">
+                    {anuncios.map(([titulo, n]) => (
+                      <li key={titulo} className="flex items-center justify-between gap-3 text-sm">
+                        <span className="min-w-0 truncate">{titulo}</span>
+                        <span className="font-bold shrink-0">{n.clientes} <span className={`font-normal ${suave}`}>clientes ·</span> {n.pedidos} <span className={`font-normal ${suave}`}>pedidos</span></span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
           </div>
         </>

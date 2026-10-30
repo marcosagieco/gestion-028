@@ -240,6 +240,7 @@ async function main() {
       idConversacion: "485",
       idMensajeOrigen: "18106",
       comprobante: { numero: "182025450674" },
+      publicidad: { red: "Facebook", anuncioId: "120247224284170068", titulo: "Entrega rápida en tu zona", llegoEn: "2026-10-30T03:31:32.000Z" },
     };
     const r1 = await pedido(datos);
     const r2 = await pedido(datos);
@@ -247,6 +248,7 @@ async function main() {
     const p = store[`pedidos/${r1.body.pedidoId}`];
     ok("pedido: el mismo mensaje no crea duplicados", r1.body.ok && r2.body.reutilizado === true && r1.body.pedidoId === r2.body.pedidoId && pedidosGuardados.length === 1, { r1: r1.body, r2: r2.body });
     ok("pedido: guarda trazabilidad de Chatwoot", p.idConversacion === "485" && p.idMensajeOrigen === "18106" && p.origen === "bot_n8n" && p.schemaVersion === 3, p);
+    ok("pedido: guarda el anuncio del que vino el cliente", p.publicidad?.red === "facebook" && p.publicidad.anuncioId === "120247224284170068" && p.publicidad.titulo === "Entrega rápida en tu zona" && p.publicidad.llegoEn === "2026-10-30T03:31:32.000Z", p.publicidad);
 
     const estadoPendiente = await llamar(api.agentEstadoOperativo, { query: { telefono: "+54 9 11 5869-6086" } });
     ok("estado: un pedido pendiente nunca figura en camino", estadoPendiente.body.pedidoActual?.estado === "pendiente" && /todavía no figura como despachado/.test(estadoPendiente.body.pedidoActual.descripcion) && !estadoPendiente.body.pedidoActual.puedeAfirmarEnCamino, estadoPendiente.body.pedidoActual);
@@ -563,6 +565,10 @@ async function main() {
     ok("estadísticas: el día se reemplaza entero y lo inválido queda en 0", store["bot_estadisticas/2026-10-28"].mensajes === 130 && store["bot_estadisticas/2026-10-28"].clientes === 0 && store["bot_estadisticas/2026-10-28"].pedidos === 0 && store["bot_estadisticas/2026-10-28"].totalDerivaciones === 0, store["bot_estadisticas/2026-10-28"]);
     const mal = await mandar([{ dia: "28/10" }]);
     ok("estadísticas: rechaza un día mal escrito", mal.status === 400, mal.body);
+    await mandar([{ dia: "2026-10-28", clientesPublicidad: 7, pedidosPublicidad: 2, porAnuncio: { "Entrega rápida en tu zona": { clientes: 5, pedidos: 2 }, "Promo 2.0 / nueva": { clientes: 2 } } }]);
+    const pub = store["bot_estadisticas/2026-10-28"];
+    ok("estadísticas: publicidad por día y por anuncio (claves válidas para Firestore)", pub.clientesPublicidad === 7 && pub.pedidosPublicidad === 2
+      && pub.porAnuncio["Entrega rápida en tu zona"].pedidos === 2 && pub.porAnuncio["Promo 2 0 nueva"].clientes === 2 && pub.porAnuncio["Promo 2 0 nueva"].pedidos === 0, pub.porAnuncio);
     delete store["bot_estadisticas/2026-10-28"];
   }
 
