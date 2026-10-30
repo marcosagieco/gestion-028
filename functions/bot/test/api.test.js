@@ -327,7 +327,7 @@ async function main() {
     const b4 = await buscar("eclaire");
     ok("catálogo: perfumes sin lista de stock no traen sabores", b4.body.resultados[0] && !("saboresConStock" in b4.body.resultados[0]), b4.body);
     const b5 = await buscar("producto inventado xyz");
-    ok("catálogo: si no encuentra nada devuelve el índice para ofrecer lo más parecido", !b5.body.resultados.length && b5.body.indice && b5.body.indice.PRECIOS_VAPES && /no encontré/.test(b5.body.nota), b5.body);
+    ok("catálogo: si no encuentra nada devuelve el índice para ofrecer lo más parecido", !b5.body.resultados.length && b5.body.indice && b5.body.indice.PRECIOS_VAPES && /no lo tenemos\. No lo busques de nuevo/.test(b5.body.nota), b5.body);
     const b6 = await buscar("que vapes tenes");
     ok("catálogo: una consulta general no busca, devuelve el índice", !b6.body.resultados.length && /plantilla/.test(b6.body.nota), b6.body);
     ok("catálogo: devuelve pocos resultados, no la lista entera", (await buscar("elfbar")).body.resultados.length <= 6);

@@ -304,7 +304,8 @@ function buscarEnCatalogo(op, consulta, { conPrecios = true } = {}) {
   if (!respuesta.resultados.length) {
     respuesta.indice = Object.fromEntries(LISTAS_CON_PRECIO.map((campo) => [NOMBRE_LISTA[campo], parsearProductos(op[campo]).map((p) => p.nombre)]).filter(([, v]) => v.length));
     respuesta.nota = q.length
-      ? `no encontré "${consulta}" en las listas de hoy: no digas que no hay sin ofrecer lo más parecido del índice`
+      // Cierra la búsqueda: el modelo, si no, sigue probando nombres hasta agotar sus vueltas.
+      ? `"${consulta}" no está en las listas de hoy: no lo tenemos. No lo busques de nuevo con otras palabras: respondé ya que no lo tenemos y ofrecé 2 o 3 parecidos del índice (si querés sus sabores o precio, una sola búsqueda por el nombre exacto del índice)`
       : "consulta general: si quiere ver todo, mandá la plantilla de esa categoría; si no, preguntale qué busca";
   }
   return respuesta;
