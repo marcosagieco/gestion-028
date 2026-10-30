@@ -107,6 +107,10 @@ dirección de CABA suma `envioGratis: { campania, desde, lanzamientoConTransfere
 
 ## `agentPedido`
 
+`publicidad: { red, anuncioId, titulo, llegoEn }` (opcional, al cargar): el anuncio de Facebook o Instagram
+por el que llegó el cliente en los últimos 30 días. Lo detecta n8n (evento `anuncio` en `v2_eventos`), no
+el modelo. Queda en el pedido y un cambio no lo toca.
+
 | Pedido | Qué hace |
 |---|---|
 | `{ preview: true, ...compra }` | Calcula el resumen. No guarda nada |
@@ -183,7 +187,10 @@ Si no lee ningún producto, no pisa lo que había. `agentBuscarCatalogo` le suma
 `{ modelo, sabores? }` (las especificaciones del modelo y el perfil de los sabores buscados), solo si el
 modelo de la web coincide seguro con el del panel.
 
-## POST `agentEstadisticasBot` — `{ dias: [{ dia, mensajes, clientes, resumenes, pedidos, clientesConPedido, abandonos, derivaciones }] }`
+## POST `agentEstadisticasBot` — `{ dias: [{ dia, mensajes, clientes, resumenes, pedidos, clientesConPedido, abandonos, derivaciones, clientesPublicidad, pedidosPublicidad, porAnuncio }] }`
+
+`clientesPublicidad`: los que llegaron ese día por un anuncio. `pedidosPublicidad`: pedidos de ese día de
+clientes que llegaron por un anuncio en los 30 días anteriores. `porAnuncio`: `{ titulo: { clientes, pedidos } }`.
 
 Los totales de cada día (`dia` en AAAA-MM-DD, hora de Buenos Aires) para el panel. Los cuenta n8n cada
 hora («028 v2 - estadísticas», con los eventos que anota el bot en `v2_eventos`) y los manda acá. Cada día
