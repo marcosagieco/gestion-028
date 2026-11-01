@@ -33,7 +33,7 @@ const LISTAS_CON_PRECIO = Object.values(LISTAS_DEL_PANEL)
 const STOCK_DE = { preciosVapesTexto: "stockNicotinaTexto", preciosThcTexto: "stockThcTexto" };
 
 const SEPARADOR_RE = /^[\s⸻━─—–=_-]+$/;
-const PRECIO_RE = /\$\s*([\d.,]+)/;
+const PRECIOS_RE = /\$\s*([\d.,]+)/g;
 const CANTIDAD_RE = /(\d+)\s*x\b/i;
 const PRECIO_POR_UNIDAD_RE = /c\s*\/\s*u\b|cada un[oa]/i;
 
@@ -65,7 +65,10 @@ function parsearProductos(texto) {
       actual = null;
       continue;
     }
-    const precio = linea.match(PRECIO_RE);
+    // Con dos precios en el renglón, el primero es el de antes y el último el que vale: "2x ~$56.000~ *$52.000*"
+    // muchas veces queda guardado sin el tachado ("2x $56.000 $52.000").
+    const montos = [...linea.matchAll(PRECIOS_RE)];
+    const precio = montos[0] || null;
     if (precio) vienePrecio = true;
     if (!precio) {
       if (vienePrecio) bloque = []; // texto después de precios: empieza el bloque de otro producto
@@ -76,7 +79,7 @@ function parsearProductos(texto) {
       bloque.push(sinEmojis(linea));
       continue;
     }
-    const monto = parseInt(precio[1].replace(/\D/g, ""), 10);
+    const monto = parseInt(montos[montos.length - 1][1].replace(/\D/g, ""), 10);
     if (!(monto > 0)) continue;
     const antes = linea.slice(0, precio.index);
     const cantidad = Number((antes.match(CANTIDAD_RE) || [])[1]) || 1;

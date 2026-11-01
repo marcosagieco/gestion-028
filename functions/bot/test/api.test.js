@@ -272,6 +272,13 @@ async function main() {
     ok("combo: 1 + 1 gummies de sabores distintos arman el pack de 2", r2.body.ok && r2.body.mensaje.includes("Subtotal: $25.000"), r2.body);
     const r3 = await resumen({ items: [{ producto: "Elfbar Ice King", variante: "Peach", cantidad: 2 }, { producto: "Elfbar EB Create", variante: "Golden Berry", cantidad: 1 }] });
     ok("combo: modelos distintos no se mezclan", r3.body.ok && r3.body.mensaje.includes("Subtotal: $71.000"), r3.body.mensaje);
+    // La lista guardada sin el tachado: "2x $56.000 $52.000". Vale el último precio del renglón.
+    const op = store["settings/operativo"];
+    const lista = op.preciosVapesTexto;
+    op.preciosVapesTexto = lista + "\n\n━━━━━━━━━━━━━\n\n👑 ELFBAR ICE KING 40K NUEVO\n💰 1x $28.000\n🔥 2x $56.000 $52.000\n🎁 5x $140.000 $122.500";
+    const r4 = await llamar(api.agentCotizarProductos, { method: "POST", body: { items: ["Grape Ice", "Miami Mint", "Sour Apple Ice", "Strawberry Ice", "Peach"].map((variante) => ({ producto: "Elfbar Ice King 40K Nuevo", variante, cantidad: 1 })) } });
+    ok("combo: con dos precios en el renglón vale el último (lista sin tachado)", r4.body.ok && r4.body.subtotal === 122500, r4.body);
+    op.preciosVapesTexto = lista;
   }
   // ── preview: cotiza, pero no promete despacho hasta que el pedido quede cargado ──
   {
