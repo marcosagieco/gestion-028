@@ -306,6 +306,14 @@ async function main() {
     const r4 = await llamar(api.agentCotizarProductos, { method: "POST", body: { items: ["Grape Ice", "Miami Mint", "Sour Apple Ice", "Strawberry Ice", "Peach"].map((variante) => ({ producto: "Elfbar Ice King 40K Nuevo", variante, cantidad: 1 })) } });
     ok("combo: con dos precios en el renglón vale el último (lista sin tachado)", r4.body.ok && r4.body.subtotal === 122500, r4.body);
     op.preciosVapesTexto = lista;
+    // Formato del equipo (Mystery Box del Cyber, 2/11): "📦 BOX $100.000" bajo el título de la sección y
+    // "Valuada en $120.000" / "Envío gratis desde $100.000", que no son precios.
+    {
+      const { parsearProductos } = require("../catalogo");
+      const cajas = parsearProductos("🚀 *ENVÍO GRATIS EN CABA A PARTIR DE $100.000*\n\n━━━━━━━━━━━━━\n\n💨 *MYSTERY BOX DESCARTABLES*\n\n📦 *BOX $50.000*\n🎁 Valuada en *$65.000*\n\n📦 *BOX $100.000*\n🎁 Valuada en *$120.000*\n\n━━━━━━━━━━━━━\n\n🌸 *MYSTERY BOX PERFUMES*\n\n📦 *BOX $100.000*\n🎁 Valuada en *$120.000*\n\n━━━━━━━━━━━━━\n\n🚚 *Envío gratis en CABA desde $100.000*");
+      ok("lista: «BOX $X» toma el nombre de su sección y «Valuada en» o «envío gratis desde» no son productos",
+        JSON.stringify(cajas.map((p) => [p.nombre, p.precios[1]])) === JSON.stringify([["MYSTERY BOX DESCARTABLES DE 50 MIL", 50000], ["MYSTERY BOX DESCARTABLES DE 100 MIL", 100000], ["MYSTERY BOX PERFUMES", 100000]]), cajas.map((p) => p.nombre));
+    }
     // La web escribe el sabor sin guion ("RAZZ B POP"); la lista de stock, con guion.
     const stock = op.stockNicotinaTexto;
     op.stockNicotinaTexto = stock + "\n\n━━━━━━━━━━━━━\n\n👾 SABOR GUION 50K\n\nStrawberry Razz B-Pop 🍓🫐🍬 (10)";

@@ -36,6 +36,11 @@ const SEPARADOR_RE = /^[\s⸻━─—–=_-]+$/;
 const PRECIOS_RE = /\$\s*([\d.,]+)/g;
 const CANTIDAD_RE = /(\d+)\s*x\b/i;
 const PRECIO_POR_UNIDAD_RE = /c\s*\/\s*u\b|cada un[oa]/i;
+// Un monto que no es un precio de venta: "Valuada en $65.000", "Envío gratis desde $100.000", "¡Ahorrás $10.000!".
+const INFORMATIVO_RE = /valuad[ao]s?\b|\bdesde\b|a partir de|env[ií]o gratis|ahorr[aá]s?\b/i;
+// Un precio con nombre genérico ("📦 BOX $100.000" bajo "MYSTERY BOX DESCARTABLES"): el producto es la sección.
+const GENERICO_RE = /^(box|caja|combo|pack|kit)$/i;
+const enMiles = (monto) => (monto % 1000 === 0 ? `${monto / 1000} MIL` : pesos(monto));
 
 function esNombre(linea) {
   const letras = linea.match(/\p{L}/gu) || [];
@@ -68,7 +73,8 @@ function parsearProductos(texto) {
     // Con dos precios en el renglón, el primero es el de antes y el último el que vale: "2x ~$56.000~ *$52.000*"
     // muchas veces queda guardado sin el tachado ("2x $56.000 $52.000").
     const montos = [...linea.matchAll(PRECIOS_RE)];
-    const precio = montos[0] || null;
+    const informativo = montos.length && INFORMATIVO_RE.test(linea.slice(0, montos[0].index));
+    const precio = (!informativo && montos[0]) || null;
     if (precio) vienePrecio = true;
     if (!precio) {
       if (vienePrecio) bloque = []; // texto después de precios: empieza el bloque de otro producto
@@ -88,6 +94,10 @@ function parsearProductos(texto) {
     // precios guarda siempre el total de esa cantidad.
     const porUnidad = PRECIO_POR_UNIDAD_RE.test(linea.slice(precio.index));
     const total = porUnidad ? monto * cantidad : monto;
+    if (GENERICO_RE.test(nombreEnLinea.trim()) && nombres.length) {
+      productos.push({ nombre: nombres.join(" "), detalle: detalles.join(" "), lineas: [...bloque], precios: { [cantidad]: total }, seccion: nombres.join(" "), montoSeccion: monto });
+      continue;
+    }
     if ((nombreEnLinea.match(/\p{L}/gu) || []).length >= 3) {
       productos.push({ nombre: nombreEnLinea, detalle: [...nombres, ...detalles].join(" "), lineas: [nombreEnLinea], precios: { [cantidad]: total }, ...(porUnidad ? { porUnidad } : {}) });
       continue;
@@ -100,6 +110,15 @@ function parsearProductos(texto) {
     }
     actual.precios[cantidad] = total;
     if (porUnidad) actual.porUnidad = true;
+  }
+  // Varias cajas en la misma sección se distinguen por el monto: "MYSTERY BOX DESCARTABLES DE 100 MIL".
+  const porSeccion = {};
+  for (const p of productos) if (p.seccion) porSeccion[p.seccion] = (porSeccion[p.seccion] || 0) + 1;
+  for (const p of productos.filter((x) => x.seccion)) {
+    if (porSeccion[p.seccion] > 1) p.nombre = `${p.seccion} DE ${enMiles(p.montoSeccion)}`;
+    p.lineas = [p.nombre, ...p.lineas];
+    delete p.seccion;
+    delete p.montoSeccion;
   }
   return productos.filter((p) => p.nombre);
 }
