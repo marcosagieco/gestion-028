@@ -34,13 +34,15 @@ function colRef(col) {
     doc: (id) => docRef(col, id),
     async add(data) { const id = "id" + autoId++; store[`${col}/${id}`] = { ...data }; return docRef(col, id); },
     where(campo, op, valor) { filtros.push({ campo, op, valor }); return this; },
+    limit(n) { this.maximo = n; return this; },
     async get() {
       const docs = Object.keys(store)
         .filter((k) => k.startsWith(col + "/"))
-        .map((k) => ({ id: k.slice(col.length + 1), data: () => store[k] }))
+        .map((k) => ({ id: k.slice(col.length + 1), exists: true, data: () => store[k] }))
         .filter((d) => filtros.every(({ campo, op, valor }) =>
-          op === "in" ? valor.includes(d.data()[campo]) : d.data()[campo] === valor));
-      return { docs, size: docs.length };
+          op === "in" ? valor.includes(d.data()[campo]) : d.data()[campo] === valor))
+        .slice(0, this.maximo ?? Infinity);
+      return { docs, size: docs.length, empty: !docs.length };
     },
   };
 }

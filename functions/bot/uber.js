@@ -7,9 +7,11 @@ const { db } = require("./firebase");
 const { conClave, rechazar } = require("./http");
 const { normalizar, normalizarTelefono, hashCorto, pesos } = require("./texto");
 const { mismaDireccion } = require("./envios");
-const { fechaBA } = require("./salidas");
+const { fechaBA, horaBuenosAires, horarioUber, salidaUber, diasSinDespacho } = require("./salidas");
+const { leerOperativo } = require("./campania");
 
 const VIGENCIA_MS = 45 * 60000;
+const MENSAJE_SIN_COBERTURA = "Hoy el Flash no llega a esa dirección: ofrecé correo (sucursal o domicilio) o moto si llega. Si prefiere Flash otro día, ese día pedí la cotización de nuevo.";
 const AVISO_VENCIDO = "como pasaron más de 45 minutos, te tengo que cotizar el Uber de vuelta";
 
 const fecha = (v) => Date.parse(v || "") || 0;
@@ -18,6 +20,8 @@ const inicioPrecio = (c) => fecha(c.informadoEn || c.resueltoEn || c.procesadoEn
 const vencida = (c) => Number(c?.montoUber) > 0 && (!inicioPrecio(c) || Date.now() > inicioPrecio(c) + VIGENCIA_MS);
 const vence = (c) => new Date(inicioPrecio(c) + VIGENCIA_MS).toISOString();
 const sinCobertura = (c) => c.sinCoberturaUber === true || c.estado === "no_llegamos" || (c.estado === "procesado" && !(Number(c.montoUber) > 0));
+// «No llegamos» vale para el día en que lo dijo el depósito: otro día el cliente puede volver a pedir Flash.
+const sinCoberturaHoy = (c) => sinCobertura(c) && fechaBA(new Date(fecha(c.resueltoEn || c.procesadoEn || c.createdAt))) === fechaBA(new Date());
 const abierta = (c) => !c.pedidoId && !c.usadaEnPedidoId && !c.canceladaEn && !["cancelada", "sustituida"].includes(c.estado);
 
 // Lo del pedido que se guarda como borrador en la cotización, para que el depósito vea qué se cotiza.
@@ -66,7 +70,7 @@ async function cotizacionEnCurso(telefono) {
   if (conPrecioVigente(c)) return { id: c.id, estado: "cotizado", montoUber: Number(c.montoUber), direccion: c.direccion || "", venceEn: vence(c) };
   if (c.estado === "pendiente") return { id: c.id, estado: "pendiente", direccion: c.direccion || "" };
   if (vencida(c)) return { id: c.id, estado: "vencido", direccion: c.direccion || "", montoAnterior: Number(c.montoUber), necesitaRecotizacion: true, mensaje: AVISO_VENCIDO };
-  if (sinCobertura(c)) return { id: c.id, estado: "sin_cobertura", direccion: c.direccion || "", mensaje: "Para esa dirección ofrecemos correo. Preguntá si prefiere sucursal o domicilio; no vuelvas a pedir Uber por tu cuenta." };
+  if (sinCoberturaHoy(c)) return { id: c.id, estado: "sin_cobertura_hoy", direccion: c.direccion || "", mensaje: MENSAJE_SIN_COBERTURA };
   return null;
 }
 
@@ -82,8 +86,18 @@ async function cerrarCotizaciones(telefono, pedidoId, tipoEnvio, direccion) {
   }
 }
 
+// Si el depósito está cotizando Flash ahora y, si no, cuándo arranca (para decírselo al cliente).
+function horarioDelFlash(op, ahora = new Date()) {
+  const a = horaBuenosAires(ahora);
+  const h = horarioUber(a.dia, a.fecha, op.horariosUberPorFecha || {});
+  if (h && a.minutos >= h.inicio && a.minutos < h.fin && !diasSinDespacho(op).includes(a.fecha)) return { abierto: true };
+  const proximo = salidaUber(op, 0, ahora);
+  return { abierto: false, mensaje: `Ahora no se cotiza Flash: la cotización ya quedó pedida y el depósito la cotiza ${proximo ? `${proximo.dia} desde las ${proximo.hora}` : "el próximo día con despacho"}. Decile eso al cliente y que el precio le llega por acá; no la vuelvas a pedir.` };
+}
+
 // POST /agentCrearCotizacionUber — { idConversacion, telefonoCliente, nombreCliente, direccion, explicacion, pedido }
 // Si ya hay un precio vigente o una cotización pendiente para esa compra y dirección, la devuelve.
+// avisarAlEquipo: hay que avisarle al depósito por WhatsApp (una cotización nueva o una que no contestó).
 const agentCrearCotizacionUber = conClave(async (req, res) => {
   const b = req.body || {};
   const idConversacion = String(b.idConversacion || "").trim();
@@ -97,14 +111,22 @@ const agentCrearCotizacionUber = conClave(async (req, res) => {
     return res.json({ ok: true, creada: false, yaCotizado: true, id: vigente.id, montoUber: Number(vigente.montoUber), venceEn: vence(vigente),
       mensaje: `El precio del Flash vigente es ${pesos(vigente.montoUber)} hasta ${vence(vigente)}.` });
   }
-  // Una pendiente que el depósito no contestó en 45 minutos, o un precio vencido, se vuelven a pedir.
-  const reintento = previa && (vencida(previa) || (previa.estado === "pendiente" && Date.now() - creada(previa) >= VIGENCIA_MS));
-  if (previa && !reintento && previa.estado === "pendiente") {
-    return res.json({ ok: true, creada: false, yaPendiente: true, id: previa.id, mensaje: "Ya hay una cotización pendiente para esta compra y dirección: esperá al depósito, no pidas otra." });
+  const horario = horarioDelFlash(await leerOperativo());
+  // Una sola cotización abierta por compra y dirección: si el depósito no la contestó en 45 minutos, se le
+  // vuelve a avisar de la misma (en horario). Con dos, el precio cargado en la vieja se descartaba sin avisar.
+  if (previa && previa.estado === "pendiente") {
+    const sinRespuesta = Date.now() - fecha(previa.reavisadaEn || previa.createdAt) >= VIGENCIA_MS;
+    if (sinRespuesta && horario.abierto) {
+      await db.collection("cotizaciones_uber").doc(previa.id).update({ reavisadaEn: new Date().toISOString() });
+      return res.json({ ok: true, creada: false, yaPendiente: true, avisarAlEquipo: true, id: previa.id,
+        mensaje: "El depósito todavía no la cotizó: se le volvió a avisar. Decile al cliente que se la pasás apenas esté." });
+    }
+    return res.json({ ok: true, creada: false, yaPendiente: true, id: previa.id,
+      mensaje: horario.abierto ? "Ya hay una cotización pendiente para esta compra y dirección: esperá al depósito, no pidas otra." : horario.mensaje });
   }
-  if (previa && !reintento && sinCobertura(previa)) {
-    return res.json({ ok: true, creada: false, sinCobertura: true, id: previa.id, mensaje: "El Flash no llega a esa dirección: ofrecele correo a sucursal o domicilio." });
-  }
+  if (previa && sinCoberturaHoy(previa)) return res.json({ ok: true, creada: false, sinCobertura: true, id: previa.id, mensaje: MENSAJE_SIN_COBERTURA });
+  // Un precio vencido se vuelve a pedir: la cotización vieja ya está cerrada.
+  const reintento = previa && vencida(previa);
   // Id determinista + transacción: dos llamadas simultáneas no pueden abrir dos cotizaciones.
   const clave = hashCorto(`${telefonoCliente}|${normalizar(direccion)}|${ciclo}${reintento ? "|reintento:" + previa.id : ""}`);
   const ref = db.collection("cotizaciones_uber").doc(`compra-${clave}`);
@@ -117,14 +139,15 @@ const agentCrearCotizacionUber = conClave(async (req, res) => {
       pedidoBorrador: b.pedido && typeof b.pedido === "object" ? JSON.parse(JSON.stringify(camposDelPedido(b.pedido))) : null,
       estado: "pendiente", montoUber: null, cicloCompra: ciclo,
       cotizacionAnteriorId: reintento ? previa.id : null,
-      recotizacionPorVencimiento: !!reintento && vencida(previa),
+      recotizacionPorVencimiento: !!reintento,
       createdAt: new Date().toISOString(),
     });
     return true;
   });
   if (!nueva) return res.json({ ok: true, creada: false, yaPendiente: true, id: ref.id, mensaje: "Ya hay una cotización pendiente para esta compra y dirección: esperá al depósito, no pidas otra." });
-  const porVencimiento = !!reintento && vencida(previa);
-  res.json({ ok: true, creada: true, id: ref.id, recotizacionPorVencimiento: porVencimiento, ...(porVencimiento ? { mensaje: AVISO_VENCIDO } : {}) });
+  const porVencimiento = !!reintento;
+  const mensaje = !horario.abierto ? horario.mensaje : porVencimiento ? AVISO_VENCIDO : null;
+  res.json({ ok: true, creada: true, avisarAlEquipo: true, id: ref.id, recotizacionPorVencimiento: porVencimiento, ...(mensaje ? { mensaje } : {}) });
 });
 
 // Una cotización que dejó de ser la de la compra (se canceló, se sustituyó o el cliente ya compró)

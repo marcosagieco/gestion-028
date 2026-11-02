@@ -157,6 +157,33 @@ async function main() {
     }
     const rOtra = await llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "14b", telefonoCliente: "+54 9 11 4444-0013", direccion: "Avenida 9 de Julio 1500" } });
     ok("uber: otra altura de la misma calle es otra dirección", rOtra.body.ok && !rOtra.body.yaPendiente, rOtra.body);
+    // Una sola cotización por compra: sin respuesta en 45 minutos se le vuelve a avisar al depósito de la
+    // misma; «No llegamos» vale para ese día; fuera de horario se pide igual y el bot dice cuándo se cotiza.
+    {
+      const flash = (tel, extra = {}) => llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "1028", telefonoCliente: tel, direccion: "Avenida del Límite 2005, Ibarlucea", ...extra } });
+      const deEse = (tel) => Object.keys(store).filter((k) => k.startsWith("cotizaciones_uber/") && store[k].telefonoCliente === tel);
+      await conHora("2026-11-03T15:00:00", async () => {
+        const nueva = await flash("5493415836038");
+        ok("flash: una cotización nueva se le avisa al equipo", nueva.body.creada && nueva.body.avisarAlEquipo && !nueva.body.mensaje, nueva.body);
+        store[`cotizaciones_uber/${nueva.body.id}`].createdAt = new Date(Date.now() - 50 * 60000).toISOString();
+        const sinRespuesta = await flash("5493415836038");
+        ok("flash: sin respuesta en 45 min se reavisa la misma, no se crea otra", sinRespuesta.body.yaPendiente && sinRespuesta.body.avisarAlEquipo && sinRespuesta.body.id === nueva.body.id && deEse("5493415836038").length === 1, sinRespuesta.body);
+        const enseguida = await flash("5493415836038");
+        ok("flash: recién reavisada no se vuelve a avisar", enseguida.body.yaPendiente && !enseguida.body.avisarAlEquipo, enseguida.body);
+        Object.assign(store[`cotizaciones_uber/${nueva.body.id}`], { estado: "procesado", sinCoberturaUber: true, resueltoEn: new Date().toISOString(), procesadoEn: new Date().toISOString() });
+        const mismoDia = await flash("5493415836038");
+        ok("flash: «No llegamos» bloquea el resto del día", mismoDia.body.sinCobertura && /otro día/.test(mismoDia.body.mensaje), mismoDia.body);
+      });
+      await conHora("2026-11-04T14:00:00", async () => {
+        const otroDia = await flash("5493415836038");
+        ok("flash: al día siguiente se puede volver a pedir", otroDia.body.creada && otroDia.body.avisarAlEquipo, otroDia.body);
+      });
+      await conHora("2026-11-04T21:00:00", async () => {
+        const noche = await flash("5491100001111");
+        ok("flash: fuera de horario se pide igual y dice cuándo se cotiza", noche.body.creada && /Ahora no se cotiza Flash/.test(noche.body.mensaje) && /mañana desde las 13:30/.test(noche.body.mensaje), noche.body);
+      });
+      for (const k of Object.keys(store)) if (k.startsWith("cotizaciones_uber/") && ["5493415836038", "5491100001111"].includes(store[k].telefonoCliente)) delete store[k];
+    }
     const r3 = await resumen({ tipoEnvio: "uber", envioSeguro: true });
     ok("uber: usa el monto que cargó el depósito + envío seguro", r3.body.total === 26000 + 8500 + 1990, r3.body);
     const r4 = await resumen({ tipoEnvio: "uber", medioPago: "efectivo" });
@@ -279,6 +306,19 @@ async function main() {
     const r4 = await llamar(api.agentCotizarProductos, { method: "POST", body: { items: ["Grape Ice", "Miami Mint", "Sour Apple Ice", "Strawberry Ice", "Peach"].map((variante) => ({ producto: "Elfbar Ice King 40K Nuevo", variante, cantidad: 1 })) } });
     ok("combo: con dos precios en el renglón vale el último (lista sin tachado)", r4.body.ok && r4.body.subtotal === 122500, r4.body);
     op.preciosVapesTexto = lista;
+    // La web escribe el sabor sin guion ("RAZZ B POP"); la lista de stock, con guion.
+    const stock = op.stockNicotinaTexto;
+    op.stockNicotinaTexto = stock + "\n\n━━━━━━━━━━━━━\n\n👾 SABOR GUION 50K\n\nStrawberry Razz B-Pop 🍓🫐🍬 (10)";
+    op.preciosVapesTexto = lista + "\n\n━━━━━━━━━━━━━\n\n👾 SABOR GUION 50K\n💰 1x $25.000";
+    const guion = await llamar(api.agentCotizarProductos, { method: "POST", body: { items: [{ producto: "Sabor Guion", variante: "STRAWBERRY RAZZ B POP", cantidad: 2 }] } });
+    ok("sabor: «B POP» de la web es el «B-Pop» del stock", guion.body.ok && guion.body.subtotal === 50000, guion.body);
+    op.stockNicotinaTexto = stock;
+    op.preciosVapesTexto = lista;
+    // Pedido armado en la web con cupón: se respeta el descuento y queda a la vista.
+    const cupon = await resumen({ items: [{ producto: "Elfbar EB Create", variante: "Golden Berry", cantidad: 2 }], cuponWeb: "{\"codigo\":\"trato-myrx6b\",\"monto\":\"$5.300\"}" });
+    ok("cupón web: descuenta el monto y lo muestra con el código", cupon.body.ok && /Cupón de la web TRATO-MYRX6B: -\$5\.300/.test(cupon.body.mensaje) && /Subtotal: \$40\.000/.test(cupon.body.mensaje), cupon.body.mensaje);
+    const exagerado = await resumen({ items: [{ producto: "Elfbar EB Create", variante: "Golden Berry", cantidad: 2 }], cuponWeb: { codigo: "X", monto: 90000 } });
+    ok("cupón web: un monto mayor que los productos no se aplica", exagerado.body.ok && !/Cupón/.test(exagerado.body.mensaje), exagerado.body.mensaje);
   }
   // ── preview: cotiza, pero no promete despacho hasta que el pedido quede cargado ──
   {
@@ -676,6 +716,14 @@ async function main() {
     ok("suelto: copia la foto a Storage y la sirve por serveComprobante", doc.comprobanteImagen.url.endsWith("?comprobante=" + r.body.id) && guardadoEnStorage.some((p) => p.includes("sueltos/" + r.body.id + ".jpg")), doc.comprobanteImagen);
     const otra = await guardar({ url: "https://chatwoot/x.jpg", lectura: JSON.stringify(celina) });
     ok("suelto: el mismo comprobante no se guarda dos veces (y acepta la lectura como JSON)", otra.body.reutilizado && otra.body.id === r.body.id, otra.body);
+    // El mismo comprobante en otro archivo y otro mensaje: es la misma transferencia, se cuenta el reenvío.
+    const antesReenvio = Object.keys(store).filter((k) => k.startsWith("comprobantes/")).length;
+    const reenviado = await guardar({ url: "https://chatwoot/x-otra-vez.jpg", idMensaje: 10, lectura: { ...celina, numeroOperacion: "1855-6332-9942" } });
+    ok("suelto: la misma transferencia en otro archivo no se guarda de nuevo y cuenta las veces", reenviado.body.reutilizado && reenviado.body.id === r.body.id
+      && store[`comprobantes/${r.body.id}`].veces === 2 && Object.keys(store).filter((k) => k.startsWith("comprobantes/")).length === antesReenvio, store[`comprobantes/${r.body.id}`]);
+    const otroImporte = await guardar({ url: "https://chatwoot/x-otro-importe.jpg", idMensaje: 11, lectura: { ...celina, monto: "$10.000" } });
+    ok("suelto: mismo número con otro importe es otro comprobante", otroImporte.body.guardado && !otroImporte.body.reutilizado && otroImporte.body.id !== r.body.id, otroImporte.body);
+    delete store[`comprobantes/${otroImporte.body.id}`];
     const santander = await guardar({ url: "https://chatwoot/santander.pdf", lectura: { esComprobante: true, monto: "$37.990,00", numeroOperacion: "96401936",
       titular: "No especificado directamente como titular", destinatario: "Lucio Felix Bunge", cbuCvu: "0070194130004014092980" } });
     const ds = store["comprobantes/" + santander.body.id];

@@ -1,6 +1,7 @@
 // Comprobantes de pago. Todos los que manda un cliente quedan guardados en "comprobantes", se cargue o
 // no el pedido (si el bot deriva o el pedido se carga a mano, igual se mandan a la financiera). El id
-// sale de la URL del adjunto: el mismo comprobante no se guarda dos veces. Al cargar el pedido se usan
+// sale de la URL del adjunto y claveOperacion identifica la transferencia: el mismo comprobante no se
+// guarda dos veces, aunque llegue en otro archivo (se cuenta en `veces`). Al cargar el pedido se usan
 // los de la compra en curso y quedan vinculados (pedidoId): el panel deja de mostrarlos como sueltos.
 "use strict";
 
@@ -21,6 +22,14 @@ const CUENTAS = [
 ];
 
 const idComprobante = (url) => `cw-${hashCorto(String(url).trim())}`;
+
+// La transferencia de un comprobante: cuenta, dígitos del número de operación e importe. El mismo
+// comprobante mandado dos veces (otro archivo, otro mensaje) es la misma transferencia; con otro importe
+// u otra cuenta, no. null si no se puede saber.
+function claveDeOperacion(cuentaCobro, numero, monto) {
+  const digitos = String(numero || "").replace(/\D/g, "");
+  return cuentaCobro && digitos && Number(monto) > 0 ? hashCorto(`${cuentaCobro}|${digitos}|${Math.round(Number(monto))}`) : null;
+}
 
 // La lectura del archivo que hace el bot (Gemini), como objeto o como JSON:
 // { esComprobante, edicionDetectada, monto, numeroOperacion, titular, destinatario, cbuCvu, alias, cuit }.
@@ -108,12 +117,27 @@ const agentGuardarComprobante = conClave(async (req, res) => {
   const ref = db.collection("comprobantes").doc(idComprobante(url));
   const respuesta = { ok: true, guardado: true, id: ref.id, monto: datos.monto, numero: datos.numero, cuentaDelNegocio: !!datos.cuentaCobro };
   const conEquipo = b.conEquipo === true || b.conEquipo === "true";
-  const existente = await ref.get();
+  // Ya guardado: el mismo archivo (misma URL) o la misma transferencia en otro archivo. No se guarda otro:
+  // se cuenta el reenvío (el panel muestra «enviado N veces») y no se suma dos veces al cobrar.
+  const claveOperacion = claveDeOperacion(datos.cuentaCobro, datos.numero, datos.monto);
+  let existente = await ref.get();
+  if (!existente.exists && claveOperacion) {
+    const mismos = await db.collection("comprobantes").where("claveOperacion", "==", claveOperacion).limit(1).get();
+    if (!mismos.empty) existente = mismos.docs[0];
+  }
   if (existente.exists) {
-    // El mismo comprobante vuelve a llegar sin el equipo: la charla volvió al bot con el cliente esperando
-    // (nadie le contestó), así que ahora sí lo puede usar el bot.
-    if (existente.data().conEquipo && !conEquipo && !existente.data().pedidoId) await ref.update({ conEquipo: false });
-    return res.json({ ...respuesta, reutilizado: true });
+    const previo = existente.data();
+    const cambios = {};
+    const idMensaje = b.idMensaje != null ? String(b.idMensaje) : null;
+    if (existente.id !== ref.id || (idMensaje && idMensaje !== previo.idMensaje && !(previo.reenvios || []).includes(idMensaje))) {
+      cambios.veces = (Number(previo.veces) || 1) + 1;
+      if (idMensaje) cambios.reenvios = [...(previo.reenvios || []), idMensaje].slice(-20);
+    }
+    // Vuelve a llegar sin el equipo: la charla volvió al bot con el cliente esperando (nadie le contestó),
+    // así que ahora sí lo puede usar el bot.
+    if (previo.conEquipo && !conEquipo && !previo.pedidoId) cambios.conEquipo = false;
+    if (Object.keys(cambios).length) await db.collection("comprobantes").doc(existente.id).update(cambios);
+    return res.json({ ...respuesta, id: existente.id, reutilizado: true, ...(cambios.veces ? { veces: cambios.veces } : {}) });
   }
   let archivo = null;
   try {
@@ -130,6 +154,8 @@ const agentGuardarComprobante = conClave(async (req, res) => {
     idMensaje: b.idMensaje != null ? String(b.idMensaje) : null,
     comprobante: { numero: datos.numero, monto: datos.monto, nombre: datos.nombre },
     cuentaCobro: datos.cuentaCobro,
+    claveOperacion,
+    veces: 1,
     posibleEdicion: datos.edicionDetectada,
     conEquipo,
     descripcion: datos.descripcion,

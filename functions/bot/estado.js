@@ -71,6 +71,12 @@ const agentEstadoOperativo = conClave(async (req, res) => {
   res.json({
     ok: true,
     opcionesMoto: opciones.slice(0, 4),
+    // Más adelante también hay salidas (hasta 14 días): si el cliente pide otro día, el bot lo ofrece de acá.
+    diasMoto: [...new Map(opciones.map((o) => [o.fecha, {
+      fecha: o.fecha, dia: o.dia,
+      semana: new Date(`${o.fecha}T12:00:00-03:00`).toLocaleDateString("es-AR", { weekday: "long", timeZone: "America/Argentina/Buenos_Aires" }),
+      horas: opciones.filter((x) => x.fecha === o.fecha).map((x) => `${x.hora} (${x.tandaId})`),
+    }])).values()],
     salidaUber: proximoUber,
     atencionEnvios: avisoDeHorario(op, opciones[0], proximoUber),
     demora: demora(op, enCola),

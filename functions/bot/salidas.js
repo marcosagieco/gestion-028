@@ -185,5 +185,5 @@ function avisoDeHorario(op, proximaMoto, proximoUber, ahora = new Date()) {
 
 module.exports = {
   fechaBA, corta, horaBuenosAires, horarioUber, hhmmDe, salidasMoto, opcionesMoto, elegirSalida, pedidosMoto,
-  pedidosEnCola, salidaUber, uberALaHora, demora, avisoDeHorario,
+  pedidosEnCola, salidaUber, uberALaHora, demora, avisoDeHorario, diasSinDespacho,
 };

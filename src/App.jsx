@@ -3746,11 +3746,15 @@ export default function App() {
         getDocs(query(collection(db, 'pedidos'), where('createdAt', '>=', desde), where('createdAt', '<', hasta))),
         getDocs(query(collection(db, 'comprobantes'), where('createdAt', '>=', desde), where('createdAt', '<', hasta))),
       ]);
+      // Cuántas veces mandó el cliente cada comprobante (el bot no lo guarda dos veces: lo cuenta en veces).
+      const guardados = sueltos.docs.map(d => ({ id: d.id, ...d.data() }));
+      const vecesPorPedido = {};
+      for (const c of guardados) if (c.pedidoId) vecesPorPedido[c.pedidoId] = Math.max(vecesPorPedido[c.pedidoId] || 1, Number(c.veces) || 1);
       const lista = [
-        ...snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(tieneComprobante),
+        ...snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(tieneComprobante).map(p => ({ ...p, vecesEnviado: vecesPorPedido[p.id] || 1 })),
         // Comprobantes que el bot guardó sin pedido (derivó, o el pedido se cargó a mano). Los que
         // terminaron en un pedido (pedidoId) ya aparecen con ese pedido y no se repiten.
-        ...sueltos.docs.map(d => ({ id: d.id, ...d.data() })).filter(c => !c.pedidoId).map(c => ({ ...c, estado: 'sin pedido', total: null })),
+        ...guardados.filter(c => !c.pedidoId).map(c => ({ ...c, estado: 'sin pedido', total: null, vecesEnviado: Number(c.veces) || 1 })),
       ].sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
       comprobantesCacheRef.current[mes] = lista;
       setComprobantesDelMes(lista);
@@ -13230,6 +13234,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
                             <div className={`mt-2.5 grid sm:grid-cols-2 gap-x-4 gap-y-1 text-xs ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>
                               {p.comprobante?.numero && <p><span className="text-zinc-500">N°: </span><span className="font-semibold">{p.comprobante.numero}</span></p>}
+                              {p.vecesEnviado > 1 && <p><span className="font-bold text-amber-500">Duplicado: el cliente lo mandó {p.vecesEnviado} veces</span></p>}
                               {p.comprobante?.nombre && <p><span className="text-zinc-500">A nombre de: </span><span className="font-semibold">{p.comprobante.nombre}</span></p>}
                               {p.total != null && <p><span className="text-zinc-500">Total del pedido: </span><span className="font-semibold">{formatMoney(p.total)}</span></p>}
                               {p.cuentaCobro && <p><span className="text-zinc-500">Cobró: </span><span className="font-semibold">{CUENTA_COBRO_LABELS[p.cuentaCobro] || p.cuentaCobro}</span></p>}

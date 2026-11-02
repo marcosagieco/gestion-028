@@ -4,11 +4,13 @@
 const crypto = require("crypto");
 
 // "Honor & Glory" → "honor glory". Saca tildes, emojis y la capacidad en puffs ("35K"), que el
-// agente a veces pega al nombre pero nunca forma parte de él.
+// agente a veces pega al nombre pero nunca forma parte de él. Guiones, barras y guiones bajos separan
+// palabras: "B-Pop" de la lista es el "B POP" que escribe la web.
 const normalizar = (texto) =>
   String(texto || "")
     .toLowerCase()
     .normalize("NFD")
+    .replace(/[-_/]/g, " ")
     .replace(/[^a-z0-9 ]/g, "")
     .replace(/\b\d+k\b/g, " ")
     .replace(/\b(y|and)\b/g, " ")

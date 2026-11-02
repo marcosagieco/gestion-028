@@ -9,6 +9,7 @@
 // compra = { telefono, idConversacion, idMensajeOrigen, cliente, items, tipoEnvio, direccion,
 //            salidaSeleccionada, horaSolicitada, medioPago, envioSeguro, datosCorreo, mayorista, publicidad }
 // publicidad = { red, anuncioId, titulo, llegoEn }: el anuncio por el que llegó el cliente (lo detecta n8n).
+// cuponWeb = { codigo, monto }: el cupón de un pedido armado en la web; se descuenta del total.
 "use strict";
 
 const { db } = require("./firebase");
@@ -24,6 +25,18 @@ const { leerOperativo, envioGratisDeCampania } = require("./campania");
 
 const ENVIO_LABEL = { moto: "🛵 Moto mensajería", uber: "⚡ Envío flash (Uber)", correo: "📦 Correo (Vía Cargo)" };
 const CUENTAS_DE_COBRO = ["alias1", "alias2", "alias3"];
+
+// El cupón de un pedido armado en la web ({ codigo, monto }): la web lo valida y el bot respeta el
+// descuento que trae el mensaje. Queda a la vista en el pedido para que el equipo lo controle. null si no
+// hay o no tiene sentido (sin monto, o igual o mayor que los productos).
+function cuponDe(c, subtotal) {
+  let v = c;
+  if (typeof v === "string") { try { v = v.trim() ? JSON.parse(v) : null; } catch { v = null; } }
+  if (!v || typeof v !== "object") return null;
+  const codigo = String(v.codigo || "").toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 30);
+  const monto = Math.round(Number(String(v.monto ?? "").replace(/[^\d.,]/g, "").replace(/\./g, "").replace(",", ".")));
+  return codigo && monto > 0 && monto < subtotal ? { codigo, monto } : null;
+}
 
 // El anuncio del que vino el cliente, limpio, o null.
 function publicidadDe(p) {
@@ -106,7 +119,7 @@ async function descarte(c, pedidoId) {
 function armarDetalle(d) {
   const { preview, modificacion, cuando, horaPedida, tipoEnvio, lineas, mayorista, subtotal, subtotalUSD, dolar, valorEnvio, envioSeguro,
     montoDescuento, total, envioCorreo, despachoMayorista, dir, ubicacion, correo, cliente, telefono, medioPago, aTransferir, comprobante,
-    adicionales, pagaAntesDeCargar, avisoHorario, envioGratis } = d;
+    adicionales, pagaAntesDeCargar, avisoHorario, envioGratis, cuponWeb } = d;
   // Si no sale hoy, va arriba de todo: la gente no lee el detalle y después se queja.
   const noSaleHoy = cuando && cuando.dia !== "hoy";
   const avisoNoRegistrado = !preview ? null
@@ -131,6 +144,7 @@ function armarDetalle(d) {
     envioGratis ? `🎁 Envío gratis (${envioGratis})` : valorEnvio ? `Envío: ${pesos(valorEnvio)}` : null,
     envioSeguro ? `🛡️ Envío seguro: ${pesos(PRECIO_ENVIO_SEGURO)}` : null,
     montoDescuento ? `💵 Descuento por efectivo: -${pesos(montoDescuento)}` : null,
+    cuponWeb ? `🏷️ Cupón de la web ${cuponWeb.codigo}: -${pesos(cuponWeb.monto)}` : null,
     `TOTAL A PAGAR: ${pesos(total)}`,
     envioCorreo ? `(el envío por correo, ${pesos(envioCorreo)}, se le paga a Vía Cargo al recibir)` : null,
     "",
@@ -255,9 +269,10 @@ async function procesarPedido(entrada) {
     const motivo = await descarte(c, refAnterior?.id);
     if (motivo) { descartados.push(motivo); continue; }
     usados.push(c); // también los repetidos (la misma operación mandada dos veces): quedan vinculados
-    const numero = String(c.comprobante.numero);
+    // La misma operación se reconoce por los dígitos del número: la lectura de la imagen a veces cambia espacios o guiones.
+    const operacion = (x) => String(x?.numero || "").replace(/\D/g, "") || String(x?.numero || "");
     if (!comprobante) { comprobante = c.comprobante; cuentaCobro = c.cuentaCobro; principal = c; }
-    else if (numero !== String(comprobante.numero) && !pagosAdicionales.some((p) => String(p.numero) === numero)) pagosAdicionales.push({ ...c.comprobante, guardado: c, cuenta: c.cuentaCobro });
+    else if (operacion(c.comprobante) !== operacion(comprobante) && !pagosAdicionales.some((p) => operacion(p) === operacion(c.comprobante))) pagosAdicionales.push({ ...c.comprobante, guardado: c, cuenta: c.cuentaCobro });
   }
   if (!preview && conComprobante && !comprobante) return error(400, DESCARTE[descartados[descartados.length - 1]].error, { requiereComprobante: true });
   const sinContar = [...new Set(descartados)].map((m) => DESCARTE[m].corto);
@@ -269,7 +284,8 @@ async function procesarPedido(entrada) {
   if (envioGratis) valorEnvio = 0;
   const envioSeguro = tipoEnvio === "uber" && (b.envioSeguro === true || b.envioSeguro === "true");
   const montoDescuento = medioPago === "efectivo" && !mayorista ? descuentoEfectivo(subtotal) : 0;
-  const total = subtotal + valorEnvio + (envioSeguro ? PRECIO_ENVIO_SEGURO : 0) - montoDescuento;
+  const cuponWeb = cuponDe(b.cuponWeb, subtotal);
+  const total = subtotal + valorEnvio + (envioSeguro ? PRECIO_ENVIO_SEGURO : 0) - montoDescuento - (cuponWeb ? cuponWeb.monto : 0);
   const envioCorreo = tipoEnvio === "correo" ? CORREO[correo.aSucursal ? "sucursal" : "domicilio"] : 0;
   const aTransferir = medioPago === "mitad y mitad" ? Math.ceil(total / 2) : 0;
 
@@ -322,7 +338,7 @@ async function procesarPedido(entrada) {
   const mensaje = armarDetalle({
     preview, modificacion: !!anterior, cuando, horaPedida, tipoEnvio, lineas, mayorista, subtotal, subtotalUSD, dolar, valorEnvio, envioSeguro,
     montoDescuento, total, envioCorreo, despachoMayorista, dir, ubicacion, correo, cliente: b.cliente, telefono, medioPago, aTransferir, envioGratis,
-    comprobante, adicionales: [...adicionales, ...nuevosAdicionales], pagaAntesDeCargar: conComprobante,
+    cuponWeb, comprobante, adicionales: [...adicionales, ...nuevosAdicionales], pagaAntesDeCargar: conComprobante,
     avisoHorario: avisoHorario || null,
   });
 
@@ -360,6 +376,7 @@ async function procesarPedido(entrada) {
     envioSeguro,
     montoEnvioSeguro: envioSeguro ? PRECIO_ENVIO_SEGURO : 0,
     montoDescuento,
+    cuponWeb,
     total,
     mayorista,
     subtotalUSD: mayorista ? subtotalUSD : null,

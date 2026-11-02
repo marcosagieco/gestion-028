@@ -633,6 +633,7 @@ function DetalleComercial({ pedido, dm }) {
           {dc ? fila('Valor del envio', `${$ars(dc.valor)} (lo paga al recibir)`) : fila('Valor del envio', pedido.valorEnvio != null ? $ars(pedido.valorEnvio) : null)}
           {pedido.envioSeguro && fila('Envio seguro', $ars(pedido.montoEnvioSeguro))}
           {pedido.montoDescuento > 0 && fila('Descuento efectivo', '-' + $ars(pedido.montoDescuento))}
+          {pedido.cuponWeb && fila(`Cupón de la web ${pedido.cuponWeb.codigo}`, '-' + $ars(pedido.cuponWeb.monto))}
           {fila('Total', pedido.total != null ? $ars(pedido.total) : null)}
           {fila('Medio de pago', pedido.medioPago)}
           {fila('Cobro en', CUENTA_POR_ALIAS[pedido.cuentaCobro])}
