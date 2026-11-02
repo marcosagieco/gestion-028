@@ -65,6 +65,8 @@ Lo del día, en una sola llamada, antes de cada respuesta del agente.
   `COMPROBANTES_VALIDOS`, `GRACIAS`, `CONFIANZA`), `ALIAS` con los datos de la cuenta activa, las listas
   del panel y las de stock sin precios (`STOCK_PERFUMES`, `STOCK_APPLE_ACCESORIOS`).
 - `campania`: la campaña que corre ahora, o `null` (ver «Campaña»).
+- `diasMoto`: los días con salida de moto de los próximos 14 días, `{ fecha, dia, semana, horas }`, para
+  cuando el cliente pide un día más adelante que las 4 de `opcionesMoto`.
 
 ## Campaña — `settings/operativo.campania`
 
@@ -107,6 +109,9 @@ dirección de CABA suma `envioGratis: { campania, desde, lanzamientoConTransfere
 
 ## `agentPedido`
 
+`cuponWeb: { codigo, monto }` (opcional): el cupón de un pedido armado en la web. Se descuenta del total
+(si es menor que los productos), sale en el resumen y queda en el pedido para que el equipo lo controle.
+
 `publicidad: { red, anuncioId, titulo, llegoEn }` (opcional, al cargar): el anuncio de Facebook o Instagram
 por el que llegó el cliente en los últimos 30 días. Lo detecta n8n (evento `anuncio` en `v2_eventos`), no
 el modelo. Queda en el pedido y un cambio no lo toca.
@@ -148,6 +153,9 @@ archivo, como objeto o JSON:
 `{ esComprobante, edicionDetectada, monto, numeroOperacion, titular, destinatario, cbuCvu, alias, cuit }`.
 
 - Guarda el comprobante en `comprobantes` (se cargue o no el pedido; el panel lo muestra como suelto).
+- La misma transferencia (`claveOperacion`: cuenta, dígitos del número e importe) no se guarda dos veces,
+  aunque llegue en otro archivo: responde `reutilizado` con el id del primero y suma `veces` (el panel
+  muestra «Duplicado: el cliente lo mandó N veces»). Con otro importe u otra cuenta es otro comprobante.
 - `conEquipo: true` si llegó mientras la charla la atendía el equipo (asignada a una persona o el bot en
   pausa): ese pedido lo carga el equipo a mano y `agentPedido` no lo usa. Si el mismo comprobante vuelve a
   llegar sin el equipo (la charla volvió al bot con el cliente esperando), se desmarca.
@@ -162,8 +170,11 @@ La foto del comprobante para el panel.
 ## `agentCrearCotizacionUber` — `{ idConversacion, telefonoCliente, nombreCliente, direccion, explicacion, pedido }`
 
 Le pide al depósito el precio del Flash. Si ya hay un precio vigente (`yaCotizado`), una pendiente
-(`yaPendiente`) o la dirección no tiene cobertura (`sinCobertura`), la devuelve sin crear otra. Una
-pendiente sin respuesta en 45 minutos, o un precio vencido, se vuelve a pedir.
+(`yaPendiente`) o el depósito dijo «No llegamos» hoy (`sinCobertura`; otro día se puede volver a pedir), la
+devuelve sin crear otra. Hay una sola cotización abierta por compra y dirección: una pendiente sin respuesta
+en 45 minutos se le vuelve a avisar al depósito (en horario del Flash); un precio vencido se pide de nuevo.
+`avisarAlEquipo: true` cuando n8n tiene que mandarle el aviso al equipo. Fuera del horario del Flash se pide
+igual y `mensaje` dice cuándo se cotiza.
 
 ## GET/POST `agentAvisosCotizacionUber`
 
