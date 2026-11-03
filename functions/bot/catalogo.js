@@ -116,7 +116,8 @@ function parsearProductos(texto) {
   for (const p of productos) if (p.seccion) porSeccion[p.seccion] = (porSeccion[p.seccion] || 0) + 1;
   for (const p of productos.filter((x) => x.seccion)) {
     if (porSeccion[p.seccion] > 1) p.nombre = `${p.seccion} DE ${enMiles(p.montoSeccion)}`;
-    p.lineas = [p.nombre, ...p.lineas];
+    // También con el monto en número: "de 50 mil" y "de $50.000" son la misma caja.
+    p.lineas = [p.nombre, `${p.seccion} ${p.montoSeccion}`, ...p.lineas];
     delete p.seccion;
     delete p.montoSeccion;
   }
