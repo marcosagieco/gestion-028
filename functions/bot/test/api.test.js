@@ -739,6 +739,15 @@ async function main() {
     const antesEditado = Object.keys(store).length;
     const editado = await guardar({ url: "https://chatwoot/editado.jpg", lectura: { ...celina, numeroOperacion: "111222333444", edicionDetectada: true } });
     ok("suelto: «parece editado» no frena: se guarda y queda anotado", editado.body.guardado === true && !editado.body.derivar && store["comprobantes/" + editado.body.id].posibleEdicion === true && Object.keys(store).length > antesEditado, editado.body);
+    // Buepp (Paula, 2/11): sin número de operación, con fecha y hora. Se identifica por fecha, hora e importe.
+    const buepp = { esComprobante: true, monto: "$48.000,00", numeroOperacion: "", fechaHora: "02/11/26 17:50 hs", titular: "Paula Suarez", destinatario: "Bunge Lucio Felix", cbuCvu: "0070194130004014092980", cuit: "20-48459795-3" };
+    const sinNro = await guardar({ url: "https://chatwoot/buepp.pdf", lectura: buepp });
+    ok("suelto: sin número de operación se guarda con fecha, hora e importe", sinNro.body.guardado && sinNro.body.numero === "SINNRO-021126-1750-48000" && sinNro.body.cuentaDelNegocio, sinNro.body);
+    const sinNroOtra = await guardar({ url: "https://chatwoot/buepp-otra-vez.jpg", idMensaje: 12, lectura: buepp });
+    ok("suelto: el mismo comprobante sin número mandado de nuevo es el mismo", sinNroOtra.body.reutilizado && sinNroOtra.body.id === sinNro.body.id, sinNroOtra.body);
+    const sinNada = await guardar({ url: "https://chatwoot/sin-nada.jpg", lectura: { ...buepp, fechaHora: "02/11/26" } });
+    ok("suelto: sin número y sin hora no alcanza", sinNada.body.guardado === false && sinNada.body.motivo === "lectura_incompleta", sinNada.body);
+    delete store[`comprobantes/${sinNro.body.id}`];
     const incompleto = await guardar({ url: "https://chatwoot/borroso.jpg", lectura: { esComprobante: true, monto: "", numeroOperacion: "" } });
     ok("suelto: sin importe ni número no se guarda", incompleto.body.guardado === false && incompleto.body.motivo === "lectura_incompleta", incompleto.body);
     // Llega mientras atiende el equipo: se guarda (para el panel y la financiera) marcado conEquipo.

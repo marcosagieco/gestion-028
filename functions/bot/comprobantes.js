@@ -32,7 +32,7 @@ function claveDeOperacion(cuentaCobro, numero, monto) {
 }
 
 // La lectura del archivo que hace el bot (Gemini), como objeto o como JSON:
-// { esComprobante, edicionDetectada, monto, numeroOperacion, titular, destinatario, cbuCvu, alias, cuit }.
+// { esComprobante, edicionDetectada, monto, numeroOperacion, fechaHora, titular, destinatario, cbuCvu, alias, cuit }.
 function leerComprobante(lectura) {
   let l = lectura;
   if (typeof l === "string") {
@@ -41,7 +41,11 @@ function leerComprobante(lectura) {
   if (!l || typeof l !== "object" || Array.isArray(l) || l.esComprobante !== true) return { esComprobante: false };
   const campo = (v) => String(v || "").replace(/[\r\n]/g, " ").trim().slice(0, 200);
   const monto = importeDeTexto(l.monto);
-  const numero = String(l.numeroOperacion || "").trim();
+  // Algunos comprobantes (Buepp) no traen número de operación: la transferencia se identifica por la fecha,
+  // la hora y el importe ("SINNRO-021126-1750-48000"), que sirve igual para no cobrarla dos veces.
+  const fh = String(l.fechaHora || "").match(/(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})\D+(\d{1,2})[:.h](\d{2})/);
+  const sinNumero = fh && monto ? `SINNRO-${fh[1].padStart(2, "0")}${fh[2].padStart(2, "0")}${fh[3].slice(-2)}-${fh[4].padStart(2, "0")}${fh[5]}-${Math.round(monto)}` : "";
+  const numero = String(l.numeroOperacion || "").trim().replace(/\s+/g, "") || sinNumero;
   // El destino es del negocio si coincide cualquiera de sus datos: el CBU/CVU leído de una imagen
   // puede tener un dígito de más o de menos, pero el titular igual coincide.
   const destino = normalizar([l.destinatario, l.alias, l.cuit, l.cbuCvu].map(campo).join(" ")) + " " + campo(l.cbuCvu).replace(/\D/g, " ");
@@ -56,7 +60,7 @@ function leerComprobante(lectura) {
     nombre: titular && !/^no (especificad|visible|aparece|figura)/i.test(titular) ? titular.slice(0, 80) : null,
     cuentaCobro: cuenta ? cuenta.alias : null,
     descripcion: ["Comprobante de pago", "Monto: " + (monto ? monto.toLocaleString("es-AR", { maximumFractionDigits: 2 }) : "-"),
-      "Número de operación: " + (numero || "-"), "Titular: " + titular, "Destinatario: " + campo(l.destinatario),
+      "Número de operación: " + (numero || "-"), "Fecha y hora: " + campo(l.fechaHora), "Titular: " + titular, "Destinatario: " + campo(l.destinatario),
       "CBU o CVU: " + campo(l.cbuCvu), "Alias visible: " + campo(l.alias), "CUIT: " + campo(l.cuit)].join("\n"),
   };
 }
