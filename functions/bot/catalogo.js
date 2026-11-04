@@ -126,6 +126,8 @@ function parsearProductos(texto) {
 
 // Los productos de todas las listas en pesos, cada uno con la lista de la que salió.
 const productosEnPesos = (op) => LISTAS_CON_PRECIO.flatMap((campo) => parsearProductos(op[campo]).map((p) => ({ ...p, lista: campo })));
+// Los nombres de los productos de una lista de precios: para cruzar cada uno con su modelo de stock.
+const nombresDeLaLista = (op, lista) => parsearProductos(op[lista]).map((p) => p.nombre);
 
 // Busca el producto que nombró el agente. Casi todas sus palabras tienen que estar en el producto, y
 // se compara con cada renglón del producto (su nombre y los de su bloque): gana el renglón más
@@ -198,21 +200,35 @@ function parsearStock(texto) {
   return modelos;
 }
 
-// El modelo de la lista de stock para un nombre de la lista de precios. En precios el nombre a veces
-// arrastra el título de la sección ("DESCARTABLES THC DOZO LIVE ROSIN"): vale el modelo de stock
-// cuyo nombre entero esté dentro del nombre de precios.
-function modeloEnStock(modelos, nombre) {
-  const hallado = buscarProducto(modelos, nombre);
+// El modelo de la lista de stock para un nombre de la lista de precios. Las dos listas no siempre lo
+// escriben igual:
+// - En precios el nombre a veces arrastra el título de la sección ("DESCARTABLES THC DOZO LIVE ROSIN"):
+//   vale el modelo de stock cuyo nombre entero esté dentro del nombre de precios.
+// - En stock a veces es más largo ("IGNITE V400 ICE" para "IGNITE V400" de precios): vale el modelo de
+//   stock que contiene el nombre de precios entero, salvo que ese modelo tenga su propio producto en
+//   precios (otrosNombres: "IGNITE V400 MIX" es de "IGNITE V400 MIX", no de "IGNITE V400").
+function modeloEnStock(modelos, nombre, otrosNombres = []) {
+  const igual = modelos.find((m) => normalizar(m.nombre) === normalizar(nombre));
+  if (igual) return igual;
+  const ajenos = new Set(otrosNombres.filter((n) => normalizar(n) !== normalizar(nombre))
+    .map((n) => modelos.find((m) => normalizar(m.nombre) === normalizar(n)) || buscarProducto(modelos, n)?.producto).filter(Boolean));
+  const propios = modelos.filter((m) => !ajenos.has(m));
+  const hallado = buscarProducto(propios, nombre);
   if (hallado && hallado.producto) return hallado.producto;
   const buscadas = palabras(nombre);
-  return modelos.filter((m) => palabras(m.nombre).every((w) => coincidencia(w, buscadas) > 0))
-    .sort((a, b) => palabras(b.nombre).length - palabras(a.nombre).length)[0] || null;
+  const dentro = propios.filter((m) => palabras(m.nombre).every((w) => coincidencia(w, buscadas) > 0))
+    .sort((a, b) => palabras(b.nombre).length - palabras(a.nombre).length)[0];
+  if (dentro) return dentro;
+  const contienen = propios.filter((m) => buscadas.every((w) => coincidencia(w, palabras(m.nombre)) > 0))
+    .sort((a, b) => palabras(a.nombre).length - palabras(b.nombre).length);
+  // Si dos lo contienen con el mismo largo es ambiguo: no se elige.
+  return contienen[0] && !(contienen[1] && palabras(contienen[1].nombre).length === palabras(contienen[0].nombre).length) ? contienen[0] : null;
 }
 
 // null si hay stock; si no, el error para el agente. Sin lista de stock cargada no se frena la venta.
-function faltaStock(textoStock, producto, variante, cantidad) {
+function faltaStock(textoStock, producto, variante, cantidad, otrosNombres = []) {
   if (!String(textoStock || "").trim()) return null;
-  const modelo = modeloEnStock(parsearStock(textoStock), producto);
+  const modelo = modeloEnStock(parsearStock(textoStock), producto, otrosNombres);
   if (!modelo) return `no hay stock de ${producto}: ofrecele otro de la lista de stock`;
   const { sabores } = modelo;
   if (!sabores.length) return null;
@@ -238,7 +254,7 @@ function faltaStock(textoStock, producto, variante, cantidad) {
 function stockDelProducto(op, producto) {
   const campo = STOCK_DE[producto.lista];
   if (!campo || !textoDe(op[campo])) return null;
-  return modeloEnStock(parsearStock(op[campo]), producto.nombre) || { titulo: "", sabores: [] };
+  return modeloEnStock(parsearStock(op[campo]), producto.nombre, nombresDeLaLista(op, producto.lista)) || { titulo: "", sabores: [] };
 }
 
 // Formato físico de los productos THC, confirmado por el negocio. No dice nada de stock ni precios.
@@ -353,6 +369,6 @@ function sinPrecios(texto) {
 }
 
 module.exports = {
-  LISTAS_DEL_PANEL, STOCK_DE, parsearProductos, productosEnPesos, buscarProducto, productoDeLinea, faltaStock,
+  LISTAS_DEL_PANEL, STOCK_DE, parsearProductos, productosEnPesos, nombresDeLaLista, buscarProducto, productoDeLinea, faltaStock,
   buscarEnCatalogo, sinPrecios,
 };

@@ -3,7 +3,7 @@
 "use strict";
 
 const { normalizar } = require("./texto");
-const { STOCK_DE, parsearProductos, productosEnPesos, buscarProducto, productoDeLinea, faltaStock } = require("./catalogo");
+const { STOCK_DE, parsearProductos, productosEnPesos, nombresDeLaLista, buscarProducto, productoDeLinea, faltaStock } = require("./catalogo");
 
 // Descuento por pagar en efectivo, medido sobre el subtotal de productos (sin el envío).
 const TRAMOS_DESCUENTO_EFECTIVO = [
@@ -112,7 +112,7 @@ function cotizarProductos(op, items, { mayorista = false, conservar = false, med
     const clave = `${r.producto.nombre}:${normalizar(it.variante)}`;
     const pedidas = (pedidasPorSabor.get(clave) || 0) + cantidad;
     pedidasPorSabor.set(clave, pedidas);
-    const sinStock = STOCK_DE[r.producto.lista] && faltaStock(op[STOCK_DE[r.producto.lista]], r.producto.nombre, it.variante, pedidas);
+    const sinStock = STOCK_DE[r.producto.lista] && faltaStock(op[STOCK_DE[r.producto.lista]], r.producto.nombre, it.variante, pedidas, nombresDeLaLista(op, r.producto.lista));
     // Para cotizar alcanza el modelo; para cargar el pedido hace falta el sabor.
     if (sinStock && !(permitirSinSabor && !normalizar(it.variante) && sinStock.startsWith("falta el sabor"))) throw new Error(sinStock);
     if (mayorista && r.producto.prepago && medioPago !== "transferencia") throw new Error(`${r.producto.nombre} es pre pago: se abona por transferencia antes`);

@@ -391,6 +391,14 @@ async function main() {
       && b7.body.resultados.every((r) => Array.isArray(r.saboresConStock) && r.saboresConStock.some((x) => /Strawberry Kiwi/.test(x))), b7.body);
     const b8 = await buscar("strawberry ice");
     ok("catálogo: un sabor en (0) no cuenta como disponible", !b8.body.resultados.some((r) => /ICE KING/.test(r.nombre) && r.s === 1) && !b8.body.resultados.some((r) => Array.isArray(r.saboresConStock) && r.saboresConStock.some((x) => /Strawberry Ice/.test(x))), b8.body);
+    // Mia (3/11): en precios «IGNITE V400», en stock «IGNITE V400 ICE». Es el mismo modelo; el MIX tiene su propio producto.
+    store["settings/operativo"].stockNicotinaTexto = "STOCK\n\n⚡ IGNITE V400 ICE\n\nMiami Mint 🌴 (4)\nGrape Ice 🍇 (2)\n\n🧪 IGNITE V400 MIX\n\nMango Ice + Peach (3)";
+    const b9 = await buscar("ignite v400");
+    const v400 = b9.body.resultados.find((r) => r.nombre === "IGNITE V400"), mix = b9.body.resultados.find((r) => r.nombre === "IGNITE V400 MIX");
+    ok("catálogo: un nombre de precios más corto que el de stock encuentra su stock", v400 && Array.isArray(v400.saboresConStock) && v400.saboresConStock.some((s) => /Miami Mint/.test(s))
+      && !v400.saboresConStock.some((s) => /Mango/.test(s)) && mix && mix.saboresConStock.some((s) => /Mango Ice/.test(s)), b9.body);
+    const r10 = await conStock({ producto: "Ignite V400", variante: "Grape Ice", cantidad: 1 });
+    ok("stock: se vende el Ignite V400 aunque en stock se llame V400 ICE", r10.body.ok, r10.body);
     store["settings/operativo"] = operativo;
   }
 
@@ -745,9 +753,25 @@ async function main() {
     ok("suelto: sin número de operación se guarda con fecha, hora e importe", sinNro.body.guardado && sinNro.body.numero === "SINNRO-021126-1750-48000" && sinNro.body.cuentaDelNegocio, sinNro.body);
     const sinNroOtra = await guardar({ url: "https://chatwoot/buepp-otra-vez.jpg", idMensaje: 12, lectura: buepp });
     ok("suelto: el mismo comprobante sin número mandado de nuevo es el mismo", sinNroOtra.body.reutilizado && sinNroOtra.body.id === sinNro.body.id, sinNroOtra.body);
+    // Con el importe y el destino alcanza: sin número ni hora, la transferencia es la del archivo.
     const sinNada = await guardar({ url: "https://chatwoot/sin-nada.jpg", lectura: { ...buepp, fechaHora: "02/11/26" } });
-    ok("suelto: sin número y sin hora no alcanza", sinNada.body.guardado === false && sinNada.body.motivo === "lectura_incompleta", sinNada.body);
+    ok("suelto: sin número ni hora se guarda igual, identificado por el archivo", sinNada.body.guardado && /^SINNRO-\d+$/.test(sinNada.body.numero)
+      && store[`comprobantes/${sinNada.body.id}`].comprobante.numero === sinNada.body.numero, sinNada.body);
+    delete store[`comprobantes/${sinNada.body.id}`];
     delete store[`comprobantes/${sinNro.body.id}`];
+    // Estudio GPS (3/11): Gemini leyó un número corto («8801»). No identifica la transferencia: se usan fecha, hora e importe.
+    const corto = await guardar({ url: "https://chatwoot/gps.jpg", lectura: { esComprobante: true, monto: "$ 71.800", numeroOperacion: "8801", fechaHora: "03/11/2026 - 14:46 h",
+      titular: "SITNISKY MATIAS AGUSTIN", destinatario: "Bunge Lucio Felix", cbuCvu: "0070194130004014092980", cuit: "20484597953" } });
+    ok("suelto: número de operación corto se guarda con fecha, hora e importe", corto.body.guardado && corto.body.numero === "SINNRO-031126-1446-71800" && corto.body.cuentaDelNegocio
+      && /Número de operación: 8801/.test(store[`comprobantes/${corto.body.id}`].descripcion), corto.body);
+    delete store[`comprobantes/${corto.body.id}`];
+    // Macarena (4/11): Mercado Pago lista «Origen y destino» juntos y la lectura invirtió los roles (Bunge como titular).
+    const invertido = await guardar({ url: "https://chatwoot/maca.jpg", lectura: { esComprobante: true, monto: "50.000", numeroOperacion: "187702585028", fechaHora: "04/noviembre/2026 a las 10:38",
+      titular: "Lucio Felix Bunge", destinatario: "Macarena Katerina Martinez", cbuCvu: "0000003100052295155598", cuit: "27-42796817-6" } });
+    const dInv = store[`comprobantes/${invertido.body.id}`];
+    ok("suelto: con los roles invertidos igual reconoce la cuenta del negocio y quién pagó", invertido.body.guardado && invertido.body.cuentaDelNegocio
+      && dInv.cuentaCobro === "alias1" && dInv.comprobante.nombre === "Macarena Katerina Martinez", dInv);
+    delete store[`comprobantes/${invertido.body.id}`];
     const incompleto = await guardar({ url: "https://chatwoot/borroso.jpg", lectura: { esComprobante: true, monto: "", numeroOperacion: "" } });
     ok("suelto: sin importe ni número no se guarda", incompleto.body.guardado === false && incompleto.body.motivo === "lectura_incompleta", incompleto.body);
     // Llega mientras atiende el equipo: se guarda (para el panel y la financiera) marcado conEquipo.
@@ -948,6 +972,16 @@ async function main() {
     ok('Moto efectivo a Uber: no descuenta dinero que no fue pagado',prep.body.ok&&prep.body.saldoPendiente===prep.body.total,prep.body);
     const sinPago=await llamar(api.agentPedido,{method:'POST',body:{telefono:pagoTel,pedidoId:cash.body.pedidoId,tipoEnvio:'uber',medioPago:'transferencia'}});
     ok('Moto efectivo a Uber: sin comprobante no cambia ni confirma pago',!sinPago.body.ok&&store['pedidos/'+cash.body.pedidoId].tipoEnvio==='moto',sinPago.body);
+    // Cancelar (regla de Lucio, 4/11): sin pagar y sin armar se cancela; pagado se cambia o reagenda; armado lo ve el equipo.
+    const cancelar=(pedidoId,telefono,extra={})=>llamar(api.agentCancelarPedido,{method:'POST',body:{pedidoId,telefono,...extra}});
+    const otro=await cancelar(cash.body.pedidoId,'5491100000000');ok('Cancelar: no cancela el pedido de otro teléfono',otro.status===404&&store['pedidos/'+cash.body.pedidoId].estado==='pendiente',otro.body);
+    const ver=await cancelar(cash.body.pedidoId,pagoTel,{soloVer:true});ok('Cancelar: soloVer no toca el pedido',ver.body.cancelable&&store['pedidos/'+cash.body.pedidoId].estado==='pendiente',ver.body);
+    const can=await cancelar(cash.body.pedidoId,pagoTel);const pc2=store['pedidos/'+cash.body.pedidoId];
+    ok('Cancelar: sin pagar y pendiente se cancela como en el panel',can.body.cancelado&&pc2.estado==='cancelado'&&pc2.canceladoAt&&/cliente/.test(pc2.motivoCancelacion),pc2);
+    const armadoNoPago=await cancelar(p.body.pedidoId,tel);ok('Cancelar: armado no lo cancela el bot, lo deriva',armadoNoPago.status===409&&armadoNoPago.body.derivar&&store[ref].estado==='armado',armadoNoPago.body);
+    store['pedidos/pagado-cancelar']={telefono:pagoTel,estado:'pendiente',montoPagado:30000,comprobante:{numero:'111222333',monto:30000},origen:'bot_n8n'};
+    const pag=await cancelar('pagado-cancelar',pagoTel);ok('Cancelar: pagado no se cancela, se ofrece cambiar',pag.status===409&&pag.body.motivo==='pagado'&&pag.body.sePuedeCambiar&&store['pedidos/pagado-cancelar'].estado==='pendiente',pag.body);
+    delete store['pedidos/pagado-cancelar'];
     const fox=await llamar(api.agentBuscarCatalogo,{query:{consulta:'EarPods Foxconn'}});ok('Apple: Foxconn se informa sin certificar original Apple',fox.body.resultados.some(x=>/Foxconn según/.test(x.autenticidadDeclarada)&&/no equivale/.test(x.autenticidadDeclarada)),fox.body);
     const sinOrigen=await llamar(api.agentBuscarCatalogo,{query:{consulta:'AirPods Pro'}});ok('Apple: no inventa el origen de un producto sin ficha',sinOrigen.body.resultados.some(x=>/no especificada/.test(x.autenticidadDeclarada)),sinOrigen.body);
     const original=await llamar(api.agentBuscarCatalogo,{query:{consulta:'Adaptador 20W Original Apple'}});ok('Apple: distingue el original declarado en el catálogo',original.body.resultados.some(x=>/^original según/.test(x.autenticidadDeclarada)),original.body);

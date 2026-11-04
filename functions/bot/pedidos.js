@@ -6,6 +6,7 @@
 //   { preview: true, ...compra }                  → el resumen, sin guardar nada
 //   { ...compra, desdeCompra }                    → carga el pedido, con los comprobantes de la compra
 //   { pedidoId, ...cambios, preview }             → calcula (preview) o aplica un cambio
+// POST /agentCancelarPedido { pedidoId, telefono, soloVer } → cancela si no está pagado ni armado
 // compra = { telefono, idConversacion, idMensajeOrigen, cliente, items, tipoEnvio, direccion,
 //            salidaSeleccionada, horaSolicitada, medioPago, envioSeguro, datosCorreo, mayorista, publicidad }
 // publicidad = { red, anuncioId, titulo, llegoEn }: el anuncio por el que llegó el cliente (lo detecta n8n).
@@ -102,12 +103,12 @@ async function inicioDeLaCompra(telefono, anterior, desdeCompra) {
 // siempre del comprobante guardado, nunca de lo que escribió el modelo.
 const DESCARTE = {
   ajeno: { error: "El comprobante no va a ninguna cuenta del negocio: decile al cliente que ese destino no es nuestro, mandale PLANTILLA:ALIAS y pedile el comprobante de la transferencia a esa cuenta.", corto: "uno va a una cuenta que no es del negocio" },
-  ilegible: { error: "En el comprobante no se leen el número de operación o el importe: pedile que lo mande de nuevo.", corto: "en uno no se leen el número de operación o el importe" },
+  ilegible: { error: "En el comprobante no se lee el importe: pedile que lo mande de nuevo.", corto: "en uno no se lee el importe" },
   usado: { error: "Ese comprobante ya se usó para otro pedido: decíselo al cliente y pedile el comprobante de esta compra.", corto: "uno ya se usó en otro pedido" },
 };
 async function descarte(c, pedidoId) {
   if (!c.cuentaCobro) return "ajeno";
-  if (!String(c.comprobante?.numero || "").trim() || !(Number(c.comprobante.monto) > 0)) return "ilegible";
+  if (!(Number(c.comprobante?.monto) > 0)) return "ilegible";
   // La misma clave que guarda el pedido en bot_pagos (cuenta + dígitos del número de operación).
   const digitos = String(c.comprobante.numero).replace(/\D/g, "");
   if (!digitos) return null;
@@ -465,4 +466,33 @@ const agentPedido = conClave(async (req, res) => {
   res.status(status).json(body);
 });
 
-module.exports = { agentPedido };
+// Regla del negocio para cancelar: si no pagó y el depósito todavía no lo armó, se cancela. Si ya pagó,
+// no se cancela: se cambia o se reagenda. Armado, lo revisa el equipo. Queda igual que con el botón
+// «Cancelar pedido» del panel (estado cancelado, con motivo y fecha; libera su lugar en la tanda).
+async function cancelarPedido(entrada) {
+  const telefono = normalizarTelefono(entrada.telefono);
+  const ref = db.collection("pedidos").doc(String(entrada.pedidoId || "-"));
+  const snap = await ref.get();
+  const p = snap.exists ? snap.data() : null;
+  if (!p || normalizarTelefono(p.telefono) !== telefono) return error(404, "No figura ese pedido para este cliente: fijate el pedido actual.");
+  if (p.estado === "cancelado") return ok({ cancelado: true, yaEstaba: true, mensaje: "Ese pedido ya estaba cancelado." });
+  if (p.estado !== "pendiente" && p.estado !== "armado") return error(409, "Ese pedido ya salió o se entregó: no se puede cancelar.", { motivo: "ya_salio" });
+  const pagado = Number(p.montoPagado) > 0 || !!p.comprobante;
+  if (pagado) {
+    return error(409, "Ese pedido ya está pagado: no se cancela. Ofrecele cambiar el día o la salida, o cambiar los productos (modificar_pedido).", { motivo: "pagado", sePuedeCambiar: p.estado === "pendiente" });
+  }
+  if (p.estado === "armado") {
+    return error(409, "El depósito ya armó ese pedido: no lo cancelás vos. Derivá con el motivo cambio_de_pedido_armado para que lo revise el equipo.", { motivo: "armado", derivar: true });
+  }
+  if (entrada.soloVer === true || entrada.soloVer === "true") return ok({ cancelable: true, mensaje: p.mensaje, total: p.total });
+  await ref.update({ estado: "cancelado", motivoCancelacion: "Lo canceló el cliente por WhatsApp (bot)", canceladoAt: new Date().toISOString() });
+  return ok({ cancelado: true, pedidoId: ref.id });
+}
+
+// POST /agentCancelarPedido — { pedidoId, telefono, soloVer }
+const agentCancelarPedido = conClave(async (req, res) => {
+  const { status, body } = await cancelarPedido(req.body || {});
+  res.status(status).json(body);
+});
+
+module.exports = { agentPedido, agentCancelarPedido };

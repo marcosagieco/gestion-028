@@ -41,26 +41,34 @@ function leerComprobante(lectura) {
   if (!l || typeof l !== "object" || Array.isArray(l) || l.esComprobante !== true) return { esComprobante: false };
   const campo = (v) => String(v || "").replace(/[\r\n]/g, " ").trim().slice(0, 200);
   const monto = importeDeTexto(l.monto);
-  // Algunos comprobantes (Buepp) no traen número de operación: la transferencia se identifica por la fecha,
-  // la hora y el importe ("SINNRO-021126-1750-48000"), que sirve igual para no cobrarla dos veces.
+  // El número de operación no es obligatorio: el comprobante vale con el importe y la cuenta de destino.
+  // Solo sirve para reconocer la misma transferencia (no cobrarla dos veces), y un número corto («8801») no
+  // alcanza para eso. Sin un número que la identifique, la transferencia se identifica por la fecha, la hora y
+  // el importe ("SINNRO-021126-1750-48000"; Buepp no trae número) o, si tampoco se leen, por el archivo.
   const fh = String(l.fechaHora || "").match(/(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})\D+(\d{1,2})[:.h](\d{2})/);
   const sinNumero = fh && monto ? `SINNRO-${fh[1].padStart(2, "0")}${fh[2].padStart(2, "0")}${fh[3].slice(-2)}-${fh[4].padStart(2, "0")}${fh[5]}-${Math.round(monto)}` : "";
-  const numero = String(l.numeroOperacion || "").trim().replace(/\s+/g, "") || sinNumero;
+  const leido = String(l.numeroOperacion || "").trim().replace(/\s+/g, "");
+  const numero = (/^[a-z0-9][a-z0-9-]{5,79}$/i.test(leido) && leido.replace(/\D/g, "").length >= 6 ? leido : "") || sinNumero;
   // El destino es del negocio si coincide cualquiera de sus datos: el CBU/CVU leído de una imagen
   // puede tener un dígito de más o de menos, pero el titular igual coincide.
+  const cuentaEn = (texto) => CUENTAS.find((c) => c.claves.some((k) => texto.includes(normalizar(k))));
   const destino = normalizar([l.destinatario, l.alias, l.cuit, l.cbuCvu].map(campo).join(" ")) + " " + campo(l.cbuCvu).replace(/\D/g, " ");
-  const cuenta = CUENTAS.find((c) => c.claves.some((k) => destino.includes(normalizar(k))));
-  const titular = campo(l.titular);
+  // Mercado Pago muestra «Origen y destino» en una sola lista y la lectura a veces invierte los roles: pone
+  // al negocio como quien paga (Macarena, 4/11). Un cliente nunca manda un pago hecho desde la cuenta del
+  // negocio, así que si el negocio figura como titular, es el destino y quien paga es el «destinatario».
+  const invertido = !cuentaEn(destino) && cuentaEn(normalizar(campo(l.titular)));
+  const cuenta = cuentaEn(destino) || invertido || null;
+  const titular = campo(invertido ? l.destinatario : l.titular);
   return {
     esComprobante: true,
     edicionDetectada: l.edicionDetectada === true,
-    completo: !!monto && /^[a-z0-9][a-z0-9-]{5,79}$/i.test(numero),
+    completo: !!monto,
     monto,
     numero: numero || null,
     nombre: titular && !/^no (especificad|visible|aparece|figura)/i.test(titular) ? titular.slice(0, 80) : null,
     cuentaCobro: cuenta ? cuenta.alias : null,
     descripcion: ["Comprobante de pago", "Monto: " + (monto ? monto.toLocaleString("es-AR", { maximumFractionDigits: 2 }) : "-"),
-      "Número de operación: " + (numero || "-"), "Fecha y hora: " + campo(l.fechaHora), "Titular: " + titular, "Destinatario: " + campo(l.destinatario),
+      "Número de operación: " + (campo(l.numeroOperacion) || "-"), "Fecha y hora: " + campo(l.fechaHora), "Titular: " + titular, "Destinatario: " + campo(invertido ? l.titular : l.destinatario),
       "CBU o CVU: " + campo(l.cbuCvu), "Alias visible: " + campo(l.alias), "CUIT: " + campo(l.cuit)].join("\n"),
   };
 }
@@ -114,16 +122,18 @@ const agentGuardarComprobante = conClave(async (req, res) => {
   if (!/^https:\/\//.test(url)) return rechazar(res, "falta la url del adjunto");
   const datos = leerComprobante(b.lectura);
   if (!datos.esComprobante) return res.json({ ok: true, guardado: false, motivo: "no_es_comprobante" });
-  // Un comprobante ilegible no se guarda como pago: el agente pide otro. Que «parezca editado» es una
-  // opinión del modelo que lee la imagen, no un dato: no frena nada y queda anotado para el equipo. El pago
-  // lo validan los datos (importe, cuenta del negocio y número de operación no repetido) al cargar el pedido.
+  // Sin importe no se guarda como pago: el agente pide otro. Que «parezca editado» es una opinión del
+  // modelo que lee la imagen, no un dato: no frena nada y queda anotado para el equipo. El pago lo validan
+  // los datos (importe, cuenta del negocio y que no se haya usado en otro pedido) al cargar el pedido.
   if (!datos.completo) return res.json({ ok: true, guardado: false, motivo: "lectura_incompleta" });
   const ref = db.collection("comprobantes").doc(idComprobante(url));
-  const respuesta = { ok: true, guardado: true, id: ref.id, monto: datos.monto, numero: datos.numero, cuentaDelNegocio: !!datos.cuentaCobro };
+  // Sin número, fecha ni hora, la transferencia es la del archivo: un número que sale de su URL.
+  const numero = datos.numero || `SINNRO-${parseInt(ref.id.slice(3, 15), 16)}`;
+  const respuesta = { ok: true, guardado: true, id: ref.id, monto: datos.monto, numero, cuentaDelNegocio: !!datos.cuentaCobro };
   const conEquipo = b.conEquipo === true || b.conEquipo === "true";
   // Ya guardado: el mismo archivo (misma URL) o la misma transferencia en otro archivo. No se guarda otro:
   // se cuenta el reenvío (el panel muestra «enviado N veces») y no se suma dos veces al cobrar.
-  const claveOperacion = claveDeOperacion(datos.cuentaCobro, datos.numero, datos.monto);
+  const claveOperacion = claveDeOperacion(datos.cuentaCobro, numero, datos.monto);
   let existente = await ref.get();
   if (!existente.exists && claveOperacion) {
     const mismos = await db.collection("comprobantes").where("claveOperacion", "==", claveOperacion).limit(1).get();
@@ -156,7 +166,7 @@ const agentGuardarComprobante = conClave(async (req, res) => {
     telefono: normalizarTelefono(b.telefono) || null,
     idConversacion: b.idConversacion != null ? String(b.idConversacion) : null,
     idMensaje: b.idMensaje != null ? String(b.idMensaje) : null,
-    comprobante: { numero: datos.numero, monto: datos.monto, nombre: datos.nombre },
+    comprobante: { numero, monto: datos.monto, nombre: datos.nombre },
     cuentaCobro: datos.cuentaCobro,
     claveOperacion,
     veces: 1,

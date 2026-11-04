@@ -3,7 +3,7 @@
 //
 //   estado.js        agentEstadoOperativo   lo del día: salidas, demora, pedido en curso, plantillas
 //   consultas.js     agentBuscarCatalogo, agentCotizarProductos, agentCotizarEnvio
-//   pedidos.js       agentPedido            resumen, carga y cambio de pedidos
+//   pedidos.js       agentPedido, agentCancelarPedido   resumen, carga, cambio y cancelación de pedidos
 //   comprobantes.js  agentGuardarComprobante, serveComprobante
 //   uber.js          agentCrearCotizacionUber, agentAvisosCotizacionUber
 //   estadisticas.js  agentEstadisticasBot   los totales del día que manda n8n, para el panel
