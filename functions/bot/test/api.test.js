@@ -193,7 +193,12 @@ async function main() {
     const r6 = await conHora("2026-09-22T14:00:00", () => resumen({ tipoEnvio: "uber", horaSolicitada: "13:00" }));
     ok("uber: rechaza una hora programada fuera del horario", r6.status === 400 && /13:30 y 20:00/.test(r6.body.error), r6.body);
     const r7 = await conHora("2026-09-22T20:00:00", async () => { const viejo = store[idCot].resueltoEn; store[idCot].resueltoEn = new Date().toISOString(); const r = await resumen({ tipoEnvio: "uber", horaSolicitada: "20:00" }); store[idCot].resueltoEn = viejo; return r; });
-    ok("uber: a las 20:00 ya no permite programar para hoy", r7.status === 400 && /hoy ya no/.test(r7.body.error), r7.body);
+    ok("uber: a las 20:00 la hora pedida queda para la próxima salida (mañana) y el resumen lo avisa", r7.body.ok && /mañana, 23\/09, a las 20:00/.test(r7.body.mensaje), r7.body);
+    // Anthony (4/11, 23:05): pidió las 13:30 de mañana, la próxima salida. Antes: «hoy ya no se puede» y no había resumen.
+    const r7b = await conHora("2026-09-22T23:05:00", async () => { const viejo = store[idCot].resueltoEn; store[idCot].resueltoEn = new Date().toISOString(); const r = await resumen({ tipoEnvio: "uber", horaSolicitada: "13:30" }); store[idCot].resueltoEn = viejo; return r; });
+    ok("uber: de noche, pedir la primera salida de mañana arma el resumen", r7b.body.ok && /mañana, 23\/09, a las 13:30/.test(r7b.body.mensaje), r7b.body);
+    const r7c = await conHora("2026-09-22T14:00:00", () => resumen({ tipoEnvio: "uber", horaSolicitada: "13:30" }));
+    ok("uber: una hora que ya pasó hoy no se programa", r7c.status === 400 && /primera salida disponible es hoy/.test(r7c.body.error), r7c.body);
     const r8 = await resumen({ tipoEnvio: "moto", horaSolicitada: "19:00" });
     ok("moto: no acepta la hora programada de Uber", r8.status === 400 && /solo se puede programar para Uber/.test(r8.body.error), r8.body);
     const r9 = await conHora("2026-09-22T14:00:00", () => pedido({ tipoEnvio: "uber", horaSolicitada: "19:00", comprobante: { numero: "19000001" } }));

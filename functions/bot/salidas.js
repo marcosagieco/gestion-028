@@ -137,20 +137,21 @@ function salidaUber(op, enCola, ahora = new Date()) {
 }
 
 // Programar un Uber a una hora que pidió el cliente: { salida } o { error } para el agente.
-function uberALaHora(op, texto, primera, ahora = new Date()) {
+// La hora es del primer día con Flash disponible (`primera`): hoy o, si hoy ya no quedan salidas, el
+// próximo día con despacho. Anthony (4/11, 23:05) pidió las 13:30 de mañana, que era justo la próxima
+// salida, y se rechazaba por «hoy ya no se puede»: el resumen nunca salió.
+function uberALaHora(op, texto, primera) {
+  if (!primera) return { error: "no hay una salida de Uber disponible en los próximos días: ofrecé moto o correo" };
   const solicitada = minutosDe(texto);
-  const actual = horaBuenosAires(ahora);
-  const h = horarioUber(actual.dia, actual.fecha, op.horariosUberPorFecha || {});
-  if (solicitada === null || solicitada < 13 * 60 + 30 || solicitada > (h?.fin ?? -1)) {
-    return { error: "la hora de Uber tiene que estar entre 13:30 y 20:00, en formato HH:mm" };
+  const dia = horaBuenosAires(new Date(`${primera.fecha}T12:00:00-03:00`)).dia;
+  const h = horarioUber(dia, primera.fecha, op.horariosUberPorFecha || {});
+  if (solicitada === null || !h || solicitada < h.inicio || solicitada > h.fin) {
+    return { error: `la hora de Uber tiene que estar entre ${hhmmDe(h?.inicio ?? 13 * 60 + 30)} y ${hhmmDe(h?.fin ?? CORTE_DESPACHO)}, en formato HH:mm` };
   }
-  if (actual.minutos >= CORTE_DESPACHO || !primera || primera.dia !== "hoy") {
-    return { error: `hoy ya no se puede programar ese Uber: la próxima salida disponible es ${primera ? `${primera.dia} a las ${primera.hora}` : "el próximo día con despacho"}` };
+  if (solicitada < minutosDe(primera.hora)) {
+    return { error: `no llegamos a programar el Uber a las ${hhmmDe(solicitada)}; la primera salida disponible es ${primera.dia} a las ${primera.hora}` };
   }
-  if (solicitada < actual.minutos || solicitada < minutosDe(primera.hora)) {
-    return { error: `no llegamos a programar el Uber a las ${hhmmDe(solicitada)}; la primera salida disponible es hoy a las ${primera.hora}` };
-  }
-  return { salida: { dia: "hoy", fecha: fechaBA(ahora), hora: hhmmDe(solicitada) } };
+  return { salida: { dia: primera.dia, fecha: primera.fecha, hora: hhmmDe(solicitada) } };
 }
 
 // ── Para el cliente ──────────────────────────────────────────────────────────
