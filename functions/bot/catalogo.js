@@ -268,7 +268,8 @@ function fichaDelProducto(nombre, lista) {
   }
   if (/\bcapsulas?\b/.test(n) && /\b(?:cookies|muha|028)\b/.test(n)) {
     return { tipoDispositivo: "cápsula intercambiable", bateriaIntegrada: false, capsulaIntercambiable: true, requierePenExterno: true,
-      compatibilidadPen: "Se utiliza con un pen o batería compatible con su conector. La marca o haber utilizado otra cápsula no confirma compatibilidad universal." };
+      // Regla del negocio (Lucio, 5/11): la rosca es la 510 estándar, la que usan casi todos los pens.
+      compatibilidadPen: "Rosca 510, la estándar: anda con cualquier pen o batería a rosca 510, que es la que usan casi todos. Si el cliente muestra o describe un pen a rosca, decile que sí es compatible." };
   }
   return null;
 }

@@ -67,7 +67,7 @@ async function main() {
   }
   const capsula = await llamar(api.agentBuscarCatalogo, { query: { consulta: "cápsulas 028" } });
   const c028 = capsula.body.resultados.find((x) => /028/.test(x.nombre));
-  ok("ficha: la cápsula 028 necesita una batería compatible", c028 && c028.fichaProducto.requierePenExterno && /no confirma compatibilidad universal/.test(c028.fichaProducto.compatibilidadPen), c028);
+  ok("ficha: la cápsula 028 va con un pen a rosca 510 y el bot lo confirma", c028 && c028.fichaProducto.requierePenExterno && /Rosca 510/.test(c028.fichaProducto.compatibilidadPen) && /sí es compatible/.test(c028.fichaProducto.compatibilidadPen), c028);
   const vape = await llamar(api.agentBuscarCatalogo, { query: { consulta: "Elfbar TE" } });
   ok("ficha: un vape de nicotina no lleva ficha THC", !vape.body.resultados[0].fichaProducto, vape.body.resultados[0]);
 
