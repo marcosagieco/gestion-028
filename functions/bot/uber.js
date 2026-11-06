@@ -86,13 +86,15 @@ async function cerrarCotizaciones(telefono, pedidoId, tipoEnvio, direccion) {
   }
 }
 
-// Si el depósito está cotizando Flash ahora y, si no, cuándo arranca (para decírselo al cliente).
-function horarioDelFlash(op, ahora = new Date()) {
+// El Flash se cotiza a cualquier hora (Lucio, 6/11): fuera del horario de salidas lo único que espera es la
+// salida. Antes se le decía al cliente «se cotiza desde las 13:30» y el precio no llegaba hasta esa hora.
+// null si ahora hay salidas de Flash; si no, cuándo saldría, para decírselo al cliente desde el primer mensaje.
+function salidaFueraDeHorario(op, ahora = new Date()) {
   const a = horaBuenosAires(ahora);
   const h = horarioUber(a.dia, a.fecha, op.horariosUberPorFecha || {});
-  if (h && a.minutos >= h.inicio && a.minutos < h.fin && !diasSinDespacho(op).includes(a.fecha)) return { abierto: true };
+  if (h && a.minutos >= h.inicio && a.minutos < h.fin && !diasSinDespacho(op).includes(a.fecha)) return null;
   const proximo = salidaUber(op, 0, ahora);
-  return { abierto: false, mensaje: `Ahora no se cotiza Flash: la cotización ya quedó pedida y el depósito la cotiza ${proximo ? `${proximo.dia} desde las ${proximo.hora}` : "el próximo día con despacho"}. Decile eso al cliente y que el precio le llega por acá; no la vuelvas a pedir.` };
+  return `Ahora no hay salida de Flash: si confirma, sale ${proximo ? `${proximo.dia} a las ${proximo.hora}` : "el próximo día con despacho"}. Decíselo desde ahora.`;
 }
 
 // POST /agentCrearCotizacionUber — { idConversacion, telefonoCliente, nombreCliente, direccion, explicacion, pedido }
@@ -111,18 +113,19 @@ const agentCrearCotizacionUber = conClave(async (req, res) => {
     return res.json({ ok: true, creada: false, yaCotizado: true, id: vigente.id, montoUber: Number(vigente.montoUber), venceEn: vence(vigente),
       mensaje: `El precio del Flash vigente es ${pesos(vigente.montoUber)} hasta ${vence(vigente)}.` });
   }
-  const horario = horarioDelFlash(await leerOperativo());
+  const salida = salidaFueraDeHorario(await leerOperativo());
+  const conSalida = (texto) => (salida ? `${texto} ${salida}` : texto);
   // Una sola cotización abierta por compra y dirección: si el depósito no la contestó en 45 minutos, se le
-  // vuelve a avisar de la misma (en horario). Con dos, el precio cargado en la vieja se descartaba sin avisar.
+  // vuelve a avisar de la misma. Con dos, el precio cargado en la vieja se descartaba sin avisar.
   if (previa && previa.estado === "pendiente") {
     const sinRespuesta = Date.now() - fecha(previa.reavisadaEn || previa.createdAt) >= VIGENCIA_MS;
-    if (sinRespuesta && horario.abierto) {
+    if (sinRespuesta) {
       await db.collection("cotizaciones_uber").doc(previa.id).update({ reavisadaEn: new Date().toISOString() });
       return res.json({ ok: true, creada: false, yaPendiente: true, avisarAlEquipo: true, id: previa.id,
-        mensaje: "El depósito todavía no la cotizó: se le volvió a avisar. Decile al cliente que se la pasás apenas esté." });
+        mensaje: conSalida("El depósito todavía no la cotizó: se le volvió a avisar. Decile al cliente que se la pasás apenas esté.") });
     }
     return res.json({ ok: true, creada: false, yaPendiente: true, id: previa.id,
-      mensaje: horario.abierto ? "Ya hay una cotización pendiente para esta compra y dirección: esperá al depósito, no pidas otra." : horario.mensaje });
+      mensaje: conSalida("Ya hay una cotización pendiente para esta compra y dirección: esperá al depósito, no pidas otra.") });
   }
   if (previa && sinCoberturaHoy(previa)) return res.json({ ok: true, creada: false, sinCobertura: true, id: previa.id, mensaje: MENSAJE_SIN_COBERTURA });
   // Un precio vencido se vuelve a pedir: la cotización vieja ya está cerrada.
@@ -146,7 +149,8 @@ const agentCrearCotizacionUber = conClave(async (req, res) => {
   });
   if (!nueva) return res.json({ ok: true, creada: false, yaPendiente: true, id: ref.id, mensaje: "Ya hay una cotización pendiente para esta compra y dirección: esperá al depósito, no pidas otra." });
   const porVencimiento = !!reintento;
-  const mensaje = !horario.abierto ? horario.mensaje : porVencimiento ? AVISO_VENCIDO : null;
+  const pedida = "La cotización ya quedó pedida: el depósito la cotiza y el precio le llega por acá; no la vuelvas a pedir.";
+  const mensaje = porVencimiento ? conSalida(AVISO_VENCIDO) : salida ? conSalida(pedida) : null;
   res.json({ ok: true, creada: true, avisarAlEquipo: true, id: ref.id, recotizacionPorVencimiento: porVencimiento, ...(mensaje ? { mensaje } : {}) });
 });
 

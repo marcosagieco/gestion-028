@@ -180,7 +180,9 @@ async function main() {
       });
       await conHora("2026-11-04T21:00:00", async () => {
         const noche = await flash("5491100001111");
-        ok("flash: fuera de horario se pide igual y dice cuándo se cotiza", noche.body.creada && /Ahora no se cotiza Flash/.test(noche.body.mensaje) && /mañana desde las 13:30/.test(noche.body.mensaje), noche.body);
+        // Lucio (6/11): el Flash se cotiza a cualquier hora; fuera de horario solo espera la salida.
+        ok("flash: fuera de horario se cotiza igual y dice cuándo sale", noche.body.creada && noche.body.avisarAlEquipo && /ya quedó pedida/.test(noche.body.mensaje)
+          && /sale mañana a las 13:30/.test(noche.body.mensaje) && !/no se cotiza|desde las/.test(noche.body.mensaje), noche.body);
       });
       for (const k of Object.keys(store)) if (k.startsWith("cotizaciones_uber/") && ["5493415836038", "5491100001111"].includes(store[k].telefonoCliente)) delete store[k];
     }
