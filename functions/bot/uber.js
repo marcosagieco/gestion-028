@@ -25,7 +25,7 @@ const sinCoberturaHoy = (c) => sinCobertura(c) && fechaBA(new Date(fecha(c.resue
 const abierta = (c) => !c.pedidoId && !c.usadaEnPedidoId && !c.canceladaEn && !["cancelada", "sustituida"].includes(c.estado);
 
 // Lo del pedido que se guarda como borrador en la cotización, para que el depósito vea qué se cotiza.
-const CAMPOS_DEL_PEDIDO = ["items", "tipoEnvio", "direccion", "medioPago", "envioSeguro", "horaSolicitada", "datosCorreo", "cliente", "salidaSeleccionada", "mayorista"];
+const CAMPOS_DEL_PEDIDO = ["items", "tipoEnvio", "direccion", "medioPago", "envioSeguro", "horaSolicitada", "datosCorreo", "cliente", "salidaSeleccionada"];
 const camposDelPedido = (p) => Object.fromEntries(CAMPOS_DEL_PEDIDO.filter((k) => p?.[k] !== undefined).map((k) => [k, p[k]]));
 
 // Las cotizaciones abiertas de la compra en curso del teléfono, de la más vieja a la más nueva: las

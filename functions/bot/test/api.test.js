@@ -869,25 +869,49 @@ async function main() {
       const inv = await resumen({ items: [{ producto: "Elfbar Ice King", cantidad }] });
       ok(`cantidad invalida ${cantidad} no se registra`, inv.status === 400, inv.body);
     }
+    // El precio mayorista sale de las cantidades: el agente no lo pide (antes, si se olvidaba de marcarlo,
+    // 10 EB Create salían a precio de lista).
     for (const [cantidad, unidad] of [[10, 14], [20, 13], [50, 12], [100, 11.5], [101, 11.5]]) {
-      const cot = await resumen({ mayorista: true, tipoEnvio: "correo", datosCorreo: { aSucursal: true }, items: [{ producto: "Elfbar Ice King", cantidad }] });
-      ok(`mayorista: ${cantidad} usa USD ${unidad}, sin derivar por volumen`, cot.body.ok && cot.body.total === cantidad * unidad * 1500 && cot.body.mensaje.includes(`USD ${unidad} c/u`), cot.body);
+      const cot = await resumen({ tipoEnvio: "correo", datosCorreo: { aSucursal: true }, items: [{ producto: "Elfbar Ice King", cantidad }] });
+      ok(`mayorista: ${cantidad} usa USD ${unidad} solo por la cantidad, sin derivar por volumen`, cot.body.ok && cot.body.total === cantidad * unidad * 1500 && cot.body.mensaje.includes(`USD ${unidad} c/u`), cot.body);
     }
-    const mezclado = await resumen({ mayorista: true, tipoEnvio: "correo", datosCorreo: { aSucursal: true }, items: [{ producto: "Elfbar Ice King", cantidad: 5, variante: "Peach" }, { producto: "Elfbar Ice King", cantidad: 5, variante: "Miami Mint" }] });
+    const mezclado = await resumen({ tipoEnvio: "correo", datosCorreo: { aSucursal: true }, items: [{ producto: "Elfbar Ice King", cantidad: 5, variante: "Peach" }, { producto: "Elfbar Ice King", cantidad: 5, variante: "Miami Mint" }] });
     ok("mayorista: agrega sabores del mismo modelo para el tramo", mezclado.body.total === 210000, mezclado.body);
-    const menor = await resumen({ mayorista: true, items: [{ producto: "Elfbar Ice King", cantidad: 9 }] });
-    ok("mayorista: menos de diez no aplica", menor.status === 400, menor.body);
-    const prePago = await resumen({ mayorista: true, medioPago: "al recibir", items: [{ producto: "Dinner Lady Galaxy", cantidad: 10 }] });
+    const menor = await resumen({ items: [{ producto: "Elfbar Ice King", cantidad: 9 }] });
+    ok("mayorista: con 9 va a precio de lista", menor.body.ok && !/USD/.test(menor.body.mensaje), menor.body);
+    const efectivo = await resumen({ medioPago: "efectivo", items: [{ producto: "Elfbar Ice King", cantidad: 10 }, { producto: "Elfbar TE 30K", cantidad: 1 }] });
+    ok("mayorista mixto: el modelo que llega a 10 va mayorista, el otro a lista y el descuento por efectivo es solo del otro",
+      efectivo.body.ok && /10x Elfbar Ice King: \$210\.000 \(mayorista USD 14 c\/u\)/.test(efectivo.body.mensaje) && /1x Elfbar TE 30K: \$23\.000$/m.test(efectivo.body.mensaje)
+        && /Descuento por efectivo: -\$1\.500/.test(efectivo.body.mensaje), efectivo.body);
+    const cotizado = await llamar(api.agentCotizarProductos, { method: "POST", body: { items: [{ producto: "Elfbar Ice King", cantidad: 10 }] } });
+    ok("cotizar: 10 unidades cotiza mayorista sin que lo pida el agente", cotizado.body.ok && cotizado.body.mayorista && cotizado.body.totalProductos === 210000, cotizado.body);
+    const prePago = await resumen({ medioPago: "al recibir", items: [{ producto: "Dinner Lady Galaxy", cantidad: 10 }] });
     ok("mayorista: respeta pre pago de lista", prePago.status === 400 && /pre pago/.test(prePago.body.error), prePago.body);
-    const correo = await pedido({ mayorista: true, tipoEnvio: "correo", direccion: "Cordoba 1500, Rosario", datosCorreo: { aSucursal: true, dni: "30111222", localidad: "Rosario", cp: "2000" }, items: [{ producto: "Elfbar Ice King", cantidad: 10 }], comprobante: { numero: "wholesale-1", monto: 210000 } });
+    const correo = await pedido({ tipoEnvio: "correo", direccion: "Cordoba 1500, Rosario", datosCorreo: { aSucursal: true, dni: "30111222", localidad: "Rosario", cp: "2000" }, items: [{ producto: "Elfbar Ice King", cantidad: 10 }], comprobante: { numero: "wholesale-1", monto: 210000 } });
     const pc = store[`pedidos/${correo.body.pedidoId}`];
-    ok("mayorista correo: entrega Via Cargo, traslado interno moto primera", correo.body.ok && pc.tipoEnvio === "moto" && pc.entregaCliente === "correo" && pc.despachoInterno === "moto_a_via_cargo" && pc.tandaSalida === "primera" && pc.fechaSalida === "2026-10-06" && pc.total === 210000 && /No es la entrega al cliente/.test(pc.mensaje), correo.body);
+    ok("mayorista correo: entrega Via Cargo, traslado interno moto primera", correo.body.ok && pc.mayorista === true && pc.tipoEnvio === "moto" && pc.entregaCliente === "correo" && pc.despachoInterno === "moto_a_via_cargo" && pc.tandaSalida === "primera" && pc.fechaSalida === "2026-10-06" && pc.total === 210000 && /No es la entrega al cliente/.test(pc.mensaje), correo.body);
     delete store["settings/operativo"].dolarMayorista;
-    const usd = await resumen({ mayorista: true, items: [{ producto: "Elfbar Ice King", cantidad: 10 }] });
+    const usd = await resumen({ items: [{ producto: "Elfbar Ice King", cantidad: 10 }] });
     ok("mayorista: sin dolar solo cotiza USD, no inventa pesos", usd.body.necesitaTipoCambio && usd.body.subtotalUSD === 140 && usd.body.total === undefined, usd.body);
-    const sinDolar = await pedido({ mayorista: true, items: [{ producto: "Elfbar Ice King", cantidad: 10 }] });
+    const sinDolar = await pedido({ items: [{ producto: "Elfbar Ice King", cantidad: 10 }] });
     ok("mayorista: sin dolar no carga ni cobra", sinDolar.status === 400 && /dolar/.test(sinDolar.body.error), sinDolar.body);
     store["settings/operativo"].dolarMayorista = 1500;
+    {
+      // Un modelo que está en stock y en la mayorista pero todavía no en la lista de precios (uno nuevo).
+      const op = store["settings/operativo"];
+      const antes = { stock: op.stockNicotinaTexto, mayor: op.preciosMayoristaTexto };
+      op.stockNicotinaTexto = "STOCK\n\n⸻\n\n🆕🔥 IGNITE V500 50K\n\nMango Passion Fruit 🥭🌴 (12)\n\n⸻\n\n👑 ELFBAR ICE KING 40K\n\nPeach 🍑 (30)";
+      op.preciosMayoristaTexto = antes.mayor + "\n⸻\n🆕🔥 *IGNITE V500 — NUEVO*\n• 10x → 16 USD c/u";
+      const busca = await llamar(api.agentBuscarCatalogo, { query: { consulta: "Ignite Mango Passion Fruit", sinPrecios: "true" } });
+      const v500 = busca.body.resultados.find((x) => x.nombre === "IGNITE V500 50K");
+      ok("catálogo: un modelo en stock sin precio por unidad se encuentra y avisa", v500 && v500.sinPrecioPorUnidad && /producto_sin_precio/.test(v500.aviso) && v500.saboresQueCoinciden?.[0] === "Mango Passion Fruit (12)", busca.body);
+      const uno = await resumen({ items: [{ producto: "IGNITE V500 50K", variante: "Mango Passion Fruit", cantidad: 1 }] });
+      ok("sin precio por unidad: 1 no se cotiza y pide derivar", uno.status === 400 && /no tiene precio por unidad/.test(uno.body.error) && /producto_sin_precio/.test(uno.body.error), uno.body);
+      const diez = await resumen({ items: [{ producto: "IGNITE V500 50K", variante: "Mango Passion Fruit", cantidad: 10 }] });
+      ok("sin precio por unidad: desde 10 va mayorista", diez.body.ok && /10x IGNITE V500 50K - Mango Passion Fruit: \$240\.000 \(mayorista USD 16 c\/u\)/.test(diez.body.mensaje), diez.body);
+      op.stockNicotinaTexto = antes.stock;
+      op.preciosMayoristaTexto = antes.mayor;
+    }
 
     const modificar = (body) => llamar(api.agentPedido, { method: "POST", body: { pedidoId: r.body.pedidoId, telefono: "5491158696086", idConversacion: "777", idMensajeOrigen: "mod-1", ...body } });
     const count = () => Object.keys(store).filter((k) => k.startsWith("pedidos/")).length;

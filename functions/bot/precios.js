@@ -2,8 +2,9 @@
 // por efectivo. Nunca con un número que mande el agente.
 "use strict";
 
-const { normalizar } = require("./texto");
-const { STOCK_DE, parsearProductos, productosEnPesos, nombresDeLaLista, buscarProducto, productoDeLinea, faltaStock } = require("./catalogo");
+const { normalizar, palabras, coincidencia, pesos } = require("./texto");
+const { STOCK_DE, MINIMO_MAYORISTA, parsearProductos, parsearMayorista, precioMayorista, productoMayorista, productosEnPesos, nombresDeLaLista,
+  buscarProducto, productoDeLinea, faltaStock } = require("./catalogo");
 
 // Descuento por pagar en efectivo, medido sobre el subtotal de productos (sin el envío).
 const TRAMOS_DESCUENTO_EFECTIVO = [
@@ -12,8 +13,6 @@ const TRAMOS_DESCUENTO_EFECTIVO = [
   { desde: 0, off: 1500 },
 ];
 const descuentoEfectivo = (subtotal) => TRAMOS_DESCUENTO_EFECTIVO.find((t) => subtotal >= t.desde).off;
-
-const MINIMO_MAYORISTA = 10;
 
 // Formas de pago. Uber y correo: solo transferencia antes. La moto además acepta efectivo (con
 // descuento), al recibir (efectivo o transferencia cuando llega, sin comprobante) y mitad y mitad
@@ -56,41 +55,22 @@ function importePorCantidad(precios, cantidad, porUnidad = false) {
   return resto === 0 ? importe : null;
 }
 
-// Lista mayorista: un modelo por renglón y debajo "10x → 13,5 USD c/u". Precios en centavos de dólar.
-function parsearMayorista(texto) {
-  const productos = [];
-  let actual = null;
-  for (const raw of String(texto || "").split(/\r?\n/)) {
-    const linea = raw.trim();
-    const precio = linea.match(/(\d+)\s*x\s*(?:[→➜:=-]+)?\s*(\d+(?:[.,]\d{1,2})?)\s*USD\b/i);
-    if (precio && actual) {
-      actual.precios[Number(precio[1])] = Math.round(Number(precio[2].replace(",", ".")) * 100);
-      continue;
-    }
-    if (!linea || /^[\s⸻━─—–=_-]+$/.test(linea) || /lista|mayorista|USD|c\/u/i.test(linea)) continue;
-    const nombre = linea.replace(/[^\p{L}\p{N}\s&'-]/gu, " ").replace(/\s+/g, " ").trim();
-    if (!nombre) continue;
-    actual = { nombre: nombre.replace(/\s*-?\s*PRE\s*PAGO.*$/i, "").trim(), detalle: "", precios: {}, prepago: /pre\s*pago/i.test(nombre) };
-    productos.push(actual);
-  }
-  return productos.filter((p) => Object.keys(p.precios).length);
-}
-// El precio por unidad del tramo que alcanza esa cantidad.
-function precioMayorista(producto, cantidad) {
-  const tramo = Object.keys(producto.precios).map(Number).filter((n) => n <= cantidad).sort((a, b) => b - a)[0];
-  return tramo ? producto.precios[tramo] : null;
-}
+// El aviso para un modelo que está en la lista mayorista pero no en la de precios por unidad.
+const sinPrecioPorUnidad = (nombre) => `${nombre} no tiene precio por unidad cargado: por menos de ${MINIMO_MAYORISTA} unidades no se puede cotizar. `
+  + `Decile al cliente que lo tenemos y derivá con motivo producto_sin_precio para que el equipo le pase el precio. Desde ${MINIMO_MAYORISTA} unidades sí tiene precio (mayorista)`;
 
 // Cotiza los items de un pedido: [{ producto, variante, cantidad }] → líneas con importe. Controla el
 // stock de cada sabor. Con `conservar`, los items ya traen su importe (un pedido que se modifica sin
 // tocar los productos mantiene los precios con que se cargó).
-function cotizarProductos(op, items, { mayorista = false, conservar = false, medioPago = "", permitirSinSabor = false } = {}) {
+// El precio mayorista no lo elige nadie: un modelo que llega al mínimo (por modelo o por el total, según
+// el panel) y está en la lista mayorista se cobra a ese precio; el resto del pedido, a precio de lista.
+// Las líneas mayoristas llevan precioUnitarioUSD.
+function cotizarProductos(op, items, { conservar = false, medioPago = "", permitirSinSabor = false } = {}) {
   if (!Array.isArray(items) || !items.length || items.length > 200) throw new Error("Indicá los productos y cantidades para cotizar");
   const listas = productosEnPesos(op);
   const ofertas = parsearProductos(op.ofertasTexto);
   const listaMayorista = parsearMayorista(op.preciosMayoristaTexto);
   const dolarMayorista = Number(op.dolarMayorista);
-  if (mayorista && items.reduce((s, it) => s + Number(it.cantidad), 0) < MINIMO_MAYORISTA) throw new Error("la compra mayorista requiere al menos 10 unidades");
   // Los combos valen por modelo, mezclando sabores: "2x $40.000" de EB Create es 1 Golden Berry + 1 Pink
   // Lemonade. Se suma la cantidad de cada modelo, se calcula con los combos y se reparte entre sus renglones.
   const lineas = [];
@@ -101,50 +81,71 @@ function cotizarProductos(op, items, { mayorista = false, conservar = false, med
     if (!Number.isSafeInteger(cantidad) || cantidad <= 0) throw new Error("la cantidad tiene que ser un entero positivo");
     if (conservar) {
       if (!Number.isFinite(it.importe) || it.importe < 0) throw new Error("el pedido original no tiene precios estructurados: consulta al equipo");
-      if (mayorista && buscarProducto(listaMayorista, it.producto)?.producto?.prepago && medioPago !== "transferencia") throw new Error(`${it.producto} es pre pago: se abona por transferencia antes`);
+      if (it.precioUnitarioUSD != null && buscarProducto(listaMayorista, it.producto)?.producto?.prepago && medioPago !== "transferencia") throw new Error(`${it.producto} es pre pago: se abona por transferencia antes`);
       const linea = { producto: it.producto, variante: it.variante || "", cantidad, importe: it.importe };
       if (it.precioUnitarioUSD != null) linea.precioUnitarioUSD = it.precioUnitarioUSD;
       lineas.push(linea);
       continue;
     }
-    const r = productoDeLinea(mayorista ? listaMayorista.map((p) => ({ ...p, lista: "preciosVapesTexto" })) : listas, mayorista ? [] : ofertas, it);
-    if (r.error) throw new Error(r.error);
-    const clave = `${r.producto.nombre}:${normalizar(it.variante)}`;
+    // El producto sale de la lista de precios; si no está ahí, de la mayorista (un modelo que se vende por mayor
+    // y todavía no tiene precio por unidad).
+    // Si el nombre es ambiguo en la lista de precios ("IGNITE V400 MIX" se parece a ICE y SWEET), vale el de la
+    // mayorista solo si lo nombra entero.
+    const r = productoDeLinea(listas, ofertas, it);
+    const enMayorista = r.error ? buscarProducto(listaMayorista, it.producto)?.producto : null;
+    const soloMayorista = enMayorista && (!r.ambiguo || palabras(it.producto).every((w) => coincidencia(w, palabras(enMayorista.nombre)) > 0)) ? enMayorista : null;
+    if (r.error && !soloMayorista) throw new Error(r.error);
+    const producto = soloMayorista ? { ...soloMayorista, lista: "preciosVapesTexto" } : r.producto;
+    const clave = `${producto.nombre}:${normalizar(it.variante)}`;
     const pedidas = (pedidasPorSabor.get(clave) || 0) + cantidad;
     pedidasPorSabor.set(clave, pedidas);
-    const sinStock = STOCK_DE[r.producto.lista] && faltaStock(op[STOCK_DE[r.producto.lista]], r.producto.nombre, it.variante, pedidas, nombresDeLaLista(op, r.producto.lista));
+    const sinStock = STOCK_DE[producto.lista] && faltaStock(op[STOCK_DE[producto.lista]], producto.nombre, it.variante, pedidas, nombresDeLaLista(op, producto.lista));
     // Para cotizar alcanza el modelo; para cargar el pedido hace falta el sabor.
     if (sinStock && !(permitirSinSabor && !normalizar(it.variante) && sinStock.startsWith("falta el sabor"))) throw new Error(sinStock);
-    if (mayorista && r.producto.prepago && medioPago !== "transferencia") throw new Error(`${r.producto.nombre} es pre pago: se abona por transferencia antes`);
     const linea = { producto: String(it.producto), variante: String(it.variante || ""), cantidad, importe: 0 };
     lineas.push(linea);
-    const m = modelos.get(r.producto.nombre) || { producto: r.producto, precios: r.precios, cantidad: 0, lineas: [] };
+    const m = modelos.get(producto.nombre)
+      || { producto, precios: soloMayorista ? null : r.precios, cantidad: 0, lineas: [],
+        mayorista: soloMayorista || (producto.lista === "preciosVapesTexto" ? productoMayorista(listaMayorista, producto.nombre) : null) };
     m.cantidad += cantidad;
     m.lineas.push(linea);
-    modelos.set(r.producto.nombre, m);
+    modelos.set(producto.nombre, m);
   }
+  const unidades = lineas.reduce((s, l) => s + l.cantidad, 0);
   let subtotalUSD = conservar ? lineas.reduce((s, l) => s + (l.precioUnitarioUSD || 0) * l.cantidad, 0) : 0;
   for (const [nombre, m] of modelos) {
-    const cantidadTramo = op.mayoristaAgrupacion === "total" ? lineas.reduce((s, l) => s + l.cantidad, 0) : m.cantidad;
-    if (mayorista && cantidadTramo < MINIMO_MAYORISTA) throw new Error(`${nombre}: el minimo mayorista es 10 unidades por modelo, mezclando sabores`);
-    const centavosUSD = mayorista ? precioMayorista(m.producto, cantidadTramo) : null;
-    const importe = mayorista
-      ? (centavosUSD === null ? null : Math.round(centavosUSD * m.cantidad * (dolarMayorista > 0 ? dolarMayorista : 1) / 100))
+    const cantidadTramo = op.mayoristaAgrupacion === "total" ? unidades : m.cantidad;
+    const centavosUSD = m.mayorista && cantidadTramo >= MINIMO_MAYORISTA ? precioMayorista(m.mayorista, cantidadTramo) : null;
+    if (centavosUSD === null && !m.precios) throw new Error(sinPrecioPorUnidad(nombre));
+    if (centavosUSD !== null && m.mayorista.prepago && medioPago !== "transferencia") throw new Error(`${nombre} es pre pago por mayor: se abona por transferencia antes`);
+    const importe = centavosUSD !== null
+      ? Math.round(centavosUSD * m.cantidad * (dolarMayorista > 0 ? dolarMayorista : 1) / 100)
       : importePorCantidad(m.precios, m.cantidad, m.producto.porUnidad === true);
     if (importe === null) {
       throw new Error(`"${nombre}" no se vende de a ${m.cantidad} (opciones: ${Object.keys(m.precios).map((n) => `${n}x`).join(", ")})`);
     }
-    if (mayorista) subtotalUSD += centavosUSD * m.cantidad / 100;
+    if (centavosUSD !== null) subtotalUSD += centavosUSD * m.cantidad / 100;
     let resto = importe;
     m.lineas.forEach((l, i) => {
-      if (mayorista) l.precioUnitarioUSD = centavosUSD / 100;
+      if (centavosUSD !== null) l.precioUnitarioUSD = centavosUSD / 100;
       l.importe = i === m.lineas.length - 1 ? resto : Math.round((importe * l.cantidad) / m.cantidad);
       resto -= l.importe;
     });
   }
+  const esMayorista = (l) => l.precioUnitarioUSD != null;
   // Si lleva una Mystery Box (lista de la campaña): tiene envío gratis en CABA (campania.js).
   const conMysteryBox = [...modelos.values()].some((m) => m.producto.lista === "mysteryBoxTexto");
-  return { lineas, subtotalUSD, dolarMayorista, conMysteryBox, subtotal: lineas.reduce((s, l) => s + l.importe, 0) };
+  return { lineas, subtotalUSD, dolarMayorista, conMysteryBox, mayorista: lineas.some(esMayorista),
+    subtotal: lineas.reduce((s, l) => s + l.importe, 0),
+    // El descuento por efectivo es solo para lo que va a precio de lista.
+    subtotalMinorista: lineas.filter((l) => !esMayorista(l)).reduce((s, l) => s + l.importe, 0) };
 }
 
-module.exports = { PAGO_LABEL, formaDePago, pagaAntes, descuentoEfectivo, TRAMOS_DESCUENTO_EFECTIVO, cotizarProductos, MINIMO_MAYORISTA };
+// El descuento por pagar en efectivo de una cotización: sobre lo que no es mayorista.
+const descuentoDe = (cotizacion, medioPago) => (medioPago === "efectivo" && cotizacion.subtotalMinorista > 0 ? descuentoEfectivo(cotizacion.subtotalMinorista) : 0);
+
+// Una línea de la cotización en texto: las mayoristas con su precio en dólares.
+const lineaEnTexto = (l, conPesos = true) => `${l.cantidad}x ${l.producto}${l.variante ? " - " + l.variante : ""}`
+  + (l.precioUnitarioUSD != null ? (conPesos ? `: ${pesos(l.importe)} (mayorista USD ${l.precioUnitarioUSD} c/u)` : `: USD ${l.precioUnitarioUSD} c/u (mayorista)`) : `: ${pesos(l.importe)}`);
+
+module.exports = { PAGO_LABEL, formaDePago, pagaAntes, descuentoEfectivo, descuentoDe, lineaEnTexto, TRAMOS_DESCUENTO_EFECTIVO, cotizarProductos, MINIMO_MAYORISTA };

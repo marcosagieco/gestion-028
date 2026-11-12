@@ -4,7 +4,7 @@
 const { conClave, rechazar } = require("./http");
 const { pesos } = require("./texto");
 const { buscarEnCatalogo } = require("./catalogo");
-const { formaDePago, descuentoEfectivo, cotizarProductos } = require("./precios");
+const { formaDePago, descuentoDe, lineaEnTexto, cotizarProductos } = require("./precios");
 const { ubicar } = require("./envios");
 const { leerInfoWeb, infoWebDe } = require("./web");
 const { leerOperativo } = require("./campania");
@@ -25,23 +25,25 @@ const agentBuscarCatalogo = conClave(async (req, res) => {
   res.json(r);
 });
 
-// /agentCotizarProductos — { items: [{ producto, variante, cantidad }], medioPago, mayorista }
-// Para cotizar alcanza el modelo: el sabor se pide recién para cargar el pedido.
+// /agentCotizarProductos — { items: [{ producto, variante, cantidad }], medioPago }
+// Para cotizar alcanza el modelo: el sabor se pide recién para cargar el pedido. El precio mayorista
+// lo aplica solo cotizarProductos (desde el mínimo de unidades).
 const agentCotizarProductos = conClave(async (req, res) => {
   const d = datos(req);
-  const mayorista = d.mayorista === true;
   const medioPago = formaDePago(d.medioPago);
   let c;
   const op = await leerOperativo();
-  try { c = cotizarProductos(op, d.items, { mayorista, medioPago, permitirSinSabor: true }); }
+  try { c = cotizarProductos(op, d.items, { medioPago, permitirSinSabor: true }); }
   catch (e) { return rechazar(res, e.message); }
-  if (mayorista && !(c.dolarMayorista > 0)) {
+  if (c.mayorista && !(c.dolarMayorista > 0)) {
     return res.json({ ok: true, moneda: "USD", subtotalUSD: c.subtotalUSD, necesitaTipoCambio: true,
-      mensaje: `Los productos suman USD ${c.subtotalUSD}. El total en pesos requiere el dólar mayorista del panel.` });
+      mensaje: [...c.lineas.map((l) => lineaEnTexto(l, false)),
+        `Lo mayorista suma USD ${c.subtotalUSD}. El total en pesos requiere el dólar mayorista del panel.`].join("\n") });
   }
-  const descuento = medioPago === "efectivo" && !mayorista ? descuentoEfectivo(c.subtotal) : 0;
-  const lineas = c.lineas.map((l) => `${l.cantidad}x ${l.producto}${l.variante ? " - " + l.variante : ""}: ${pesos(l.importe)}`);
+  const descuento = descuentoDe(c, medioPago);
+  const lineas = c.lineas.map((l) => lineaEnTexto(l));
   res.json({ ok: true, moneda: "ARS", items: c.lineas, subtotal: c.subtotal, montoDescuento: descuento, totalProductos: c.subtotal - descuento,
+    ...(c.mayorista ? { mayorista: true } : {}),
     ...(op.campaniaActiva && c.conMysteryBox ? { conMysteryBox: true } : {}),
     mensaje: [...lineas, `Total de productos: ${pesos(c.subtotal - descuento)}${descuento ? " (incluye descuento por efectivo)" : ""}`].join("\n") });
 });

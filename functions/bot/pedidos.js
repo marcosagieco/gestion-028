@@ -8,7 +8,8 @@
 //   { pedidoId, ...cambios, preview }             → calcula (preview) o aplica un cambio
 // POST /agentCancelarPedido { pedidoId, telefono, soloVer } → cancela si no está pagado ni armado
 // compra = { telefono, idConversacion, idMensajeOrigen, cliente, items, tipoEnvio, direccion,
-//            salidaSeleccionada, horaSolicitada, medioPago, envioSeguro, datosCorreo, mayorista, publicidad }
+//            salidaSeleccionada, horaSolicitada, medioPago, envioSeguro, datosCorreo, publicidad }
+// El precio mayorista no se pide: sale de las cantidades (precios.js).
 // publicidad = { red, anuncioId, titulo, llegoEn }: el anuncio por el que llegó el cliente (lo detecta n8n).
 // cuponWeb = { codigo, monto }: el cupón de un pedido armado en la web; se descuenta del total.
 "use strict";
@@ -16,7 +17,7 @@
 const { db } = require("./firebase");
 const { conClave } = require("./http");
 const { normalizarTelefono, hashCorto, pesos } = require("./texto");
-const { PAGO_LABEL, formaDePago, pagaAntes, descuentoEfectivo, cotizarProductos } = require("./precios");
+const { PAGO_LABEL, formaDePago, pagaAntes, descuentoDe, lineaEnTexto, cotizarProductos } = require("./precios");
 const { PRECIO_ENVIO_SEGURO, CORREO, ubicar, armarDireccion, mismaDireccion } = require("./envios");
 const { fechaBA, corta, opcionesMoto, elegirSalida, pedidosMoto, pedidosEnCola, salidaUber, uberALaHora, avisoDeHorario } = require("./salidas");
 const { esPedidoEnCurso, restriccionCambio } = require("./seguimiento");
@@ -137,7 +138,7 @@ function armarDetalle(d) {
     ...conBlanco(avisoNoRegistrado),
     ...conBlanco(avisoHorario),
     "🛒 PRODUCTOS",
-    ...lineas.map((l) => `* ${l.cantidad}x ${l.producto}${l.variante ? " - " + l.variante : ""}: ${pesos(l.importe)}${mayorista ? ` (mayorista USD ${l.precioUnitarioUSD} c/u)` : ""}`),
+    ...lineas.map((l) => `* ${lineaEnTexto(l)}`),
     "",
     "💰 TOTALES",
     `Subtotal: ${pesos(subtotal)}`,
@@ -200,7 +201,6 @@ async function procesarPedido(entrada) {
   const dir = armarDireccion(b.direccion);
   const correo = b.datosCorreo || {};
   const items = Array.isArray(b.items) ? b.items : [];
-  const mayorista = b.mayorista === true || b.mayorista === "true";
   if (!["moto", "uber", "correo"].includes(tipoEnvio)) return faltaDato("tipoEnvio tiene que ser moto, uber o correo");
   if (medioPago && medioPago !== "transferencia" && tipoEnvio !== "moto") {
     return faltaDato("en Uber y correo se paga solo por transferencia antes; efectivo, al recibir y mitad y mitad son solo con moto");
@@ -249,15 +249,16 @@ async function procesarPedido(entrada) {
   const op = await leerOperativo();
   const conservar = !!anterior && entrada.items === undefined;
   let cotizacion;
-  try { cotizacion = cotizarProductos(op, items, { mayorista, conservar, medioPago }); }
+  // El precio mayorista lo decide cotizarProductos por las cantidades, no el agente.
+  try { cotizacion = cotizarProductos(op, items, { conservar, medioPago }); }
   catch (e) { return faltaDato(e.message); }
-  const { lineas, subtotalUSD } = cotizacion;
+  const { lineas, subtotalUSD, mayorista } = cotizacion;
   const dolar = conservar ? anterior.dolarMayorista : cotizacion.dolarMayorista;
   if (mayorista && !conservar && !(Number.isFinite(dolar) && dolar > 0)) {
     if (!preview) return faltaDato("falta cargar el valor del dolar mayorista en el panel: no inventes el total en pesos ni registres el pedido");
     return ok({ preview: true, necesitaTipoCambio: true, moneda: "USD", subtotalUSD,
-      mensaje: ["PRODUCTOS MAYORISTAS", ...lineas.map((l) => `${l.cantidad}x ${l.producto}${l.variante ? " - " + l.variante : ""}: USD ${l.precioUnitarioUSD} c/u`),
-        `Subtotal productos: USD ${subtotalUSD}`, "Total en pesos pendiente del valor del dolar mayorista del panel. El envio se cotiza en pesos por separado."].join("\n") });
+      mensaje: ["PRODUCTOS", ...lineas.map((l) => lineaEnTexto(l, false)),
+        `Subtotal mayorista: USD ${subtotalUSD}`, "Total en pesos pendiente del valor del dolar mayorista del panel. El envio se cotiza en pesos por separado."].join("\n") });
   }
 
   // ── Los comprobantes: el primero es el principal; los demás, adicionales (otra transferencia de la
@@ -284,7 +285,7 @@ async function procesarPedido(entrada) {
   const envioGratis = envioGratisDeCampania(op, { tipoEnvio, esCABA: ubicacion?.esCABA === true, subtotal, medioPago, conMysteryBox: cotizacion.conMysteryBox });
   if (envioGratis) valorEnvio = 0;
   const envioSeguro = tipoEnvio === "uber" && (b.envioSeguro === true || b.envioSeguro === "true");
-  const montoDescuento = medioPago === "efectivo" && !mayorista ? descuentoEfectivo(subtotal) : 0;
+  const montoDescuento = descuentoDe(cotizacion, medioPago);
   const cuponWeb = cuponDe(b.cuponWeb, subtotal);
   const total = subtotal + valorEnvio + (envioSeguro ? PRECIO_ENVIO_SEGURO : 0) - montoDescuento - (cuponWeb ? cuponWeb.monto : 0);
   const envioCorreo = tipoEnvio === "correo" ? CORREO[correo.aSucursal ? "sucursal" : "domicilio"] : 0;

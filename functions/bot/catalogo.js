@@ -173,13 +173,51 @@ function productoDeLinea(listas, ofertas, item) {
   const oferta = buscarProducto(ofertas, item.producto);
   const ambiguo = (regular && regular.ambiguo) || (oferta && oferta.ambiguo);
   if (ambiguo) {
-    return { error: `"${item.producto}" coincide con más de un producto (${ambiguo.join(" / ")}): usá el nombre exacto de la lista` };
+    return { ambiguo: true, error: `"${item.producto}" coincide con más de un producto (${ambiguo.join(" / ")}): usá el nombre exacto de la lista` };
   }
   if (!(regular && regular.producto) && !(oferta && oferta.producto)) {
     return { error: `no encontré "${item.producto}" en las listas de precios de hoy: usá el nombre tal cual figura en la lista` };
   }
   const precios = { ...(regular && regular.producto && regular.producto.precios), ...(oferta && oferta.producto && oferta.producto.precios) };
   return { producto: (regular && regular.producto) || oferta.producto, precios };
+}
+
+// Lista mayorista: un modelo por renglón y debajo "10x → 13,5 USD c/u". Precios en centavos de dólar.
+// Desde MINIMO_MAYORISTA unidades se cobra con esta lista (precios.js).
+const MINIMO_MAYORISTA = 10;
+function parsearMayorista(texto) {
+  const productos = [];
+  let actual = null;
+  for (const raw of String(texto || "").split(/\r?\n/)) {
+    const linea = raw.trim();
+    const precio = linea.match(/(\d+)\s*x\s*(?:[→➜:=-]+)?\s*(\d+(?:[.,]\d{1,2})?)\s*USD\b/i);
+    if (precio && actual) {
+      actual.precios[Number(precio[1])] = Math.round(Number(precio[2].replace(",", ".")) * 100);
+      continue;
+    }
+    if (!linea || /^[\s⸻━─—–=_-]+$/.test(linea) || /lista|mayorista|USD|c\/u/i.test(linea)) continue;
+    // Lo que va después de un guion es una nota, no el modelo: "EB CREATE 40K — PRECIOS ACTUALIZADOS", "— PRE PAGO".
+    const nombre = linea.split(/\s[—–-]\s/)[0].replace(/[^\p{L}\p{N}\s&'-]/gu, " ").replace(/\s+/g, " ").trim();
+    if (!nombre) continue;
+    actual = { nombre, detalle: "", precios: {}, prepago: /pre\s*pago/i.test(linea) };
+    productos.push(actual);
+  }
+  return productos.filter((p) => Object.keys(p.precios).length);
+}
+// El producto de la lista mayorista de un modelo de vapes. La mayorista agrupa: "IGNITE V400" vale para
+// "IGNITE V400 ICE 40K" y "IGNITE V400 SWEET 40K". Gana el producto mayorista más específico cuyo nombre
+// entero esté en el del modelo ("IGNITE V400 MIX" antes que "IGNITE V400"); si ninguno, el buscador.
+function productoMayorista(listaMayorista, nombre) {
+  const buscadas = palabras(nombre);
+  const dentro = listaMayorista
+    .filter((m) => palabras(m.nombre).length && palabras(m.nombre).every((w) => coincidencia(w, buscadas) > 0))
+    .sort((a, b) => palabras(b.nombre).length - palabras(a.nombre).length)[0];
+  return dentro || buscarProducto(listaMayorista, nombre)?.producto || null;
+}
+// El precio por unidad del tramo que alcanza esa cantidad.
+function precioMayorista(producto, cantidad) {
+  const tramo = Object.keys(producto.precios).map(Number).filter((n) => n <= cantidad).sort((a, b) => b - a)[0];
+  return tramo ? producto.precios[tramo] : null;
 }
 
 // Un modelo sin stock no aparece en la lista.
@@ -282,6 +320,19 @@ function autenticidadDeclarada(producto) {
   return "no especificada; no afirmar original ni Foxconn";
 }
 
+// Los modelos con stock que no son de ningún producto de la lista de precios (`propios`: los nombres de
+// stock que ya tienen el suyo). Van con el producto de la lista mayorista, si está, para cotizarlos por mayor.
+function modelosSinPrecio(op, propios) {
+  const listaMayorista = parsearMayorista(op.preciosMayoristaTexto);
+  return Object.entries(STOCK_DE).flatMap(([lista, campo]) => parsearStock(op[campo])
+    .filter((m) => !propios.has(m.nombre) && m.sabores.some((s) => s.cantidad !== 0))
+    .map((modelo) => {
+      const mayorista = lista === "preciosVapesTexto" ? productoMayorista(listaMayorista, modelo.nombre) : null;
+      const p = { nombre: modelo.nombre, detalle: "", lineas: [modelo.nombre], precios: {}, lista, sinPrecio: true, mayorista };
+      return { p, modelo, sabores: modelo.sabores.filter((s) => s.cantidad !== 0) };
+    }));
+}
+
 // Palabras que no distinguen un producto ("¿qué vapes tenés?"): no cuentan para buscar.
 const PALABRAS_GENERICAS = new Set(["vape", "vapes", "vaper", "vapers", "pod", "pods", "descartable", "descartables", "thc", "nicotina",
   "perfume", "perfumes", "accesorio", "accesorios", "stock", "precio", "precios", "lista", "catalogo", "hay", "tenes", "tienen", "tenian",
@@ -301,6 +352,9 @@ function buscarEnCatalogo(op, consulta, { conPrecios = true } = {}) {
       const sabores = modelo && modelo.sabores.filter((s) => s.cantidad !== 0);
       return { p, modelo, sabores };
     });
+    // Un modelo que está en stock pero todavía no en la lista de precios (uno nuevo) también se encuentra:
+    // nunca se le dice al cliente que no hay algo que sí hay.
+    conStock.push(...modelosSinPrecio(op, new Set(conStock.map((x) => x.modelo && x.modelo.nombre).filter(Boolean))));
     // Se busca en el nombre, la descripción y los sabores con stock ("watermelon" trae los modelos que lo tienen).
     const puntaje = ({ p, sabores }) => {
       const enTodo = [p.nombre, ...(p.lineas || []), p.detalle, ...(sabores || []).map((s) => s.texto)].flatMap(palabras);
@@ -313,7 +367,12 @@ function buscarEnCatalogo(op, consulta, { conPrecios = true } = {}) {
     if (hallados.some((x) => x.s === 1)) hallados = hallados.filter((x) => x.s === 1);
     respuesta.resultados = hallados.slice(0, 8).map(({ p, modelo, sabores }) => {
       const r = { lista: NOMBRE_LISTA[p.lista], nombre: p.nombre, detalle: (p.lineas || []).filter((l) => l !== p.nombre).join(" · ") };
-      if (conPrecios) {
+      if (p.sinPrecio) {
+        r.sinPrecioPorUnidad = true;
+        if (conPrecios && p.mayorista) r.preciosMayoristas = Object.entries(p.mayorista.precios).map(([n, c]) => `${n}x USD ${c / 100} c/u`).join(", ");
+        r.aviso = `Lo tenemos, pero todavía no tiene precio por unidad cargado. ${p.mayorista ? `Desde ${MINIMO_MAYORISTA} unidades va a precio mayorista y se cotiza normal. ` : ""}`
+          + `Por menos, decile que lo tenemos y derivá con motivo producto_sin_precio para que el equipo le pase el precio: no inventes uno.`;
+      } else if (conPrecios) {
         r.precios = precios(p);
         const oferta = buscarProducto(ofertas, p.nombre);
         if (oferta && oferta.producto) r.oferta = precios(oferta.producto);
@@ -371,5 +430,5 @@ function sinPrecios(texto) {
 
 module.exports = {
   LISTAS_DEL_PANEL, STOCK_DE, parsearProductos, productosEnPesos, nombresDeLaLista, buscarProducto, productoDeLinea, faltaStock,
-  buscarEnCatalogo, sinPrecios,
+  MINIMO_MAYORISTA, parsearMayorista, precioMayorista, productoMayorista, buscarEnCatalogo, sinPrecios,
 };
