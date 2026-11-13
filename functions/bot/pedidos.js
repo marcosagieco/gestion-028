@@ -306,7 +306,11 @@ async function procesarPedido(entrada) {
     }
   }
   if (tipoEnvio === "uber" && !cuando) return faltaDato("No hay una salida de Uber disponible en las fechas configuradas; ofrece correo con su plazo real o consulta al equipo.");
-  const horaPedida = String(b.horaSolicitada || "").trim();
+  // La hora de la próxima salida no es un horario que pidió el cliente: es la salida de siempre. Si llega igual
+  // (el agente a veces la manda), no se marca «horario pedido por el cliente» (Vicky, 13/11: «yo no pedí las 13:30»).
+  const enHHMM = (t) => { const m = String(t || "").match(/(\d{1,2})\s*[:.h]?\s*(\d{2})?/); return m ? `${m[1].padStart(2, "0")}:${m[2] || "00"}` : ""; };
+  let horaPedida = String(b.horaSolicitada || "").trim();
+  if (horaPedida && tipoEnvio === "uber" && cuando && !(conservarSalida && entrada.horaSolicitada === undefined) && enHHMM(horaPedida) === enHHMM(cuando.hora)) horaPedida = "";
   if (horaPedida && tipoEnvio !== "uber") return faltaDato("la hora solicitada solo se puede programar para Uber");
   if (horaPedida && !(conservarSalida && entrada.horaSolicitada === undefined)) {
     const r = uberALaHora(op, horaPedida, cuando);

@@ -201,6 +201,13 @@ async function main() {
     ok("uber: de noche, pedir la primera salida de mañana arma el resumen", r7b.body.ok && /mañana, 23\/09, a las 13:30/.test(r7b.body.mensaje), r7b.body);
     const r7c = await conHora("2026-09-22T14:00:00", () => resumen({ tipoEnvio: "uber", horaSolicitada: "13:30" }));
     ok("uber: una hora que ya pasó hoy no se programa", r7c.status === 400 && /primera salida disponible es hoy/.test(r7c.body.error), r7c.body);
+    // Vicky (13/11): el agente mandó como «hora pedida» la próxima salida (13:30) y el resumen decía «horario pedido
+    // por el cliente». La clienta no la había pedido. La hora de la próxima salida no se marca como pedida.
+    const natural = await conHora("2026-09-22T14:00:00", () => resumen({ tipoEnvio: "uber" }));
+    const horaNatural = (natural.body.mensaje || "").match(/a las (\d{2}:\d{2})/)?.[1];
+    const mismaHora = await conHora("2026-09-22T14:00:00", () => resumen({ tipoEnvio: "uber", horaSolicitada: horaNatural }));
+    ok("uber: la hora de la próxima salida no se marca como pedida por el cliente", horaNatural && mismaHora.body.ok && new RegExp(`a las ${horaNatural}`).test(mismaHora.body.mensaje)
+      && !/horario pedido por el cliente/.test(mismaHora.body.mensaje), { horaNatural, mensaje: mismaHora.body.mensaje });
     const r8 = await resumen({ tipoEnvio: "moto", horaSolicitada: "19:00" });
     ok("moto: no acepta la hora programada de Uber", r8.status === 400 && /solo se puede programar para Uber/.test(r8.body.error), r8.body);
     const r9 = await conHora("2026-09-22T14:00:00", () => pedido({ tipoEnvio: "uber", horaSolicitada: "19:00", comprobante: { numero: "19000001" } }));
