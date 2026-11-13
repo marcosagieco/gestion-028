@@ -23,7 +23,7 @@ const { fechaBA, corta, opcionesMoto, elegirSalida, pedidosMoto, pedidosEnCola, 
 const { esPedidoEnCurso, restriccionCambio } = require("./seguimiento");
 const { TOLERANCIA_COMPROBANTE, comprobantesDeLaCompra, copiarAlPedido, vincularAlPedido } = require("./comprobantes");
 const { precioParaElPedido, cerrarCotizaciones } = require("./uber");
-const { leerOperativo, envioGratisDeCampania } = require("./campania");
+const { leerOperativo, envioGratisDe } = require("./campania");
 
 const ENVIO_LABEL = { moto: "🛵 Moto mensajería", uber: "⚡ Envío flash (Uber)", correo: "📦 Correo (Vía Cargo)" };
 const CUENTAS_DE_COBRO = ["alias1", "alias2", "alias3"];
@@ -282,7 +282,7 @@ async function procesarPedido(entrada) {
 
   const subtotal = lineas.reduce((s, l) => s + l.importe, 0);
   // Envío gratis de la campaña (moto en CABA): se descuenta acá para que el resumen y el cobro coincidan.
-  const envioGratis = envioGratisDeCampania(op, { tipoEnvio, esCABA: ubicacion?.esCABA === true, subtotal, medioPago, conMysteryBox: cotizacion.conMysteryBox });
+  const envioGratis = envioGratisDe(op, { tipoEnvio, esCABA: ubicacion?.esCABA === true, subtotal, medioPago, conMysteryBox: cotizacion.conMysteryBox });
   if (envioGratis) valorEnvio = 0;
   const envioSeguro = tipoEnvio === "uber" && (b.envioSeguro === true || b.envioSeguro === "true");
   const montoDescuento = descuentoDe(cotizacion, medioPago);

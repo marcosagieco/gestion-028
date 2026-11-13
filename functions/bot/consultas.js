@@ -7,7 +7,7 @@ const { buscarEnCatalogo } = require("./catalogo");
 const { formaDePago, descuentoDe, lineaEnTexto, cotizarProductos } = require("./precios");
 const { ubicar } = require("./envios");
 const { leerInfoWeb, infoWebDe } = require("./web");
-const { leerOperativo } = require("./campania");
+const { leerOperativo, reglaEnvioGratis } = require("./campania");
 
 const datos = (req) => ({ ...req.query, ...(req.body && typeof req.body === "object" ? req.body : {}) });
 
@@ -48,16 +48,13 @@ const agentCotizarProductos = conClave(async (req, res) => {
     mensaje: [...lineas, `Total de productos: ${pesos(c.subtotal - descuento)}${descuento ? " (incluye descuento por efectivo)" : ""}`].join("\n") });
 });
 
-// /agentCotizarEnvio — { direccion }: si llega la moto y cuánto sale. Con una campaña y una dirección de CABA,
-// `envioGratis` dice cuándo el envío sale gratis (con Mystery Box, desde cuánto y si en el lanzamiento alcanza
-// con pagar por transferencia):
-// el total final lo calcula armar_resumen.
+// /agentCotizarEnvio — { direccion }: si llega la moto y cuánto sale. Con el envío gratis prendido (en el panel
+// o por una campaña) y una dirección de CABA, `envioGratis` dice cuándo sale gratis (desde cuánto y, con una
+// campaña, con Mystery Box o pagando por transferencia en el lanzamiento): el total final lo calcula armar_resumen.
 const agentCotizarEnvio = conClave(async (req, res) => {
   const [u, op] = await Promise.all([ubicar(datos(req).direccion), leerOperativo()]);
   if (!u) return res.json({ ok: true, encontrada: false });
-  const c = op.campaniaActiva;
-  const envioGratis = c && u.esCABA && u.cubiertoMoto
-    ? { campania: c.nombre, desde: c.envioGratisDesde, lanzamientoConTransferencia: c.enLanzamiento, conMysteryBox: true } : null;
+  const envioGratis = u.esCABA && u.cubiertoMoto ? reglaEnvioGratis(op) : null;
   res.json({ ok: true, encontrada: true, cubiertoMoto: u.cubiertoMoto, monto: u.cubiertoMoto ? u.monto : null, km: u.km, zona: u.zona, admiteEfectivo: u.cubiertoMoto,
     ...(envioGratis ? { envioGratis } : {}) });
 });

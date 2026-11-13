@@ -52,9 +52,11 @@ function plantillasDelDia(op, salidaFlash) {
   const horarioFlash = salidaFlash?.fecha === ahora.fecha && h ? `⏳ ${hhmmDe(h.inicio)} hs a ${hhmmDe(h.fin)} hs`
     : salidaFlash ? `⏳ Próxima salida: ${corta(salidaFlash.fecha)} a las ${salidaFlash.hora}. A confirmar con el pedido.`
       : "⏳ Consultá la próxima salida disponible antes de pagar.";
+  // Con el envío gratis prendido en el panel, la moto lo dice (solo CABA).
+  const gratis = op.envioGratisActivo ? `\n🎁 Envío gratis en CABA con compras desde ${pesos(op.envioGratisActivo.desde)}` : "";
   plantillas.FORMAS_DE_ENTREGA = plantillas.FORMAS_DE_ENTREGA
     .replace("{HORARIO_FLASH}", horarioFlash)
-    .replace("{SALIDAS_MOTO}", `⏳ Dos salidas: ${primera.hora} y ${segunda.hora}. Fecha y disponibilidad a confirmar.`);
+    .replace("{SALIDAS_MOTO}", `⏳ Dos salidas: ${primera.hora} y ${segunda.hora}. Fecha y disponibilidad a confirmar.${gratis}`);
   return plantillas;
 }
 
@@ -85,6 +87,8 @@ const agentEstadoOperativo = conClave(async (req, res) => {
     cotizacionUber,
     // La campaña que corre ahora (CYBER 028): el bot la menciona y sigue su mensaje.
     campania: op.campaniaActiva,
+    // El envío gratis prendido en el panel: { desde } (solo moto en CABA), o null.
+    envioGratis: op.envioGratisActivo,
     plantillas: plantillasDelDia(op, proximoUber),
   });
 });

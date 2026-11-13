@@ -688,6 +688,32 @@ async function main() {
     store["settings/operativo"] = antes;
   }
 
+  // ── envío gratis del panel (Lucio, 12/11): interruptor en /operativo, solo moto en CABA, desde un monto ──
+  {
+    const op = store["settings/operativo"];
+    const antes = structuredClone(op);
+    const ice = (cantidad, extra = {}) => resumen({ items: [{ producto: "Ice King", variante: "Peach", cantidad }], ...extra });
+    op.envioGratis = { activo: true, desde: 100000 };
+    const cinco = await ice(5);
+    ok("envío gratis: desde $100.000 en CABA el envío no se cobra", cinco.body.ok && /🎁 Envío gratis \(compra desde \$100\.000 en CABA\)/.test(cinco.body.mensaje) && cinco.body.total === 124000, cinco.body.mensaje);
+    const tres = await ice(3);
+    ok("envío gratis: con menos del monto el envío se cobra", tres.body.ok && !/Envío gratis/.test(tres.body.mensaje) && tres.body.total > 75000, tres.body.mensaje);
+    const olivos = await ice(5, { direccion: { texto: "Maipú 1000, Olivos" } });
+    ok("envío gratis: fuera de CABA el envío se cobra", olivos.body.ok && !/Envío gratis/.test(olivos.body.mensaje) && olivos.body.total > 124000, olivos.body.mensaje);
+    const envio = await llamar(api.agentCotizarEnvio, { query: { direccion: "Cabildo 2000, Belgrano" } });
+    ok("envío gratis: cotizar el envío avisa desde cuánto, sin campaña ni Mystery Box", envio.body.envioGratis?.desde === 100000 && envio.body.envioGratis.campania === null && envio.body.envioGratis.conMysteryBox === false, envio.body);
+    const estado = await llamar(api.agentEstadoOperativo);
+    ok("envío gratis: el estado del día lo trae y las formas de entrega lo dicen", estado.body.envioGratis?.desde === 100000 && /Envío gratis en CABA con compras desde \$100\.000/.test(estado.body.plantillas.FORMAS_DE_ENTREGA), estado.body.envioGratis);
+    op.envioGratis.activo = false;
+    const apagado = await ice(5);
+    ok("envío gratis: apagado en el panel se cobra siempre", apagado.body.ok && !/Envío gratis/.test(apagado.body.mensaje) && apagado.body.total > 124000, apagado.body.mensaje);
+    const estadoApagado = await llamar(api.agentEstadoOperativo);
+    ok("envío gratis: apagado, el estado no lo trae ni las formas de entrega", estadoApagado.body.envioGratis === null && !/Envío gratis/.test(estadoApagado.body.plantillas.FORMAS_DE_ENTREGA), estadoApagado.body.envioGratis);
+    const envioApagado = await llamar(api.agentCotizarEnvio, { query: { direccion: "Cabildo 2000, Belgrano" } });
+    ok("envío gratis: apagado, cotizar el envío no lo menciona", !envioApagado.body.envioGratis, envioApagado.body);
+    store["settings/operativo"] = antes;
+  }
+
   // ── información de productos de la web (028import.com) ──
   {
     const web = require("../web");

@@ -82,6 +82,8 @@ const DEFAULTS = {
   preciosVapesTexto: '', preciosThcTexto: '', perfumesTexto: '', appleTexto: '',
   preciosMayoristaTexto: '', ofertasTexto: '', combosBateriasTexto: '', combosBateriasTitulo: 'Combos y baterias', dolarMayorista: '',
   campania: CAMPANIA_VACIA,
+  // Envío gratis de siempre: solo moto en CABA, con productos desde `desde` (functions/bot/campania.js).
+  envioGratis: { activo: false, desde: 100000 },
 };
 
 export default function OperativoPage() {
@@ -96,7 +98,7 @@ export default function OperativoPage() {
 
   useEffect(() => {
     const unsub = onSnapshot(DOC_REF(), (snap) => {
-      if (snap.exists()) setForm({ ...DEFAULTS, ...snap.data(), salidasMoto: { ...DEFAULTS.salidasMoto, ...snap.data().salidasMoto }, campania: { ...CAMPANIA_VACIA, ...snap.data().campania } });
+      if (snap.exists()) setForm({ ...DEFAULTS, ...snap.data(), salidasMoto: { ...DEFAULTS.salidasMoto, ...snap.data().salidasMoto }, campania: { ...CAMPANIA_VACIA, ...snap.data().campania }, envioGratis: { ...DEFAULTS.envioGratis, ...snap.data().envioGratis } });
       setLoaded(true);
     }, () => setLoaded(true));
     return unsub;
@@ -105,6 +107,8 @@ export default function OperativoPage() {
   const set = (k, v) => { setForm((f) => ({ ...f, [k]: v })); setSavedAt(null); };
   const setCampania = (k, v) => { setForm((f) => ({ ...f, campania: { ...f.campania, [k]: v } })); setSavedAt(null); };
   const campania = form.campania || CAMPANIA_VACIA;
+  const envioGratis = { ...DEFAULTS.envioGratis, ...form.envioGratis };
+  const setEnvioGratis = (k, v) => set('envioGratis', { ...envioGratis, [k]: v });
 
   // Los días que ya pasaron no se muestran ni se guardan.
   const diasSinDespacho = (form.diasSinDespacho || []).filter((d) => d >= hoyBA()).sort();
@@ -122,6 +126,10 @@ export default function OperativoPage() {
     }
     if (form.dolarMayorista != null && form.dolarMayorista !== '' && !(Number.isFinite(Number(form.dolarMayorista)) && Number(form.dolarMayorista) > 0)) {
       alert('El valor del dolar debe ser mayor que cero.');
+      return;
+    }
+    if (envioGratis.activo && !(Number(envioGratis.desde) > 0)) {
+      alert('Para prender el envío gratis poné desde qué monto (por ejemplo 100000).');
       return;
     }
     if (campania.activa && (!campania.inicio || !campania.fin || campania.inicio >= campania.fin)) {
@@ -148,6 +156,7 @@ export default function OperativoPage() {
         combosBateriasTexto: (form.combosBateriasTexto || '').trim(),
         combosBateriasTitulo: (form.combosBateriasTitulo || '').trim() || 'Combos y baterias',
         dolarMayorista: Number(form.dolarMayorista) > 0 ? Number(form.dolarMayorista) : null,
+        envioGratis: { activo: envioGratis.activo === true, desde: Number(envioGratis.desde) > 0 ? Number(envioGratis.desde) : null },
         campania: {
           activa: campania.activa === true,
           nombre: (campania.nombre || '').trim(),
@@ -241,6 +250,29 @@ export default function OperativoPage() {
                   className={`w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none ${input}`} />
               </label>
             ))}
+          </div>
+
+          {/* Envío gratis: interruptor que lee el bot */}
+          <div className={`rounded-2xl border p-5 ${card}`}>
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <p className={`text-xs font-bold uppercase tracking-wide ${label}`}>Envío gratis</p>
+              <button type="button" role="switch" aria-checked={envioGratis.activo === true} aria-label="Envío gratis"
+                onClick={() => setEnvioGratis('activo', !envioGratis.activo)}
+                className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${envioGratis.activo ? 'bg-emerald-500' : (dm ? 'bg-white/15' : 'bg-zinc-300')}`}>
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${envioGratis.activo ? 'translate-x-5' : ''}`} />
+              </button>
+            </div>
+            <p className={`text-[11px] mb-3 ${label}`}>Solo motomensajería en CABA. El bot lo avisa y lo descuenta solo cuando los productos llegan al monto.</p>
+            <label className={`block text-sm mb-2 ${label}`}>Desde ($)
+              <input type="number" min="1" step="1000" value={envioGratis.desde ?? ''}
+                onChange={(e) => setEnvioGratis('desde', e.target.value)}
+                className={`mt-2 w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none ${input}`} />
+            </label>
+            <p className={`text-xs font-bold ${envioGratis.activo ? 'text-emerald-500' : 'text-zinc-500'}`}>
+              {envioGratis.activo
+                ? `Prendido: envío gratis en CABA desde $${Number(envioGratis.desde || 0).toLocaleString('es-AR')}.`
+                : 'Apagado: el envío se cobra siempre.'}
+            </p>
           </div>
 
           {/* Limite de pedidos por tanda */}
