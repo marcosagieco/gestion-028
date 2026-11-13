@@ -151,7 +151,10 @@ const agentGuardarComprobante = conClave(async (req, res) => {
     // así que ahora sí lo puede usar el bot.
     if (previo.conEquipo && !conEquipo && !previo.pedidoId) cambios.conEquipo = false;
     if (Object.keys(cambios).length) await db.collection("comprobantes").doc(existente.id).update(cambios);
-    return res.json({ ...respuesta, id: existente.id, reutilizado: true, ...(cambios.veces ? { veces: cambios.veces } : {}) });
+    // Si ya está en un pedido (el cliente lo reenvió, por ejemplo porque lo borró), el bot lo tiene que saber:
+    // no hay nada que cargar y no se le pide otro comprobante.
+    return res.json({ ...respuesta, id: existente.id, reutilizado: true, ...(cambios.veces ? { veces: cambios.veces } : {}),
+      ...(previo.pedidoId ? { yaEnPedido: previo.pedidoId } : {}) });
   }
   let archivo = null;
   try {

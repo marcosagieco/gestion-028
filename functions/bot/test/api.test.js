@@ -770,6 +770,12 @@ async function main() {
     const reenviado = await guardar({ url: "https://chatwoot/x-otra-vez.jpg", idMensaje: 10, lectura: { ...celina, numeroOperacion: "1855-6332-9942" } });
     ok("suelto: la misma transferencia en otro archivo no se guarda de nuevo y cuenta las veces", reenviado.body.reutilizado && reenviado.body.id === r.body.id
       && store[`comprobantes/${r.body.id}`].veces === 2 && Object.keys(store).filter((k) => k.startsWith("comprobantes/")).length === antesReenvio, store[`comprobantes/${r.body.id}`]);
+    ok("suelto: un reenvío que todavía no está en un pedido no avisa pedido", !reenviado.body.yaEnPedido, reenviado.body);
+    // Victorio (13/11): el pedido ya se cargó con el comprobante; lo borró sin querer y lo mandó de nuevo.
+    store[`comprobantes/${r.body.id}`].pedidoId = "bot-victorio";
+    const yaUsado = await guardar({ url: "https://chatwoot/x-reenvio-pedido.jpg", idMensaje: 13, lectura: celina });
+    ok("suelto: reenviado después de cargar el pedido avisa en qué pedido está", yaUsado.body.reutilizado && yaUsado.body.yaEnPedido === "bot-victorio", yaUsado.body);
+    store[`comprobantes/${r.body.id}`].pedidoId = null;
     const otroImporte = await guardar({ url: "https://chatwoot/x-otro-importe.jpg", idMensaje: 11, lectura: { ...celina, monto: "$10.000" } });
     ok("suelto: mismo número con otro importe es otro comprobante", otroImporte.body.guardado && !otroImporte.body.reutilizado && otroImporte.body.id !== r.body.id, otroImporte.body);
     delete store[`comprobantes/${otroImporte.body.id}`];
