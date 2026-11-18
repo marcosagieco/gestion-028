@@ -1018,20 +1018,20 @@ async function main() {
     ok("agrega productos al mismo pedido al recibir", agregar.body.ok && count() === antes && store[`pedidos/${r.body.pedidoId}`].items[0].cantidad === 2, agregar.body);
     setAntesTransaccion(() => { store[`pedidos/${r.body.pedidoId}`].estado = "armado"; });
     const carrera = await modificar({ idMensajeOrigen: "mod-4", direccion: "Cabildo 2000, Belgrano" });
-    ok("si deposito arma durante cambio, bloquea y deriva", carrera.status === 409 && carrera.body.derivar && store[`pedidos/${r.body.pedidoId}`].direccion.texto !== "Cabildo 2000, Belgrano" && count() === antes, carrera.body);
-    const armado = await modificar({ idMensajeOrigen: "mod-5" });
-    ok("pedido armado deriva sin duplicado", armado.status === 409 && armado.body.motivo === "modificar_pedido_armado", armado.body);
+    ok("si el depósito arma durante el cambio, no lo pisa", carrera.status === 409 && store[`pedidos/${r.body.pedidoId}`].direccion.texto !== "Cabildo 2000, Belgrano" && count() === antes, carrera.body);
+    // Regla de Lucio (18/11): sin pagar se cambia aunque esté armado; vuelve a pendiente y se avisa al equipo.
+    const armado = await modificar({ idMensajeOrigen: "mod-5", items: [{ producto: "Elfbar Ice King", cantidad: 3, variante: "Peach" }] });
+    const pa = store[`pedidos/${r.body.pedidoId}`];
+    ok("armado sin pagar: el bot lo cambia, vuelve a pendiente y avisa al equipo", armado.body.ok && armado.body.cambiadoTrasArmado && armado.body.avisarAlEquipo && pa.estado === "pendiente" && pa.cambiadoTrasArmado && pa.items[0].cantidad === 3 && count() === antes, armado.body);
     const pagado = await pedido({ comprobante: { numero: "pago-base", monto: 29000 } });
     const cambios = { pedidoId: pagado.body.pedidoId, telefono: "5491158696086", items: [{ producto: "Elfbar Ice King", cantidad: 2, variante: "Peach" }] };
     const extra = await llamar(api.agentPedido, { method: "POST", body: cambios });
-    ok("agregar a pagado pide diferencia antes de guardar", extra.status === 400 && extra.body.requierePago && !extra.body.derivar && store[`pedidos/${pagado.body.pedidoId}`].items[0].cantidad === 1, extra.body);
-    const fotoOriginal = store[`pedidos/${pagado.body.pedidoId}`].comprobanteImagen;
-    store["comprobantes/cw-" + hashCorto("https://chatwoot/saldo.jpg")] = { telefono: "5491158696086", cuentaCobro: "alias1", comprobante: { numero: "pago-saldo", monto: 23000 }, urlFuente: "https://chatwoot/saldo.jpg", createdAt: new Date().toISOString(), pedidoId: null };
-    const saldo = await llamar(api.agentPedido, { method: "POST", body: { ...cambios, idMensajeOrigen: "saldo-1" } });
-    ok("pago adicional permite actualizar sin duplicar", saldo.body.ok && store[`pedidos/${pagado.body.pedidoId}`].montoPagado === 52000 && store[`pedidos/${pagado.body.pedidoId}`].comprobantesAdicionales.length === 1, saldo.body);
-    ok("pago adicional conserva foto original y guarda segunda aparte", store[`pedidos/${pagado.body.pedidoId}`].comprobanteImagen.path === fotoOriginal.path && store[`pedidos/${pagado.body.pedidoId}`].comprobantesAdicionales[0].imagen.path !== fotoOriginal.path, store[`pedidos/${pagado.body.pedidoId}`].comprobantesAdicionales);
-    const saldoRetry = await llamar(api.agentPedido, { method: "POST", body: { ...cambios, idMensajeOrigen: "saldo-1" } });
-    ok("reintento no suma pago adicional dos veces", saldoRetry.body.reutilizado && store[`pedidos/${pagado.body.pedidoId}`].montoPagado === 52000, saldoRetry.body);
+    ok("pagado: no lo cambia el bot, deriva", extra.status === 409 && extra.body.derivar && extra.body.motivo === "cambio_de_pedido_pagado" && store[`pedidos/${pagado.body.pedidoId}`].items[0].cantidad === 1, extra.body);
+    const vistaPagado = await llamar(api.agentPedido, { method: "POST", body: { ...cambios, preview: true } });
+    ok("pagado: tampoco muestra un cambio propuesto", vistaPagado.status === 409 && vistaPagado.body.derivar, vistaPagado.body);
+    store[`pedidos/${pagado.body.pedidoId}`].estado = "armado";
+    const pagadoArmado = await llamar(api.agentPedido, { method: "POST", body: { ...cambios, idMensajeOrigen: "pa-1" } });
+    ok("pagado y armado: deriva y no lo toca", pagadoArmado.status === 409 && pagadoArmado.body.motivo === "cambio_de_pedido_pagado" && store[`pedidos/${pagado.body.pedidoId}`].estado === "armado", pagadoArmado.body);
 
     for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
     store["settings/operativo"].limitePorTanda = 1;
@@ -1078,7 +1078,7 @@ async function main() {
     ok('Rodolfo: moto confirmada cancela cotización que estaba pendiente',p.body.ok&&store[cotKey].canceladaEn&&store[cotKey].canceladaPorPedidoId===p.body.pedidoId,store[cotKey]);
     const ref='pedidos/'+p.body.pedidoId;store[ref].estado='armado';store[ref].fechaSalida='2026-10-23';store[ref].horaSalida='13:30';
     const cambio=()=>llamar(api.agentPedido,{method:'POST',body:{pedidoId:p.body.pedidoId,telefono:tel,preview:true,direccion:{texto:'Florida 500, San Nicolás'}}});
-    const antes=await cambio();ok('Armado antes de salida: deriva al equipo',antes.status===409&&antes.body.derivar&&!antes.body.bloqueadoSalida,antes.body);
+    const antes=await cambio();ok('Armado sin pagar antes de salida: el bot muestra el cambio',antes.body.ok&&!antes.body.derivar&&store[ref].estado==='armado',antes.body);
     await conHora('2026-10-23T13:30:00',async()=>{const limite=await cambio();ok('Armado a la hora exacta de salida: no modifica ni deriva',limite.body.bloqueadoSalida&&limite.body.derivar===false,limite.body);const e=await llamar(api.agentEstadoOperativo,{query:{telefono:tel}});ok('Estado real comunica que el cambio ya está cerrado',e.body.pedidoActual.cambio.bloqueadoSalida,e.body.pedidoActual);});
     const url='https://chatwoot/solo-alias.jpg';const c=await llamar(api.agentGuardarComprobante,{method:'POST',body:{url,telefono:tel,idConversacion:conv,idMensaje:'alias-solo',lectura:{esComprobante:true,monto:'$35.200',numeroOperacion:'90008101',alias:'028import.gl'}}});ok('Comprobante: reconoce una cuenta válida por el alias visible',c.body.guardado&&Object.values(store).some(x=>x.idMensaje==='alias-solo'&&x.cuentaCobro==='alias1'),c.body);
     const pagoTel='5491199998102',pagoConv='qa-efectivo-uber';
@@ -1088,7 +1088,7 @@ async function main() {
     ok('Moto efectivo a Uber: no descuenta dinero que no fue pagado',prep.body.ok&&prep.body.saldoPendiente===prep.body.total,prep.body);
     const sinPago=await llamar(api.agentPedido,{method:'POST',body:{telefono:pagoTel,pedidoId:cash.body.pedidoId,tipoEnvio:'uber',medioPago:'transferencia'}});
     ok('Moto efectivo a Uber: sin comprobante no cambia ni confirma pago',!sinPago.body.ok&&store['pedidos/'+cash.body.pedidoId].tipoEnvio==='moto',sinPago.body);
-    // Cancelar (regla de Lucio, 4/11): sin pagar y sin armar se cancela; pagado se cambia o reagenda; armado lo ve el equipo.
+    // Cancelar (regla de Lucio, 4/11 y 18/11): sin pagar y sin armar se cancela; pagado no se cancela y sus cambios los hace el equipo; armado lo ve el equipo.
     const cancelar=(pedidoId,telefono,extra={})=>llamar(api.agentCancelarPedido,{method:'POST',body:{pedidoId,telefono,...extra}});
     const otro=await cancelar(cash.body.pedidoId,'5491100000000');ok('Cancelar: no cancela el pedido de otro teléfono',otro.status===404&&store['pedidos/'+cash.body.pedidoId].estado==='pendiente',otro.body);
     const ver=await cancelar(cash.body.pedidoId,pagoTel,{soloVer:true});ok('Cancelar: soloVer no toca el pedido',ver.body.cancelable&&store['pedidos/'+cash.body.pedidoId].estado==='pendiente',ver.body);
@@ -1096,7 +1096,7 @@ async function main() {
     ok('Cancelar: sin pagar y pendiente se cancela como en el panel',can.body.cancelado&&pc2.estado==='cancelado'&&pc2.canceladoAt&&/cliente/.test(pc2.motivoCancelacion),pc2);
     const armadoNoPago=await cancelar(p.body.pedidoId,tel);ok('Cancelar: armado no lo cancela el bot, lo deriva',armadoNoPago.status===409&&armadoNoPago.body.derivar&&store[ref].estado==='armado',armadoNoPago.body);
     store['pedidos/pagado-cancelar']={telefono:pagoTel,estado:'pendiente',montoPagado:30000,comprobante:{numero:'111222333',monto:30000},origen:'bot_n8n'};
-    const pag=await cancelar('pagado-cancelar',pagoTel);ok('Cancelar: pagado no se cancela, se ofrece cambiar',pag.status===409&&pag.body.motivo==='pagado'&&pag.body.sePuedeCambiar&&store['pedidos/pagado-cancelar'].estado==='pendiente',pag.body);
+    const pag=await cancelar('pagado-cancelar',pagoTel);ok('Cancelar: pagado no se cancela y los cambios los hace el equipo',pag.status===409&&pag.body.motivo==='pagado'&&pag.body.derivarSiQuiereCambiar&&/cambio_de_pedido_pagado/.test(pag.body.error)&&store['pedidos/pagado-cancelar'].estado==='pendiente',pag.body);
     delete store['pedidos/pagado-cancelar'];
     const fox=await llamar(api.agentBuscarCatalogo,{query:{consulta:'EarPods Foxconn'}});ok('Apple: Foxconn se informa sin certificar original Apple',fox.body.resultados.some(x=>/Foxconn según/.test(x.autenticidadDeclarada)&&/no equivale/.test(x.autenticidadDeclarada)),fox.body);
     const sinOrigen=await llamar(api.agentBuscarCatalogo,{query:{consulta:'AirPods Pro'}});ok('Apple: no inventa el origen de un producto sin ficha',sinOrigen.body.resultados.some(x=>/no especificada/.test(x.autenticidadDeclarada)),sinOrigen.body);

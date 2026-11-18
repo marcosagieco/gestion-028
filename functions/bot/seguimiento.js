@@ -20,17 +20,26 @@ function esPedidoEnCurso(p, ahora = Date.now()) {
   return Number.isFinite(actividad) && actividad <= ahora + 5 * 60000 && ahora - actividad <= ventana;
 }
 
-// Si el cliente puede cambiar el pedido, o qué pasa si lo pide.
+// Pagado: con un comprobante o con plata ya recibida (también la mitad de «mitad y mitad»).
+const estaPagado = (p) => Number(p?.montoPagado) > 0 || !!p?.comprobante;
+
+// Si el cliente puede cambiar el pedido, o qué pasa si lo pide. Regla de Lucio (18/11): lo que decide es
+// el pago, no el armado. Sin pagar, el bot lo cambia aunque el depósito ya lo haya armado (vuelve a
+// pendiente para rearmarlo y se avisa al equipo). Pagado, los cambios los hace el equipo: se deriva.
+// Con la hora de salida cumplida ya no se cambia nada.
 function restriccionCambio(pedido, ahora = Date.now()) {
   if (!pedido) return { permitido: false, derivar: false, mensaje: "No figura un pedido para modificar." };
-  if (pedido.estado === "armado") {
-    const salida = Date.parse(`${pedido.fechaSalida || ""}T${pedido.horaSalida || ""}:00-03:00`);
-    if (Number.isFinite(salida) && ahora >= salida) {
-      return { permitido: false, derivar: false, bloqueadoSalida: true, motivo: "salida_cerrada", mensaje: "tu pedido ya está armado y llegó la hora de salida; ya no podemos modificarlo" };
-    }
-    return { permitido: false, derivar: true, motivo: "modificar_pedido_armado", mensaje: "el pedido ya está armado; el equipo tiene que revisar si todavía puede hacer el cambio antes de la salida" };
+  if (!["pendiente", "armado"].includes(pedido.estado)) {
+    return { permitido: false, derivar: false, bloqueadoSalida: true, motivo: "ya_salio", mensaje: "el pedido ya salió o se entregó; ya no se puede modificar" };
   }
-  return { permitido: pedido.estado === "pendiente", derivar: pedido.estado !== "pendiente", motivo: "modificar_pedido_armado" };
+  const salida = Date.parse(`${pedido.fechaSalida || ""}T${pedido.horaSalida || ""}:00-03:00`);
+  if (pedido.estado === "armado" && Number.isFinite(salida) && ahora >= salida) {
+    return { permitido: false, derivar: false, bloqueadoSalida: true, motivo: "salida_cerrada", mensaje: "tu pedido ya está armado y llegó la hora de salida; ya no podemos modificarlo" };
+  }
+  if (estaPagado(pedido)) {
+    return { permitido: false, derivar: true, pagado: true, motivo: "cambio_de_pedido_pagado", mensaje: "El pedido ya está pagado: los cambios los hace el equipo. Derivá con el motivo cambio_de_pedido_pagado y contale al cliente qué quiere cambiar en el resumen." };
+  }
+  return { permitido: true, derivar: false, armado: pedido.estado === "armado" };
 }
 
 // Hay dos repartos (15:30 y 18:30) y cada uno tiene su recorrido: se mira el del reparto de ESTE
@@ -71,7 +80,8 @@ async function pedidoEnCurso(telefono) {
     fechaSalida: pedido.fechaSalida || null,
     horaSalida: pedido.horaSalida || null,
     puedeAfirmarEnCamino: enLaCalle,
-    puedeModificar: pedido.origen === "bot_n8n" && pedido.estado === "pendiente",
+    pagado: estaPagado(pedido),
+    puedeModificar: pedido.origen === "bot_n8n" && restriccionCambio(pedido).permitido,
     cambio: restriccionCambio(pedido),
     detalle: pedido.origen === "bot_n8n" ? {
       cliente: pedido.cliente, direccion: pedido.direccion, items: pedido.items, total: pedido.total,
@@ -80,4 +90,4 @@ async function pedidoEnCurso(telefono) {
   };
 }
 
-module.exports = { esPedidoEnCurso, restriccionCambio, pedidoEnCurso };
+module.exports = { esPedidoEnCurso, estaPagado, restriccionCambio, pedidoEnCurso };

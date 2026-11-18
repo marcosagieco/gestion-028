@@ -21,7 +21,7 @@ const { normalizarTelefono, hashCorto, pesos } = require("./texto");
 const { PAGO_LABEL, formaDePago, pagaAntes, descuentoDe, lineaEnTexto, cotizarProductos } = require("./precios");
 const { PRECIO_ENVIO_SEGURO, CORREO, ubicar, armarDireccion, mismaDireccion, puedeRetirar, tramosFlash } = require("./envios");
 const { fechaBA, corta, opcionesMoto, elegirSalida, pedidosMoto, pedidosEnCola, salidaUber, uberALaHora, avisoDeHorario } = require("./salidas");
-const { esPedidoEnCurso, restriccionCambio } = require("./seguimiento");
+const { esPedidoEnCurso, estaPagado, restriccionCambio } = require("./seguimiento");
 const { TOLERANCIA_COMPROBANTE, comprobantesDeLaCompra, copiarAlPedido, vincularAlPedido } = require("./comprobantes");
 const { precioParaElPedido, flashConTarifa, cerrarCotizaciones } = require("./uber");
 const { leerOperativo, envioGratisDe } = require("./campania");
@@ -59,7 +59,8 @@ const faltaDato = (mensaje, extra) => error(400, mensaje, extra);
 // La cuenta a la que se le pide que transfiera: la que dijo el comprobante, o la activa del panel.
 const cuentaDeCobro = (pedida, op) => (CUENTAS_DE_COBRO.includes(pedida) ? pedida : CUENTAS_DE_COBRO.includes(op.aliasActivo) ? op.aliasActivo : "alias1");
 
-// El pedido que se quiere cambiar: tiene que ser del bot, de este cliente, en curso y pendiente.
+// El pedido que se quiere cambiar: tiene que ser del bot, de este cliente, en curso y sin pagar (la regla
+// está en restriccionCambio: pagado se deriva; armado sin pagar se cambia y vuelve a pendiente).
 async function pedidoAModificar(pedidoId, telefono, idMensajeOrigen, preview) {
   const ref = db.collection("pedidos").doc(String(pedidoId));
   const snap = await ref.get();
@@ -70,9 +71,9 @@ async function pedidoAModificar(pedidoId, telefono, idMensajeOrigen, preview) {
   if (!esPedidoEnCurso(anterior)) {
     return { respuesta: error(409, "Ese pedido es de una compra anterior: no lo uses para esta compra. Seguí con los productos, la entrega y el pago de la compra nueva, sin pedidoId.", { continuarCompra: true, motivo: "pedido_anterior" }) };
   }
-  if (anterior.estado !== "pendiente") {
-    const cambio = restriccionCambio(anterior);
-    return { respuesta: error(409, cambio.mensaje || "el pedido ya no está pendiente: no crees otro pedido", cambio) };
+  const cambio = restriccionCambio(anterior);
+  if (!cambio.permitido) {
+    return { respuesta: error(409, cambio.mensaje || "ese pedido ya no se puede cambiar: no crees otro pedido", cambio) };
   }
   // El mismo mensaje del cliente no aplica dos veces el mismo cambio (reintentos de n8n).
   if (!preview && idMensajeOrigen && anterior.ultimoMensajeModificacion === String(idMensajeOrigen)) {
@@ -433,8 +434,9 @@ async function procesarPedido(entrada) {
       if (pagoSnap.exists && pagoSnap.data().pedidoId !== ref.id) return { pagoRepetido: true };
     }
     if (refAnterior) {
-      if (actual?.estado !== "pendiente") return { bloqueado: restriccionCambio(actual) };
-      if (actual.updatedAt !== anterior.updatedAt || actual.total !== anterior.total || actual.mensaje !== anterior.mensaje) return { conflicto: true };
+      if (!restriccionCambio(actual).permitido) return { bloqueado: restriccionCambio(actual) };
+      // Si el depósito lo armó o lo cambió mientras tanto, se vuelve a mirar antes de pisarlo.
+      if (actual.estado !== anterior.estado || actual.updatedAt !== anterior.updatedAt || actual.total !== anterior.total || actual.mensaje !== anterior.mensaje) return { conflicto: true };
     } else if (actual) return { reutilizado: actual };
     if (usaTandaMoto && !conservarSalida) {
       // El documento de la tanda serializa las altas simultáneas, aunque la tanda esté vacía.
@@ -447,12 +449,14 @@ async function procesarPedido(entrada) {
       tx.set(lock, { version: Number(lockSnap.exists ? lockSnap.data().version : 0) + 1 });
     }
     for (const refPago of refsPago) tx.set(refPago, { pedidoId: ref.id, telefono, createdAt: ahora });
+    // Un pedido armado que cambia vuelve a pendiente: el paquete que armó el depósito ya no es este.
     tx.set(ref, refAnterior ? {
-      ...actual, ...pedido, estado: actual.estado, createdAt: actual.createdAt, idempotencia: actual.idempotencia,
+      ...actual, ...pedido, estado: "pendiente", createdAt: actual.createdAt, idempotencia: actual.idempotencia,
+      ...(actual.estado === "armado" ? { cambiadoTrasArmado: ahora } : {}),
       idMensajeOrigen: actual.idMensajeOrigen, cuentaCobro: actual.cuentaCobro || pedido.cuentaCobro, comprobanteImagen: actual.comprobanteImagen,
       updatedAt: ahora, ultimoMensajeModificacion: String(entrada.idMensajeOrigen || ""),
     } : pedido);
-    return {};
+    return { eraArmado: actual?.estado === "armado" };
   });
   if (resultado.pagoRepetido) return error(409, "Ese comprobante ya se usó para otro pedido: decíselo al cliente y pedile el comprobante de esta compra.", { requiereComprobante: true });
   if (resultado.bloqueado) return error(409, resultado.bloqueado.mensaje || "el depósito cambió el estado; no crees otro pedido", resultado.bloqueado);
@@ -478,7 +482,9 @@ async function procesarPedido(entrada) {
   for (const c of usados) await vincularAlPedido(c.id, ref.id);
   await cerrarCotizaciones(telefono, ref.id, tipoEnvio, dir.texto);
   const notas = [pagoDeMas ? `El cliente transfirió ${pesos(pagoDeMas)} de más: avisale que quedó anotado y que el equipo se lo devuelve.` : "", avisoSinContar.trim()].filter(Boolean);
+  if (resultado.eraArmado) notas.push("El depósito ya lo había armado: volvió a pendiente para rearmarlo y el equipo recibe el aviso del cambio.");
   return ok({ pedidoId: ref.id, mensaje, total, salida: cuando, reutilizado: false, modificado: !!refAnterior, tipoEnvio,
+    ...(resultado.eraArmado ? { cambiadoTrasArmado: true, avisarAlEquipo: true } : {}),
     ...(pagoDeMas ? { pagoDeMas } : {}), ...(notas.length ? { nota: notas.join(" ") } : {}) });
 }
 
@@ -488,7 +494,7 @@ const agentPedido = conClave(async (req, res) => {
 });
 
 // Regla del negocio para cancelar: si no pagó y el depósito todavía no lo armó, se cancela. Si ya pagó,
-// no se cancela: se cambia o se reagenda. Armado, lo revisa el equipo. Queda igual que con el botón
+// no se cancela y los cambios los hace el equipo (18/11). Armado sin pagar, la cancelación la revisa el equipo. Queda igual que con el botón
 // «Cancelar pedido» del panel (estado cancelado, con motivo y fecha; libera su lugar en la tanda).
 async function cancelarPedido(entrada) {
   const telefono = normalizarTelefono(entrada.telefono);
@@ -498,12 +504,11 @@ async function cancelarPedido(entrada) {
   if (!p || normalizarTelefono(p.telefono) !== telefono) return error(404, "No figura ese pedido para este cliente: fijate el pedido actual.");
   if (p.estado === "cancelado") return ok({ cancelado: true, yaEstaba: true, mensaje: "Ese pedido ya estaba cancelado." });
   if (p.estado !== "pendiente" && p.estado !== "armado") return error(409, "Ese pedido ya salió o se entregó: no se puede cancelar.", { motivo: "ya_salio" });
-  const pagado = Number(p.montoPagado) > 0 || !!p.comprobante;
-  if (pagado) {
-    return error(409, "Ese pedido ya está pagado: no se cancela. Ofrecele cambiar el día o la salida, o cambiar los productos (modificar_pedido).", { motivo: "pagado", sePuedeCambiar: p.estado === "pendiente" });
+  if (estaPagado(p)) {
+    return error(409, "Ese pedido ya está pagado: no se cancela. Si quiere cambiar algo (el día, la salida o los productos), lo hace el equipo: derivá con el motivo cambio_de_pedido_pagado.", { motivo: "pagado", derivarSiQuiereCambiar: true });
   }
   if (p.estado === "armado") {
-    return error(409, "El depósito ya armó ese pedido: no lo cancelás vos. Derivá con el motivo cambio_de_pedido_armado para que lo revise el equipo.", { motivo: "armado", derivar: true });
+    return error(409, "El depósito ya armó ese pedido: no lo cancelás vos. Derivá con el motivo cancelar_pedido_armado para que lo revise el equipo. Si en vez de cancelar quiere cambiarlo, el cambio lo hacés vos con modificar_pedido.", { motivo: "armado", derivar: true });
   }
   if (entrada.soloVer === true || entrada.soloVer === "true") return ok({ cancelable: true, mensaje: p.mensaje, total: p.total });
   await ref.update({ estado: "cancelado", motivoCancelacion: "Lo canceló el cliente por WhatsApp (bot)", canceladoAt: new Date().toISOString() });
