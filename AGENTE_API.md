@@ -141,10 +141,12 @@ el modelo. Queda en el pedido y un cambio no lo toca.
   ninguno sirve, `400` con `requiereComprobante` y qué decirle al cliente; si sirve alguno, la `nota` lo
   avisa. Tolerancia: $5.000. Si falta más, `400` con `requierePago` y `faltante`; si sobra, se carga
   con `pagoDeMas`. Un mismo pago no paga dos pedidos.
-- **Cambios:** solo de un pedido del bot, de ese cliente, en curso y pendiente. Uno armado deriva
-  (`modificar_pedido_armado`), salvo que ya pasó la hora de salida (`bloqueadoSalida`). Uno de una
-  compra anterior responde `continuarCompra` (`pedido_anterior`). Si el cambio sube el total de un
-  pedido pagado, pide un comprobante adicional (`requierePago`).
+- **Cambios (regla de Lucio, 18/11):** solo de un pedido del bot, de ese cliente, en curso y **sin
+  pagar** (`restriccionCambio`). Pagado (comprobante o `montoPagado`) deriva con
+  `cambio_de_pedido_pagado`. Sin pagar se cambia aunque esté armado: vuelve a `pendiente`, queda
+  `cambiadoTrasArmado` y la respuesta trae `avisarAlEquipo` para que n8n avise que hay que rearmarlo.
+  Armado con la hora de salida cumplida no se cambia (`bloqueadoSalida`). Uno de una compra anterior
+  responde `continuarCompra` (`pedido_anterior`).
 
 ## `agentGuardarComprobante` — `{ url, lectura, telefono, cliente, idConversacion, idMensaje, conEquipo }`
 
