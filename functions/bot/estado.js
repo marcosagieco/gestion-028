@@ -7,7 +7,7 @@ const { conClave } = require("./http");
 const { textoDe, pesos } = require("./texto");
 const { LISTAS_DEL_PANEL, sinPrecios } = require("./catalogo");
 const { TRAMOS_DESCUENTO_EFECTIVO, MINIMO_MAYORISTA } = require("./precios");
-const { PRECIO_ENVIO_SEGURO, CORREO, puedeRetirar } = require("./envios");
+const { PRECIO_ENVIO_SEGURO, CORREO, puedeRetirar, tramosFlash } = require("./envios");
 const { horaBuenosAires, horarioUber, hhmmDe, corta, salidasMoto, opcionesMoto, pedidosMoto, pedidosEnCola, salidaUber, demora, avisoDeHorario } = require("./salidas");
 const { pedidoEnCurso } = require("./seguimiento");
 const { TOLERANCIA_COMPROBANTE } = require("./comprobantes");
@@ -49,9 +49,12 @@ function plantillasDelDia(op, salidaFlash) {
   const [primera, segunda] = salidasMoto(op);
   const ahora = horaBuenosAires(new Date());
   const h = horarioUber(ahora.dia, ahora.fecha, op.horariosUberPorFecha || {});
-  const horarioFlash = salidaFlash?.fecha === ahora.fecha && h ? `⏳ ${hhmmDe(h.inicio)} hs a ${hhmmDe(h.fin)} hs`
+  const tramos = tramosFlash(op);
+  const horarioFlash = (salidaFlash?.fecha === ahora.fecha && h ? `⏳ ${hhmmDe(h.inicio)} hs a ${hhmmDe(h.fin)} hs`
     : salidaFlash ? `⏳ Próxima salida: ${corta(salidaFlash.fecha)} a las ${salidaFlash.hora}. A confirmar con el pedido.`
-      : "⏳ Consultá la próxima salida disponible antes de pagar.";
+      : "⏳ Consultá la próxima salida disponible antes de pagar.")
+    // Con la tarifa fija, el precio según la distancia (hasta el último tramo).
+    + (tramos ? `\n💲 Precio según la distancia, desde ${pesos(tramos[0].monto)} (hasta ${tramos.slice(-1)[0].hasta} km)` : "");
   // Con el envío gratis prendido en el panel, la moto lo dice (solo CABA).
   const gratis = op.envioGratisActivo ? `\n🎁 Envío gratis en CABA con compras desde ${pesos(op.envioGratisActivo.desde)}` : "";
   plantillas.FORMAS_DE_ENTREGA = plantillas.FORMAS_DE_ENTREGA
@@ -91,6 +94,8 @@ const agentEstadoOperativo = conClave(async (req, res) => {
     envioGratis: op.envioGratisActivo,
     // Si este cliente puede retirar en persona (lista del panel): el bot le ofrece el retiro.
     puedeRetirar: puedeRetirar(op, req.query.telefono),
+    // Tarifa fija del Flash (panel): el precio sale al instante por la distancia, hasta hastaKm. null: lo cotiza el depósito.
+    tarifaFlash: tramosFlash(op) ? { hastaKm: tramosFlash(op).slice(-1)[0].hasta } : null,
     plantillas: plantillasDelDia(op, proximoUber),
   });
 });

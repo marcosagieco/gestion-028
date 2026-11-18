@@ -19,11 +19,11 @@ const { db } = require("./firebase");
 const { conClave } = require("./http");
 const { normalizarTelefono, hashCorto, pesos } = require("./texto");
 const { PAGO_LABEL, formaDePago, pagaAntes, descuentoDe, lineaEnTexto, cotizarProductos } = require("./precios");
-const { PRECIO_ENVIO_SEGURO, CORREO, ubicar, armarDireccion, mismaDireccion, puedeRetirar } = require("./envios");
+const { PRECIO_ENVIO_SEGURO, CORREO, ubicar, armarDireccion, mismaDireccion, puedeRetirar, tramosFlash } = require("./envios");
 const { fechaBA, corta, opcionesMoto, elegirSalida, pedidosMoto, pedidosEnCola, salidaUber, uberALaHora, avisoDeHorario } = require("./salidas");
 const { esPedidoEnCurso, restriccionCambio } = require("./seguimiento");
 const { TOLERANCIA_COMPROBANTE, comprobantesDeLaCompra, copiarAlPedido, vincularAlPedido } = require("./comprobantes");
-const { precioParaElPedido, cerrarCotizaciones } = require("./uber");
+const { precioParaElPedido, flashConTarifa, cerrarCotizaciones } = require("./uber");
 const { leerOperativo, envioGratisDe } = require("./campania");
 
 const ENVIO_LABEL = { moto: "🛵 Moto mensajería", uber: "⚡ Envío flash (Uber)", correo: "📦 Correo (Vía Cargo)", retiro: "🏪 Retiro en persona" };
@@ -243,6 +243,12 @@ async function procesarPedido(entrada) {
   } else if (tipoEnvio === "uber") {
     if (envioAnterior === "uber" && mismaDireccion(anterior.direccion?.texto, dir.texto)) {
       valorEnvio = anterior.valorEnvio; // un cambio de productos mantiene el Uber ya cotizado
+    } else if (tramosFlash(op)) {
+      // Tarifa fija del panel: el precio sale de la distancia (uber.flashConTarifa), sin cotización del depósito.
+      const r = await flashConTarifa(op, dir.texto);
+      if (r.error) return faltaDato(r.error);
+      if (r.lejos) return faltaDato(r.mensaje);
+      valorEnvio = r.monto;
     } else {
       const precio = await precioParaElPedido(telefono, dir.texto);
       // Si el cliente ya transfirió, el precio que se le pasó vale aunque hayan pasado los 45 minutos:

@@ -139,4 +139,29 @@ const telefonosConRetiro = (op) => String(op?.retiroPermitidoTexto || "").split(
   .map((l) => normalizarTelefono((l.match(/\+?\d[\d\s().-]{7,}\d/) || [""])[0])).filter(Boolean);
 const puedeRetirar = (op, telefono) => !!normalizarTelefono(telefono) && telefonosConRetiro(op).includes(normalizarTelefono(telefono));
 
-module.exports = { PRECIO_ENVIO_SEGURO, CORREO, ubicar, armarDireccion, mismaDireccion, puedeRetirar };
+// Tarifa fija del Flash (Lucio, 4/11 y 18/11): en vez de que el depósito cotice cada Uber, un precio por tramo de
+// distancia, sacado de los 841 viajes que cotizó el equipo. Se carga en /operativo: settings/operativo.tarifaFlash =
+// { activa, tramosTexto }, un tramo por renglón con los km hasta los que vale y el precio («hasta 3 km: $3.000»).
+// Más allá del último tramo no hay Flash (se ofrece correo). Apagada, el Flash se cotiza a mano como antes.
+function tramosFlash(op) {
+  const t = op?.tarifaFlash;
+  if (!t || t.activa !== true) return null;
+  // Los km son el número pegado a «km» («de 3 a 6 km» vale hasta 6) y el precio, el que va después del «$».
+  const tramos = String(t.tramosTexto || "").split("\n").map((l) => {
+    const km = l.match(/(\d+(?:[.,]\d+)?)\s*km/i);
+    const precio = l.match(/\$\s*(\d[\d.]*)/);
+    const hasta = km ? Number(km[1].replace(",", ".")) : NaN;
+    const monto = precio ? Number(precio[1].replace(/\./g, "")) : NaN;
+    return hasta > 0 && monto > 0 ? { hasta, monto } : null;
+  }).filter(Boolean).sort((a, b) => a.hasta - b.hasta);
+  return tramos.length ? tramos : null;
+}
+// El precio del Flash a una distancia: { monto } o { lejos: true, maxKm }. null si la tarifa fija está apagada.
+function precioFlash(op, km) {
+  const tramos = tramosFlash(op);
+  if (!tramos) return null;
+  const tramo = tramos.find((t) => km <= t.hasta);
+  return tramo ? { monto: tramo.monto } : { lejos: true, maxKm: tramos[tramos.length - 1].hasta };
+}
+
+module.exports = { PRECIO_ENVIO_SEGURO, CORREO, ubicar, armarDireccion, mismaDireccion, puedeRetirar, tramosFlash, precioFlash };

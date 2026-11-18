@@ -6,7 +6,7 @@
 const { db } = require("./firebase");
 const { conClave, rechazar } = require("./http");
 const { normalizar, normalizarTelefono, hashCorto, pesos } = require("./texto");
-const { mismaDireccion } = require("./envios");
+const { mismaDireccion, ubicar, tramosFlash, precioFlash } = require("./envios");
 const { fechaBA, horaBuenosAires, horarioUber, salidaUber, diasSinDespacho } = require("./salidas");
 const { leerOperativo } = require("./campania");
 
@@ -97,7 +97,19 @@ function salidaFueraDeHorario(op, ahora = new Date()) {
   return `Ahora no hay salida de Flash: si confirma, sale ${proximo ? `${proximo.dia} a las ${proximo.hora}` : "el próximo día con despacho"}. Decíselo desde ahora.`;
 }
 
+// El Flash con la tarifa fija del panel: { monto, km }, { lejos, mensaje } (más allá del último tramo) o { error }.
+// La distancia es por calle desde el depósito, la misma que usa la moto.
+async function flashConTarifa(op, direccion) {
+  if (!String(direccion || "").trim()) return { error: "falta la dirección: pedile calle, altura y barrio" };
+  const u = await ubicar(direccion);
+  if (!u) return { error: "no pude ubicar la dirección: pedile calle, altura y barrio" };
+  const p = precioFlash(op, u.km);
+  if (p.lejos) return { lejos: true, km: u.km, mensaje: `El Flash llega hasta ${p.maxKm} km del depósito y esa dirección está a ${u.km} km: ofrecé correo (sucursal o domicilio).` };
+  return { monto: p.monto, km: u.km };
+}
+
 // POST /agentCrearCotizacionUber — { idConversacion, telefonoCliente, nombreCliente, direccion, explicacion, pedido }
+// Con la tarifa fija del panel prendida, devuelve el precio al instante (no se crea una cotización para el depósito).
 // Si ya hay un precio vigente o una cotización pendiente para esa compra y dirección, la devuelve.
 // avisarAlEquipo: hay que avisarle al depósito por WhatsApp (una cotización nueva o una que no contestó).
 const agentCrearCotizacionUber = conClave(async (req, res) => {
@@ -106,6 +118,16 @@ const agentCrearCotizacionUber = conClave(async (req, res) => {
   const telefonoCliente = normalizarTelefono(b.telefonoCliente);
   if (!idConversacion || !telefonoCliente) return rechazar(res, "faltan idConversacion o telefonoCliente");
   const direccion = String(b.direccion || "").trim();
+  const op = await leerOperativo();
+  // Tarifa fija: el precio sale de la distancia, al instante, sin el depósito ni vencimiento.
+  if (tramosFlash(op)) {
+    const r = await flashConTarifa(op, direccion);
+    if (r.error) return res.json({ ok: false, error: r.error });
+    if (r.lejos) return res.json({ ok: true, creada: false, sinCobertura: true, mensaje: r.mensaje });
+    const salida = salidaFueraDeHorario(op);
+    return res.json({ ok: true, creada: false, yaCotizado: true, tarifaFija: true, montoUber: r.monto, km: r.km,
+      mensaje: `El Flash a esa dirección sale ${pesos(r.monto)} (${r.km} km del depósito). Es la tarifa fija: el precio es este, no hay que esperar al depósito.${salida ? " " + salida : ""}` });
+  }
   const { cotizaciones, ciclo } = await cotizacionesDeLaCompra(telefonoCliente, direccion);
   const previa = ultima(cotizaciones);
   const vigente = conPrecioVigente(previa);
@@ -113,7 +135,7 @@ const agentCrearCotizacionUber = conClave(async (req, res) => {
     return res.json({ ok: true, creada: false, yaCotizado: true, id: vigente.id, montoUber: Number(vigente.montoUber), venceEn: vence(vigente),
       mensaje: `El precio del Flash vigente es ${pesos(vigente.montoUber)} hasta ${vence(vigente)}.` });
   }
-  const salida = salidaFueraDeHorario(await leerOperativo());
+  const salida = salidaFueraDeHorario(op);
   const conSalida = (texto) => (salida ? `${texto} ${salida}` : texto);
   // Una sola cotización abierta por compra y dirección: si el depósito no la contestó en 45 minutos, se le
   // vuelve a avisar de la misma. Con dos, el precio cargado en la vieja se descartaba sin avisar.
@@ -200,4 +222,4 @@ const agentAvisosCotizacionUber = conClave(async (req, res) => {
   res.json({ ok: true, avisos });
 });
 
-module.exports = { precioParaElPedido, cotizacionEnCurso, cerrarCotizaciones, agentCrearCotizacionUber, agentAvisosCotizacionUber };
+module.exports = { precioParaElPedido, flashConTarifa, cotizacionEnCurso, cerrarCotizaciones, agentCrearCotizacionUber, agentAvisosCotizacionUber };

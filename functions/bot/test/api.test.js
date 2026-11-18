@@ -695,6 +695,32 @@ async function main() {
     store["settings/operativo"] = antes;
   }
 
+  // ── tarifa fija del Flash (Lucio, 18/11): precio por tramo de distancia, sin cotización del depósito ──
+  {
+    const op = store["settings/operativo"];
+    const antes = structuredClone(op);
+    op.tarifaFlash = { activa: true, tramosTexto: "Hasta 3 km: $3.000\nde 3 a 10 km: $8.000" };
+    const cotizar = (direccion) => llamar(api.agentCrearCotizacionUber, { method: "POST", body: { idConversacion: "901", telefonoCliente: "5491100009999", direccion } });
+    const cerca = await cotizar("Cabildo 2000, Belgrano");
+    ok("flash fijo: cerca del depósito sale el primer tramo, al instante", cerca.body.ok && cerca.body.montoUber === 3000 && cerca.body.tarifaFija && !cerca.body.avisarAlEquipo, cerca.body);
+    ok("flash fijo: no crea una cotización para el depósito", !Object.keys(store).some((k) => k.startsWith("cotizaciones_uber/") && store[k].telefonoCliente === "5491100009999"), Object.keys(store).filter((k) => k.startsWith("cotizaciones_uber/")));
+    const lejos = await cotizar("Mozart 3000, Villa Lugano");
+    ok("flash fijo: más lejos que el último tramo no hay Flash y se ofrece correo", lejos.body.ok && lejos.body.sinCobertura && /hasta 10 km/.test(lejos.body.mensaje) && /correo/.test(lejos.body.mensaje), lejos.body);
+    const sinDir = await cotizar("");
+    ok("flash fijo: sin dirección la pide", sinDir.body.ok === false && /dirección/.test(sinDir.body.error), sinDir.body);
+    const r = await resumen({ tipoEnvio: "uber", medioPago: "transferencia", direccion: { texto: "Cabildo 2000, Belgrano" }, telefono: "+5491100009999" });
+    ok("flash fijo: el resumen cobra el tramo sin cotización previa", r.body.ok && /Envío: \$3\.000/.test(r.body.mensaje), r.body.mensaje || r.body);
+    const rLejos = await resumen({ tipoEnvio: "uber", medioPago: "transferencia", direccion: { texto: "Mozart 3000, Villa Lugano" }, telefono: "+5491100009999" });
+    ok("flash fijo: el resumen de una dirección lejana no se arma", rLejos.status === 400 && /correo/.test(rLejos.body.error), rLejos.body);
+    const estado = await llamar(api.agentEstadoOperativo);
+    ok("flash fijo: el estado del día lo trae y las formas de entrega lo dicen", estado.body.tarifaFlash?.hastaKm === 10 && /Precio según la distancia, desde \$3\.000 \(hasta 10 km\)/.test(estado.body.plantillas.FORMAS_DE_ENTREGA), estado.body.tarifaFlash);
+    op.tarifaFlash.activa = false;
+    const apagada = await cotizar("Cabildo 2000, Belgrano");
+    ok("flash fijo: apagada, vuelve la cotización del depósito", apagada.body.ok && apagada.body.creada && apagada.body.avisarAlEquipo, apagada.body);
+    for (const k of Object.keys(store)) if (k.startsWith("cotizaciones_uber/") && store[k].telefonoCliente === "5491100009999") delete store[k];
+    store["settings/operativo"] = antes;
+  }
+
   // ── retiro en persona (Lucio, 16/11): solo los teléfonos que el depósito carga en /operativo ──
   {
     const op = store["settings/operativo"];

@@ -86,6 +86,8 @@ const DEFAULTS = {
   envioGratis: { activo: false, desde: 100000 },
   // Clientes que pueden retirar en persona: un teléfono por renglón, con el nombre si se quiere (functions/bot/envios.js).
   retiroPermitidoTexto: '',
+  // Tarifa fija del Flash por tramos de distancia (functions/bot/envios.js). Apagada, el depósito cotiza cada Flash.
+  tarifaFlash: { activa: false, tramosTexto: 'Hasta 3 km: $3.000\nHasta 6 km: $6.500\nHasta 10 km: $8.000\nHasta 15 km: $10.000\nHasta 25 km: $15.000' },
 };
 
 export default function OperativoPage() {
@@ -100,7 +102,7 @@ export default function OperativoPage() {
 
   useEffect(() => {
     const unsub = onSnapshot(DOC_REF(), (snap) => {
-      if (snap.exists()) setForm({ ...DEFAULTS, ...snap.data(), salidasMoto: { ...DEFAULTS.salidasMoto, ...snap.data().salidasMoto }, campania: { ...CAMPANIA_VACIA, ...snap.data().campania }, envioGratis: { ...DEFAULTS.envioGratis, ...snap.data().envioGratis } });
+      if (snap.exists()) setForm({ ...DEFAULTS, ...snap.data(), salidasMoto: { ...DEFAULTS.salidasMoto, ...snap.data().salidasMoto }, campania: { ...CAMPANIA_VACIA, ...snap.data().campania }, envioGratis: { ...DEFAULTS.envioGratis, ...snap.data().envioGratis }, tarifaFlash: { ...DEFAULTS.tarifaFlash, ...snap.data().tarifaFlash } });
       setLoaded(true);
     }, () => setLoaded(true));
     return unsub;
@@ -111,6 +113,13 @@ export default function OperativoPage() {
   const campania = form.campania || CAMPANIA_VACIA;
   const envioGratis = { ...DEFAULTS.envioGratis, ...form.envioGratis };
   const setEnvioGratis = (k, v) => set('envioGratis', { ...envioGratis, [k]: v });
+  const tarifaFlash = { ...DEFAULTS.tarifaFlash, ...form.tarifaFlash };
+  const setTarifaFlash = (k, v) => set('tarifaFlash', { ...tarifaFlash, [k]: v });
+  // Los tramos tal como los lee el bot: «Hasta 3 km: $3.000» (km pegados a «km», precio después del «$»).
+  const tramosLeidos = String(tarifaFlash.tramosTexto || '').split('\n').map((l) => {
+    const km = l.match(/(\d+(?:[.,]\d+)?)\s*km/i); const precio = l.match(/\$\s*(\d[\d.]*)/);
+    return km && precio ? { hasta: Number(km[1].replace(',', '.')), monto: Number(precio[1].replace(/\./g, '')) } : null;
+  }).filter((t) => t && t.hasta > 0 && t.monto > 0).sort((a, b) => a.hasta - b.hasta);
 
   // Los días que ya pasaron no se muestran ni se guardan.
   const diasSinDespacho = (form.diasSinDespacho || []).filter((d) => d >= hoyBA()).sort();
@@ -128,6 +137,10 @@ export default function OperativoPage() {
     }
     if (form.dolarMayorista != null && form.dolarMayorista !== '' && !(Number.isFinite(Number(form.dolarMayorista)) && Number(form.dolarMayorista) > 0)) {
       alert('El valor del dolar debe ser mayor que cero.');
+      return;
+    }
+    if (tarifaFlash.activa && !tramosLeidos.length) {
+      alert('Para prender la tarifa del Flash cargá al menos un tramo, por ejemplo «Hasta 3 km: $3.000».');
       return;
     }
     if (envioGratis.activo && !(Number(envioGratis.desde) > 0)) {
@@ -160,6 +173,7 @@ export default function OperativoPage() {
         dolarMayorista: Number(form.dolarMayorista) > 0 ? Number(form.dolarMayorista) : null,
         envioGratis: { activo: envioGratis.activo === true, desde: Number(envioGratis.desde) > 0 ? Number(envioGratis.desde) : null },
         retiroPermitidoTexto: (form.retiroPermitidoTexto || '').trim(),
+        tarifaFlash: { activa: tarifaFlash.activa === true, tramosTexto: (tarifaFlash.tramosTexto || '').trim() },
         campania: {
           activa: campania.activa === true,
           nombre: (campania.nombre || '').trim(),
@@ -275,6 +289,26 @@ export default function OperativoPage() {
               {envioGratis.activo
                 ? `Prendido: envío gratis en CABA desde $${Number(envioGratis.desde || 0).toLocaleString('es-AR')}.`
                 : 'Apagado: el envío se cobra siempre.'}
+            </p>
+          </div>
+
+          {/* Tarifa fija del Flash por distancia */}
+          <div className={`rounded-2xl border p-5 ${card}`}>
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <p className={`text-xs font-bold uppercase tracking-wide ${label}`}>Tarifa del Flash</p>
+              <button type="button" role="switch" aria-checked={tarifaFlash.activa === true} aria-label="Tarifa del Flash"
+                onClick={() => setTarifaFlash('activa', !tarifaFlash.activa)}
+                className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${tarifaFlash.activa ? 'bg-emerald-500' : (dm ? 'bg-white/15' : 'bg-zinc-300')}`}>
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${tarifaFlash.activa ? 'translate-x-5' : ''}`} />
+              </button>
+            </div>
+            <p className={`text-[11px] mb-3 ${label}`}>Prendida, el bot le da al cliente el precio del Flash al instante según los km por calle desde el depósito, sin cotizarlo acá. Más lejos que el último tramo no hay Flash: ofrece correo. Un tramo por renglón.</p>
+            <textarea value={tarifaFlash.tramosTexto || ''} onChange={(e) => setTarifaFlash('tramosTexto', e.target.value)}
+              rows={5} className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors font-mono ${input}`} />
+            <p className={`text-xs font-bold mt-2 ${tarifaFlash.activa ? 'text-emerald-500' : 'text-zinc-500'}`}>
+              {tarifaFlash.activa
+                ? (tramosLeidos.length ? `Prendida: ${tramosLeidos.length} tramos, hasta ${tramosLeidos[tramosLeidos.length - 1].hasta} km.` : 'Falta cargar los tramos.')
+                : 'Apagada: el Flash lo cotiza el depósito.'}
             </p>
           </div>
 
