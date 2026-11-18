@@ -695,6 +695,26 @@ async function main() {
     store["settings/operativo"] = antes;
   }
 
+  // ── retiro en persona (Lucio, 16/11): solo los teléfonos que el depósito carga en /operativo ──
+  {
+    const op = store["settings/operativo"];
+    const antes = structuredClone(op);
+    op.retiroPermitidoTexto = "11 5869 6086 Uma\n+54 9 11 2592-0325 Lukita";
+    const retiro = (extra = {}) => resumen({ tipoEnvio: "retiro", direccion: undefined, medioPago: "efectivo", retiroCuando: "mañana a la tarde", items: [{ producto: "Ice King", variante: "Peach", cantidad: 1 }], ...extra });
+    const r = await retiro();
+    ok("retiro: un cliente de la lista arma el resumen sin dirección ni envío", r.body.ok && /Retiro en persona/.test(r.body.mensaje) && /Pasa a retirar: mañana a la tarde/.test(r.body.mensaje) && !/Envío:/.test(r.body.mensaje), r.body);
+    const otro = await retiro({ telefono: "+5491100001111" });
+    ok("retiro: un cliente que no está en la lista no puede", otro.status === 400 && /no puede retirar/.test(otro.body.error), otro.body);
+    const cargado = await pedido({ tipoEnvio: "retiro", direccion: undefined, medioPago: "efectivo", retiroCuando: "el martes", idMensajeOrigen: "retiro-1", items: [{ producto: "Ice King", variante: "Peach", cantidad: 1 }] });
+    const p = store[`pedidos/${cargado.body.pedidoId}`];
+    ok("retiro: se carga en la columna Retiro, sin tanda ni repartidor", cargado.body.ok && p.tipoEnvio === "retiro" && p.retiroCuando === "el martes" && !p.fechaSalida && !p.repartidor && p.valorEnvio === 0, p);
+    delete store[`pedidos/${cargado.body.pedidoId}`];
+    const conLista = await llamar(api.agentEstadoOperativo, { query: { telefono: "5491125920325" } });
+    const sinLista = await llamar(api.agentEstadoOperativo, { query: { telefono: "5491100001111" } });
+    ok("retiro: el estado del día dice si el cliente puede retirar", conLista.body.puedeRetirar === true && sinLista.body.puedeRetirar === false, { con: conLista.body.puedeRetirar, sin: sinLista.body.puedeRetirar });
+    store["settings/operativo"] = antes;
+  }
+
   // ── envío gratis del panel (Lucio, 12/11): interruptor en /operativo, solo moto en CABA, desde un monto ──
   {
     const op = store["settings/operativo"];

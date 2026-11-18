@@ -8,7 +8,8 @@
 //   { pedidoId, ...cambios, preview }             → calcula (preview) o aplica un cambio
 // POST /agentCancelarPedido { pedidoId, telefono, soloVer } → cancela si no está pagado ni armado
 // compra = { telefono, idConversacion, idMensajeOrigen, cliente, items, tipoEnvio, direccion,
-//            salidaSeleccionada, horaSolicitada, medioPago, envioSeguro, datosCorreo, publicidad }
+//            salidaSeleccionada, horaSolicitada, medioPago, envioSeguro, datosCorreo, retiroCuando, publicidad }
+// tipoEnvio «retiro»: solo para los teléfonos que el depósito cargó en /operativo (envios.puedeRetirar).
 // El precio mayorista no se pide: sale de las cantidades (precios.js).
 // publicidad = { red, anuncioId, titulo, llegoEn }: el anuncio por el que llegó el cliente (lo detecta n8n).
 // cuponWeb = { codigo, monto }: el cupón de un pedido armado en la web; se descuenta del total.
@@ -18,14 +19,14 @@ const { db } = require("./firebase");
 const { conClave } = require("./http");
 const { normalizarTelefono, hashCorto, pesos } = require("./texto");
 const { PAGO_LABEL, formaDePago, pagaAntes, descuentoDe, lineaEnTexto, cotizarProductos } = require("./precios");
-const { PRECIO_ENVIO_SEGURO, CORREO, ubicar, armarDireccion, mismaDireccion } = require("./envios");
+const { PRECIO_ENVIO_SEGURO, CORREO, ubicar, armarDireccion, mismaDireccion, puedeRetirar } = require("./envios");
 const { fechaBA, corta, opcionesMoto, elegirSalida, pedidosMoto, pedidosEnCola, salidaUber, uberALaHora, avisoDeHorario } = require("./salidas");
 const { esPedidoEnCurso, restriccionCambio } = require("./seguimiento");
 const { TOLERANCIA_COMPROBANTE, comprobantesDeLaCompra, copiarAlPedido, vincularAlPedido } = require("./comprobantes");
 const { precioParaElPedido, cerrarCotizaciones } = require("./uber");
 const { leerOperativo, envioGratisDe } = require("./campania");
 
-const ENVIO_LABEL = { moto: "🛵 Moto mensajería", uber: "⚡ Envío flash (Uber)", correo: "📦 Correo (Vía Cargo)" };
+const ENVIO_LABEL = { moto: "🛵 Moto mensajería", uber: "⚡ Envío flash (Uber)", correo: "📦 Correo (Vía Cargo)", retiro: "🏪 Retiro en persona" };
 const CUENTAS_DE_COBRO = ["alias1", "alias2", "alias3"];
 
 // El cupón de un pedido armado en la web ({ codigo, monto }): la web lo valida y el bot respeta el
@@ -121,7 +122,7 @@ async function descarte(c, pedidoId) {
 function armarDetalle(d) {
   const { preview, modificacion, cuando, horaPedida, tipoEnvio, lineas, mayorista, subtotal, subtotalUSD, dolar, valorEnvio, envioSeguro,
     montoDescuento, total, envioCorreo, despachoMayorista, dir, ubicacion, correo, cliente, telefono, medioPago, aTransferir, comprobante,
-    adicionales, pagaAntesDeCargar, avisoHorario, envioGratis, cuponWeb } = d;
+    adicionales, pagaAntesDeCargar, avisoHorario, envioGratis, cuponWeb, retiroCuando } = d;
   // Si no sale hoy, va arriba de todo: la gente no lee el detalle y después se queja.
   const noSaleHoy = cuando && cuando.dia !== "hoy";
   const avisoNoRegistrado = !preview ? null
@@ -154,7 +155,8 @@ function armarDetalle(d) {
     ENVIO_LABEL[tipoEnvio] + (envioSeguro ? " — 🛡️ CON ENVÍO SEGURO" : "") + (tipoEnvio === "correo" ? (correo.aSucursal ? " a sucursal" : " a domicilio") : ""),
     despachoMayorista ? "Traslado interno a despacho: motomensajeria, primera tanda. No es la entrega al cliente." : null,
     lineaSalida,
-    dir.texto,
+    tipoEnvio === "retiro" ? `🕐 Pasa a retirar: ${retiroCuando || "a coordinar"}. El lugar y la hora te los confirma el equipo por acá.` : null,
+    dir.texto || null,
     ubicacion && ubicacion.zona ? `Zona ${ubicacion.zona}` : null,
     dir.referencias ? `Ref: ${dir.referencias}` : null,
     tipoEnvio === "correo" && correo.dni ? `DNI: ${correo.dni} — ${correo.localidad} (CP ${correo.cp})` : null,
@@ -192,6 +194,7 @@ async function procesarPedido(entrada) {
   if (anterior && entrada.tipoEnvio && entrada.tipoEnvio !== envioAnterior && entrada.horaSolicitada === undefined) b.horaSolicitada = null;
 
   const { tipoEnvio } = b;
+  const op = await leerOperativo();
   const medioPago = formaDePago(b.medioPago);
   const conComprobante = pagaAntes(medioPago);
   // Los comprobantes de esta compra los toma el sistema: los que mandó el cliente en esta charla y que
@@ -201,16 +204,22 @@ async function procesarPedido(entrada) {
   const dir = armarDireccion(b.direccion);
   const correo = b.datosCorreo || {};
   const items = Array.isArray(b.items) ? b.items : [];
-  if (!["moto", "uber", "correo"].includes(tipoEnvio)) return faltaDato("tipoEnvio tiene que ser moto, uber o correo");
-  if (medioPago && medioPago !== "transferencia" && tipoEnvio !== "moto") {
-    return faltaDato("en Uber y correo se paga solo por transferencia antes; efectivo, al recibir y mitad y mitad son solo con moto");
+  if (!["moto", "uber", "correo", "retiro"].includes(tipoEnvio)) return faltaDato("tipoEnvio tiene que ser moto, uber o correo");
+  // Retiro en persona: solo los clientes que el depósito cargó en el panel. Sin envío; se paga como en moto.
+  if (tipoEnvio === "retiro" && !puedeRetirar(op, telefono)) {
+    return faltaDato("este cliente no puede retirar en persona: no hay local, ofrecele moto, Flash o correo");
   }
+  const conPagoAlRecibir = tipoEnvio === "moto" || tipoEnvio === "retiro";
+  if (medioPago && medioPago !== "transferencia" && !conPagoAlRecibir) {
+    return faltaDato("en Uber y correo se paga solo por transferencia antes; efectivo, al recibir y mitad y mitad son solo con moto o retiro");
+  }
+  const retiroCuando = tipoEnvio === "retiro" ? String(b.retiroCuando || "").trim().slice(0, 120) : "";
 
   // ── Lo que falta para calcular el resumen y, si no es preview, para cargar el pedido ──
   const faltan = [];
   if (!telefono) faltan.push("el teléfono");
   if (!items.length) faltan.push("los productos");
-  if (!dir.texto) faltan.push("la dirección");
+  if (!dir.texto && tipoEnvio !== "retiro") faltan.push("la dirección");
   if (!medioPago) faltan.push("el medio de pago (transferencia, efectivo, al recibir o mitad y mitad)");
   if (tipoEnvio === "correo" && typeof correo.aSucursal !== "boolean") faltan.push("si el correo va a sucursal o a domicilio");
   if (!preview) {
@@ -246,7 +255,6 @@ async function procesarPedido(entrada) {
   }
 
   // ── Precios, siempre de las listas del día (con la campaña que corra, si hay) ──
-  const op = await leerOperativo();
   const conservar = !!anterior && entrada.items === undefined;
   let cotizacion;
   // El precio mayorista lo decide cotizarProductos por las cantidades, no el agente.
@@ -344,7 +352,7 @@ async function procesarPedido(entrada) {
   const mensaje = armarDetalle({
     preview, modificacion: !!anterior, cuando, horaPedida, tipoEnvio, lineas, mayorista, subtotal, subtotalUSD, dolar, valorEnvio, envioSeguro,
     montoDescuento, total, envioCorreo, despachoMayorista, dir, ubicacion, correo, cliente: b.cliente, telefono, medioPago, aTransferir, envioGratis,
-    cuponWeb, comprobante, adicionales: [...adicionales, ...nuevosAdicionales], pagaAntesDeCargar: conComprobante,
+    cuponWeb, comprobante, adicionales: [...adicionales, ...nuevosAdicionales], pagaAntesDeCargar: conComprobante, retiroCuando,
     avisoHorario: avisoHorario || null,
   });
 
@@ -388,6 +396,8 @@ async function procesarPedido(entrada) {
     subtotalUSD: mayorista ? subtotalUSD : null,
     dolarMayorista: mayorista ? dolar : null,
     entregaCliente: tipoEnvio,
+    // Retiro en persona: cuándo dijo el cliente que pasa (el lugar y la hora los coordina el equipo).
+    retiroCuando: retiroCuando || null,
     despachoInterno: despachoMayorista ? "moto_a_via_cargo" : null,
     fechaSalida: cuando?.fecha || null,
     horaSalida: cuando?.hora || null,

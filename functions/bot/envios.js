@@ -3,7 +3,7 @@
 
 const axios = require("axios");
 const { GOOGLE_MAPS_KEY } = require("./firebase");
-const { normalizar } = require("./texto");
+const { normalizar, normalizarTelefono } = require("./texto");
 
 const DEPOSITO = { lat: -34.55359497285959, lng: -58.4523699884262 }; // Libertador 6299 (src/reparto/zonas.js)
 const TARIFA_POR_KM = 1000;
@@ -132,4 +132,11 @@ function mismaDireccion(a, b) {
   return nucleoDireccion(a) === nucleoDireccion(b) && (!la || !lb || la === lb);
 }
 
-module.exports = { PRECIO_ENVIO_SEGURO, CORREO, ubicar, armarDireccion, mismaDireccion };
+// Retiro en persona (Lucio, 16/11): no hay local, pero algunos clientes pueden pasar a retirar. Los carga el
+// depósito en /operativo («Pueden retirar en persona»): un teléfono por renglón, con el nombre si quiere
+// («11 6445 7972 Martin»). El lugar y la hora los coordina el equipo con cada uno.
+const telefonosConRetiro = (op) => String(op?.retiroPermitidoTexto || "").split("\n")
+  .map((l) => normalizarTelefono((l.match(/\+?\d[\d\s().-]{7,}\d/) || [""])[0])).filter(Boolean);
+const puedeRetirar = (op, telefono) => !!normalizarTelefono(telefono) && telefonosConRetiro(op).includes(normalizarTelefono(telefono));
+
+module.exports = { PRECIO_ENVIO_SEGURO, CORREO, ubicar, armarDireccion, mismaDireccion, puedeRetirar };

@@ -7,7 +7,7 @@ const { conClave } = require("./http");
 const { textoDe, pesos } = require("./texto");
 const { LISTAS_DEL_PANEL, sinPrecios } = require("./catalogo");
 const { TRAMOS_DESCUENTO_EFECTIVO, MINIMO_MAYORISTA } = require("./precios");
-const { PRECIO_ENVIO_SEGURO, CORREO } = require("./envios");
+const { PRECIO_ENVIO_SEGURO, CORREO, puedeRetirar } = require("./envios");
 const { horaBuenosAires, horarioUber, hhmmDe, corta, salidasMoto, opcionesMoto, pedidosMoto, pedidosEnCola, salidaUber, demora, avisoDeHorario } = require("./salidas");
 const { pedidoEnCurso } = require("./seguimiento");
 const { TOLERANCIA_COMPROBANTE } = require("./comprobantes");
@@ -89,6 +89,8 @@ const agentEstadoOperativo = conClave(async (req, res) => {
     campania: op.campaniaActiva,
     // El envío gratis prendido en el panel: { desde } (solo moto en CABA), o null.
     envioGratis: op.envioGratisActivo,
+    // Si este cliente puede retirar en persona (lista del panel): el bot le ofrece el retiro.
+    puedeRetirar: puedeRetirar(op, req.query.telefono),
     plantillas: plantillasDelDia(op, proximoUber),
   });
 });

@@ -84,6 +84,8 @@ const DEFAULTS = {
   campania: CAMPANIA_VACIA,
   // Envío gratis de siempre: solo moto en CABA, con productos desde `desde` (functions/bot/campania.js).
   envioGratis: { activo: false, desde: 100000 },
+  // Clientes que pueden retirar en persona: un teléfono por renglón, con el nombre si se quiere (functions/bot/envios.js).
+  retiroPermitidoTexto: '',
 };
 
 export default function OperativoPage() {
@@ -157,6 +159,7 @@ export default function OperativoPage() {
         combosBateriasTitulo: (form.combosBateriasTitulo || '').trim() || 'Combos y baterias',
         dolarMayorista: Number(form.dolarMayorista) > 0 ? Number(form.dolarMayorista) : null,
         envioGratis: { activo: envioGratis.activo === true, desde: Number(envioGratis.desde) > 0 ? Number(envioGratis.desde) : null },
+        retiroPermitidoTexto: (form.retiroPermitidoTexto || '').trim(),
         campania: {
           activa: campania.activa === true,
           nombre: (campania.nombre || '').trim(),
@@ -273,6 +276,15 @@ export default function OperativoPage() {
                 ? `Prendido: envío gratis en CABA desde $${Number(envioGratis.desde || 0).toLocaleString('es-AR')}.`
                 : 'Apagado: el envío se cobra siempre.'}
             </p>
+          </div>
+
+          {/* Clientes que pueden retirar en persona */}
+          <div className={`rounded-2xl border p-5 ${card}`}>
+            <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Pueden retirar en persona</label>
+            <p className={`text-[11px] mb-3 ${label}`}>Un teléfono por renglón, con el nombre si querés. A estos clientes el bot les ofrece retirar: carga el pedido en la columna Retiro y ustedes le confirman el lugar y la hora. Al resto le dice que no hay local.</p>
+            <textarea value={form.retiroPermitidoTexto || ''} onChange={(e) => set('retiroPermitidoTexto', e.target.value)}
+              rows={5} placeholder={'11 6445 7972 Martin\n11 2592 0325 Lukita'}
+              className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition-colors font-mono ${input}`} />
           </div>
 
           {/* Limite de pedidos por tanda */}
