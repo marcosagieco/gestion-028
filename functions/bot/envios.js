@@ -41,11 +41,12 @@ function haversineKm(a, b) {
   return 2 * 6371 * Math.asin(Math.sqrt(h));
 }
 
-// Kilómetros REALES por calle entre el depósito y un punto, con la misma vara con la que se le paga
-// al motomensajero en /reparto (Routes API, moto, con tránsito — ver src/reparto/routesApi.js). La
-// calle es un 39% más larga que la línea recta (medido sobre 131 entregas reales): si se cobrara en
-// línea recta, cada envío en moto perdería plata. Si Google no contesta, se usa la línea recta por
-// ese mismo factor: menos exacto, pero no deja el cobro corto.
+// Kilómetros REALES por calle entre el depósito y un punto (moto y Flash). Regla de Lucio (18/11): el
+// camino en auto con MENOS km, siempre. Antes se pedía la ruta de moto con tránsito y se tomaba la
+// primera, que es la más rápida: a Av. Córdoba 1540 daba ~13 km por autopista cuando por Libertador
+// son 8,9 km, y se cobraba de más (Flash y moto). Ahora se piden las alternativas en auto y se toma la
+// más corta. La calle es un 39% más larga que la línea recta (medido sobre 131 entregas reales): si
+// Google no contesta, se usa la línea recta por ese factor: menos exacto, pero no deja el cobro corto.
 const FACTOR_CALLE = 1.4;
 
 async function kmPorCalle(destino) {
@@ -55,13 +56,14 @@ async function kmPorCalle(destino) {
       {
         origin: { location: { latLng: { latitude: DEPOSITO.lat, longitude: DEPOSITO.lng } } },
         destination: { location: { latLng: { latitude: destino.lat, longitude: destino.lng } } },
-        travelMode: "TWO_WHEELER",
-        routingPreference: "TRAFFIC_AWARE",
+        travelMode: "DRIVE",
+        routingPreference: "TRAFFIC_UNAWARE",
+        computeAlternativeRoutes: true,
       },
       { headers: { "X-Goog-Api-Key": GOOGLE_MAPS_KEY, "X-Goog-FieldMask": "routes.distanceMeters" }, timeout: 8000 }
     );
-    const metros = data.routes && data.routes[0] && data.routes[0].distanceMeters;
-    return typeof metros === "number" ? metros / 1000 : null;
+    const distancias = (data.routes || []).map((r) => r.distanceMeters).filter((m) => typeof m === "number" && m > 0);
+    return distancias.length ? Math.min(...distancias) / 1000 : null;
   } catch (e) {
     console.error("[bot] Routes API no respondió, se usa el estimado:", e.message);
     return null;
