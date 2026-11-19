@@ -5,7 +5,7 @@ const axios = require("axios");
 const { GOOGLE_MAPS_KEY } = require("./firebase");
 const { normalizar, normalizarTelefono } = require("./texto");
 
-const DEPOSITO = { lat: -34.55359497285959, lng: -58.4523699884262 }; // Libertador 6299 (src/reparto/zonas.js)
+const DEPOSITO = { lat: -34.5556272, lng: -58.4450553 }; // Miñones 2061, desde el 19/11 (igual que src/reparto/zonas.js)
 const TARIFA_POR_KM = 1000;
 const MINIMO_ENVIO = 3000;
 const PRECIO_ENVIO_SEGURO = 1990; // solo flash (Uber)

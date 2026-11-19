@@ -106,13 +106,13 @@ export const sugerirZonaPorComponentesDireccion = (addressComponents) => {
   return null;
 };
 
-// Punto de partida del recorrido (depósito). Coordenadas confirmadas por el dueño desde el mapa
-// embebido de Google para esta dirección — reemplazan un punto anterior que estaba ~350m corrido
-// (afectaba tanto el orden del recorrido como la plata de motomensajería, ver reparto/motomensajeria.js).
+// Punto de partida del recorrido (depósito). Afecta el orden del recorrido y la plata de motomensajería
+// (ver reparto/motomensajeria.js). Desde el 19/11 el depósito es Miñones 2061 (antes Libertador 6299);
+// coordenadas ROOFTOP de Google. El bot usa el mismo punto (functions/bot/envios.js, DEPOSITO).
 export const DEPOSITO_ORIGEN = {
-  texto: 'Av. del Libertador 6299, Belgrano, CABA',
-  lat: -34.55359497285959,
-  lng: -58.4523699884262,
+  texto: 'Miñones 2061, Belgrano, CABA',
+  lat: -34.5556272,
+  lng: -58.4450553,
 };
 
 // Sesgo del autocompletado de direcciones: un círculo amplio que cubre CABA + GBA norte, centrado
