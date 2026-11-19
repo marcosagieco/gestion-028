@@ -49,21 +49,31 @@ function haversineKm(a, b) {
 // Google no contesta, se usa la línea recta por ese factor: menos exacto, pero no deja el cobro corto.
 const FACTOR_CALLE = 1.4;
 
+// Google no siempre trae el camino más corto entre las alternativas (a Av. Córdoba 1540 la ruta por
+// Libertador no aparecía): se pide también sin autopistas, que suele ser el más corto en la ciudad, y se
+// toma el mínimo de todo. Si una de las dos consultas falla, vale la otra.
+async function rutas(destino, extra) {
+  const { data } = await axios.post(
+    "https://routes.googleapis.com/directions/v2:computeRoutes",
+    {
+      origin: { location: { latLng: { latitude: DEPOSITO.lat, longitude: DEPOSITO.lng } } },
+      destination: { location: { latLng: { latitude: destino.lat, longitude: destino.lng } } },
+      travelMode: "DRIVE",
+      routingPreference: "TRAFFIC_UNAWARE",
+      computeAlternativeRoutes: true,
+      ...extra,
+    },
+    { headers: { "X-Goog-Api-Key": GOOGLE_MAPS_KEY, "X-Goog-FieldMask": "routes.distanceMeters" }, timeout: 8000 }
+  );
+  return (data.routes || []).map((r) => r.distanceMeters).filter((m) => typeof m === "number" && m > 0);
+}
+
 async function kmPorCalle(destino) {
   try {
-    const { data } = await axios.post(
-      "https://routes.googleapis.com/directions/v2:computeRoutes",
-      {
-        origin: { location: { latLng: { latitude: DEPOSITO.lat, longitude: DEPOSITO.lng } } },
-        destination: { location: { latLng: { latitude: destino.lat, longitude: destino.lng } } },
-        travelMode: "DRIVE",
-        routingPreference: "TRAFFIC_UNAWARE",
-        computeAlternativeRoutes: true,
-      },
-      { headers: { "X-Goog-Api-Key": GOOGLE_MAPS_KEY, "X-Goog-FieldMask": "routes.distanceMeters" }, timeout: 8000 }
-    );
-    const distancias = (data.routes || []).map((r) => r.distanceMeters).filter((m) => typeof m === "number" && m > 0);
-    return distancias.length ? Math.min(...distancias) / 1000 : null;
+    const consultas = await Promise.allSettled([rutas(destino, {}), rutas(destino, { routeModifiers: { avoidHighways: true } })]);
+    const distancias = consultas.flatMap((c) => (c.status === "fulfilled" ? c.value : []));
+    if (!distancias.length) throw consultas.find((c) => c.status === "rejected")?.reason || new Error("sin rutas");
+    return Math.min(...distancias) / 1000;
   } catch (e) {
     console.error("[bot] Routes API no respondió, se usa el estimado:", e.message);
     return null;

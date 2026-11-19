@@ -104,8 +104,10 @@ const fakeAxios = {
       const km = 2 * 6371 * Math.asin(Math.sqrt(h)) * 1.4;
       // Como Google: la primera ruta es la más rápida (más larga, por autopista) y la corta viene de
       // alternativa. El backend tiene que pedir auto con alternativas y quedarse con la de menos km.
+      // Y a veces la corta solo aparece pidiendo sin autopistas.
       if (body.travelMode !== "DRIVE" || body.computeAlternativeRoutes !== true) return { status: 200, data: { routes: [{ distanceMeters: Math.round(km * 1500) }] } };
-      return { status: 200, data: { routes: [{ distanceMeters: Math.round(km * 1500) }, { distanceMeters: Math.round(km * 1000) }, { distanceMeters: Math.round(km * 1200) }] } };
+      if (!body.routeModifiers?.avoidHighways) return { status: 200, data: { routes: [{ distanceMeters: Math.round(km * 1500) }, { distanceMeters: Math.round(km * 1200) }] } };
+      return { status: 200, data: { routes: [{ distanceMeters: Math.round(km * 1100) }, { distanceMeters: Math.round(km * 1000) }] } };
     }
     throw new Error("POST inesperado en el test: " + url);
   },
