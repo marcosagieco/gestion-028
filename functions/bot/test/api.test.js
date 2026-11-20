@@ -909,6 +909,32 @@ async function main() {
     ok("panel: combos y baterias disponibles como plantilla", movidaPanel.body.plantillas.COMBOS_BATERIAS === "Combo capsula y bateria", movidaPanel.body);
     ok("panel: entrega informa dos horarios actualizados", /15:30 y 18:30/.test(movidaPanel.body.plantillas.FORMAS_DE_ENTREGA), movidaPanel.body.plantillas.FORMAS_DE_ENTREGA);
 
+    // Salida extra (Lucio, 20/11): se prende y se apaga en /operativo y va con la moto de la noche.
+    const op = store["settings/operativo"];
+    const salidasAntes = op.salidasMoto;
+    op.salidasMoto = { primera: "15:30", segunda: "18:30" };
+    op.salidaExtraMoto = { activa: true, hora: "20:00" };
+    const conExtra = await llamar(api.agentEstadoOperativo);
+    ok("extra: entrega informa tres salidas", /Tres salidas: 15:30, 18:30 y 20:00/.test(conExtra.body.plantillas.FORMAS_DE_ENTREGA), conExtra.body.plantillas.FORMAS_DE_ENTREGA);
+    ok("extra: se ofrece la tercera de hoy", conExtra.body.opcionesMoto.some((o) => o.fecha === "2026-10-06" && o.tandaId === "tercera" && o.hora === "20:00"), conExtra.body.opcionesMoto);
+    const enExtra = await pedido({ idConversacion: "870", idMensajeOrigen: "8701", medioPago: "al recibir", salidaSeleccionada: { fecha: "2026-10-06", tandaId: "tercera", hora: "20:00" } });
+    const extraGuardado = enExtra.body.pedidoId && store[`pedidos/${enExtra.body.pedidoId}`];
+    ok("extra: se carga en la tercera con la moto de la noche", enExtra.body.ok && extraGuardado.tandaSalida === "tercera" && extraGuardado.horaSalida === "20:00" && extraGuardado.repartidor === "moto2", enExtra.body);
+    if (enExtra.body.pedidoId) delete store[`pedidos/${enExtra.body.pedidoId}`];
+    op.salidaExtraMoto = { activa: true, hora: "18:00" };
+    const antesDeLaSegunda = await llamar(api.agentEstadoOperativo);
+    ok("extra: si no queda después de la segunda no se ofrece ni se anuncia", !antesDeLaSegunda.body.opcionesMoto.some((o) => o.tandaId === "tercera") && /Dos salidas: 15:30 y 18:30/.test(antesDeLaSegunda.body.plantillas.FORMAS_DE_ENTREGA), antesDeLaSegunda.body);
+    op.salidaExtraMoto = { activa: true, hora: "21:00" };
+    const despuesDelCorte = await llamar(api.agentEstadoOperativo);
+    ok("extra: después de las 20:00 no se ofrece", !despuesDelCorte.body.opcionesMoto.some((o) => o.tandaId === "tercera"), despuesDelCorte.body.opcionesMoto);
+    op.salidaExtraMoto = { activa: false, hora: "20:00" };
+    const apagada = await llamar(api.agentEstadoOperativo);
+    ok("extra: apagada no se ofrece", !apagada.body.opcionesMoto.some((o) => o.tandaId === "tercera") && /Dos salidas/.test(apagada.body.plantillas.FORMAS_DE_ENTREGA), apagada.body);
+    const sinExtra = await pedido({ idConversacion: "871", idMensajeOrigen: "8711", medioPago: "al recibir", salidaSeleccionada: { fecha: "2026-10-06", tandaId: "tercera", hora: "20:00" } });
+    ok("extra: apagada no deja cargar la tercera", sinExtra.status === 400, sinExtra.body);
+    delete op.salidaExtraMoto;
+    op.salidasMoto = salidasAntes;
+
     for (const delta of [-5001, -5000, 0, 5000, 5001]) {
       const pago = await pedido({ comprobante: { numero: `delta-${delta}`, monto: 29000 + delta } });
       const esperado = delta < -5000 ? "pide lo que falta" : delta > 5000 ? "carga y anota lo de más" : "acepta";

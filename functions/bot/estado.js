@@ -54,7 +54,8 @@ function plantillasDelDia(op, salidaFlash) {
   plantillas.STOCK_THC = sinPrecios(plantillas.STOCK_THC);
   plantillas.STOCK_PERFUMES = sinPrecios(plantillas.PERFUMES);
   plantillas.STOCK_APPLE_ACCESORIOS = sinPrecios(plantillas.APPLE_ACCESORIOS);
-  const [primera, segunda] = salidasMoto(op);
+  const salidas = salidasMoto(op).map((t) => t.hora);
+  const textoSalidas = (salidas.length === 3 ? "Tres salidas: " : "Dos salidas: ") + salidas.slice(0, -1).join(", ") + " y " + salidas.at(-1);
   const ahora = horaBuenosAires(new Date());
   const h = horarioUber(ahora.dia, ahora.fecha, op.horariosUberPorFecha || {});
   const tramos = tramosFlash(op);
@@ -67,7 +68,7 @@ function plantillasDelDia(op, salidaFlash) {
   const gratis = op.envioGratisActivo ? `\n🎁 Envío gratis en CABA con compras desde ${pesos(op.envioGratisActivo.desde)}` : "";
   plantillas.FORMAS_DE_ENTREGA = plantillas.FORMAS_DE_ENTREGA
     .replace("{HORARIO_FLASH}", horarioFlash)
-    .replace("{SALIDAS_MOTO}", `⏳ Dos salidas: ${primera.hora} y ${segunda.hora}. Fecha y disponibilidad a confirmar.${gratis}`);
+    .replace("{SALIDAS_MOTO}", `⏳ ${textoSalidas}. Fecha y disponibilidad a confirmar.${gratis}`);
   return plantillas;
 }
 

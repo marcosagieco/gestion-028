@@ -88,6 +88,8 @@ const DEFAULTS = {
   retiroPermitidoTexto: '',
   // Tarifa fija del Flash por tramos de distancia (functions/bot/envios.js). Apagada, el depósito cotiza cada Flash.
   tarifaFlash: { activa: false, tramosTexto: 'Hasta 3 km: $3.000\nHasta 6 km: $6.500\nHasta 10 km: $8.000\nHasta 15 km: $10.000\nHasta 25 km: $15.000' },
+  // Salida extra de moto: se prende y se apaga; va con la moto de la noche (functions/bot/salidas.js).
+  salidaExtraMoto: { activa: false, hora: '20:00' },
 };
 
 export default function OperativoPage() {
@@ -102,7 +104,7 @@ export default function OperativoPage() {
 
   useEffect(() => {
     const unsub = onSnapshot(DOC_REF(), (snap) => {
-      if (snap.exists()) setForm({ ...DEFAULTS, ...snap.data(), salidasMoto: { ...DEFAULTS.salidasMoto, ...snap.data().salidasMoto }, campania: { ...CAMPANIA_VACIA, ...snap.data().campania }, envioGratis: { ...DEFAULTS.envioGratis, ...snap.data().envioGratis }, tarifaFlash: { ...DEFAULTS.tarifaFlash, ...snap.data().tarifaFlash } });
+      if (snap.exists()) setForm({ ...DEFAULTS, ...snap.data(), salidasMoto: { ...DEFAULTS.salidasMoto, ...snap.data().salidasMoto }, campania: { ...CAMPANIA_VACIA, ...snap.data().campania }, envioGratis: { ...DEFAULTS.envioGratis, ...snap.data().envioGratis }, tarifaFlash: { ...DEFAULTS.tarifaFlash, ...snap.data().tarifaFlash }, salidaExtraMoto: { ...DEFAULTS.salidaExtraMoto, ...snap.data().salidaExtraMoto } });
       setLoaded(true);
     }, () => setLoaded(true));
     return unsub;
@@ -115,6 +117,8 @@ export default function OperativoPage() {
   const setEnvioGratis = (k, v) => set('envioGratis', { ...envioGratis, [k]: v });
   const tarifaFlash = { ...DEFAULTS.tarifaFlash, ...form.tarifaFlash };
   const setTarifaFlash = (k, v) => set('tarifaFlash', { ...tarifaFlash, [k]: v });
+  const salidaExtra = { ...DEFAULTS.salidaExtraMoto, ...form.salidaExtraMoto };
+  const setSalidaExtra = (k, v) => set('salidaExtraMoto', { ...salidaExtra, [k]: v });
   // Los tramos tal como los lee el bot: «Hasta 3 km: $3.000» (km pegados a «km», precio después del «$»).
   const tramosLeidos = String(tarifaFlash.tramosTexto || '').split('\n').map((l) => {
     const km = l.match(/(\d+(?:[.,]\d+)?)\s*km/i); const precio = l.match(/\$\s*(\d[\d.]*)/);
@@ -133,6 +137,11 @@ export default function OperativoPage() {
     const horarios = [form.salidasMoto?.primera, form.salidasMoto?.segunda];
     if (horarios.some((h) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(h || '') || h > '20:00') || horarios[0] >= horarios[1]) {
       alert('Las dos salidas deben tener horarios distintos y ordenados, hasta las 20:00.');
+      return;
+    }
+    // La extra tiene que quedar después de la segunda y hasta las 20:00 (si no, el bot no la ofrecería).
+    if (salidaExtra.activa && (!/^([01]\d|2[0-3]):[0-5]\d$/.test(salidaExtra.hora || '') || salidaExtra.hora > '20:00' || salidaExtra.hora <= horarios[1])) {
+      alert(`La salida extra tiene que ser después de la salida 2 (${horarios[1]}) y hasta las 20:00. Si la salida 2 ya es a las 20:00, pasala a otro horario (por ejemplo 18:30).`);
       return;
     }
     if (form.dolarMayorista != null && form.dolarMayorista !== '' && !(Number.isFinite(Number(form.dolarMayorista)) && Number(form.dolarMayorista) > 0)) {
@@ -174,6 +183,7 @@ export default function OperativoPage() {
         envioGratis: { activo: envioGratis.activo === true, desde: Number(envioGratis.desde) > 0 ? Number(envioGratis.desde) : null },
         retiroPermitidoTexto: (form.retiroPermitidoTexto || '').trim(),
         tarifaFlash: { activa: tarifaFlash.activa === true, tramosTexto: (tarifaFlash.tramosTexto || '').trim() },
+        salidaExtraMoto: { activa: salidaExtra.activa === true, hora: salidaExtra.hora || '20:00' },
         campania: {
           activa: campania.activa === true,
           nombre: (campania.nombre || '').trim(),
@@ -267,6 +277,21 @@ export default function OperativoPage() {
                   className={`w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none ${input}`} />
               </label>
             ))}
+            {/* Salida extra: se prende y se apaga; la lleva la moto de la noche, con el mismo cupo */}
+            <div className={`pt-3 border-t ${dm ? 'border-white/[0.06]' : 'border-zinc-200'}`}>
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <span className={`text-sm ${label}`}>Salida extra</span>
+                <button type="button" role="switch" aria-checked={salidaExtra.activa === true} aria-label="Salida extra"
+                  onClick={() => setSalidaExtra('activa', !salidaExtra.activa)}
+                  className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${salidaExtra.activa ? 'bg-emerald-500' : (dm ? 'bg-white/15' : 'bg-zinc-300')}`}>
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${salidaExtra.activa ? 'translate-x-5' : ''}`} />
+                </button>
+              </div>
+              <p className={`text-[11px] mb-3 ${label}`}>Prendida, el bot la ofrece como una salida más (va con la moto de la noche y tiene el mismo cupo). Queda prendida hasta que la apaguen. Tiene que ser después de la salida 2 y hasta las 20:00.</p>
+              <input type="time" max="20:00" value={salidaExtra.hora || '20:00'}
+                onChange={(e) => setSalidaExtra('hora', e.target.value)}
+                className={`w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none ${input}`} />
+            </div>
           </div>
 
           {/* Envío gratis: interruptor que lee el bot */}

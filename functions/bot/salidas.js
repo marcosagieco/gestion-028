@@ -1,5 +1,5 @@
-// Salidas: cuándo sale un pedido. La moto tiene dos salidas por día con cupo (el depósito las
-// configura en /operativo); el Uber sale en tandas de media hora entre las 13:30 y las 20:00.
+// Salidas: cuándo sale un pedido. La moto tiene dos salidas por día con cupo, más una extra que se prende y se
+// apaga (el depósito las configura en /operativo); el Uber sale en tandas de media hora entre las 13:30 y las 20:00.
 "use strict";
 
 const { db } = require("./firebase");
@@ -48,13 +48,19 @@ function minutosDe(texto) {
 
 // ── Moto ─────────────────────────────────────────────────────────────────────
 
-// Las dos salidas del día, con la hora que cargó el depósito.
+// Las salidas del día, con la hora que cargó el depósito: las dos de siempre y, si está prendida en /operativo,
+// la salida extra (Lucio, 20/11: «un horario a las 20 que pueda habilitar y sacar»). settings/operativo.salidaExtraMoto
+// = { activa, hora }. Va con la moto de la noche (pedidos.js) y tiene el mismo cupo. Si su hora no es válida o no
+// queda después de la segunda, no se ofrece: una salida extra mal cargada nunca frena al bot.
+const HORA_VALIDA = (h) => /^([01]\d|2[0-3]):[0-5]\d$/.test(h) && h <= "20:00";
 function salidasMoto(op) {
   const salidas = SALIDAS_MOTO.map((t) => ({ ...t, hora: op.salidasMoto?.[t.id] ?? t.hora }));
-  const valida = (h) => /^([01]\d|2[0-3]):[0-5]\d$/.test(h) && h <= "20:00";
-  if (salidas.some((t) => !valida(t.hora)) || salidas[0].hora >= salidas[1].hora) {
+  if (salidas.some((t) => !HORA_VALIDA(t.hora)) || salidas[0].hora >= salidas[1].hora) {
     throw new Error("Las dos salidas de moto deben ser HH:mm, distintas, ordenadas y hasta las 20:00");
   }
+  const extra = op.salidaExtraMoto;
+  const hora = String(extra?.hora || "20:00");
+  if (extra?.activa === true && HORA_VALIDA(hora) && hora > salidas[1].hora) salidas.push({ id: "tercera", hora });
   return salidas;
 }
 

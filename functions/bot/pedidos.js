@@ -415,7 +415,8 @@ async function procesarPedido(entrada) {
     fechaSalida: cuando?.fecha || null,
     horaSalida: cuando?.hora || null,
     tandaSalida: cuando?.tandaId || null,
-    repartidor: usaTandaMoto ? (conservarSalida && anterior.repartidor ? anterior.repartidor : cuando.tandaId === "segunda" ? "moto2" : "moto1") : null,
+    // La primera salida va con la moto de la tarde; la segunda y la extra (tercera), con la de la noche.
+    repartidor: usaTandaMoto ? (conservarSalida && anterior.repartidor ? anterior.repartidor : cuando.tandaId === "primera" ? "moto1" : "moto2") : null,
     medioPago,
     horaSolicitada: horaPedida ? cuando.hora : null,
     montoTransferencia: aTransferir || null,

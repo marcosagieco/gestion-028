@@ -53,7 +53,10 @@ Lo del día, en una sola llamada, antes de cada respuesta del agente.
 ```
 
 - `opcionesMoto`: hasta cuatro salidas que no pasaron y tienen cupo. Son dos por día (`primera` y
-  `segunda`, 15:30 y 18:30 por defecto, editables en `/operativo` como `salidasMoto`).
+  `segunda`, 15:30 y 18:30 por defecto, editables en `/operativo` como `salidasMoto`), más la `tercera`
+  si en `/operativo` está prendida la salida extra (`salidaExtraMoto = { activa, hora }`, 20:00 por
+  defecto). La extra solo se ofrece si su hora queda después de la segunda y hasta las 20:00; va con la
+  moto de la noche (`repartidor: "moto2"`) y tiene el mismo cupo.
 - `salidaUber`: la tanda de media hora en la que entra un pedido nuevo según la cola.
 - `atencionEnvios.aviso`: el texto para el cliente si hoy ya no hay salidas o falta menos de una hora.
 - `pedidoActual`: el pedido **en curso** del teléfono, o `null`. Un pedido viejo que quedó pendiente
