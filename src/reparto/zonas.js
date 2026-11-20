@@ -106,13 +106,14 @@ export const sugerirZonaPorComponentesDireccion = (addressComponents) => {
   return null;
 };
 
-// Punto de partida del recorrido (depósito). Afecta el orden del recorrido y la plata de motomensajería
-// (ver reparto/motomensajeria.js). Desde el 19/11 el depósito es Miñones 2061 (antes Libertador 6299);
-// coordenadas ROOFTOP de Google. El bot usa el mismo punto (functions/bot/envios.js, DEPOSITO).
+// Punto de partida del recorrido (depósito). Coordenadas confirmadas por el dueño desde el mapa
+// embebido de Google para esta dirección. Afecta el orden del recorrido y la plata de motomensajería
+// (ver reparto/motomensajeria.js). El bot usa el mismo punto (functions/bot/envios.js, DEPOSITO).
+// El 19/11 se pasó por error a Miñones 2061 (la casa de Lucio, no el depósito): se volvió a Libertador.
 export const DEPOSITO_ORIGEN = {
-  texto: 'Miñones 2061, Belgrano, CABA',
-  lat: -34.5556272,
-  lng: -58.4450553,
+  texto: 'Av. del Libertador 6299, Belgrano, CABA',
+  lat: -34.55359497285959,
+  lng: -58.4523699884262,
 };
 
 // Sesgo del autocompletado de direcciones: un círculo amplio que cubre CABA + GBA norte, centrado
