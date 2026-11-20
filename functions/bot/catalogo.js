@@ -36,8 +36,13 @@ const SEPARADOR_RE = /^[\s⸻━─—–=_-]+$/;
 const PRECIOS_RE = /\$\s*([\d.,]+)/g;
 const CANTIDAD_RE = /(\d+)\s*x\b/i;
 const PRECIO_POR_UNIDAD_RE = /c\s*\/\s*u\b|cada un[oa]/i;
-// Un monto que no es un precio de venta: "Valuada en $65.000", "Envío gratis desde $100.000", "¡Ahorrás $10.000!".
-const INFORMATIVO_RE = /valuad[ao]s?\b|\bdesde\b|a partir de|env[ií]o gratis|ahorr[aá]s?\b/i;
+// Un monto que no es un precio de venta: "Valuada en $65.000", "Envío gratis desde $100.000", "¡Ahorrás $10.000!",
+// "Precio anterior: $75.000", "Precio regular: $85.000" (el de antes de la promo, cuando no está tachado).
+const INFORMATIVO_RE = /valuad[ao]s?\b|\bdesde\b|a partir de|env[ií]o gratis|ahorr[aá]s?\b|precio (anterior|regular|de lista)\b|\bantes\b/i;
+// Un rótulo de precio, no un nombre de producto: "🔥 PRECIO COMBO: $70.000", "Precio actualizado: $67.000". El precio es
+// del producto del bloque (el título de arriba). Antes «PRECIO COMBO» quedaba como un producto aparte y el combo
+// Batería + Cápsula 028 se cobraba como la batería sola ($40.000 en vez de $70.000; 20/11).
+const ROTULO_RE = /^(precios?( (combo|actualizad[oa]|final|promo|promocional|oferta|especial|nuevo|de hoy|hoy))?|ahora|oferta|promo|total|valor)$/;
 // Un precio con nombre genérico ("📦 BOX $100.000" bajo "MYSTERY BOX DESCARTABLES"): el producto es la sección.
 const GENERICO_RE = /^(box|caja|combo|pack|kit)$/i;
 const enMiles = (monto) => (monto % 1000 === 0 ? `${monto / 1000} MIL` : pesos(monto));
@@ -89,7 +94,8 @@ function parsearProductos(texto) {
     if (!(monto > 0)) continue;
     const antes = linea.slice(0, precio.index);
     const cantidad = Number((antes.match(CANTIDAD_RE) || [])[1]) || 1;
-    const nombreEnLinea = sinEmojis(antes.replace(CANTIDAD_RE, " "));
+    const enLinea = sinEmojis(antes.replace(CANTIDAD_RE, " "));
+    const nombreEnLinea = ROTULO_RE.test(normalizar(enLinea)) ? "" : enLinea;
     // "3x $17.500 c/u" es el precio de cada unidad desde 3: el producto se cobra por escalones (ver precios.js).
     // precios guarda siempre el total de esa cantidad.
     const porUnidad = PRECIO_POR_UNIDAD_RE.test(linea.slice(precio.index));
@@ -166,20 +172,38 @@ function buscarProducto(productos, nombre) {
   return { producto: candidatos[0].p };
 }
 
+// La oferta de un producto de la lista, o null. Tiene que ser del mismo producto: todas las palabras del nombre de la
+// oferta están en el producto. Si no, la búsqueda aproximada le daba la promo del combo con Cápsula 028 al combo con
+// Jeeter («batería cápsula 1ml» coincide en 3 de 4 palabras).
+function ofertaDe(ofertas, producto) {
+  const o = buscarProducto(ofertas, producto.nombre)?.producto;
+  if (!o) return null;
+  const delProducto = [producto.nombre, ...(producto.lineas || []), producto.detalle].flatMap(palabras);
+  return palabras(o.nombre).every((w) => coincidencia(w, delProducto) > 0) ? o : null;
+}
+
 // { producto, precios } o { error } para una línea del pedido. Las ofertas pisan los precios de la
-// lista para las cantidades que tengan cargadas.
+// lista para las cantidades que tengan cargadas. Un producto que está solo en las ofertas también se vende.
 function productoDeLinea(listas, ofertas, item) {
   const regular = buscarProducto(listas, item.producto);
-  const oferta = buscarProducto(ofertas, item.producto);
-  const ambiguo = (regular && regular.ambiguo) || (oferta && oferta.ambiguo);
-  if (ambiguo) {
-    return { ambiguo: true, error: `"${item.producto}" coincide con más de un producto (${ambiguo.join(" / ")}): usá el nombre exacto de la lista` };
+  if (regular && regular.ambiguo) {
+    return { ambiguo: true, error: `"${item.producto}" coincide con más de un producto (${regular.ambiguo.join(" / ")}): usá el nombre exacto de la lista` };
   }
-  if (!(regular && regular.producto) && !(oferta && oferta.producto)) {
+  if (regular && regular.producto) {
+    const oferta = ofertaDe(ofertas, regular.producto);
+    if (!oferta) return { producto: regular.producto, precios: { ...regular.producto.precios } };
+    // «2x $38.000 c/u» en la oferta: el precio es por unidad aunque la lista lo tenga como combo.
+    const producto = oferta.porUnidad && !regular.producto.porUnidad ? { ...regular.producto, porUnidad: true } : regular.producto;
+    return { producto, precios: { ...regular.producto.precios, ...oferta.precios } };
+  }
+  const soloOferta = buscarProducto(ofertas, item.producto);
+  if (soloOferta && soloOferta.ambiguo) {
+    return { ambiguo: true, error: `"${item.producto}" coincide con más de un producto (${soloOferta.ambiguo.join(" / ")}): usá el nombre exacto de la lista` };
+  }
+  if (!(soloOferta && soloOferta.producto)) {
     return { error: `no encontré "${item.producto}" en las listas de precios de hoy: usá el nombre tal cual figura en la lista` };
   }
-  const precios = { ...(regular && regular.producto && regular.producto.precios), ...(oferta && oferta.producto && oferta.producto.precios) };
-  return { producto: (regular && regular.producto) || oferta.producto, precios };
+  return { producto: soloOferta.producto, precios: { ...soloOferta.producto.precios } };
 }
 
 // Lista mayorista: un modelo por renglón y debajo "10x → 13,5 USD c/u". Precios en centavos de dólar.
@@ -374,8 +398,8 @@ function buscarEnCatalogo(op, consulta, { conPrecios = true } = {}) {
           + `Por menos, decile que lo tenemos y derivá con motivo producto_sin_precio para que el equipo le pase el precio: no inventes uno.`;
       } else if (conPrecios) {
         r.precios = precios(p);
-        const oferta = buscarProducto(ofertas, p.nombre);
-        if (oferta && oferta.producto) r.oferta = precios(oferta.producto);
+        const oferta = ofertaDe(ofertas, p);
+        if (oferta) r.oferta = precios(oferta);
       }
       if (p.lista === "appleTexto") r.autenticidadDeclarada = autenticidadDeclarada(p);
       if (sabores) {

@@ -39,10 +39,13 @@ const pagaAntes = (medioPago) => medioPago === "transferencia" || medioPago === 
 // chicos. null si esa cantidad no se puede armar (ej. gummies que solo se venden de a 2).
 // Con precios por unidad ("3x $17.500 c/u"), todas las unidades valen el precio del escalón más alto al
 // que llega la cantidad: 4 unidades pagan el de 3 y 7, el de 5.
+// Si una promo deja un escalón más barato que uno más alto de la lista (promo «2x $38.000 c/u» y lista «5x $200.000»,
+// $40.000 c/u), vale el más barato: nunca se cobra más caro por llevar más.
 function importePorCantidad(precios, cantidad, porUnidad = false) {
   if (porUnidad) {
-    const escalon = Object.keys(precios).map(Number).sort((a, b) => b - a).find((n) => n <= cantidad);
-    return escalon ? Math.round((precios[escalon] / escalon) * cantidad) : null;
+    const escalones = Object.keys(precios).map(Number).filter((n) => n <= cantidad);
+    if (!escalones.length) return null;
+    return Math.round(Math.min(...escalones.map((n) => precios[n] / n)) * cantidad);
   }
   let resto = cantidad;
   let importe = 0;
