@@ -5,7 +5,7 @@ import { initializeFirestore, getFirestore, collection, query, orderBy, onSnapsh
 import {
   ClipboardList, Plus, Clock, AlertTriangle, XCircle, CheckCircle, ChevronRight,
   ChevronDown, ChevronUp, History, Save, Moon, Sun, PartyPopper, Search, Trash2, Download,
-  Bike, Car, MapPin, PackageCheck, Store, Archive, Pencil, Loader2, Mail, ScanBarcode
+  Bike, Car, MapPin, PackageCheck, Store, Archive, Pencil, Loader2, Mail, ScanBarcode, CalendarClock
 } from 'lucide-react';
 import AddressAutocomplete from './reparto/AddressAutocomplete';
 import { armarPrefillFinalizar, rankearItemsEnStock } from './pedidos/autocompletarVenta';
@@ -14,6 +14,7 @@ import { ZONAS } from './reparto/zonas';
 import { rid, useCodigosBarra, derivarProductosConocidos, registrarCodigoBarra, agregarAEscaneo } from './escaneo/datos';
 import { CajaEscaneo, RegistrarCodigoModal, FilaEscaneada } from './escaneo/componentes';
 import AccesosRapidos from './navegacion/AccesosRapidos';
+import { hoyLocal, esProgramado, esFechaValida, fechaSalidaCorta } from './pedidos/fechaSalida';
 
 // --- Firebase: mismo patrón que FacturasPage.jsx — página 100% independiente de App.jsx,
 // reutiliza la instancia si ya fue inicializada (no debería pasar acá porque esta página vive
@@ -80,6 +81,48 @@ const safeDateTime = (dateStr) => {
   const d = new Date(dateStr);
   return isNaN(d.getTime()) ? 0 : d.getTime();
 };
+// Buscador de pedidos (Armado y Finalizado). Junta todo lo que alguien puede querer escribir:
+// el mensaje original, lo escaneado, los productos de la venta, vendedor, medio de pago y las
+// fechas (subida, armado, finalizado, salida programada) en varios formatos: "20/11", "20/11/2026",
+// "2026-11-20" y el día de la semana ("viernes"). Sin acentos ni mayúsculas, así "cápsula" y
+// "capsula" encuentran lo mismo. Varias palabras = tienen que estar todas ("dozo 20/11").
+const sinAcentos = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+const fechasParaBuscar = (valor) => {
+  const ms = safeDateTime(valor);
+  if (!ms) return '';
+  const d = new Date(ms);
+  const dd = String(d.getDate()).padStart(2, '0'), mm = String(d.getMonth() + 1).padStart(2, '0'), yy = d.getFullYear();
+  const dia = d.toLocaleDateString('es-AR', { weekday: 'long' });
+  return `${dd}/${mm} ${dd}/${mm}/${yy} ${d.getDate()}/${d.getMonth() + 1} ${yy}-${mm}-${dd} ${dia}`;
+};
+const textoBusquedaPedido = (p) => sinAcentos([
+  p.mensaje,
+  ...(p.escaneoItems || []).map(it => `${it.product || ''} ${it.variant || ''}`),
+  ...(p.venta?.items || []).map(it => `${it.producto || ''} ${it.variante || ''}`),
+  p.venta?.vendedor, p.venta?.medioPago,
+  fechasParaBuscar(p.createdAt), fechasParaBuscar(p.armadoAt), fechasParaBuscar(p.finalizadoAt),
+  p.programadoPara ? fechasParaBuscar(p.programadoPara + 'T12:00:00') : '',
+].filter(Boolean).join(' '));
+const coincideBusqueda = (p, q) => {
+  const palabras = sinAcentos(q).split(/\s+/).filter(Boolean);
+  if (palabras.length === 0) return true;
+  const texto = textoBusquedaPedido(p);
+  return palabras.every(w => texto.includes(w));
+};
+
+// Cuadro de búsqueda (el mismo en Armado y Finalizado).
+function BuscadorPedidos({ value, onChange, dm, placeholder }) {
+  return (
+    <div className="relative mb-4">
+      <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+        <Search size={16} className={dm ? 'text-zinc-500' : 'text-zinc-400'} />
+      </div>
+      <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        className={`h-11 border rounded-xl pl-9 pr-3.5 w-full text-sm outline-none transition-all ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100 placeholder-zinc-600 focus:ring-1 focus:ring-[#6366f1]/10' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-1 focus:ring-blue-100'}`} />
+    </div>
+  );
+}
+
 const timeAgoStr = (dateStr) => {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -396,6 +439,31 @@ function BotonEscanear({ pedido, dm, db, codigosBarra, productosConocidos }) {
           onCerrar={() => setAbierto(false)} />
       )}
     </>
+  );
+}
+
+// Lista de lo que se escaneó para este pedido (pedido.escaneoItems), venga del botón "Escanear
+// productos" de acá o de la pestaña Salida de /escaner con el pedido elegido. Se muestra en el
+// pendiente, en el armado y en el finalizado, para poder ver qué salió en el paquete.
+function ProductosEscaneados({ pedido, dm }) {
+  const items = (pedido.escaneoItems || []).filter(it => (parseInt(it.cantidad) || 0) > 0);
+  if (items.length === 0) return null;
+  const unidades = items.reduce((s, it) => s + (parseInt(it.cantidad) || 0), 0);
+  return (
+    <div className={`rounded-xl border p-3 ${dm ? 'border-emerald-500/25 bg-emerald-500/[0.06]' : 'border-emerald-200 bg-emerald-50/60'}`}>
+      <p className={`text-xs font-bold flex items-center gap-1.5 mb-1.5 ${dm ? 'text-emerald-300' : 'text-emerald-700'}`}>
+        <ScanBarcode size={13}/> Escaneado · {unidades} producto{unidades === 1 ? '' : 's'}
+        {pedido.escaneadoAt && <span className="font-medium opacity-70">· {safeDateStr(pedido.escaneadoAt, { day: '2-digit', month: 'short' })} {safeTimeStr(pedido.escaneadoAt)}</span>}
+      </p>
+      <ul className="space-y-0.5">
+        {items.map((it, idx) => (
+          <li key={idx} className={`text-sm flex gap-2 ${dm ? 'text-zinc-200' : 'text-zinc-800'}`}>
+            <span className="font-black tabular-nums">{parseInt(it.cantidad) || 0}×</span>
+            <span>{it.product}{it.variant ? <span className="opacity-60"> — {it.variant}</span> : null}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -784,7 +852,71 @@ function EditableDireccion({ pedido, dm }) {
 // un solo pedido a la vez, bien grande, con un botón enorme para no errarle.
 // Se monta de nuevo cada vez que cambia el pedido en foco (el padre le pasa key={pedido.id}),
 // así el "entered" arranca en false y dispara la animación de crecimiento apenas se pinta.
-function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, onCancel, hideCancel = false, requireConfirm = false, extraAction, conEscaneo = false, db, codigosBarra, productosConocidos }) {
+// Botón para programar el día en que SALE el pedido (ver pedidos/fechaSalida.js). Con una fecha
+// futura el pedido se va a la pestaña Programados y vuelve solo a la cola ese día; al anotar la
+// venta, la fecha del formulario arranca en esa. Se puede cambiar o quitar en cualquier momento.
+function ProgramarSalida({ pedido, dm }) {
+  const [abierto, setAbierto] = useState(false);
+  const [fecha, setFecha] = useState(pedido.programadoPara || '');
+  const [guardando, setGuardando] = useState(false);
+  const tiene = esFechaValida(pedido.programadoPara);
+
+  const guardar = async (valor) => {
+    setGuardando(true);
+    try {
+      await updateDoc(doc(db, 'pedidos', pedido.id), { programadoPara: valor || deleteField() });
+      setAbierto(false);
+    } catch (e) {
+      alert('No se pudo guardar la fecha: ' + e.message);
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  if (!abierto) {
+    return (
+      <button type="button" onClick={() => { setFecha(pedido.programadoPara || ''); setAbierto(true); }}
+        className={`w-full h-11 rounded-xl font-bold text-sm border flex items-center justify-center gap-2 transition-all active:scale-[0.97] ${
+          tiene
+            ? (dm ? 'border-indigo-500/30 text-indigo-300 bg-indigo-500/[0.08] hover:bg-indigo-500/[0.14]' : 'border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100')
+            : (dm ? 'border-white/[0.1] text-zinc-300 hover:bg-white/[0.05]' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50')
+        }`}>
+        <CalendarClock size={15}/> {tiene ? `Sale el ${fechaSalidaCorta(pedido.programadoPara)} · cambiar` : 'Programar para otro día'}
+      </button>
+    );
+  }
+
+  return (
+    <div className={`rounded-xl border p-3 flex flex-col gap-2.5 ${dm ? 'border-white/[0.1] bg-white/[0.03]' : 'border-zinc-200 bg-zinc-50'}`}>
+      <label className={`text-xs font-semibold flex items-center gap-1.5 ${dm ? 'text-zinc-300' : 'text-zinc-700'}`}>
+        <CalendarClock size={13}/> ¿Qué día sale este pedido?
+      </label>
+      <input type="date" value={fecha} min={hoyLocal()} onChange={e => setFecha(e.target.value)}
+        className={`h-12 border rounded-xl px-3.5 w-full text-base outline-none ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100 [color-scheme:dark]' : 'bg-white border-zinc-200 text-zinc-900'}`} />
+      <p className="text-[11px] leading-snug text-zinc-500">
+        Hasta ese día sale de la cola y queda en Programados. La venta se anota con esta fecha.
+      </p>
+      <div className="flex gap-2">
+        <button type="button" disabled={!esFechaValida(fecha) || guardando} onClick={() => guardar(fecha)}
+          className="flex-1 h-11 rounded-xl font-bold text-sm text-white bg-[#6366f1] hover:bg-[#4f46e5] disabled:opacity-40 transition-all active:scale-[0.97]">
+          {guardando ? 'Guardando...' : 'Guardar fecha'}
+        </button>
+        {tiene && (
+          <button type="button" disabled={guardando} onClick={() => guardar(null)}
+            className={`h-11 px-3 rounded-xl font-bold text-sm border transition-all active:scale-[0.97] ${dm ? 'border-white/[0.1] text-zinc-400 hover:text-zinc-200' : 'border-zinc-200 text-zinc-500 hover:text-zinc-800'}`}>
+            Quitar
+          </button>
+        )}
+        <button type="button" disabled={guardando} onClick={() => setAbierto(false)}
+          className={`h-11 px-3 rounded-xl font-bold text-sm transition-all ${dm ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-800'}`}>
+          Cerrar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, onCancel, hideCancel = false, requireConfirm = false, extraAction, conEscaneo = false, sinUrgencia = false, db, codigosBarra, productosConocidos }) {
   const [entered, setEntered] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   useEffect(() => {
@@ -792,7 +924,8 @@ function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, on
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  const mins = minutesSince(pedido.createdAt);
+  // En Programados la demora no es un problema: el pedido espera a su día a propósito.
+  const mins = sinUrgencia ? 0 : minutesSince(pedido.createdAt);
   const isUrgente = mins >= PEDIDO_URGENTE_MIN;
   const isAlerta = mins >= PEDIDO_ALERTA_MIN && mins < PEDIDO_URGENTE_MIN;
   return (
@@ -844,12 +977,15 @@ function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, on
 
       <DetalleComercial pedido={pedido} dm={dm} />
 
+      <ProductosEscaneados pedido={pedido} dm={dm} />
+
       <div className="flex flex-col gap-2 mt-1">
         {conEscaneo && <BotonEscanear pedido={pedido} dm={dm} db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos} />}
         <button onClick={() => (conEscaneo || requireConfirm) ? setShowConfirm(true) : onAction()}
           className={`w-full h-16 rounded-2xl font-black text-lg text-white transition-all active:scale-[0.97] ${actionColor}`}>
           {actionLabel}
         </button>
+        <ProgramarSalida pedido={pedido} dm={dm} />
         {!hideCancel && (
           <button onClick={onCancel}
             className={`w-full h-11 rounded-xl font-bold text-sm border transition-all active:scale-[0.97] ${dm ? 'border-red-500/30 text-red-400 hover:bg-red-500/10' : 'border-red-200 text-red-600 hover:bg-red-50'}`}>
@@ -1004,12 +1140,15 @@ function MotoPendienteCard({ pedido, dm, onListo, onCancel, db, codigosBarra, pr
         </div>
       </div>
 
+      <ProductosEscaneados pedido={pedido} dm={dm} />
+
       <div className="flex flex-col gap-2 mt-1">
         <BotonEscanear pedido={pedido} dm={dm} db={db} codigosBarra={codigosBarra} productosConocidos={productosConocidos} />
         <button onClick={() => setShowConfirm(true)} disabled={!puedeConfirmar}
           className="w-full h-16 rounded-2xl font-black text-lg text-white transition-all active:scale-[0.97] bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed">
           {saving ? 'Guardando...' : `Listo · ${nombreRepartidor(repartidorSel)}`}
         </button>
+        <ProgramarSalida pedido={pedido} dm={dm} />
         <button onClick={onCancel}
           className={`w-full h-11 rounded-xl font-bold text-sm border transition-all active:scale-[0.97] ${dm ? 'border-red-500/30 text-red-400 hover:bg-red-500/10' : 'border-red-200 text-red-600 hover:bg-red-50'}`}>
           Cancelar pedido
@@ -1064,6 +1203,11 @@ function NextRow({ list, dm, onFocus }) {
                 {p.tipoEnvio === 'retiro' && !esPedidoCorreo(p) && (
                   <span className={`flex items-center gap-1 ${dm ? 'text-amber-400' : 'text-amber-600'}`}>
                     <Store size={10}/> Retiro
+                  </span>
+                )}
+                {p.escaneadoAt && (
+                  <span className={`flex items-center gap-1 ${dm ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                    <ScanBarcode size={10}/> Escaneado
                   </span>
                 )}
               </div>
@@ -1209,6 +1353,7 @@ function FinalizadoCard({ p, dm, isExpanded, onToggleExpand, onEliminar, onEdita
         </div>
       </div>
       <p className={`text-base leading-snug whitespace-pre-wrap font-semibold ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{p.mensaje}</p>
+      <div className="mt-2"><ProductosEscaneados pedido={p} dm={dm} /></div>
       <button onClick={() => onToggleExpand(p.id)}
         className={`flex items-center gap-1 text-xs font-bold mt-2 py-1 ${dm ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-700'}`}>
         {isExpanded ? 'Ver menos' : 'Ver datos de la venta'} {isExpanded ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}
@@ -1422,7 +1567,7 @@ export default function PedidosPage() {
   }, [batches]);
 
   const pendientes = useMemo(() =>
-    pedidos.filter(p => p.estado === 'pendiente').sort((a, b) => safeDateTime(a.createdAt) - safeDateTime(b.createdAt)),
+    pedidos.filter(p => p.estado === 'pendiente' && !esProgramado(p)).sort((a, b) => safeDateTime(a.createdAt) - safeDateTime(b.createdAt)),
     [pedidos]);
   // Sin clasificar: no arrancó con "moto" ni "uber" — bloquea el flujo normal hasta que se asigne
   // a mano. Clasificados: el resto de la cola, que sí sigue el flujo de foco + siguientes de siempre.
@@ -1439,13 +1584,19 @@ export default function PedidosPage() {
   // tipoEnvio, para no dejar huérfano nada que ya estuviera armado antes de este cambio) — los de
   // moto pasan a manejarse desde la pantalla de Reparto una vez armados, hasta que se entregan.
   const armados = useMemo(() =>
-    pedidos.filter(p => p.estado === 'armado' && p.tipoEnvio !== 'moto').sort((a, b) => safeDateTime(a.createdAt) - safeDateTime(b.createdAt)),
+    pedidos.filter(p => p.estado === 'armado' && p.tipoEnvio !== 'moto' && !esProgramado(p)).sort((a, b) => safeDateTime(a.createdAt) - safeDateTime(b.createdAt)),
     [pedidos]);
   // Entregado: llegó al cliente (lo marcó el motomensajero) pero todavía no se cargó la venta —
   // quedan acá "destacados" hasta que alguien de Gestión los cierra con el mismo formulario de
   // siempre. Los más viejos entregados primero, para no dejar ninguno esperando de más.
   const entregados = useMemo(() =>
     pedidos.filter(p => p.estado === 'entregado').sort((a, b) => safeDateTime(a.entregadoEn) - safeDateTime(b.entregadoEn)),
+    [pedidos]);
+  // Programados: pendientes o armados (de cualquier canal, moto incluida) con fecha de salida futura.
+  // El más próximo primero.
+  const programados = useMemo(() =>
+    pedidos.filter(p => (p.estado === 'pendiente' || p.estado === 'armado') && esProgramado(p))
+      .sort((a, b) => a.programadoPara.localeCompare(b.programadoPara) || safeDateTime(a.createdAt) - safeDateTime(b.createdAt)),
     [pedidos]);
   const finalizados = useMemo(() =>
     pedidos.filter(p => p.estado === 'finalizado').sort((a, b) => safeDateTime(b.finalizadoAt || b.createdAt) - safeDateTime(a.finalizadoAt || a.createdAt)),
@@ -1456,14 +1607,15 @@ export default function PedidosPage() {
   // cliente escribió por WhatsApp.
   const [finalizadoSearch, setFinalizadoSearch] = useState('');
   const finalizadosFiltrados = useMemo(() => {
-    const q = finalizadoSearch.trim().toLowerCase();
-    if (!q) return finalizados;
-    return finalizados.filter(p => {
-      const productos = (p.venta?.items || []).map(it => it.producto).join(' ');
-      const haystack = [p.mensaje, p.venta?.vendedor, p.venta?.medioPago, productos].filter(Boolean).join(' ').toLowerCase();
-      return haystack.includes(q);
-    });
+    if (!finalizadoSearch.trim()) return finalizados;
+    return finalizados.filter(p => coincideBusqueda(p, finalizadoSearch));
   }, [finalizados, finalizadoSearch]);
+  // Buscador de Armado: mismo criterio (producto, fecha, cualquier palabra del mensaje).
+  const [armadoSearch, setArmadoSearch] = useState('');
+  const armadosFiltrados = useMemo(() => {
+    if (!armadoSearch.trim()) return armados;
+    return armados.filter(p => coincideBusqueda(p, armadoSearch));
+  }, [armados, armadoSearch]);
   // Mismo criterio que pendientesMoto/Uber/Retiro: separados por tipo de envío, para que Finalizado
   // se pueda mirar por canal igual que Pendiente. "Sin tipo" son pedidos viejos de antes de que
   // existiera tipoEnvio — se muestra solo si hay alguno, no es un canal real.
@@ -1605,7 +1757,8 @@ export default function PedidosPage() {
     // La venta se anota en el día en que se subió el pedido, no en el día en que se carga: con una
     // pila de pedidos entregados esperando, cargarlos hoy los metería a todos en la fecha de hoy y
     // movería la facturación de días anteriores. Si el pedido no trae fecha, se usa hoy.
-    const prefill = armarPrefillFinalizar(pedido, sellableItems, fechaDeSubida(pedido), aliasActivo);
+    // Si el pedido tiene día de salida programado, la venta va a ese día.
+    const prefill = armarPrefillFinalizar(pedido, sellableItems, esFechaValida(pedido.programadoPara) ? pedido.programadoPara : fechaDeSubida(pedido), aliasActivo);
     setFinalizarForm(prefill.form);
     setFinalizarItems(prefill.items);
     setFinalizarPagos(prefill.pagos);
@@ -2152,6 +2305,8 @@ export default function PedidosPage() {
             { key: 'armado', label: 'Armado', count: armados.length },
             { key: 'entregado', label: 'Entregado', count: entregados.length },
             { key: 'finalizado', label: 'Finalizado', count: finalizados.length },
+            // Solo aparece si hay alguno (o si se está mirando), para no sumar una pestaña vacía.
+            ...((programados.length > 0 || section === 'programado') ? [{ key: 'programado', label: 'Programados', count: programados.length }] : []),
           ].map(s => (
             <button key={s.key} onClick={() => setSection(s.key)}
               className={`flex-1 min-w-0 h-11 rounded-lg text-xs font-bold transition-all active:scale-[0.97] px-1 sm:px-2 ${section === s.key ? (dm ? 'bg-white/[0.1] text-zinc-100' : 'bg-white text-zinc-900 shadow-sm') : `text-zinc-500 ${dm ? 'lg:hover:text-zinc-300' : 'lg:hover:text-zinc-700'}`}`}>
@@ -2228,9 +2383,16 @@ export default function PedidosPage() {
           armados.length === 0
             ? <EmptyState dm={dm} icon={PartyPopper} text="No hay pedidos armados esperando." />
             : (() => {
-                const focus = armados.find(p => p.id === focusArmadoId) || armados[0];
-                const rest = armados.filter(p => p.id !== focus.id);
+                const buscador = <BuscadorPedidos value={armadoSearch} onChange={setArmadoSearch} dm={dm}
+                  placeholder="Buscar por producto, fecha (20/11) o cualquier palabra..." />;
+                if (armadosFiltrados.length === 0) return (
+                  <>{buscador}<EmptyState dm={dm} icon={Search} text="Ningún pedido armado coincide con la búsqueda." /></>
+                );
+                const focus = armadosFiltrados.find(p => p.id === focusArmadoId) || armadosFiltrados[0];
+                const rest = armadosFiltrados.filter(p => p.id !== focus.id);
                 return (
+                  <>
+                  {buscador}
                   <div className="lg:flex lg:items-start lg:gap-6">
                     <div className="lg:w-[560px] lg:flex-shrink-0">
                       <FocusCard key={focus.id} pedido={focus} dm={dm} eyebrow="Próximo a finalizar" actionLabel="Finalizar"
@@ -2241,6 +2403,7 @@ export default function PedidosPage() {
                       <NextRow list={rest} dm={dm} onFocus={setFocusArmadoId} />
                     </div>
                   </div>
+                  </>
                 );
               })()
         )}
@@ -2269,6 +2432,23 @@ export default function PedidosPage() {
               })()
         )}
 
+        {/* PROGRAMADOS: pedidos que salen otro día. Se pueden anotar ya (la venta queda con su fecha
+            de salida) o esperar: el día que llega vuelven solos a Pendiente / Armado / reparto. */}
+        {section === 'programado' && (
+          programados.length === 0
+            ? <EmptyState dm={dm} icon={CalendarClock} text="No hay pedidos programados para otro día." />
+            : (
+              <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3 lg:items-start">
+                {programados.map(p => (
+                  <FocusCard key={p.id} pedido={p} dm={dm} sinUrgencia
+                    eyebrow={`Sale el ${fechaSalidaCorta(p.programadoPara)} · ${p.estado === 'armado' ? 'ya armado' : 'sin armar'}`}
+                    actionLabel="Anotar venta" actionColor="bg-[#6366f1] hover:bg-[#2563eb]"
+                    onAction={() => handleAbrirFinalizar(p)} onCancel={() => setCancelTarget(p)} />
+                ))}
+              </div>
+            )
+        )}
+
         {/* FINALIZADO: sin acciones, separado por canal igual que Pendiente (Moto/Uber/Retiro en
             columnas propias en PC) — así se puede repasar cada canal por separado. */}
         {section === 'finalizado' && (
@@ -2281,7 +2461,7 @@ export default function PedidosPage() {
                     <Search size={16} className={dm ? 'text-zinc-500' : 'text-zinc-400'} />
                   </div>
                   <input value={finalizadoSearch} onChange={e => setFinalizadoSearch(e.target.value)}
-                    placeholder="Buscar por mensaje, vendedor, producto o medio de pago..."
+                    placeholder="Buscar por producto, fecha (20/11), palabra, vendedor o medio de pago..."
                     className={`h-11 border rounded-xl pl-9 pr-3.5 w-full text-sm outline-none transition-all ${dm ? 'bg-[#101010] border-white/[0.07] text-zinc-100 placeholder-zinc-600 focus:ring-1 focus:ring-[#6366f1]/10' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-1 focus:ring-blue-100'}`} />
                 </div>
                 {finalizadoSearch.trim() && finalizadosFiltrados.length === 0 ? (

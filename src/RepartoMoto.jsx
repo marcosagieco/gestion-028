@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { esProgramado } from './pedidos/fechaSalida';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   initializeFirestore, getFirestore, collection, query, orderBy, onSnapshot,
@@ -358,7 +359,7 @@ export default function RepartoMoto({ repartidor = REPARTIDOR_DEFAULT }) {
   }, []);
 
   const stopsRaw = useMemo(() =>
-    pedidos.filter(p => p.tipoEnvio === 'moto' && p.estado === 'armado' && p.direccion && esDelRepartidor(p, repartidor)),
+    pedidos.filter(p => p.tipoEnvio === 'moto' && p.estado === 'armado' && p.direccion && !esProgramado(p) && esDelRepartidor(p, repartidor)),
     [pedidos, repartidor]);
   const stopsOrdenadas = useMemo(() =>
     [...stopsRaw].sort((a, b) => (a.ordenRecorrido ?? 999) - (b.ordenRecorrido ?? 999)),

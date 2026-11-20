@@ -6,6 +6,7 @@ import {
   persistentLocalCache, persistentMultipleTabManager,
 } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
+import { esProgramado } from './pedidos/fechaSalida';
 import {
   Bike, ArrowLeft, Moon, Sun, ChevronDown, ChevronRight, GripVertical,
   MapPin, Lock, CheckCircle, XCircle, Loader2, PartyPopper, Clock, Trash2, AlertTriangle, Pencil,
@@ -366,7 +367,7 @@ export default function RepartoDeposito() {
   // cargada. Son las de los DOS repartidores: `stopsRaw` es lo que se muestra (las del que se
   // está mirando) y `todasLasParadas` las usan los contadores y el recálculo al pasar un pedido.
   const todasLasParadas = useMemo(() =>
-    pedidos.filter(p => p.tipoEnvio === 'moto' && p.estado === 'armado' && p.direccion),
+    pedidos.filter(p => p.tipoEnvio === 'moto' && p.estado === 'armado' && p.direccion && !esProgramado(p)),
     [pedidos]);
 
   const paradasPorRepartidor = useMemo(() => {

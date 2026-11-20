@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   initializeFirestore, getFirestore, collection, query, where, orderBy, limit, onSnapshot,
-  doc, setDoc, addDoc, deleteDoc,
+  doc, setDoc, addDoc, deleteDoc, getDoc, updateDoc,
   persistentLocalCache, persistentMultipleTabManager,
 } from 'firebase/firestore';
 import {
@@ -183,6 +183,20 @@ export default function EscanerPage() {
         items: sesionSalida.map(it => ({ codigo: it.codigo, product: it.product, variant: it.variant, cantidad: parseInt(it.cantidad) || 0 })),
         createdAt: new Date().toISOString(),
       });
+      // Si se eligió un pedido, lo escaneado también queda en el pedido (escaneoItems), sumado a
+      // lo que ya tuviera escaneado — así aparece en /pedidos igual que si se escaneara desde ahí.
+      if (pedidoSel) {
+        const ref = doc(db, 'pedidos', pedidoSel.id);
+        const actual = (await getDoc(ref)).data()?.escaneoItems || [];
+        const juntos = actual.map(it => ({ ...it }));
+        for (const it of sesionSalida) {
+          const cant = parseInt(it.cantidad) || 0;
+          const igual = juntos.find(x => x.product === it.product && x.variant === it.variant);
+          if (igual) igual.cantidad = (parseInt(igual.cantidad) || 0) + cant;
+          else juntos.push({ codigo: it.codigo, product: it.product, variant: it.variant, cantidad: cant });
+        }
+        await updateDoc(ref, { escaneadoAt: new Date().toISOString(), escaneoItems: juntos });
+      }
       showToast('Registro de salida guardado');
       setSesionSalida([]); setPedidoSel(null); setBusquedaPedido('');
     } catch (e) {

@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef, useId, useCallback } from 'react';
 import {
-  Plus, Trash2, Save, TrendingUp, DollarSign, Package, UserCircle,
+  Plus, Trash2, Save, TrendingUp, TrendingDown, Info, DollarSign, Package, UserCircle,
   ShoppingCart, Wallet, Activity, LogOut, Moon, Sun, AlertTriangle, Calendar, Award, FolderOpen, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, Box, Users, BarChart3, CheckCircle, Clock, Settings, Truck, Home, Percent, Flame, WifiOff, Download, XCircle, Search, ArrowUpDown, Star, Copy, Sparkles, Send, Minimize2, RotateCcw, Target, RefreshCw, Receipt, Minus, ArrowDownLeft, ArrowUpRight, Landmark, CreditCard, ArrowLeftRight, Pencil, Check, ClipboardList, GripVertical,
   UserCog, HandCoins, CalendarClock, History, Bike, Eye, EyeOff, Bot, Car, ScanBarcode
 } from 'lucide-react';
 
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Bar, ComposedChart, Line, ReferenceLine } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Bar, ComposedChart, Line, ReferenceLine, Cell } from 'recharts';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Link } from 'react-router-dom';
@@ -15,6 +15,8 @@ import { CSS as DndCSS } from '@dnd-kit/utilities';
 
 import ProjectionChart from './ProjectionChart';
 import BotEstadisticas from './BotEstadisticas';
+import MetricasBotInicio from './inicio/MetricasBotInicio';
+import AnunciosWhatsApp from './metaads/AnunciosWhatsApp';
 import MetricSlider from './MetricSlider';
 import { buildDailySeries, buildRatioSeries, computeProjection, PROJECTION_CUTOFF_DATE } from './projectionEngine';
 import { REPARTIDORES, repartidorConfig, repartidorDe } from './reparto/repartidores';
@@ -215,6 +217,13 @@ const DEFAULT_HOME_CARD_ORDER = {
 // "Restablecer orden".
 const DEFAULT_HOME_SECTOR_LABELS = { sector1: 'Plata', sector2: 'Clientes', sector3: 'Cuentas' };
 const DEFAULT_HOME_SECTOR_ORDER = ['sector1', 'sector2', 'sector3'];
+// Lo que hay en cada sección de fábrica, debajo de su nombre. Si el usuario la renombra, no se muestra
+// (ya no se sabe qué puso adentro).
+const DEFAULT_HOME_SECTOR_DESCRIPTIONS = {
+  sector1: 'Lo que entró, lo que se gastó y lo que quedó en el período.',
+  sector2: 'Quiénes compraron y de dónde llegaron.',
+  sector3: 'Cuánto entró por cada cuenta y lo que vale el stock.',
+};
 // Bloques grandes de Inicio (a diferencia de las tarjetas chicas de arriba, que ya se podían
 // reordenar): también se pueden arrastrar entre sí en modo Editar, pero en su propia lista aparte
 // — no se mezclan con las tarjetas chicas ni entre secciones, son dos sistemas de arrastre
@@ -222,12 +231,13 @@ const DEFAULT_HOME_SECTOR_ORDER = ['sector1', 'sector2', 'sector3'];
 // de la grilla de tarjetas).
 const HOME_BLOCK_META = {
   evolucion:      { label: 'Evolución del Período' },
+  botWhatsapp:    { label: 'Bot de WhatsApp' },
   equipoClientes: { label: 'Equipo, Nuevos Clientes y Último Costo' },
   topProductos:   { label: 'Top Productos' },
   fallosRobos:    { label: 'Fallas y Robos' },
   cotizaciones:   { label: 'Cotización del Dólar' },
 };
-const DEFAULT_HOME_BLOCK_ORDER = ['evolucion', 'equipoClientes', 'topProductos', 'fallosRobos', 'cotizaciones'];
+const DEFAULT_HOME_BLOCK_ORDER = ['evolucion', 'botWhatsapp', 'equipoClientes', 'topProductos', 'fallosRobos', 'cotizaciones'];
 // Las 7 casas que devuelve DolarApi.com — todas seleccionables en el bloque de Inicio.
 const COTIZACIONES_DISPLAY = [
   { key: 'oficial',          label: 'Oficial',      color: '#22c55e' },
@@ -761,8 +771,8 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
 
   if (chartData.length === 0) return <div className="h-[250px] flex items-center justify-center text-sm font-medium opacity-50">No hay transacciones en este periodo.</div>;
 
-  const themeColor = isCompareMode ? (darkMode ? '#f43f5e' : '#e11d48') : '#3b82f6';
-  const gridColor = darkMode ? '#1D1D1D' : '#e4e4e7';
+  const themeColor = isCompareMode ? (darkMode ? '#f43f5e' : '#e11d48') : '#6366f1';
+  const gridColor = darkMode ? '#1c1c1f' : '#f0f0f2';
   const textColor = darkMode ? '#71717a' : '#a1a1aa';
 
   return (
@@ -776,7 +786,7 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
           </div>
       </div>
       
-      <div className={`w-full h-[250px] p-2 rounded-xl border ${darkMode ? 'bg-[#0B0B0B] border-[#1D1D1D]' : 'bg-white border-zinc-200'}`}>
+      <div className="w-full h-[260px]">
         {/* debounce: sin esto, el gráfico se redibuja entero (ejes, curva, gradiente) en cada
             micro-cambio de ancho mientras el contenedor se está animando — por ejemplo, mientras
             se abre/cierra la barra lateral — y eso es justo lo que se sentía "lageado". Con
@@ -785,20 +795,19 @@ const SalesAreaChart = ({ sales, mode, customRange, darkMode, isCompareMode = fa
           <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id={`colorMetric-${isCompareMode ? 'vs' : 'base'}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={themeColor} stopOpacity={0.4}/>
-                <stop offset="60%" stopColor={themeColor} stopOpacity={0.08}/>
+                <stop offset="0%" stopColor={themeColor} stopOpacity={0.22}/>
                 <stop offset="100%" stopColor={themeColor} stopOpacity={0}/>
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridColor} />
+            <CartesianGrid vertical={false} stroke={gridColor} />
             <XAxis dataKey="name" stroke={textColor} fontSize={10} tickLine={false} axisLine={false} dy={10} minTickGap={20} />
             <YAxis
               stroke={textColor} fontSize={10} tickLine={false} axisLine={false}
               tickFormatter={(value) => metric !== 'quantity' ? formatCompact(value) : value}
               width={45}
             />
-            <RechartsTooltip content={<CustomTooltip darkMode={darkMode} />} cursor={{ stroke: textColor, strokeWidth: 1, strokeDasharray: '3 3' }} />
-            <Area type="monotone" dataKey={metric === 'revenue' ? 'Ingresos' : metric === 'quantity' ? 'Unidades' : metric === 'shipping' ? 'Ganancia Envío' : 'Ganancia'} stroke={metric === 'profit' ? '#a78bfa' : metric === 'shipping' ? '#f59e0b' : themeColor} strokeWidth={3} fillOpacity={1} fill={`url(#colorMetric-${isCompareMode ? 'vs' : 'base'})`} activeDot={{ r: 6, strokeWidth: 0 }} />
+            <RechartsTooltip content={<CustomTooltip darkMode={darkMode} />} cursor={{ stroke: textColor, strokeWidth: 1, strokeOpacity: 0.5 }} />
+            <Area type="monotone" dataKey={metric === 'revenue' ? 'Ingresos' : metric === 'quantity' ? 'Unidades' : metric === 'shipping' ? 'Ganancia Envío' : 'Ganancia'} stroke={themeColor} strokeWidth={2} fillOpacity={1} fill={`url(#colorMetric-${isCompareMode ? 'vs' : 'base'})`} activeDot={{ r: 4, strokeWidth: 2, stroke: darkMode ? '#0E0E0E' : '#fff' }} />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -935,17 +944,17 @@ const MiniLineChart = ({ data, labels, formatter, showArea = false }) => {
           <>
             <defs>
               <linearGradient id={`mlg-${gradientId}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.4}/>
-                <stop offset="60%" stopColor="#3b82f6" stopOpacity={0.08}/>
+                <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.38}/>
+                <stop offset="70%" stopColor="#3b82f6" stopOpacity={0.08}/>
                 <stop offset="100%" stopColor="#3b82f6" stopOpacity={0}/>
               </linearGradient>
             </defs>
             <path d={areaPath} fill={`url(#mlg-${gradientId})`} stroke="none" />
           </>
         )}
-        <path d={smoothPath} fill="none" stroke="#3b82f6" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+        <path d={smoothPath} fill="none" stroke="#3b82f6" strokeWidth="2.5" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />
         {hovered !== null && (
-          <circle cx={points[hovered].x} cy={points[hovered].y} r="3" fill="#3b82f6" strokeWidth="1.5" stroke="#fff" />
+          <line x1={points[hovered].x} x2={points[hovered].x} y1="0" y2={h} stroke="#3b82f6" strokeOpacity="0.6" strokeWidth="1" vectorEffect="non-scaling-stroke" />
         )}
       </svg>
     </div>
@@ -1124,7 +1133,7 @@ function MotoPagosPanel({ darkMode, deuda, ultimoPago, onPagar, repartidor, vari
         </div>
         <div>
           <span className={`text-sm font-bold ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{cfg.nombre}</span>
-          <span className={`block text-[9px] font-bold uppercase tracking-wide mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
+          <span className={`block text-[11px] font-medium mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
             {variant === 'card' ? `${TEAM_PAYMENT_TYPE_LABELS.motomensajeria} · sale ${cfg.salida}` : `Sale ${cfg.salida}`}
           </span>
         </div>
@@ -1135,8 +1144,8 @@ function MotoPagosPanel({ darkMode, deuda, ultimoPago, onPagar, repartidor, vari
 
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div>
-          <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-0.5">A pagar</div>
-          <div className={`text-lg font-black leading-none ${deuda.cantidad > 0 ? 'text-amber-500' : (darkMode ? 'text-zinc-100' : 'text-zinc-900')}`}>{formatMoney(deuda.total)}</div>
+          <div className="text-[11px] font-medium text-zinc-500 mb-0.5">A pagar</div>
+          <div className={`text-lg font-semibold tracking-tight leading-none ${deuda.cantidad > 0 ? 'text-amber-500' : (darkMode ? 'text-zinc-100' : 'text-zinc-900')}`}>{formatMoney(deuda.total)}</div>
           {ultimoPago && <div className="text-[10px] text-zinc-500 mt-1.5">Último pago: {formatMoney(ultimoPago.monto)} el {safeDateStr(ultimoPago.fecha)}</div>}
         </div>
         <button onClick={() => setExpanded(v => !v)} disabled={deuda.cantidad === 0}
@@ -1416,8 +1425,11 @@ const TeamMemberCard = ({
 
 
 // --- PREMIUM METRIC CARD ---
-const PremiumMetricCard = ({ title, value, subtitle, change, sparkline, sparklineLabels, sparklineFormatter, darkMode, extra, tooltip, lineSparkline, lineSparklineLabels, lineSparklineFormatter, onClick }) => {
-  const isPositive = change === null || change === undefined || change >= 0;
+// La tarjeta de Inicio (y de Meta Ads). Criterio: nombre arriba, el número grande, debajo si mejoró o
+// empeoró contra el período anterior (verde = mejoró, rojo = empeoró: en gastos, bajar es mejorar, ver
+// `bajarEsMejor`) y una línea corta de contexto. Las que se pueden tocar (abren un detalle o alternan
+// entre pesos/unidades) llevan una flechita y se resaltan al pasar el mouse.
+const PremiumMetricCard = ({ title, value, subtitle, change, sparkline, sparklineLabels, sparklineFormatter, darkMode, extra, tooltip, lineSparkline, lineSparklineLabels, lineSparklineFormatter, onClick, bajarEsMejor = false }) => {
   const [tipOpen, setTipOpen] = useState(false);
   const tipRef = useRef(null);
 
@@ -1434,28 +1446,22 @@ const PremiumMetricCard = ({ title, value, subtitle, change, sparkline, sparklin
     };
   }, [tipOpen]);
 
+  const hayCambio = change !== null && change !== undefined && isFinite(change);
+  const quieto = hayCambio && Math.abs(change) < 0.05;
+  const sube = hayCambio && change > 0;
+  const bueno = bajarEsMejor ? !sube : sube;
+  const IconoCambio = quieto ? Minus : sube ? TrendingUp : TrendingDown;
+  const colorCambio = quieto ? 'text-zinc-400 bg-zinc-500/10' : bueno ? (darkMode ? 'text-emerald-400 bg-emerald-500/10' : 'text-emerald-600 bg-emerald-50') : (darkMode ? 'text-rose-400 bg-rose-500/10' : 'text-rose-600 bg-rose-50');
+
   return (
-    <div onClick={onClick} className={`relative rounded-2xl p-3 sm:p-4 flex flex-col min-w-0 ${onClick ? 'cursor-pointer active:scale-[0.98] touch-manipulation' : ''} ${
-      darkMode ? 'bg-[#0E0E0E]' : 'bg-white'
+    <div onClick={onClick} className={`group relative rounded-xl p-4 flex flex-col min-w-0 h-full transition-colors ${onClick ? 'cursor-pointer active:scale-[0.99] touch-manipulation' : ''} ${
+      darkMode
+        ? `bg-[#0A0A0A] ${onClick ? 'hover:bg-[#101010]' : ''}`
+        : `bg-white ${onClick ? 'hover:bg-zinc-50' : ''}`
     }`}>
-      {/* Identificador de "esto se puede tocar", para las tarjetas interactivas (abren un modal,
-          alternan qué muestran, etc.) — sale solo de que la tarjeta tenga onClick, no hay que
-          marcarlo a mano en cada una. Es el borde REAL de la tarjeta (mismo radio, así sigue la
-          curva de la esquina tal cual es) pintado de azul, recortado con clip-path para que solo se
-          vea el tramo que pasa por la esquina superior derecha — no un triángulo relleno aparte. */}
-      {onClick && (
-        <div className="absolute inset-0 rounded-2xl pointer-events-none" style={{ border: '1.5px solid #3b82f6', clipPath: 'inset(0 0 calc(100% - 20px) calc(100% - 20px))' }} />
-      )}
-      <div className="flex items-start justify-between gap-2 mb-2 sm:mb-3">
-        <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-zinc-500 leading-tight">{title}</span>
-        <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
-          {change !== null && change !== undefined && (
-            <span className={`text-[9px] sm:text-[10px] font-bold px-1 sm:px-1.5 py-0.5 rounded-full ${
-              isPositive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
-            }`}>
-              {isPositive ? '+' : '−'}{Math.abs(change).toFixed(1)}%
-            </span>
-          )}
+      <div className="flex items-start justify-between gap-2 min-h-[22px]">
+        <span className={`text-[12px] sm:text-[13px] font-medium leading-snug ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{title}</span>
+        <div className="flex items-center gap-1 flex-shrink-0 -mt-0.5 -mr-1">
           {tooltip && (
             <div className="relative group/tt" ref={tipRef}>
               <span
@@ -1463,32 +1469,42 @@ const PremiumMetricCard = ({ title, value, subtitle, change, sparkline, sparklin
                   e.stopPropagation();
                   if (window.matchMedia('(hover: none)').matches) setTipOpen(o => !o);
                 }}
-                className={`w-5 h-5 rounded-full border text-[9px] font-bold flex items-center justify-center cursor-pointer select-none transition-colors ${
-                  tipOpen
-                    ? 'border-indigo-400 text-indigo-400 bg-indigo-500/10'
-                    : 'border-zinc-500/40 text-zinc-500 hover:border-zinc-400 hover:text-zinc-400'
+                className={`w-6 h-6 rounded-md flex items-center justify-center cursor-pointer select-none transition-colors ${
+                  tipOpen ? 'text-indigo-400' : (darkMode ? 'text-zinc-600 hover:text-zinc-300' : 'text-zinc-400 hover:text-zinc-700')
                 }`}
-              >?</span>
-              <div className={`absolute z-[100] right-0 top-6 w-64 max-w-[calc(100vw-2rem)] bg-zinc-900 border border-zinc-700 text-zinc-200 text-[11px] leading-snug rounded-xl px-3 py-2.5 shadow-xl transition-opacity duration-150 whitespace-normal ${
-                tipOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none group-hover/tt:opacity-100'
-              }`}>
+                aria-label="Qué significa"
+              ><Info size={14} /></span>
+              <div className={`absolute z-[100] right-0 top-7 w-64 max-w-[calc(100vw-2rem)] border text-[12px] leading-relaxed rounded-xl px-3.5 py-3 shadow-xl transition-opacity duration-150 whitespace-normal font-normal ${
+                darkMode ? 'bg-[#18181b] border-[#27272a] text-zinc-300' : 'bg-white border-zinc-200 text-zinc-700'
+              } ${tipOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none group-hover/tt:opacity-100'}`}>
                 {tooltip}
               </div>
             </div>
           )}
+          {onClick && (
+            <span className={`w-6 h-6 rounded-md flex items-center justify-center transition-colors ${darkMode ? 'text-zinc-600 group-hover:text-zinc-300' : 'text-zinc-400 group-hover:text-zinc-700'}`} title="Tocá para ver más">
+              <ChevronRight size={15} />
+            </span>
+          )}
         </div>
       </div>
-      <div className="flex items-center gap-2">
-        <div className={`text-sm sm:text-xl lg:text-2xl font-bold tracking-tighter leading-tight break-all min-w-0 ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`}>{value}</div>
-        {/* extra (ej. el fueguito de racha en "Promedio de Ventas") va a la misma altura que el
-            número, empujado del todo a la derecha — antes quedaba apilado abajo en su propia fila. */}
-        {extra && <div className="ml-auto flex-shrink-0">{extra}</div>}
+      <div className="flex items-center gap-2 mt-2">
+        <div className={`text-[20px] sm:text-[24px] lg:text-[26px] font-bold tracking-tight leading-tight break-words min-w-0 ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`}>{value}</div>
+        {(extra || hayCambio) && (
+          <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+            {extra}
+            {hayCambio && (
+              <span title="Contra el período anterior" className={`inline-flex items-center gap-1 text-[11px] sm:text-xs font-semibold rounded-full px-1.5 py-0.5 ${colorCambio}`}>
+                <IconoCambio size={13} strokeWidth={2.5} />
+                {quieto ? 'Igual' : `${sube ? '+' : '−'}${Math.abs(change).toFixed(1).replace('.', ',')}%`}
+              </span>
+            )}
+          </div>
+        )}
       </div>
+      {subtitle && <p title={typeof subtitle === 'string' ? subtitle : undefined} className="text-[11px] sm:text-xs leading-snug mt-1 text-zinc-500 truncate">{subtitle}</p>}
       {lineSparkline && <MiniLineChart data={lineSparkline} labels={lineSparklineLabels} formatter={lineSparklineFormatter} />}
-      {/* El mini gráfico de las tarjetas (antes barras) ahora es de líneas, igual estilo que las
-          de Meta Ads — mismo componente MiniLineChart, solo que acá llega por la prop `sparkline`
-          en vez de `lineSparkline` (para no tener que tocar los ~25 call sites de las tarjetas). */}
-      {sparkline && <div className="mt-auto pt-3"><MiniLineChart data={sparkline} labels={sparklineLabels} formatter={sparklineFormatter} showArea /></div>}
+      {sparkline && <div className="mt-auto pt-2"><MiniLineChart data={sparkline} labels={sparklineLabels} formatter={sparklineFormatter} showArea /></div>}
     </div>
   );
 };
@@ -3882,8 +3898,10 @@ export default function App() {
     try {
       const saved = JSON.parse(localStorage.getItem('homeBlockOrder') || 'null');
       if (Array.isArray(saved) && saved.length > 0) {
-        const missing = DEFAULT_HOME_BLOCK_ORDER.filter(id => !saved.includes(id));
-        return missing.length > 0 ? [...saved, ...missing] : saved;
+        const conBot = saved.includes('botWhatsapp') ? saved
+          : (saved.includes('evolucion') ? saved.flatMap(id => id === 'evolucion' ? [id, 'botWhatsapp'] : [id]) : ['botWhatsapp', ...saved]);
+        const missing = DEFAULT_HOME_BLOCK_ORDER.filter(id => !conBot.includes(id));
+        return missing.length > 0 ? [...conBot, ...missing] : conBot;
       }
     } catch {}
     return DEFAULT_HOME_BLOCK_ORDER;
@@ -8418,19 +8436,19 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       const netProfitWithAds = cur.netProfit - homeAdSpend;
       const netMarginWithAds = cur.totalRevenue > 0 ? (netProfitWithAds / cur.totalRevenue) * 100 : 0;
       return {
-          facturacion:       <PremiumMetricCard key="facturacion" darkMode={darkMode} title="Facturación" value={formatMoney(cur.totalRevenue)} subtitle="Bruto facturado" change={pct(cur.totalRevenue, prev?.totalRevenue)} sparkline={sparklines?.revenue} sparklineLabels={L} sparklineFormatter={fMoney} />,
-          gananciaBruta:     <PremiumMetricCard key="gananciaBruta" darkMode={darkMode} title="Ganancia Bruta" value={showGananciaBrutaPct ? formatPercent(cur.grossMargin) : formatMoney(cur.grossProfit)} subtitle={`${formatPercent(cur.grossMargin)} margen`} change={pct(cur.grossProfit, prev?.grossProfit)} sparkline={sparklines?.profit} sparklineLabels={L} sparklineFormatter={fMoney} onClick={() => setShowGananciaBrutaPct(v => !v)} />,
-          gananciaNeta:      <PremiumMetricCard key="gananciaNeta" darkMode={darkMode} title="Ganancia Neta" value={showGananciaNetaPct ? formatPercent(netMarginWithAds) : formatMoney(netProfitWithAds)} subtitle={`${formatPercent(netMarginWithAds)} neto${homeAdSpend > 0 ? ' · incl. ads' : ''}`} change={pct(cur.netProfit, prev?.netProfit)} sparkline={sparklines?.profit} sparklineLabels={L} sparklineFormatter={fMoney} onClick={() => setShowGananciaNetaPct(v => !v)} tooltip={homeAdSpend > 0 ? `Ganancia neta descontando el gasto en Meta Ads del período (${formatMoney(homeAdSpend)}). Gastos anotados por vos: ${formatMoney(cur.totalGlobalExpenses)}.` : undefined} />,
-          gananciaEnvio:     <PremiumMetricCard key="gananciaEnvio" darkMode={darkMode} title="Ganancia Envío" value={formatMoney(cur.totalShippingProfit)} subtitle="Cobrado menos costo" change={pct(cur.totalShippingProfit, prev?.totalShippingProfit)} sparkline={sparklines?.shipProfit} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Diferencia entre lo que cobraste al cliente por envío y lo que te costó a vos el envío." />,
-          gastosTotales:     <PremiumMetricCard key="gastosTotales" darkMode={darkMode} title="Gastos Totales" value={formatMoney(totalExpWithAds)} subtitle={(homeAdSpend > 0 ? `incl. ${formatMoney(homeAdSpend)} en ads` : 'Logística y operativos') + ' · tocá para ver detalle'} change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklines?.expensesWithAds} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Gastos anotados por vos (${formatMoney(cur.totalGlobalExpenses)}) + Meta Ads del período (${formatMoney(homeAdSpend)}). Cada uno se cuenta una sola vez.` : undefined}
+          facturacion:       <PremiumMetricCard key="facturacion" darkMode={darkMode} title="Facturación" value={formatMoney(cur.totalRevenue)} subtitle="Todo lo vendido, antes de costos" change={pct(cur.totalRevenue, prev?.totalRevenue)} sparkline={sparklines?.revenue} sparklineLabels={L} sparklineFormatter={fMoney} />,
+          gananciaBruta:     <PremiumMetricCard key="gananciaBruta" darkMode={darkMode} title="Ganancia Bruta" value={showGananciaBrutaPct ? formatPercent(cur.grossMargin) : formatMoney(cur.grossProfit)} subtitle={`Ventas menos costo de mercadería · ${formatPercent(cur.grossMargin)}`} change={pct(cur.grossProfit, prev?.grossProfit)} sparkline={sparklines?.profit} sparklineLabels={L} sparklineFormatter={fMoney} onClick={() => setShowGananciaBrutaPct(v => !v)} />,
+          gananciaNeta:      <PremiumMetricCard key="gananciaNeta" darkMode={darkMode} title="Ganancia Neta" value={showGananciaNetaPct ? formatPercent(netMarginWithAds) : formatMoney(netProfitWithAds)} subtitle={`Lo que queda después de todos los gastos · ${formatPercent(netMarginWithAds)}`} change={pct(cur.netProfit, prev?.netProfit)} sparkline={sparklines?.profit} sparklineLabels={L} sparklineFormatter={fMoney} onClick={() => setShowGananciaNetaPct(v => !v)} tooltip={homeAdSpend > 0 ? `Ganancia neta descontando el gasto en Meta Ads del período (${formatMoney(homeAdSpend)}). Gastos anotados por vos: ${formatMoney(cur.totalGlobalExpenses)}.` : undefined} />,
+          gananciaEnvio:     <PremiumMetricCard key="gananciaEnvio" darkMode={darkMode} title="Ganancia Envío" value={formatMoney(cur.totalShippingProfit)} subtitle="Lo cobrado por envío menos lo que costó" change={pct(cur.totalShippingProfit, prev?.totalShippingProfit)} sparkline={sparklines?.shipProfit} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Diferencia entre lo que cobraste al cliente por envío y lo que te costó a vos el envío." />,
+          gastosTotales:     <PremiumMetricCard key="gastosTotales" darkMode={darkMode} title="Gastos Totales" value={formatMoney(totalExpWithAds)} subtitle={homeAdSpend > 0 ? `Incluye ${formatMoney(homeAdSpend)} de Meta Ads` : 'Logística y operativos'} change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} bajarEsMejor sparkline={sparklines?.expensesWithAds} sparklineLabels={L} sparklineFormatter={fMoney} tooltip={homeAdSpend > 0 ? `Gastos anotados por vos (${formatMoney(cur.totalGlobalExpenses)}) + Meta Ads del período (${formatMoney(homeAdSpend)}). Cada uno se cuenta una sola vez.` : undefined}
             onClick={(e) => openGastosModal(e, { title: 'Gastos Totales', gasto: cur.expenseBreakdown.gasto, pago: cur.expenseBreakdown.pago, gastoEntries: cur.expenseBreakdown.gastoEntries, pagoEntries: cur.expenseBreakdown.pagoEntries, ...(homeAdSpend > 0 ? { ads: homeAdSpend } : {}) })} />,
-          gastosEmpresa:     <PremiumMetricCard key="gastosEmpresa" darkMode={darkMode} title="Gastos Empresa" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Gastos anotados · tocá para ver detalle" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} sparkline={sparklines?.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gastos operativos, logística y fijos que cargaste vos, incluyendo pagos del flujo de caja. No incluye Meta Ads (se muestra aparte, en su propia tarjeta y adentro de Gastos Totales). Los retiros no cuentan como gasto."
+          gastosEmpresa:     <PremiumMetricCard key="gastosEmpresa" darkMode={darkMode} title="Gastos Empresa" value={formatMoney(cur.totalGlobalExpenses)} subtitle="Los gastos que anotaste" change={pct(cur.totalGlobalExpenses, prev?.totalGlobalExpenses)} bajarEsMejor sparkline={sparklines?.expenses} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gastos operativos, logística y fijos que cargaste vos, incluyendo pagos del flujo de caja. No incluye Meta Ads (se muestra aparte, en su propia tarjeta y adentro de Gastos Totales). Los retiros no cuentan como gasto."
             onClick={(e) => openGastosModal(e, { title: 'Gastos Empresa', gasto: cur.expenseBreakdown.gasto, pago: cur.expenseBreakdown.pago, gastoEntries: cur.expenseBreakdown.gastoEntries, pagoEntries: cur.expenseBreakdown.pagoEntries })} />,
-          gastoMetaAds:      <PremiumMetricCard key="gastoMetaAds" darkMode={darkMode} title="Gasto Meta Ads" value={homeAdSpend > 0 ? formatMoney(homeAdSpend) : '—'} subtitle="Inversión publicitaria" change={null} sparkline={sparklines?.adSpend} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gasto total en publicidad de Meta Ads durante el período seleccionado" />,
-          inversion:         <PremiumMetricCard key="inversion" darkMode={darkMode} title="Inversión" value={formatMoney(cur.totalInvestment)} subtitle="Capital apostado" change={null} sparkline={sparklines?.investment} sparklineLabels={L} sparklineFormatter={fMoney} />,
+          gastoMetaAds:      <PremiumMetricCard key="gastoMetaAds" darkMode={darkMode} title="Gasto Meta Ads" value={homeAdSpend > 0 ? formatMoney(homeAdSpend) : '—'} subtitle="Publicidad en Facebook e Instagram" change={null} sparkline={sparklines?.adSpend} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Gasto total en publicidad de Meta Ads durante el período seleccionado" />,
+          inversion:         <PremiumMetricCard key="inversion" darkMode={darkMode} title="Inversión" value={formatMoney(cur.totalInvestment)} subtitle="Mercadería comprada en el período" change={null} sparkline={sparklines?.investment} sparklineLabels={L} sparklineFormatter={fMoney} />,
           productosFallados: <PremiumMetricCard key="productosFallados" darkMode={darkMode} title="Productos Fallados" value={showFalladosUnidades ? `${cur.failedUnits ?? 0} ud${(cur.failedUnits ?? 0) !== 1 ? 's' : ''}` : formatMoney(cur.failedValue ?? 0)} subtitle={`${cur.failedUnits ?? 0} unidad${(cur.failedUnits ?? 0) !== 1 ? 'es' : ''} perdida${(cur.failedUnits ?? 0) !== 1 ? 's' : ''}`} change={null} sparkline={sparklines?.failedValue} sparklineLabels={L} sparklineFormatter={fMoney} onClick={() => setShowFalladosUnidades(v => !v)} tooltip="Productos marcados como 'falla' al cargar la venta: se descontaron del stock pero no se cuentan como venta real (no suman a facturación, ganancia ni productos vendidos)." />,
           productosRobados:  <PremiumMetricCard key="productosRobados" darkMode={darkMode} title="Productos Robados" value={showRobadosUnidades ? `${cur.stolenUnits ?? 0} ud${(cur.stolenUnits ?? 0) !== 1 ? 's' : ''}` : formatMoney(cur.stolenValue ?? 0)} subtitle={`${cur.stolenUnits ?? 0} unidad${(cur.stolenUnits ?? 0) !== 1 ? 'es' : ''} robada${(cur.stolenUnits ?? 0) !== 1 ? 's' : ''}`} change={null} sparkline={sparklines?.stolenValue} sparklineLabels={L} sparklineFormatter={fMoney} onClick={() => setShowRobadosUnidades(v => !v)} tooltip="Productos marcados como 'robo' al cargar la venta: se descontaron del stock pero no se cuentan como venta real (no suman a facturación, ganancia ni productos vendidos)." />,
-          promedioVentas:    <PremiumMetricCard key="promedioVentas" darkMode={darkMode} title="Promedio de Ventas" value={cur.dailyAvgItems.toFixed(1)} subtitle="uds por día" change={pct(cur.dailyAvgItems, prev?.dailyAvgItems)} sparkline={sparklines?.units} sparklineLabels={L} sparklineFormatter={fUds}
+          promedioVentas:    <PremiumMetricCard key="promedioVentas" darkMode={darkMode} title="Promedio de Ventas" value={cur.dailyAvgItems.toFixed(1).replace('.', ',')} subtitle="Productos vendidos por día" change={pct(cur.dailyAvgItems, prev?.dailyAvgItems)} sparkline={sparklines?.units} sparklineLabels={L} sparklineFormatter={fUds}
                               extra={cur.currentStreak > 0 && (
                                   <div className="flex items-center gap-1.5">
                                       <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md" style={{background:'rgba(168,85,247,0.15)', border:'1px solid rgba(168,85,247,0.25)'}}>
@@ -8440,13 +8458,13 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                   </div>
                               )}
                           />,
-          productosVendidos: <PremiumMetricCard key="productosVendidos" darkMode={darkMode} title="Productos Vendidos" value={cur.itemsSold} subtitle={null} change={pct(cur.itemsSold, prev?.itemsSold)} sparkline={sparklines?.units} sparklineLabels={L} sparklineFormatter={fUds} />,
-          pedidosTotales:    <PremiumMetricCard key="pedidosTotales" darkMode={darkMode} title="Pedidos" value={cur.salesCount} subtitle="Total del período" change={pct(cur.salesCount, prev?.salesCount)} sparkline={sparklines?.pedidos} sparklineLabels={L} sparklineFormatter={v => `${v} pedido${v !== 1 ? 's' : ''}`} />,
-          ticketPromedio:    <PremiumMetricCard key="ticketPromedio" darkMode={darkMode} title="Ticket Promedio" value={formatMoney(avgTicket)} subtitle={unitsPerOrder > 0 ? `por pedido · ${unitsPerOrder.toFixed(1)} uds c/u` : 'por pedido'} change={pct(avgTicket, prevAvgTicket)} sparkline={sparklines?.avgTicket} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Cuánto gasta un cliente por compra: facturación dividida por la cantidad de pedidos. Es el número que sirve para fijar un mínimo de compra o decidir a partir de cuánto conviene regalar el envío." />,
-          precioPorUnidad:   <PremiumMetricCard key="precioPorUnidad" darkMode={darkMode} title="Precio por Unidad" value={formatMoney(avgUnitPrice)} subtitle="promedio por producto" change={pct(avgUnitPrice, prevAvgUnitPrice)} sparkline={sparklines?.avgUnitPrice} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="A cuánto se vendió un producto en promedio: facturación dividida por unidades vendidas. Si sube sin que suba el Ticket Promedio, quiere decir que estás vendiendo menos productos por pedido." />,
-          clientesNuevos:    <PremiumMetricCard key="clientesNuevos" darkMode={darkMode} title="Clientes Nuevos" value={newClientsListFor.length} subtitle="Total del período" change={null} sparkline={sparklines?.clients} sparklineLabels={L} sparklineFormatter={fClientes} />,
-          clientesOrganicos: <PremiumMetricCard key="clientesOrganicos" darkMode={darkMode} title="Clientes Orgánicos" value={newClientsOrganic} subtitle="Sin inversión en ads" change={null} sparkline={sparklines?.organicClients} sparklineLabels={L} sparklineFormatter={fClientes} />,
-          clientesPorAds:    <PremiumMetricCard key="clientesPorAds" darkMode={darkMode} title="Clientes por Ads" value={newClientsAds} subtitle="Captados por publicidad" change={null} sparkline={sparklines?.adsClients} sparklineLabels={L} sparklineFormatter={fClientes} />,
+          productosVendidos: <PremiumMetricCard key="productosVendidos" darkMode={darkMode} title="Productos Vendidos" value={cur.itemsSold.toLocaleString('es-AR')} subtitle="Unidades vendidas en el período" change={pct(cur.itemsSold, prev?.itemsSold)} sparkline={sparklines?.units} sparklineLabels={L} sparklineFormatter={fUds} />,
+          pedidosTotales:    <PremiumMetricCard key="pedidosTotales" darkMode={darkMode} title="Pedidos" value={cur.salesCount} subtitle="Compras distintas en el período" change={pct(cur.salesCount, prev?.salesCount)} sparkline={sparklines?.pedidos} sparklineLabels={L} sparklineFormatter={v => `${v} pedido${v !== 1 ? 's' : ''}`} />,
+          ticketPromedio:    <PremiumMetricCard key="ticketPromedio" darkMode={darkMode} title="Ticket Promedio" value={formatMoney(avgTicket)} subtitle={unitsPerOrder > 0 ? `Por compra · ${unitsPerOrder.toFixed(1).replace('.', ',')} productos en promedio` : 'Por compra'} change={pct(avgTicket, prevAvgTicket)} sparkline={sparklines?.avgTicket} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="Cuánto gasta un cliente por compra: facturación dividida por la cantidad de pedidos. Es el número que sirve para fijar un mínimo de compra o decidir a partir de cuánto conviene regalar el envío." />,
+          precioPorUnidad:   <PremiumMetricCard key="precioPorUnidad" darkMode={darkMode} title="Precio por Unidad" value={formatMoney(avgUnitPrice)} subtitle="A cuánto se vende cada producto en promedio" change={pct(avgUnitPrice, prevAvgUnitPrice)} sparkline={sparklines?.avgUnitPrice} sparklineLabels={L} sparklineFormatter={fMoney} tooltip="A cuánto se vendió un producto en promedio: facturación dividida por unidades vendidas. Si sube sin que suba el Ticket Promedio, quiere decir que estás vendiendo menos productos por pedido." />,
+          clientesNuevos:    <PremiumMetricCard key="clientesNuevos" darkMode={darkMode} title="Clientes Nuevos" value={newClientsListFor.length} subtitle="Compraron por primera vez" change={null} sparkline={sparklines?.clients} sparklineLabels={L} sparklineFormatter={fClientes} />,
+          clientesOrganicos: <PremiumMetricCard key="clientesOrganicos" darkMode={darkMode} title="Clientes Orgánicos" value={newClientsOrganic} subtitle="Llegaron sin publicidad" change={null} sparkline={sparklines?.organicClients} sparklineLabels={L} sparklineFormatter={fClientes} />,
+          clientesPorAds:    <PremiumMetricCard key="clientesPorAds" darkMode={darkMode} title="Clientes por Ads" value={newClientsAds} subtitle="Llegaron por un anuncio" change={null} sparkline={sparklines?.adsClients} sparklineLabels={L} sparklineFormatter={fClientes} />,
           clientesFijosAds:  <PremiumMetricCard key="clientesFijosAds" darkMode={darkMode} title="Clientes Fijos Ads" value={fixedAdsCount} subtitle={fixedAdsCount > 0 ? formatMoney(fixedAdsRevenue) : 'Sin ventas'} change={null} sparkline={sparklines?.fixedAdsClients} sparklineLabels={L} sparklineFormatter={fClientes} tooltip="Clientes que originalmente llegaron por publicidad y ya son clientes fijos/recurrentes" />,
           ventasRevendedor:  <PremiumMetricCard key="ventasRevendedor" darkMode={darkMode} title="Ventas Revendedor" value={revendedoresCount} subtitle={revendedoresCount > 0 ? formatMoney(revendedoresRevenue) : 'Sin ventas'} change={null} sparkline={sparklines?.resellerClients} sparklineLabels={L} sparklineFormatter={fClientes} />,
           alias1:            <PremiumMetricCard key="alias1" darkMode={darkMode} title="Alias 1" value={showWalletPedidos.alias1 ? fVentas(cntAlias1) : formatMoney(ingAlias1)} subtitle={`Ingresos · ${fVentas(cntAlias1)}`} change={null} sparkline={sparklines?.alias1} sparklineLabels={L} sparklineFormatter={fMoney} color="blue" onClick={() => toggleWalletPedidos('alias1')} />,
@@ -8454,7 +8472,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
           alias3:            <PremiumMetricCard key="alias3" darkMode={darkMode} title="Alias 3" value={showWalletPedidos.alias3 ? fVentas(cntAlias3) : formatMoney(ingAlias3)} subtitle={`Ingresos · ${fVentas(cntAlias3)}`} change={null} sparkline={sparklines?.alias3} sparklineLabels={L} sparklineFormatter={fMoney} color="amber" onClick={() => toggleWalletPedidos('alias3')} />,
           alias4:            <PremiumMetricCard key="alias4" darkMode={darkMode} title="Alias 4" value={showWalletPedidos.alias4 ? fVentas(cntAlias4) : formatMoney(ingAlias4)} subtitle={`Ingresos · ${fVentas(cntAlias4)}`} change={null} sparkline={sparklines?.alias4} sparklineLabels={L} sparklineFormatter={fMoney} color="rose" onClick={() => toggleWalletPedidos('alias4')} />,
           efectivo:          <PremiumMetricCard key="efectivo" darkMode={darkMode} title="Efectivo" value={showWalletPedidos.efectivo ? fVentas(cntEfectivo) : formatMoney(ingEfectivo)} subtitle="Ingresos" change={null} sparkline={sparklines?.efectivo} sparklineLabels={L} sparklineFormatter={fMoney} color="emerald" onClick={() => toggleWalletPedidos('efectivo')} />,
-          inversionActiva:   <PremiumMetricCard key="inversionActiva" darkMode={darkMode} title="Inversión Activa" value={showInversionUnidades ? `${cur.currentStockUnits.toLocaleString('es-AR')} ud${cur.currentStockUnits !== 1 ? 's' : ''}` : formatMoney(cur.currentStockValue)} subtitle={`Stock a costo actual · ${cur.currentStockUnits.toLocaleString('es-AR')} uds`} change={null} sparkline={L ? new Array(L.length).fill(cur.currentStockValue) : null} sparklineLabels={L} sparklineFormatter={fMoney} onClick={() => setShowInversionUnidades(v => !v)} tooltip="Valor a costo del stock disponible ahora mismo — es una foto del momento, no tenemos histórico día a día de cuánto valía en el pasado. Tocá la tarjeta para ver la cantidad de productos en stock." />,
+          inversionActiva:   <PremiumMetricCard key="inversionActiva" darkMode={darkMode} title="Inversión Activa" value={showInversionUnidades ? `${cur.currentStockUnits.toLocaleString('es-AR')} ud${cur.currentStockUnits !== 1 ? 's' : ''}` : formatMoney(cur.currentStockValue)} subtitle={`Lo que vale hoy el stock, a costo · ${cur.currentStockUnits.toLocaleString('es-AR')} unidades`} change={null} sparkline={null} sparklineLabels={L} sparklineFormatter={fMoney} onClick={() => setShowInversionUnidades(v => !v)} tooltip="Valor a costo del stock disponible ahora mismo — es una foto del momento, no tenemos histórico día a día de cuánto valía en el pasado. Tocá la tarjeta para ver la cantidad de productos en stock." />,
       };
   };
 
@@ -8482,9 +8500,16 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                       const label = homeSectorLabels[sectorKey];
                       return (
                           <React.Fragment key={sectorKey}>
-                              {i > 0 && <div className={`h-px w-full ${darkMode ? 'bg-white/[0.07]' : 'bg-zinc-200'}`} />}
+                              {i > 0 && <div className={`h-px w-full my-2 ${darkMode ? 'bg-white/[0.06]' : 'bg-zinc-200'}`} />}
                               <div>
-                                  {label && <div className={`text-sm font-bold tracking-tight mb-2.5 ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{label}</div>}
+                                  {label && (
+                                      <div className="mb-3">
+                                          <h3 className={`text-[15px] font-semibold tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{label}</h3>
+                                          {label === DEFAULT_HOME_SECTOR_LABELS[sectorKey] && DEFAULT_HOME_SECTOR_DESCRIPTIONS[sectorKey] && (
+                                              <p className="text-[13px] mt-0.5 text-zinc-500">{DEFAULT_HOME_SECTOR_DESCRIPTIONS[sectorKey]}</p>
+                                          )}
+                                      </div>
+                                  )}
                                   {sectorGrid(sectorKey)}
                               </div>
                           </React.Fragment>
@@ -8824,14 +8849,14 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
             {activeTab === 'home' && (
                 <div className="space-y-5 animate-in fade-in duration-300">
                     {/* PERIOD SELECTOR */}
-                    <div className={`p-4 rounded-2xl border flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 ${darkMode ? 'bg-[#0E0E0E] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
+                    <div className={`p-4 rounded-2xl border flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
                         <div className="flex items-center gap-3 flex-shrink-0">
-                            <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{background:'rgba(59,130,246,0.12)'}}>
-                                <Calendar size={15} style={{color:'#6366f1'}}/>
+                            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{background:'rgba(99,102,241,0.12)'}}>
+                                <Calendar size={16} style={{color:'#6366f1'}}/>
                             </div>
                             <div>
-                                <h3 className={`font-bold text-sm ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Período de Análisis</h3>
-                                <p className="text-[11px] text-zinc-500">Seleccioná el rango a evaluar</p>
+                                <h3 className={`text-[15px] font-semibold tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Período</h3>
+                                <p className="text-[13px] text-zinc-500 mt-0.5">Todo lo de abajo se calcula para estas fechas y se compara con el período anterior.</p>
                             </div>
                         </div>
                         <div className="w-full lg:w-auto flex flex-col md:flex-row gap-3 lg:items-center">
@@ -8848,13 +8873,13 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             {globalMonth === 'compare' && (
                                 <div className="flex flex-col gap-2 animate-in slide-in-from-right-2 w-full md:w-auto">
                                     <div className="flex items-center gap-2">
-                                        <span className="text-[10px] font-bold uppercase w-10 text-zinc-500">Base</span>
+                                        <span className="text-xs font-medium w-10 text-zinc-500">Base</span>
                                         <Input darkMode={darkMode} type="date" value={customDateRange.start} onChange={e => setCustomDateRange({...customDateRange, start: e.target.value})} />
                                         <span className="text-zinc-500 font-bold">—</span>
                                         <Input darkMode={darkMode} type="date" value={customDateRange.end} onChange={e => setCustomDateRange({...customDateRange, end: e.target.value})} />
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <span className="text-[10px] font-bold uppercase w-10 text-rose-400">Vs</span>
+                                        <span className="text-xs font-medium w-10 text-rose-400">Vs</span>
                                         <Input darkMode={darkMode} type="date" value={compareDateRange.start} onChange={e => setCompareDateRange({...compareDateRange, start: e.target.value})} />
                                         <span className="text-zinc-500 font-bold">—</span>
                                         <Input darkMode={darkMode} type="date" value={compareDateRange.end} onChange={e => setCompareDateRange({...compareDateRange, end: e.target.value})} />
@@ -8875,16 +8900,16 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             { id: 'base', content: (
                                 <div className="space-y-5 pr-1">
                                     <div className="flex items-center justify-between flex-wrap gap-2">
-                                        <h3 className="text-base font-black flex items-center gap-2" style={{color:'#6366f1'}}>
+                                        <h3 className="text-base font-semibold flex items-center gap-2" style={{color:'#6366f1'}}>
                                             <Calendar size={16}/> Período Base
                                         </h3>
                                         <span className="text-[11px] font-semibold text-zinc-500">{customDateRange.start} — {customDateRange.end}</span>
                                     </div>
                                     {renderHomeCardSectors(analysisData.baseStats, analysisData.compareStats, { rangeStart: analysisData.rangeStart, rangeEnd: analysisData.rangeEnd })}
-                                    <div className={`rounded-2xl p-5 ${darkMode ? 'bg-[#0E0E0E]' : 'bg-white'}`}>
+                                    <div className={`rounded-2xl p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
                                         <div className="flex items-center gap-2 mb-3">
                                             <TrendingUp size={13} className="text-zinc-500"/>
-                                            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Ingresos (Base)</span>
+                                            <span className={`text-[13px] font-medium ${darkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>Ingresos (Base)</span>
                                         </div>
                                         <SalesAreaChart sales={analysisData.baseStats.filteredSales} mode="custom" customRange={customDateRange} darkMode={darkMode} isCompareMode={false} />
                                     </div>
@@ -8893,16 +8918,16 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             { id: 'vs', content: (
                                 <div className="space-y-5 pl-1">
                                     <div className="flex items-center justify-between flex-wrap gap-2">
-                                        <h3 className="text-base font-black text-rose-500 flex items-center gap-2">
+                                        <h3 className="text-base font-semibold text-rose-500 flex items-center gap-2">
                                             <ArrowUpDown size={16}/> Período a Comparar
                                         </h3>
                                         <span className="text-[11px] font-semibold text-zinc-500">{compareDateRange.start} — {compareDateRange.end}</span>
                                     </div>
                                     {renderHomeCardSectors(analysisData.compareStats, analysisData.baseStats, { rangeStart: analysisData.compareRangeStart, rangeEnd: analysisData.compareRangeEnd })}
-                                    <div className={`rounded-2xl p-5 ${darkMode ? 'bg-[#0E0E0E]' : 'bg-white'}`}>
+                                    <div className={`rounded-2xl p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
                                         <div className="flex items-center gap-2 mb-3">
                                             <TrendingUp size={13} className="text-rose-500"/>
-                                            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Ingresos (Vs)</span>
+                                            <span className={`text-[13px] font-medium ${darkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>Ingresos (Vs)</span>
                                         </div>
                                         <SalesAreaChart sales={analysisData.compareStats.filteredSales} mode="custom" customRange={compareDateRange} darkMode={darkMode} isCompareMode={true} />
                                     </div>
@@ -8944,12 +8969,16 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         chicas de arriba — ver comentario junto a HOME_BLOCK_META). */}
                     {(() => {
                     const blocks = {
+                    // Métricas del bot de WhatsApp (src/inicio/MetricasBotInicio.jsx) para el mismo período de arriba.
+                    botWhatsapp: globalMonth !== 'compare' && (
+                        <MetricasBotInicio db={db} darkMode={darkMode} rangeStart={analysisData.rangeStart} rangeEnd={analysisData.rangeEnd} />
+                    ),
                     evolucion: globalMonth !== 'compare' && (
-                            <div className={`rounded-2xl p-5 ${darkMode ? 'bg-[#0E0E0E]' : 'bg-white'}`}>
+                            <div className={`rounded-2xl p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
                                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                                     <div>
-                                        <h3 className={`text-sm font-bold ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Evolución del Período</h3>
-                                        <p className="text-[11px] text-zinc-500 mt-0.5">Ingresos · Unidades · Ganancia</p>
+                                        <h3 className={`text-[15px] font-semibold tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Evolución del período</h3>
+                                        <p className="text-[13px] text-zinc-500 mt-0.5 leading-relaxed">Cómo vinieron las ventas día por día. Elegí qué ver y de qué cuenta.</p>
                                     </div>
                                     <div className={`flex items-center gap-1 p-1 rounded-xl ${darkMode ? 'bg-zinc-900/60' : 'bg-zinc-100'}`}>
                                         {[
@@ -8982,12 +9011,12 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                     equipoClientes: (
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                         {/* EQUIPO */}
-                        <div className={`rounded-2xl p-5 ${darkMode ? 'bg-[#0E0E0E]' : 'bg-white'}`}>
+                        <div className={`rounded-2xl p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
                             <div className="flex items-center justify-between mb-4">
                                 <div className="flex items-center gap-2">
-                                    <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Rendimiento del Equipo</h3>
+                                    <h3 className={`text-[15px] font-semibold tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Rendimiento del equipo</h3>
                                     {globalMonth === 'compare' && (
-                                        <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${compareViewIndex === 1 ? 'bg-rose-500/10 text-rose-400' : 'bg-indigo-500/10 text-indigo-400'}`}>
+                                        <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${compareViewIndex === 1 ? 'bg-rose-500/10 text-rose-400' : 'bg-indigo-500/10 text-indigo-400'}`}>
                                             {compareViewIndex === 1 ? 'VS' : 'BASE'}
                                         </span>
                                     )}
@@ -9012,7 +9041,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                         return (
                                         <div key={member.name} className="py-4 first:pt-0 last:pb-0">
                                             <div className="flex items-center gap-2.5 mb-2">
-                                                <div className="w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-black flex-shrink-0"
+                                                <div className="w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-semibold flex-shrink-0"
                                                     style={i === 0 ? { background: '#6366f1', color: '#fff' } : { background: darkMode ? 'rgba(255,255,255,0.06)' : '#f4f4f5', color: darkMode ? '#a1a1aa' : '#71717a' }}>
                                                     {i + 1}
                                                 </div>
@@ -9024,27 +9053,27 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                             </div>
                                             <div className="grid grid-cols-2 gap-x-4 gap-y-3">
                                                 <div>
-                                                    <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-0.5">Facturación</div>
-                                                    <div className={`text-sm font-black leading-none ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{formatMoney(member.revenue)}</div>
+                                                    <div className="text-[11px] font-medium text-zinc-500 mb-0.5">Facturación</div>
+                                                    <div className={`text-[15px] font-semibold leading-none ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{formatMoney(member.revenue)}</div>
                                                 </div>
                                                 <div>
-                                                    <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-0.5">Ganancia bruta</div>
-                                                    <div className="text-sm font-black leading-none text-emerald-400">{formatMoney(member.profit)}</div>
+                                                    <div className="text-[11px] font-medium text-zinc-500 mb-0.5">Ganancia bruta</div>
+                                                    <div className={`text-[15px] font-semibold leading-none ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{formatMoney(member.profit)}</div>
                                                 </div>
                                                 <div>
-                                                    <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-0.5">Pedidos · Unidades</div>
+                                                    <div className="text-[11px] font-medium text-zinc-500 mb-0.5">Pedidos · Unidades</div>
                                                     <div className={`text-sm font-bold leading-none ${darkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>{member.count} · {member.items} un.</div>
                                                 </div>
                                                 <div>
-                                                    <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-0.5">Ticket promedio</div>
+                                                    <div className="text-[11px] font-medium text-zinc-500 mb-0.5">Ticket promedio</div>
                                                     <div className={`text-sm font-bold leading-none ${darkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>{formatMoney(member.avgTicket)}</div>
                                                 </div>
                                                 {member.commission !== null && (
                                                     <div className="col-span-2">
-                                                        <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-0.5">Comisión ({rate}%)</div>
+                                                        <div className="text-[11px] font-medium text-zinc-500 mb-0.5">Comisión ({rate}%)</div>
                                                         {isBuono ? (
                                                             <div className="flex items-center gap-1.5">
-                                                                <span className="text-sm font-black leading-none text-amber-400">
+                                                                <span className="text-[15px] font-semibold leading-none text-amber-400">
                                                                     {showBuonoCommission ? formatMoney(member.commission) : '••••••'}
                                                                 </span>
                                                                 <button onClick={() => setShowBuonoCommission(v => !v)}
@@ -9053,7 +9082,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                                                 </button>
                                                             </div>
                                                         ) : (
-                                                            <div className="text-sm font-black leading-none text-amber-400">{formatMoney(member.commission)}</div>
+                                                            <div className="text-[15px] font-semibold leading-none text-amber-400">{formatMoney(member.commission)}</div>
                                                         )}
                                                     </div>
                                                 )}
@@ -9082,7 +9111,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             h-full para que el wrapper tome el alto completo de la fila del grid, y así
                             "Último Costo" (flex-1 más abajo) pueda estirarse hasta llenarlo) */}
                         <div className="flex flex-col gap-5 h-full">
-                        <div className={`rounded-2xl p-5 ${darkMode ? 'bg-[#0E0E0E]' : 'bg-white'}`}>
+                        <div className={`rounded-2xl p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
                             {(() => {
                                 const orgList = newClientsList.filter(s => s.isNewClient === 'Nuevo - Organico' || s.isNewClient === true);
                                 const adsList = newClientsList.filter(s => s.isNewClient === 'Nuevo - Publicidad');
@@ -9108,9 +9137,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
                                 return (<>
                                     <div className="flex items-center justify-between gap-2 mb-4">
-                                        <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Nuevos Clientes</h3>
+                                        <h3 className={`text-[15px] font-semibold tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Clientes nuevos</h3>
                                         {globalMonth === 'compare' ? (
-                                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${compareViewIndex === 1 ? 'bg-rose-500/10 text-rose-400' : 'bg-indigo-500/10 text-indigo-400'}`}>
+                                            <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${compareViewIndex === 1 ? 'bg-rose-500/10 text-rose-400' : 'bg-indigo-500/10 text-indigo-400'}`}>
                                                 {compareViewIndex === 1 ? 'VS' : 'BASE'}
                                             </span>
                                         ) : showChange && (
@@ -9146,7 +9175,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                                             </div>
                                                         </div>
                                                         <div className="flex flex-col items-end flex-shrink-0">
-                                                            <span className={`text-xs font-black ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{item.value}</span>
+                                                            <span className={`text-xs font-semibold ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{item.value}</span>
                                                             <span className="text-[10px] text-zinc-500">{pct}%</span>
                                                         </div>
                                                     </div>
@@ -9156,12 +9185,12 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                     </div>
                                     <div className={`flex items-center justify-between mt-4 pt-3 border-t ${darkMode ? 'border-white/[0.06]' : 'border-zinc-100'}`}>
                                         <div>
-                                            <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Facturación generada</div>
-                                            <div className={`text-sm font-black mt-0.5 ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{formatMoney(totalRevenue)}</div>
+                                            <div className="text-[11px] font-medium text-zinc-500">Facturación generada</div>
+                                            <div className={`text-sm font-semibold mt-0.5 ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{formatMoney(totalRevenue)}</div>
                                         </div>
                                         <div className="text-right">
-                                            <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Ticket promedio</div>
-                                            <div className={`text-sm font-black mt-0.5 ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{formatMoney(total > 0 ? totalRevenue / total : 0)}</div>
+                                            <div className="text-[11px] font-medium text-zinc-500">Ticket promedio</div>
+                                            <div className={`text-sm font-semibold mt-0.5 ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{formatMoney(total > 0 ? totalRevenue / total : 0)}</div>
                                         </div>
                                     </div>
                                 </>);
@@ -9181,10 +9210,10 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 return b.lastCost - a.lastCost;
                             }).filter(p => p.name.toLowerCase().includes(avgCostSearch.trim().toLowerCase()));
                             return (
-                            <div className={`rounded-2xl p-5 flex-1 flex flex-col ${darkMode ? 'bg-[#0E0E0E]' : 'bg-white'}`}>
+                            <div className={`rounded-2xl p-5 flex-1 flex flex-col ${darkMode ? 'bg-[#0A0A0A]' : 'bg-white'}`}>
                                 <div className="flex items-center gap-2 mb-1 flex-wrap">
                                     <div className="flex items-center gap-2 flex-shrink-0">
-                                        <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Último Costo por Producto</h3>
+                                        <h3 className={`text-[15px] font-semibold tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Último costo por producto</h3>
                                     </div>
                                     <div className="flex-1 min-w-[110px] relative">
                                         <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none"/>
@@ -9224,14 +9253,14 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                         {sorted.map((p) => (
                                             <div key={p.name} className="flex items-center justify-between py-3">
                                                 <div className="flex items-center gap-3 min-w-0">
-                                                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${darkMode ? 'bg-sky-500/10 text-sky-400' : 'bg-sky-100 text-sky-600'}`}>
+                                                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${darkMode ? 'bg-white/[0.05] text-zinc-400' : 'bg-zinc-100 text-zinc-500'}`}>
                                                         <Package size={13} />
                                                     </div>
                                                     <div className="min-w-0">
                                                         <div className={`text-xs font-semibold truncate ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{p.name}</div>
                                                     </div>
                                                 </div>
-                                                <div className="text-xs font-black text-sky-400 flex-shrink-0 ml-2">{formatMoney(p.lastCost)}</div>
+                                                <div className={`text-[13px] font-semibold tabular-nums flex-shrink-0 ml-2 ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{formatMoney(p.lastCost)}</div>
                                             </div>
                                         ))}
                                     </div>
@@ -9249,7 +9278,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         const activeList = topProductsBySeñaView ? topProductsBySeña : topProducts;
                         const activeProfitList = topProfitBySeñaView ? topProductsByProfitBySeña : topProductsByProfit;
                         return (
-                        <div className={`relative overflow-hidden rounded-2xl ${darkMode ? 'bg-[#0E0E0E]' : 'bg-white'}`}>
+                        <div className={`relative overflow-hidden rounded-2xl ${darkMode ? 'bg-[#0A0A0A]' : 'bg-white'}`}>
                             <div className="flex transition-transform duration-500 ease-in-out" style={{ transform: `translateX(-${productsCardPage * 100}%)` }}>
 
                                 {/* Slide 1: Más vendidos (por unidades) */}
@@ -9257,14 +9286,14 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                     <div className="flex items-center justify-between mb-4">
                                         <div>
                                             <div className="flex items-center gap-2">
-                                                <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Productos más vendidos</h3>
+                                                <h3 className={`text-[15px] font-semibold tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Productos más vendidos</h3>
                                                 {globalMonth === 'compare' && (
-                                                    <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${compareViewIndex === 1 ? 'bg-rose-500/10 text-rose-400' : 'bg-indigo-500/10 text-indigo-400'}`}>
+                                                    <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${compareViewIndex === 1 ? 'bg-rose-500/10 text-rose-400' : 'bg-indigo-500/10 text-indigo-400'}`}>
                                                         {compareViewIndex === 1 ? 'VS' : 'BASE'}
                                                     </span>
                                                 )}
                                             </div>
-                                            <p className="text-[10px] text-zinc-600 mt-0.5">{topProductsBySeñaView ? 'por seña de lote · período seleccionado' : 'por unidades · período seleccionado'}</p>
+                                            <p className="text-[13px] text-zinc-500 mt-0.5">{topProductsBySeñaView ? 'por seña de lote · período seleccionado' : 'por unidades · período seleccionado'}</p>
                                         </div>
                                         <div className="flex items-center gap-2">
                                             <button
@@ -9297,7 +9326,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                             const pct = maxUnits > 0 ? (p.units / maxUnits) * 100 : 0;
                                             return (
                                                 <div key={p.name} className="flex items-center gap-3">
-                                                    <div className={`w-5 text-[10px] font-black text-right shrink-0 ${i === 0 ? 'text-indigo-400' : darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                                                    <div className={`w-5 text-[10px] font-semibold text-right shrink-0 ${i === 0 ? 'text-indigo-400' : darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
                                                         {i + 1}
                                                     </div>
                                                     <div className="flex-1 min-w-0">
@@ -9324,14 +9353,14 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                     <div className="flex items-center justify-between mb-4">
                                         <div>
                                             <div className="flex items-center gap-2">
-                                                <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Rentabilidad de productos</h3>
+                                                <h3 className={`text-[15px] font-semibold tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Rentabilidad de productos</h3>
                                                 {globalMonth === 'compare' && (
-                                                    <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${compareViewIndex === 1 ? 'bg-rose-500/10 text-rose-400' : 'bg-indigo-500/10 text-indigo-400'}`}>
+                                                    <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${compareViewIndex === 1 ? 'bg-rose-500/10 text-rose-400' : 'bg-indigo-500/10 text-indigo-400'}`}>
                                                         {compareViewIndex === 1 ? 'VS' : 'BASE'}
                                                     </span>
                                                 )}
                                             </div>
-                                            <p className="text-[10px] text-zinc-600 mt-0.5">{topProfitBySeñaView ? 'por seña de lote · ganancia · período seleccionado' : 'por ganancia · período seleccionado'}</p>
+                                            <p className="text-[13px] text-zinc-500 mt-0.5">{topProfitBySeñaView ? 'por seña de lote · ganancia · período seleccionado' : 'por ganancia · período seleccionado'}</p>
                                         </div>
                                         <div className="flex items-center gap-2">
                                             <button
@@ -9365,7 +9394,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                             const margin = p.revenue > 0 ? (p.profit / p.revenue) * 100 : 0;
                                             return (
                                                 <div key={p.name} className="flex items-center gap-3">
-                                                    <div className={`w-5 text-[10px] font-black text-right shrink-0 ${i === 0 ? 'text-emerald-400' : darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                                                    <div className={`w-5 text-[10px] font-semibold text-right shrink-0 ${i === 0 ? 'text-emerald-400' : darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
                                                         {i + 1}
                                                     </div>
                                                     <div className="flex-1 min-w-0">
@@ -9404,11 +9433,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         return (
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                             {topFailedProducts.length > 0 && (
-                            <div className={`rounded-2xl p-5 ${darkMode ? 'bg-[#0E0E0E]' : 'bg-white'}`}>
+                            <div className={`rounded-2xl p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
                                 <div className="flex items-center justify-between mb-4">
                                     <div>
-                                        <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Productos con más fallas</h3>
-                                        <p className="text-[10px] text-zinc-600 mt-0.5">{topFailedBySeñaView ? 'por seña de lote · período seleccionado' : 'por unidades falladas · período seleccionado'}</p>
+                                        <h3 className={`text-[15px] font-semibold tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Productos con más fallas</h3>
+                                        <p className="text-[13px] text-zinc-500 mt-0.5">{topFailedBySeñaView ? 'por seña de lote · período seleccionado' : 'por unidades falladas · período seleccionado'}</p>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <button
@@ -9436,7 +9465,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                         const pct = maxUnits > 0 ? (p.units / maxUnits) * 100 : 0;
                                         return (
                                             <div key={p.name} className="flex items-center gap-3">
-                                                <div className={`w-5 text-[10px] font-black text-right shrink-0 ${i === 0 ? 'text-red-400' : darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                                                <div className={`w-5 text-[10px] font-semibold text-right shrink-0 ${i === 0 ? 'text-red-400' : darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
                                                     {i + 1}
                                                 </div>
                                                 <div className="flex-1 min-w-0">
@@ -9459,11 +9488,11 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             </div>
                             )}
                             {topStolenProducts.length > 0 && (
-                            <div className={`rounded-2xl p-5 ${darkMode ? 'bg-[#0E0E0E]' : 'bg-white'}`}>
+                            <div className={`rounded-2xl p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
                                 <div className="flex items-center justify-between mb-4">
                                     <div>
-                                        <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Productos con más robos</h3>
-                                        <p className="text-[10px] text-zinc-600 mt-0.5">{topStolenBySeñaView ? 'por seña de lote · período seleccionado' : 'por unidades robadas · período seleccionado'}</p>
+                                        <h3 className={`text-[15px] font-semibold tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Productos con más robos</h3>
+                                        <p className="text-[13px] text-zinc-500 mt-0.5">{topStolenBySeñaView ? 'por seña de lote · período seleccionado' : 'por unidades robadas · período seleccionado'}</p>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <button
@@ -9491,7 +9520,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                         const pct = maxUnits > 0 ? (p.units / maxUnits) * 100 : 0;
                                         return (
                                             <div key={p.name} className="flex items-center gap-3">
-                                                <div className={`w-5 text-[10px] font-black text-right shrink-0 ${i === 0 ? 'text-orange-400' : darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                                                <div className={`w-5 text-[10px] font-semibold text-right shrink-0 ${i === 0 ? 'text-orange-400' : darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
                                                     {i + 1}
                                                 </div>
                                                 <div className="flex-1 min-w-0">
@@ -9522,8 +9551,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         const gridColor = darkMode ? '#1D1D1D' : '#e4e4e7';
                         const textColor = darkMode ? '#71717a' : '#a1a1aa';
                         return (
-                        <div className={`rounded-2xl p-5 ${darkMode ? 'bg-[#0E0E0E]' : 'bg-white'}`}>
-                            <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-center mb-3">Cotización del Dólar</h3>
+                        <div className={`rounded-2xl p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
+                            <h3 className={`text-[15px] font-semibold tracking-tight text-center mb-3 ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Cotización del Dólar</h3>
 
                             {/* Selector para elegir el dólar y Recargo: uno al lado del otro, a la misma altura,
                                 sin fondo, cada uno con una línea gris oscuro abajo del ancho justo de su contenido. */}
@@ -9531,7 +9560,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 <div className="relative" ref={cotizacionSelectorRef}>
                                     <button onClick={() => setCotizacionSelectorOpen(v => !v)}
                                         className={`flex items-center gap-2 px-1 py-2 border-b-2 transition-colors ${darkMode ? 'border-zinc-700 hover:border-zinc-500' : 'border-zinc-300 hover:border-zinc-400'}`}>
-                                        <span className="text-xs font-bold uppercase tracking-widest text-zinc-500">Dólar</span>
+                                        <span className="text-xs font-medium text-zinc-500">Dólar</span>
                                         <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: casaMeta.color }}/>
                                         <span className={`text-sm font-bold ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{casaMeta.label}</span>
                                         <ChevronDown size={14} className={`text-zinc-500 transition-transform duration-200 ${cotizacionSelectorOpen ? 'rotate-180' : ''}`}/>
@@ -9553,7 +9582,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 </div>
 
                                 <div className={`flex items-center gap-2 border-b-2 px-1 py-2 ${darkMode ? 'border-zinc-700' : 'border-zinc-300'}`}>
-                                    <span className="text-xs font-bold uppercase tracking-widest text-zinc-500">Recargo</span>
+                                    <span className="text-xs font-medium text-zinc-500">Recargo</span>
                                     <div className={`flex items-center justify-center gap-0.5 w-12 h-5 rounded-md ${darkMode ? 'bg-white/[0.06]' : 'bg-zinc-100'}`}>
                                         <input type="number" step="0.5" value={cotizacionMarkupPct}
                                             onChange={e => setCotizacionMarkupPct(parseFloat(e.target.value) || 0)}
@@ -9569,7 +9598,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                 {/* Precio del dólar elegido, solo, centrado abajo del selector y el recargo */}
                                 <div className="flex justify-center mb-4">
                                     <div className={`flex flex-col items-center gap-1 border-b-2 px-1 py-2 ${darkMode ? 'border-zinc-700' : 'border-zinc-300'}`}>
-                                        <div className="text-4xl font-black tracking-tight" style={{ color: casaMeta.color }}>
+                                        <div className="text-4xl font-semibold tracking-tight" style={{ color: casaMeta.color }}>
                                             {formatMoney(data.venta * (1 + cotizacionMarkupPct / 100))}
                                         </div>
                                         <div className="flex items-center justify-center flex-wrap gap-x-2 gap-y-1 text-[11px] text-zinc-500">
@@ -9638,14 +9667,14 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             const hidden = hiddenHomeCharts.includes(id);
                             if (hidden && !homeEditMode) return null;
                             return (
-                                <div className={`rounded-2xl p-5 ${wide ? 'lg:col-span-2' : ''} ${darkMode ? 'bg-[#0E0E0E]' : 'bg-white'} ${hidden ? 'opacity-40' : ''}`}>
+                                <div className={`rounded-2xl p-5 border ${wide ? 'lg:col-span-2' : ''} ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'} ${hidden ? 'opacity-40' : ''}`}>
                                     <div className="flex items-start justify-between gap-3 mb-3">
                                         <div className="min-w-0">
                                             <div className="flex items-center gap-2 flex-wrap">
-                                                <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">{title}</h3>
-                                                {hidden && <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-zinc-500/10 text-zinc-500 shrink-0">OCULTO</span>}
+                                                <h3 className={`text-[15px] font-semibold tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{title}</h3>
+                                                {hidden && <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-zinc-500/10 text-zinc-500 shrink-0">OCULTO</span>}
                                             </div>
-                                            {subtitle && <p className="text-[11px] text-zinc-500 mt-0.5">{subtitle}</p>}
+                                            {subtitle && <p className="text-[13px] text-zinc-500 mt-0.5 leading-relaxed">{subtitle}</p>}
                                         </div>
                                         {homeEditMode && (
                                             <button onClick={() => toggleHomeChart(id)} title={hidden ? 'Mostrar este gráfico' : 'Ocultar este gráfico'}
@@ -9662,20 +9691,20 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mt-5">
 
                             {/* Margen % en el tiempo */}
-                            <HomeChartCard id="margenPct" title="Margen % · últimos 60 días" subtitle={`Ganancia bruta como % de la facturación, día a día (la línea punteada es el ${formatPercent(analysisData.baseStats.grossMargin)} de la tarjeta "Ganancia Bruta" para el período elegido arriba — cada día sube y baja alrededor de ese promedio, no tiene que coincidir día por día). Si el promedio baja aunque la plata en pesos suba, es la primera señal de que algo se rompió.`}>
-                                <div className={`w-full h-[220px] p-2 rounded-xl ${darkMode ? 'bg-[#0B0B0B]' : 'bg-zinc-50'}`}>
+                            <HomeChartCard id="margenPct" title="Margen día por día" subtitle={`Qué parte de cada peso vendido es ganancia (sin contar gastos), en los últimos 60 días. La línea gris es el promedio del período elegido: ${formatPercent(analysisData.baseStats.grossMargin)}. Si la curva baja aunque se venda más, algo se está comiendo el margen.`}>
+                                <div className="w-full h-[220px]">
                                     <ResponsiveContainer width="100%" height="100%" debounce={200}>
                                         <AreaChart data={margenDiario} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                                             <defs>
                                                 <linearGradient id="colorMargenHome" x1="0" y1="0" x2="0" y2="1">
-                                                    <stop offset="0%" stopColor="#6366f1" stopOpacity={0.4}/>
+                                                    <stop offset="0%" stopColor="#6366f1" stopOpacity={0.2}/>
                                                     <stop offset="100%" stopColor="#6366f1" stopOpacity={0}/>
                                                 </linearGradient>
                                             </defs>
-                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridColor} />
+                                            <CartesianGrid vertical={false} stroke={gridColor} />
                                             <XAxis dataKey="label" stroke={textColor} fontSize={10} tickLine={false} axisLine={false} minTickGap={30} />
                                             <YAxis stroke={textColor} fontSize={10} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}%`} width={40} />
-                                            <ReferenceLine y={analysisData.baseStats.grossMargin} stroke="#a1a1aa" strokeDasharray="4 4" strokeWidth={1.5} label={{ value: `Promedio: ${formatPercent(analysisData.baseStats.grossMargin)}`, position: 'insideTopRight', fill: textColor, fontSize: 10 }} />
+                                            <ReferenceLine y={analysisData.baseStats.grossMargin} stroke="#a1a1aa" strokeOpacity={0.6} strokeWidth={1} label={{ value: `Promedio ${formatPercent(analysisData.baseStats.grossMargin)}`, position: 'insideTopRight', fill: textColor, fontSize: 10 }} />
                                             <RechartsTooltip content={({ active, payload, label }) => (active && payload?.[0]) ? (
                                                 <div className={`p-3 rounded-lg shadow-xl border ${darkMode ? 'bg-zinc-800 border-zinc-700 text-white' : 'bg-white border-zinc-200 text-zinc-900'}`}>
                                                     <p className="text-xs font-semibold mb-1 opacity-70">{label}</p>
@@ -9684,14 +9713,14 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                                     </p>
                                                 </div>
                                             ) : null} />
-                                            <Area type="monotone" dataKey="margen" stroke="#6366f1" strokeWidth={2.5} fillOpacity={1} fill="url(#colorMargenHome)" connectNulls />
+                                            <Area type="monotone" dataKey="margen" stroke="#6366f1" strokeWidth={2} fillOpacity={1} fill="url(#colorMargenHome)" connectNulls activeDot={{ r: 4, strokeWidth: 2, stroke: darkMode ? '#0E0E0E' : '#fff' }} />
                                         </AreaChart>
                                     </ResponsiveContainer>
                                 </div>
                             </HomeChartCard>
 
                             {/* Composición de la facturación */}
-                            <HomeChartCard id="composicion" title="En qué se fue la facturación" subtitle="Facturación contra cada costo — la barra más larga es la más grande en pesos.">
+                            <HomeChartCard id="composicion" title="En qué se fue la facturación" subtitle="De todo lo que se vendió, cuánto se fue en cada costo y cuánto quedó de ganancia.">
                                 <div className="space-y-3">
                                     {/* Facturación arriba de todo, como referencia — siempre la barra más larga (100%). */}
                                     <div>
@@ -9699,8 +9728,8 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                             <span className={`font-bold ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Facturación</span>
                                             <span className={`font-bold ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{formatMoney(composicionFacturacion.facturacion)}</span>
                                         </div>
-                                        <div className={`h-2 overflow-hidden ${darkMode ? 'bg-white/[0.06]' : 'bg-zinc-100'}`}>
-                                            <div className="h-full" style={{ width: '100%', background: '#6366f1' }} />
+                                        <div className={`h-1.5 rounded-full overflow-hidden ${darkMode ? 'bg-white/[0.06]' : 'bg-zinc-100'}`}>
+                                            <div className="h-full rounded-full" style={{ width: '100%', background: '#6366f1' }} />
                                         </div>
                                     </div>
                                     {composicionFacturacion.segmentos.map(s => {
@@ -9711,20 +9740,20 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                                     <span className={`font-semibold truncate ${darkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>
                                                         {s.label}{s.sublabel && <span className="text-[10px] font-normal text-zinc-500"> ({s.sublabel})</span>}
                                                     </span>
-                                                    <span className="font-bold shrink-0" style={{ color: s.color }}>{formatMoney(s.valor)} <span className="text-[10px] font-medium text-zinc-500">· {s.pct.toFixed(1)}%</span></span>
+                                                    <span className={`font-semibold shrink-0 tabular-nums ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>{formatMoney(s.valor)} <span className="text-[11px] font-medium text-zinc-500">· {s.pct.toFixed(1).replace('.', ',')}%</span></span>
                                                 </div>
-                                                <div className={`h-2 overflow-hidden ${darkMode ? 'bg-white/[0.06]' : 'bg-zinc-100'}`}>
-                                                    <div className="h-full transition-all duration-500" style={{ width: `${pctBar}%`, background: s.color }} />
+                                                <div className={`h-1.5 rounded-full overflow-hidden ${darkMode ? 'bg-white/[0.06]' : 'bg-zinc-100'}`}>
+                                                    <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pctBar}%`, background: s.color }} />
                                                 </div>
                                             </div>
                                         );
                                     })}
                                 </div>
-                                <p className="text-[10px] text-zinc-500 mt-4">* Esta Ganancia Neta ya descuenta fallas y robos — la tarjeta "Ganancia Neta" de Inicio todavía no los resta (hueco pendiente del sistema, no un error de este gráfico).</p>
+                                <p className="text-[11px] leading-relaxed text-zinc-500 mt-4">* Esta Ganancia Neta ya descuenta fallas y robos — la tarjeta "Ganancia Neta" de Inicio todavía no los resta (hueco pendiente del sistema, no un error de este gráfico).</p>
                             </HomeChartCard>
 
                             {/* Días de stock por producto */}
-                            <HomeChartCard id="diasStock" title="Días de stock por producto" subtitle="Al ritmo de venta de los últimos 30 días, cuántos días de stock quedan — los más urgentes primero.">
+                            <HomeChartCard id="diasStock" title="Días de stock por producto" subtitle="Si se sigue vendiendo como en los últimos 30 días, para cuántos días alcanza el stock. Los más urgentes primero.">
                                 {diasDeStock.length === 0 ? (
                                     <p className="text-sm text-zinc-500 text-center py-8 opacity-60">Sin stock activo para calcular.</p>
                                 ) : (
@@ -9751,27 +9780,27 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             </HomeChartCard>
 
                             {/* Pareto de productos */}
-                            <HomeChartCard id="pareto" title="Pareto de productos" subtitle={paretoProductos.totalProductos === 0 ? 'Sin ganancia en el período elegido.' : `${paretoProductos.n80} de ${paretoProductos.totalProductos} productos hacen el 80% de la ganancia del período.`}>
+                            <HomeChartCard id="pareto" title="Qué productos dejan la ganancia" subtitle={paretoProductos.totalProductos === 0 ? 'Sin ganancia en el período elegido.' : `${paretoProductos.n80} de ${paretoProductos.totalProductos} productos (en color) hacen el 80% de la ganancia del período. Los demás, en gris, suman el 20% restante.`}>
                                 {paretoProductos.totalProductos === 0 ? (
                                     <p className="text-sm text-zinc-500 text-center py-8 opacity-60">Sin datos para este período.</p>
                                 ) : (
-                                    <div className={`w-full h-[240px] p-2 rounded-xl ${darkMode ? 'bg-[#0B0B0B]' : 'bg-zinc-50'}`}>
+                                    <div className="w-full h-[250px]">
                                         <ResponsiveContainer width="100%" height="100%">
                                             <ComposedChart data={paretoProductos.filas} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridColor} />
-                                                <XAxis dataKey="name" stroke={textColor} fontSize={9} tickLine={false} axisLine={false} interval={0} angle={-30} textAnchor="end" height={55} />
+                                                <CartesianGrid vertical={false} stroke={gridColor} />
+                                                <XAxis dataKey="name" stroke={textColor} fontSize={10} tickLine={false} axisLine={false} interval={0} angle={-30} textAnchor="end" height={55} />
                                                 <YAxis yAxisId="left" stroke={textColor} fontSize={10} tickLine={false} axisLine={false} tickFormatter={formatCompact} width={45} />
-                                                <YAxis yAxisId="right" orientation="right" stroke={textColor} fontSize={10} tickLine={false} axisLine={false} domain={[0, 100]} tickFormatter={(v) => `${v}%`} width={35} />
                                                 <RechartsTooltip content={({ active, payload, label }) => (active && payload?.[0]) ? (
                                                     <div className={`p-3 rounded-lg shadow-xl border ${darkMode ? 'bg-zinc-800 border-zinc-700 text-white' : 'bg-white border-zinc-200 text-zinc-900'}`}>
                                                         <p className="text-xs font-semibold mb-1 opacity-70">{label}</p>
-                                                        <p className="text-sm font-bold text-indigo-400">Ganancia: {formatMoney(payload[0].payload.profit)}</p>
-                                                        <p className="text-sm font-bold text-amber-400">{payload[0].payload.pctIndividual.toFixed(1)}% de la ganancia total</p>
+                                                        <p className="text-sm font-semibold">Ganancia: {formatMoney(payload[0].payload.profit)}</p>
+                                                        <p className="text-xs opacity-80">{payload[0].payload.pctIndividual.toFixed(1).replace('.', ',')}% de la ganancia total</p>
                                                         <p className="text-[11px] mt-1 opacity-60">Acumulado hasta acá: {payload[0].payload.pctAcumulado.toFixed(1)}%</p>
                                                     </div>
                                                 ) : null} />
-                                                <Bar yAxisId="left" dataKey="profit" fill="#6366f1" radius={[4, 4, 0, 0]} name="Ganancia" />
-                                                <Line yAxisId="right" type="monotone" dataKey="pctAcumulado" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3 }} name="% acumulado" />
+                                                <Bar yAxisId="left" dataKey="profit" radius={[4, 4, 0, 0]} name="Ganancia" maxBarSize={36}>
+                                                    {paretoProductos.filas.map((fila, i) => <Cell key={fila.name + i} fill={i < paretoProductos.n80 ? '#6366f1' : (darkMode ? '#3f3f46' : '#d4d4d8')} />)}
+                                                </Bar>
                                             </ComposedChart>
                                         </ResponsiveContainer>
                                     </div>
@@ -9779,7 +9808,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             </HomeChartCard>
 
                             {/* Mapa de calor día×hora — ancho completo, necesita las 24 columnas */}
-                            <HomeChartCard id="heatmap" wide title="Cuándo entran los pedidos" subtitle={`Día y hora en que se ANOTA el pedido para armar (no cuando se termina de armar ni se entrega) — últimos ~2 meses, ${mapaCalorPedidos.total} pedido${mapaCalorPedidos.total === 1 ? '' : 's'}.`}>
+                            <HomeChartCard id="heatmap" wide title="Cuándo entran los pedidos" subtitle={`Cuanto más fuerte el color, más pedidos se cargan ese día a esa hora. Últimos 2 meses, ${mapaCalorPedidos.total.toLocaleString('es-AR')} pedido${mapaCalorPedidos.total === 1 ? '' : 's'}.`}>
                                 {mapaCalorPedidos.total === 0 ? (
                                     <p className="text-sm text-zinc-500 text-center py-8 opacity-60">Todavía no hay pedidos en la ventana reciente.</p>
                                 ) : (
@@ -12805,6 +12834,9 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                     <span>{metaError}</span>
                   </div>
                 )}
+
+                {/* Anuncios cruzados con el bot de WhatsApp: gasto, clientes, ventas y ROAS por anuncio */}
+                <AnunciosWhatsApp db={db} darkMode={darkMode} metaPeriod={metaPeriod} metaCustomRange={metaCustomRange} />
 
                 {/* Skeleton loading */}
                 {metaLoading && !metaData && (
