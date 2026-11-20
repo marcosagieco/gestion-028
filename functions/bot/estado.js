@@ -39,8 +39,16 @@ const PLANTILLAS_FIJAS = {
 
 // Las plantillas del día: las fijas, los datos de cobro de la cuenta activa y las listas del panel.
 // Las de stock van sin precios.
+// La cuenta para cuando el cliente no puede transferir a la activa (le da error o se la rechaza): el alias 1 o, si el
+// activo ya es el 1, el 2 (Lucio, 20/11). El comprobante vale igual: se acepta a cualquiera de las tres cuentas.
+function aliasDeRespaldo(activo) {
+  const respaldo = activo === "alias1" ? "alias2" : "alias1";
+  return ALIASES[respaldo].replace(/^dale te paso los datos/, "dale, probá con esta otra cuenta");
+}
+
 function plantillasDelDia(op, salidaFlash) {
-  const plantillas = { ...PLANTILLAS_FIJAS, ALIAS: ALIASES[op.aliasActivo] || ALIASES.alias1 };
+  const activo = ALIASES[op.aliasActivo] ? op.aliasActivo : "alias1";
+  const plantillas = { ...PLANTILLAS_FIJAS, ALIAS: ALIASES[activo], ALIAS_RESPALDO: aliasDeRespaldo(activo) };
   for (const [nombre, campo] of Object.entries(LISTAS_DEL_PANEL)) plantillas[nombre] = textoDe(op[campo]);
   plantillas.STOCK_NICOTINA = sinPrecios(plantillas.STOCK_NICOTINA);
   plantillas.STOCK_THC = sinPrecios(plantillas.STOCK_THC);

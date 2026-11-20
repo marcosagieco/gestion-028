@@ -62,7 +62,8 @@ Lo del día, en una sola llamada, antes de cada respuesta del agente.
 - `cotizacionUber`: la cotización de la compra en curso, con `estado` `cotizado`, `pendiente`,
   `vencido` (`necesitaRecotizacion: true`) o `sin_cobertura`. `null` si no hay.
 - `plantillas`: las fijas (`FORMAS_DE_ENTREGA`, `ENVIO_SEGURO`, `DESCUENTO_EFECTIVO`, `COMUNIDAD`,
-  `COMPROBANTES_VALIDOS`, `GRACIAS`, `CONFIANZA`), `ALIAS` con los datos de la cuenta activa, las listas
+  `COMPROBANTES_VALIDOS`, `GRACIAS`, `CONFIANZA`), `ALIAS` con los datos de la cuenta activa,
+  `ALIAS_RESPALDO` (el alias 1, o el 2 si el activo es el 1) para el cliente que no puede transferir a la activa, las listas
   del panel y las de stock sin precios (`STOCK_PERFUMES`, `STOCK_APPLE_ACCESORIOS`).
 - `campania`: la campaña que corre ahora, o `null` (ver «Campaña»).
 - `diasMoto`: los días con salida de moto de los próximos 14 días, `{ fecha, dia, semana, horas }`, para

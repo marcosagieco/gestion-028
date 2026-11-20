@@ -1126,6 +1126,44 @@ async function main() {
     await conHora('2026-10-28T10:00:00',async()=>{const mier=await e();ok('Miércoles vuelve a 13:30',mier.body.salidaUber.hora==='13:30',mier.body.salidaUber);});
   });
 
+  // ── Combos y promo del fin de semana (listas reales del 20/11). «PRECIO COMBO: $70.000» y «Precio actualizado:
+  // $67.000» son el precio del producto de arriba, no productos: antes el combo con Cápsula 028 se cobraba como la
+  // batería sola ($40.000) y el de Jeeter como la cápsula sola ($50.000). ──
+  {
+    const combos = "🔋 *LISTA PRECIOS BATERÍAS THC + COMBOS*\n\n━━━━━━━━━━━━━━━\n\n⚡ *BATERÍA PEN GENÉRICA 350 mAh*\n\n🔋 Capacidad de batería: 350 mAh  \n🔌 Compatible con cápsulas rosca 510  \n💎 Diseño premium y recargable\n\n💰 1x *$40.000*\n\n━━━━━━━━━━━━━━━\n\n🔥 *COMBO BATERÍA + CÁPSULA 028 1ML*\n\n🔝🦾 Batería 350 mAh + Cápsula 028 1ML\n\n💰 Precio regular: ~$85.000~  \n🔥 *PRECIO COMBO: $70.000*\n\n🎁 *¡AHORRÁS $15.000!*\n\n━━━━━━━━━━━━━━━\n\n💎 *COMBO BATERÍA + CÁPSULA JEETER 1ML*\n\n🚀 Batería 350 mAh + Cápsula Jeeter 1ML\n\n💰 Precio regular: ~$90.000~  \n🔥 *PRECIO COMBO: $75.000*\n\n🎁 *¡AHORRÁS $15.000!*\n\n━━━━━━━━━━━━━━━\n\n🔋 *Batería recargable + Cápsula 1ML*\n\n📦 *DISPONIBLES EN 028 IMPORT*";
+    const thc = "💰 LISTA PRECIOS THC - CLIENTES\n\n━━━━━━━━━━━━━━━\n\n💨 CÁPSULAS THC\n\n🔝🦾 CÁPSULAS 028 1ML — PREMIUM\n\n💰 1x $40.000\n💰 2x $38.000 c/u\n🚀 5x ~$225.000~ $200.000\n\n💎 CÁPSULAS JEETER 1ML\n\n💰 1x $50.000\n🔥 2x ~$100.000~ $90.000\n🚀 5x ~$250.000~ $212.500";
+    const ofertas = "📦 028 IMPORT — PRECIOS DEL FIN DE SEMANA\n\n📅 Válidos únicamente este fin de semana.\n\n🔝🦾 CÁPSULAS 028 1ML — PREMIUM\n\n💰 1x $40.000\n💰 2x $38.000 c/u\n\n🔋 BATERÍA + CÁPSULA 028 1ML\n\nPrecio anterior: ~$75.000~\nPrecio actualizado: $67.000\n\n━━━━━━━━━━━━━━━\n\n📦 028 IMPORT — INFORMACIÓN DE PRECIOS";
+    const cotizar = async (producto, cantidad, conOfertas = true) => {
+      store["settings/operativo"] = { ...LISTAS, preciosThcTexto: thc, combosBateriasTexto: combos, ofertasTexto: conOfertas ? ofertas : "", limitePorTanda: 100 };
+      const r = await llamar(api.agentCotizarProductos, { method: "POST", body: { items: [{ producto, cantidad }], medioPago: "transferencia" } });
+      return r.body.ok ? r.body.subtotal : r.body.error;
+    };
+    for (const [producto, cantidad, conOfertas, esperado, nombre] of [
+      ["COMBO BATERÍA + CÁPSULA 028 1ML", 1, false, 70000, "combo 028: el PRECIO COMBO es el del combo"],
+      ["COMBO BATERÍA + CÁPSULA JEETER 1ML", 1, false, 75000, "combo Jeeter: el PRECIO COMBO es el del combo"],
+      ["BATERÍA PEN GENÉRICA 350 mAh", 1, false, 40000, "la batería sola sigue a su precio"],
+      ["COMBO BATERÍA + CÁPSULA 028 1ML", 1, true, 67000, "combo 028 con la promo del fin de semana"],
+      ["COMBO BATERÍA + CÁPSULA JEETER 1ML", 1, true, 75000, "la promo del combo 028 no le cae al de Jeeter"],
+      ["CÁPSULAS JEETER 1ML", 2, true, 90000, "la promo de Cápsulas 028 no le cae a Jeeter"],
+      ["CÁPSULAS 028 1ML PREMIUM", 2, true, 76000, "promo 2x $38.000 c/u"],
+      ["CÁPSULAS 028 1ML PREMIUM", 3, true, 114000, "3 a $38.000 c/u"],
+      ["CÁPSULAS 028 1ML PREMIUM", 5, true, 190000, "5 a $38.000: la promo es mejor que el 5x de la lista"],
+    ]) {
+      const r = await cotizar(producto, cantidad, conOfertas);
+      ok(`promos: ${nombre} (${cantidad}x = ${esperado})`, r === esperado, r);
+    }
+  }
+
+  // ── Si el cliente no puede transferir a la cuenta activa, el bot le pasa la de respaldo (Lucio, 20/11) ──
+  {
+    store["settings/operativo"] = { ...LISTAS, aliasActivo: "alias3", limitePorTanda: 100 };
+    const conTame = (await llamar(api.agentEstadoOperativo)).body.plantillas;
+    ok("alias de respaldo: con Tame Lake activo es el alias 1", /Tame Lake/.test(conTame.ALIAS) && /Lucio Felix Bunge/.test(conTame.ALIAS_RESPALDO) && /028import\.gl/.test(conTame.ALIAS_RESPALDO) && /^dale, probá con esta otra cuenta/.test(conTame.ALIAS_RESPALDO), conTame.ALIAS_RESPALDO);
+    store["settings/operativo"].aliasActivo = "alias1";
+    const conBunge = (await llamar(api.agentEstadoOperativo)).body.plantillas;
+    ok("alias de respaldo: con el alias 1 activo es el 2", /Lucio Felix Bunge/.test(conBunge.ALIAS) && /Marcos Agustin Gieco/.test(conBunge.ALIAS_RESPALDO), conBunge.ALIAS_RESPALDO);
+  }
+
   // ── Reenviar el mismo comprobante anota cuándo lo volvió a mandar (ultimoEnvio): para la compra cuenta desde ahí ──
   {
     const lectura = { esComprobante: true, monto: "$ 51.000", numeroOperacion: "77711122233", destinatario: "Tame Lake 358 Sa", cbuCvu: "0000510400000000001348" };
