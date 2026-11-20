@@ -100,10 +100,13 @@ async function copiarAlPedido(url, pedidoId, adicionalId = null) {
 // `desde` (ms) y que todavía no están en ningún pedido, del más viejo al más nuevo. No cuentan los que
 // llegaron mientras atendía el equipo (conEquipo): esos pedidos los carga el equipo. Así el agente no
 // tiene que copiar el link del comprobante (lo copiaba mal y el cliente tenía que mandarlo otra vez).
+// Cuenta la última vez que el cliente lo mandó: si lo reenvía (porque el bot se lo pidió), es el pago de esta
+// compra aunque la primera vez haya llegado antes de que empezara.
 async function comprobantesDeLaCompra(telefono, idConversacion, desde) {
   const snap = await db.collection("comprobantes").where("telefono", "==", telefono).get();
+  const llegada = (c) => Math.max(Date.parse(c.createdAt || "") || 0, Date.parse(c.ultimoEnvio || "") || 0);
   return snap.docs.map((d) => ({ ...d.data(), id: d.id }))
-    .filter((c) => !c.pedidoId && !c.conEquipo && String(c.idConversacion ?? "") === String(idConversacion ?? "") && (Date.parse(c.createdAt || "") || 0) >= desde)
+    .filter((c) => !c.pedidoId && !c.conEquipo && String(c.idConversacion ?? "") === String(idConversacion ?? "") && llegada(c) >= desde)
     .sort((x, y) => String(x.createdAt).localeCompare(String(y.createdAt)));
 }
 
@@ -146,6 +149,9 @@ const agentGuardarComprobante = conClave(async (req, res) => {
     if (existente.id !== ref.id || (idMensaje && idMensaje !== previo.idMensaje && !(previo.reenvios || []).includes(idMensaje))) {
       cambios.veces = (Number(previo.veces) || 1) + 1;
       if (idMensaje) cambios.reenvios = [...(previo.reenvios || []), idMensaje].slice(-20);
+      // Lo volvió a mandar ahora: para la compra en curso cuenta desde este envío (comprobantesDeLaCompra).
+      // Lucía (conv. 2651, 19/11): lo reenvió porque el bot se lo pidió y seguía sin contar.
+      if (!previo.pedidoId) cambios.ultimoEnvio = new Date().toISOString();
     }
     // Vuelve a llegar sin el equipo: la charla volvió al bot con el cliente esperando (nadie le contestó),
     // así que ahora sí lo puede usar el bot.

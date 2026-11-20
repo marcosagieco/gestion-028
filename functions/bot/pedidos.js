@@ -95,11 +95,17 @@ function idDelPedidoNuevo(b, telefono) {
 // Desde cuándo cuentan los comprobantes de esta compra: los que llegaron después del pedido que se
 // cambia o, si es nuevo, después del último pedido del teléfono, del inicio de la compra que conoce el
 // bot (desdeCompra) y de las últimas 24 horas. Así no se cuenta el pago de una compra anterior.
+// El inicio de la compra que anota el bot (desdeCompra) se corre 30 minutos para atrás: muchos clientes
+// transfieren antes de escribir o antes de que el bot arme nada. Lucía (conv. 2651, 19/11) mandó el comprobante
+// 37 segundos antes de que empezara la ficha: quedaba afuera y el bot le pidió que lo reenviara dos veces. El
+// pago de una compra anterior sigue afuera por el último pedido y porque, si se usó, ya está en ese pedido.
+const MARGEN_ANTES_DE_LA_COMPRA = 30 * 60000;
 async function inicioDeLaCompra(telefono, anterior, desdeCompra) {
   if (anterior) return Date.parse(anterior.createdAt || "") || 0;
   const pedidos = await db.collection("pedidos").where("telefono", "==", telefono).get();
   const ultimo = Math.max(0, ...pedidos.docs.map((d) => Date.parse(d.data().createdAt || "") || 0));
-  return Math.max(ultimo, Date.now() - 24 * 3600000, Date.parse(desdeCompra || "") || 0);
+  const desde = Date.parse(desdeCompra || "");
+  return Math.max(ultimo, Date.now() - 24 * 3600000, Number.isFinite(desde) ? desde - MARGEN_ANTES_DE_LA_COMPRA : 0);
 }
 
 // Por qué un comprobante de la compra no sirve para pagarla (null si sirve). Los datos del pago salen

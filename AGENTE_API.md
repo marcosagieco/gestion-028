@@ -134,8 +134,9 @@ el modelo. Queda en el pedido y un cambio no lo toca.
   se carga con el último precio que se le pasó. `horaSolicitada` programa el Uber a esa hora si se puede.
 - **Pago por transferencia o mitad y mitad:** el backend toma los comprobantes de la compra: los que
   guardó `agentGuardarComprobante` en esta conversación y teléfono, sin usar en ningún pedido, llegados
-  después del pedido que se cambia o, si es nuevo, después del último pedido, de `desdeCompra` (cuando
-  empezó la compra en el bot) y de las últimas 24 horas. El modelo no pasa links (los copiaba mal). El
+  después del pedido que se cambia o, si es nuevo, después del último pedido, de 30 minutos antes de
+  `desdeCompra` (cuando empezó la compra en el bot: muchos transfieren antes de escribir) y de las últimas 24
+  horas. Un comprobante reenviado cuenta desde su último envío (`ultimoEnvio`). El modelo no pasa links (los copiaba mal). El
   número y el importe salen del comprobante guardado. Se suman todos; el primero es el principal y los
   otros, adicionales. No cuentan los que van a otra cuenta, no se leen, ya pagaron otro pedido o llegaron con el equipo atendiendo (`conEquipo`): si
   ninguno sirve, `400` con `requiereComprobante` y qué decirle al cliente; si sirve alguno, la `nota` lo
@@ -157,7 +158,8 @@ archivo, como objeto o JSON:
 - Guarda el comprobante en `comprobantes` (se cargue o no el pedido; el panel lo muestra como suelto).
 - La misma transferencia (`claveOperacion`: cuenta, dígitos del número e importe) no se guarda dos veces,
   aunque llegue en otro archivo: responde `reutilizado` con el id del primero y suma `veces` (el panel
-  muestra «Duplicado: el cliente lo mandó N veces»). Con otro importe u otra cuenta es otro comprobante.
+  muestra «Duplicado: el cliente lo mandó N veces»). Si todavía no está en un pedido, anota `ultimoEnvio`:
+  para la compra en curso cuenta desde ese reenvío. Con otro importe u otra cuenta es otro comprobante.
 - `conEquipo: true` si llegó mientras la charla la atendía el equipo (asignada a una persona o el bot en
   pausa): ese pedido lo carga el equipo a mano y `agentPedido` no lo usa. Si el mismo comprobante vuelve a
   llegar sin el equipo (la charla volvió al bot con el cliente esperando), se desmarca.

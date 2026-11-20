@@ -944,6 +944,16 @@ async function main() {
       const antesDeLaCompra = await pedido({ comprobanteUrl: undefined, idMensajeOrigen: "partes-6", desdeCompra: LLEGO_RECIEN });
       ok("comprobante de antes de que empezara la compra: no paga esta", !antesDeLaCompra.body.ok && /falta el comprobante/.test(antesDeLaCompra.body.error), antesDeLaCompra.body);
       delete store["comprobantes/cw-viejo"];
+      // Lucía (conv. 2651, 19/11): transfirió y mandó el comprobante 37 segundos antes de que el bot empezara la
+      // ficha. Quedaba afuera y el bot le pidió que lo reenviara dos veces. Hasta 30 minutos antes cuenta.
+      store["comprobantes/cw-lucia"] = { telefono: "5491158696086", cuentaCobro: "alias3", comprobante: { numero: "189435275157", monto: 29000 }, urlFuente: "https://chatwoot/lucia.jpg", createdAt: "2998-12-31T23:59:23.000Z", pedidoId: null };
+      const lucia = await pedido({ comprobanteUrl: undefined, idMensajeOrigen: "partes-lucia", desdeCompra: LLEGO_RECIEN });
+      ok("comprobante de segundos antes de la ficha: paga esta compra", lucia.body.ok && store["comprobantes/cw-lucia"].pedidoId === lucia.body.pedidoId, lucia.body);
+      // Reenviado: cuenta desde el último envío, aunque la primera vez haya llegado mucho antes.
+      store["comprobantes/cw-reenviado"] = { telefono: "5491158696086", cuentaCobro: "alias3", comprobante: { numero: "reenviado-88801", monto: 29000 }, urlFuente: "https://chatwoot/reenviado.jpg",
+        createdAt: "2998-12-31T20:00:00.000Z", ultimoEnvio: "2999-01-01T00:00:05.000Z", pedidoId: null };
+      const reenviado = await pedido({ comprobanteUrl: undefined, idMensajeOrigen: "partes-reenviado", desdeCompra: LLEGO_RECIEN });
+      ok("comprobante reenviado: cuenta desde que lo volvió a mandar", reenviado.body.ok && store["comprobantes/cw-reenviado"].pedidoId === reenviado.body.pedidoId, reenviado.body);
       // Uno que llegó mientras atendía el equipo: ese pedido lo carga el equipo a mano, el bot no lo usa.
       store["comprobantes/cw-equipo"] = { telefono: "5491158696086", cuentaCobro: "alias3", comprobante: { numero: "equipo-77701", monto: 29000 }, urlFuente: "https://chatwoot/equipo.jpg", createdAt: LLEGO_RECIEN, conEquipo: true, pedidoId: null };
       const delEquipo = await pedido({ comprobanteUrl: undefined, idMensajeOrigen: "partes-7" });
@@ -1115,6 +1125,18 @@ async function main() {
     await conHora('2026-10-25T16:01:00',async()=>{const fin=await e();ok('Respeta cierre especial del domingo',fin.body.salidaUber.fecha==='2026-10-26',fin.body.salidaUber);});
     await conHora('2026-10-28T10:00:00',async()=>{const mier=await e();ok('Miércoles vuelve a 13:30',mier.body.salidaUber.hora==='13:30',mier.body.salidaUber);});
   });
+
+  // ── Reenviar el mismo comprobante anota cuándo lo volvió a mandar (ultimoEnvio): para la compra cuenta desde ahí ──
+  {
+    const lectura = { esComprobante: true, monto: "$ 51.000", numeroOperacion: "77711122233", destinatario: "Tame Lake 358 Sa", cbuCvu: "0000510400000000001348" };
+    const guardar = (url, idMensaje) => llamar(api.agentGuardarComprobante, { method: "POST", body: { url, lectura, telefono: "+5491199998301", idConversacion: "qa-reenvio", idMensaje } });
+    const primero = await guardar("https://chatwoot/reenvio-1.jpg", "r1");
+    const id = "comprobantes/" + primero.body.id;
+    const antes = store[id].ultimoEnvio;
+    const segundo = await guardar("https://chatwoot/reenvio-2.jpg", "r2");
+    ok("reenvío: es el mismo comprobante y anota el último envío", segundo.body.reutilizado && segundo.body.id === primero.body.id && !antes && !!store[id].ultimoEnvio && store[id].veces === 2, store[id]);
+    delete store[id];
+  }
 
   // ── Comprobantes que llegaron durante una pausa (conv. 1545, 19/11): quedan con conEquipo y el bot no los usa.
   // Si nadie del equipo escribió en la pausa, el bot los libera y puede cargar el pedido con ellos. ──
