@@ -4,7 +4,7 @@
 //   estado.js        agentEstadoOperativo   lo del día: salidas, demora, pedido en curso, plantillas
 //   consultas.js     agentBuscarCatalogo, agentCotizarProductos, agentCotizarEnvio
 //   pedidos.js       agentPedido, agentCancelarPedido   resumen, carga, cambio y cancelación de pedidos
-//   comprobantes.js  agentGuardarComprobante, serveComprobante
+//   comprobantes.js  agentGuardarComprobante, agentComprobantesDeLaPausa, serveComprobante
 //   uber.js          agentCrearCotizacionUber, agentAvisosCotizacionUber
 //   estadisticas.js  agentEstadisticasBot   los totales del día que manda n8n, para el panel
 //   web.js           actualizarInfoWebDiario, agentActualizarInfoWeb   descripciones de productos de la web
@@ -12,7 +12,7 @@
 // El resto de los archivos son las reglas que usan: catálogo, precios, envíos, salidas y seguimiento.
 "use strict";
 
-const { agentGuardarComprobante, serveComprobante } = require("./comprobantes");
+const { agentGuardarComprobante, agentComprobantesDeLaPausa, serveComprobante } = require("./comprobantes");
 const { agentCrearCotizacionUber, agentAvisosCotizacionUber } = require("./uber");
 const { agentEstadisticasBot } = require("./estadisticas");
 const { actualizarInfoWebDiario, agentActualizarInfoWeb } = require("./web");
@@ -22,6 +22,7 @@ module.exports = {
   ...require("./consultas"),
   ...require("./pedidos"),
   agentGuardarComprobante,
+  agentComprobantesDeLaPausa,
   serveComprobante,
   agentCrearCotizacionUber,
   agentAvisosCotizacionUber,

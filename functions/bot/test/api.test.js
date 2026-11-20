@@ -1116,6 +1116,33 @@ async function main() {
     await conHora('2026-10-28T10:00:00',async()=>{const mier=await e();ok('Miércoles vuelve a 13:30',mier.body.salidaUber.hora==='13:30',mier.body.salidaUber);});
   });
 
+  // ── Comprobantes que llegaron durante una pausa (conv. 1545, 19/11): quedan con conEquipo y el bot no los usa.
+  // Si nadie del equipo escribió en la pausa, el bot los libera y puede cargar el pedido con ellos. ──
+  {
+    store["settings/operativo"] = { ...LISTAS, aliasActivo: "alias3", limitePorTanda: 100 };
+    const tel = "5491199998201", conv = "qa-pausa", desde = Math.floor(Date.now() / 1000) - 3600;
+    const datos = { telefono: tel, idConversacion: conv, idMensajeOrigen: "pausa-1", comprobanteUrl: undefined };
+    const previo = await resumen(datos);
+    const base = { telefono: tel, idConversacion: conv, cuentaCobro: "alias3", urlFuente: "https://chatwoot/pausa.jpg", pedidoId: null };
+    store["comprobantes/cw-pausa"] = { ...base, comprobante: { numero: "55500011", monto: previo.body.total }, createdAt: LLEGO_RECIEN, conEquipo: true };
+    store["comprobantes/cw-pausa-otra-conv"] = { ...base, idConversacion: "otra", comprobante: { numero: "55500012", monto: 1000 }, createdAt: LLEGO_RECIEN, conEquipo: true };
+    store["comprobantes/cw-pausa-usado"] = { ...base, comprobante: { numero: "55500013", monto: 1000 }, createdAt: LLEGO_RECIEN, conEquipo: true, pedidoId: "otro" };
+    store["comprobantes/cw-pausa-viejo"] = { ...base, comprobante: { numero: "55500014", monto: 1000 }, createdAt: "2020-01-01T00:00:00.000Z", conEquipo: true };
+    const pausa = (liberar) => llamar(api.agentComprobantesDeLaPausa, { method: "POST", body: { telefono: "+" + tel, idConversacion: conv, desde: String(desde), liberar } });
+    const sinCargar = await pedido(datos);
+    ok("pausa: un comprobante que llegó con el equipo no carga el pedido", !sinCargar.body.ok && /comprobante/.test(sinCargar.body.error || "") && !store["comprobantes/cw-pausa"].pedidoId, sinCargar.body);
+    const mirar = await pausa(false);
+    ok("pausa: lista solo los de esta conversación, sin pedido y de la pausa", mirar.body.comprobantes.length === 1 && mirar.body.comprobantes[0].id === "cw-pausa" && mirar.body.comprobantes[0].conEquipo && !mirar.body.comprobantes[0].liberado, mirar.body);
+    ok("pausa: sin liberar no toca nada", store["comprobantes/cw-pausa"].conEquipo === true, store["comprobantes/cw-pausa"]);
+    const liberados = await pausa(true);
+    ok("pausa: con liberar lo desmarca", liberados.body.comprobantes[0].liberado && store["comprobantes/cw-pausa"].conEquipo === false && store["comprobantes/cw-pausa-otra-conv"].conEquipo === true, liberados.body);
+    const cargado = await pedido({ ...datos, idMensajeOrigen: "pausa-2" });
+    ok("pausa: liberado, el bot carga el pedido con ese pago", cargado.body.ok && store["comprobantes/cw-pausa"].pedidoId === cargado.body.pedidoId, cargado.body);
+    const faltaDato = await llamar(api.agentComprobantesDeLaPausa, { method: "POST", body: { telefono: tel, desde: String(desde) } });
+    ok("pausa: sin conversación se rechaza", faltaDato.status === 400, faltaDato.body);
+    for (const k of ["cw-pausa", "cw-pausa-otra-conv", "cw-pausa-usado", "cw-pausa-viejo"]) delete store["comprobantes/" + k];
+  }
+
   const fallas = resultados.filter((r) => !r.ok);
   for (const r of resultados) console.log(`${r.ok ? "OK  " : "FALLA"} - ${r.nombre}${r.ok ? "" : "\n        " + String(JSON.stringify(r.detalle)).slice(0, 600)}`);
   console.log(`\n${resultados.length - fallas.length}/${resultados.length} pasaron.`);

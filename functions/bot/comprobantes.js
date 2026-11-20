@@ -183,6 +183,40 @@ const agentGuardarComprobante = conClave(async (req, res) => {
   res.json(respuesta);
 });
 
+// POST /agentComprobantesDeLaPausa — { telefono, idConversacion, desde, liberar }
+// Lo llama el bot cuando la charla vuelve a él después de una pausa (derivó, escribió el equipo o se la
+// asignaron a una persona). Devuelve los comprobantes que mandó el cliente en esta conversación desde
+// `desde` (segundos, milisegundos o ISO) y que no están en ningún pedido. Mientras el bot estaba pausado se
+// guardaron con conEquipo, porque ese pedido lo cargaba el equipo; si nadie del equipo escribió en la pausa,
+// nadie lo cargó: con liberar=true se desmarcan y el bot los puede usar para cargar el pedido (caso del
+// 19/11, conv. 1545: el cliente transfirió durante la pausa, nadie lo atendió y el pago quedó sin pedido).
+// Responde { comprobantes: [{ id, monto, cuentaDelNegocio, conEquipo, liberado }] }.
+function instanteDe(valor) {
+  const n = Number(valor);
+  if (Number.isFinite(n) && n > 0) return n < 1e12 ? n * 1000 : n;
+  const t = Date.parse(String(valor || ""));
+  return Number.isFinite(t) ? t : null;
+}
+const agentComprobantesDeLaPausa = conClave(async (req, res) => {
+  const b = req.body || {};
+  const telefono = normalizarTelefono(b.telefono);
+  const idConversacion = String(b.idConversacion ?? "").trim();
+  const desde = instanteDe(b.desde);
+  if (!telefono || !idConversacion) return rechazar(res, "faltan telefono o idConversacion");
+  if (desde === null) return rechazar(res, "desde tiene que ser una fecha");
+  const liberar = b.liberar === true || b.liberar === "true";
+  const snap = await db.collection("comprobantes").where("telefono", "==", telefono).get();
+  const comprobantes = [];
+  for (const d of snap.docs) {
+    const c = d.data();
+    if (c.pedidoId || String(c.idConversacion ?? "") !== idConversacion || (Date.parse(c.createdAt || "") || 0) < desde) continue;
+    const liberado = liberar && c.conEquipo === true;
+    if (liberado) await db.collection("comprobantes").doc(d.id).update({ conEquipo: false, liberadoEn: new Date().toISOString() });
+    comprobantes.push({ id: d.id, monto: Number(c.comprobante?.monto) || null, cuentaDelNegocio: !!c.cuentaCobro, conEquipo: c.conEquipo === true && !liberado, liberado });
+  }
+  res.json({ ok: true, comprobantes });
+});
+
 // GET /serveComprobante?pedido= — la foto del comprobante para el panel. Sin clave a propósito,
 // igual que servePdf: el panel la muestra con un <img>. La "clave" es el id aleatorio del pedido.
 // Con ?comprobante=<id> sirve un comprobante suelto.
@@ -207,5 +241,5 @@ const serveComprobante = functions.https.onRequest(async (req, res) => {
 
 module.exports = {
   TOLERANCIA_COMPROBANTE, comprobantesDeLaCompra, copiarAlPedido, vincularAlPedido,
-  agentGuardarComprobante, serveComprobante,
+  agentGuardarComprobante, agentComprobantesDeLaPausa, serveComprobante,
 };

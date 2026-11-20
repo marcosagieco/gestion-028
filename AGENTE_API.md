@@ -22,7 +22,7 @@ total, salida, cupo y validación del pago. El backend no lee la conversación: 
 | `bot/estado.js` | `agentEstadoOperativo` y las plantillas fijas |
 | `bot/consultas.js` | `agentBuscarCatalogo`, `agentCotizarProductos`, `agentCotizarEnvio` |
 | `bot/pedidos.js` | `agentPedido`: resumen, carga y cambio de pedidos |
-| `bot/comprobantes.js` | `agentGuardarComprobante`, `serveComprobante` y la tolerancia del pago |
+| `bot/comprobantes.js` | `agentGuardarComprobante`, `agentComprobantesDeLaPausa`, `serveComprobante` y la tolerancia del pago |
 | `bot/uber.js` | `agentCrearCotizacionUber` y `agentAvisosCotizacionUber` |
 | `bot/estadisticas.js` | `agentEstadisticasBot` |
 | `bot/web.js` | `actualizarInfoWebDiario`, `agentActualizarInfoWeb` y la `infoWeb` de `agentBuscarCatalogo` |
@@ -164,6 +164,14 @@ archivo, como objeto o JSON:
 - Responde `{ guardado: true, id, monto, numero, cuentaDelNegocio }`, o `guardado: false` con `motivo`:
   `no_es_comprobante` o `lectura_incompleta`. Que parezca editado no frena: queda `posibleEdicion`.
 - La cuenta se reconoce por cualquiera de sus datos (titular, alias, CUIT o CBU/CVU).
+
+## POST `agentComprobantesDeLaPausa` — `{ telefono, idConversacion, desde, liberar }`
+
+Lo llama el bot cuando la charla vuelve a él después de una pausa. Devuelve los comprobantes de esta
+conversación que llegaron desde `desde` (segundos, milisegundos o ISO) y no están en ningún pedido:
+`{ comprobantes: [{ id, monto, cuentaDelNegocio, conEquipo, liberado }] }`. Durante la pausa se guardaron
+con `conEquipo` (los carga el equipo). Con `liberar: true` (nadie del equipo escribió en la pausa) se
+desmarcan y `agentPedido` los puede usar para cargar la compra.
 
 ## `serveComprobante` — `?pedido=` o `?comprobante=` (sin clave)
 
