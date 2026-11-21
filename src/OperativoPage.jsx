@@ -52,6 +52,7 @@ const ALIASES = [
   { id: 'alias1', label: 'Alias 1 — Lucio (028import.gl)' },
   { id: 'alias2', label: 'Alias 2 — Marcos (028import.gal2)' },
   { id: 'alias3', label: 'Alias 3 — Financiera (tamelake358sa.eluter)' },
+  { id: 'alias4', label: 'Alias 4 — Cuenta Recaudadora (CVU ...2947)' },
 ];
 
 // Fechas "AAAA-MM-DD" en hora de Buenos Aires (las mismas que usa el backend).
@@ -387,7 +388,7 @@ export default function OperativoPage() {
           {/* Alias activo */}
           <div className={`rounded-2xl border p-5 ${card}`}>
             <label className={`block text-xs font-bold uppercase tracking-wide mb-2 ${label}`}>Alias a usar hoy</label>
-            <p className={`text-[11px] mb-3 ${label}`}>Cual de los 3 le pasa el bot al cliente cuando llega el momento de cobrar.</p>
+            <p className={`text-[11px] mb-3 ${label}`}>Cual de los 4 le pasa el bot al cliente cuando llega el momento de cobrar.</p>
             <div className="space-y-2">
               {ALIASES.map((a) => {
                 const sel = form.aliasActivo === a.id;

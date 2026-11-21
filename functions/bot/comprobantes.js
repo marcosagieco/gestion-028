@@ -18,6 +18,8 @@ const TOLERANCIA_COMPROBANTE = 5000;
 const CUENTAS = [
   { alias: "alias3", claves: ["0000510400000000001348", "tame lake", "tamelake", "30718603702"] },
   { alias: "alias2", claves: ["0070181130004057764295", "gieco", "028import.gal2"] },
+  // La Cuenta Recaudadora también es de Lucio: va antes del alias 1 para que su CVU no se tome por «bunge».
+  { alias: "alias4", claves: ["0000137902554316992947", "servicio de pago"] },
   { alias: "alias1", claves: ["0070194130004014092980", "bunge", "028import.gl"] },
 ];
 

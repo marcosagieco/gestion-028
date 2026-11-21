@@ -431,6 +431,7 @@ async function main() {
       ["alias1", "Lucio Felix Bunge", "0070194130004014092980"],
       ["alias2", "Marcos Agustin Gieco", "0070181130004057764295"],
       ["alias3", "Tame Lake S.A.", "0000510400000000001348"],
+      ["alias4", "Lucio Bunge", "0000137902554316992947"],
     ]) {
       store["settings/operativo"].aliasActivo = alias;
       const estado = await llamar(api.agentEstadoOperativo);
@@ -815,6 +816,9 @@ async function main() {
     const doc = store[`comprobantes/${r.body.id}`];
     ok("suelto: guarda el comprobante con sus datos", r.body.guardado && doc.comprobante.numero === "185563329942" && doc.comprobante.monto === 65990 && doc.comprobante.nombre === "Celina Luque Peluffo" && doc.telefono === "5492235861032" && doc.pedidoId === null, doc);
     ok("suelto: reconoce la cuenta aunque el CVU se haya leído mal", doc.cuentaCobro === "alias3", doc.cuentaCobro);
+    // Cuenta Recaudadora (21/11): también está a nombre de Lucio; el CVU manda sobre «bunge» del alias 1.
+    const recaudadora = await guardar({ url: "https://chatwoot/recaudadora.jpg", idMensaje: 10, lectura: { esComprobante: true, monto: "$40.000", numeroOperacion: "556677889900", titular: "Celina Luque Peluffo", destinatario: "Lucio Bunge", cbuCvu: "0000137902554316992947" } });
+    ok("suelto: el CVU de la Cuenta Recaudadora es alias4, no alias1", store[`comprobantes/${recaudadora.body.id}`]?.cuentaCobro === "alias4", recaudadora.body);
     ok("suelto: copia la foto a Storage y la sirve por serveComprobante", doc.comprobanteImagen.url.endsWith("?comprobante=" + r.body.id) && guardadoEnStorage.some((p) => p.includes("sueltos/" + r.body.id + ".jpg")), doc.comprobanteImagen);
     const otra = await guardar({ url: "https://chatwoot/x.jpg", lectura: JSON.stringify(celina) });
     ok("suelto: el mismo comprobante no se guarda dos veces (y acepta la lectura como JSON)", otra.body.reutilizado && otra.body.id === r.body.id, otra.body);

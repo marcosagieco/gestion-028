@@ -89,6 +89,7 @@ const CUENTA_COBRO_LABELS = {
   alias1: 'Lucio Felix Bunge (Galicia)',
   alias2: 'Marcos Agustin Gieco (Galicia)',
   alias3: 'Tame Lake S.A. (financiera)',
+  alias4: 'Lucio Bunge (Cuenta Recaudadora)',
 };
 // Lo que el navegador puede mostrar con <img>. Un PDF (o una foto de iPhone en HEIC) se abre aparte.
 const COMPROBANTE_IMAGEN_WEB = ['image/jpeg', 'image/png', 'image/webp'];

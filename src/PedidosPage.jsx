@@ -632,6 +632,7 @@ const CUENTA_POR_ALIAS = {
   alias1: 'Lucio Felix Bunge (Galicia)',
   alias2: 'Marcos Agustin Gieco (Galicia)',
   alias3: 'Tame Lake S.A. (financiera)',
+  alias4: 'Lucio Bunge (Cuenta Recaudadora)',
 };
 
 // Exporta los pedidos del bot pagados por transferencia a CSV, con la cuenta que cobró cada uno,

@@ -27,7 +27,7 @@ const { precioParaElPedido, flashConTarifa, cerrarCotizaciones } = require("./ub
 const { leerOperativo, envioGratisDe } = require("./campania");
 
 const ENVIO_LABEL = { moto: "🛵 Moto mensajería", uber: "⚡ Envío flash (Uber)", correo: "📦 Correo (Vía Cargo)", retiro: "🏪 Retiro en persona" };
-const CUENTAS_DE_COBRO = ["alias1", "alias2", "alias3"];
+const CUENTAS_DE_COBRO = ["alias1", "alias2", "alias3", "alias4"];
 
 // El cupón de un pedido armado en la web ({ codigo, monto }): la web lo valida y el bot respeta el
 // descuento que trae el mensaje. Queda a la vista en el pedido para que el equipo lo controle. null si no
