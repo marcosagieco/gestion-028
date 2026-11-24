@@ -5,7 +5,7 @@ const path   = require('path');
 
 // Ruta explícita: dotenv por defecto busca ".env" relativo al directorio desde el que se invocó
 // node (process.cwd()), no relativo a este archivo. Si este módulo se corre como script suelto
-// desde la raíz del repo (ej. "node functions/verificar-emisor1.js"), sin esto cargaría por
+// desde la raíz del repo (ej. "node functions/un-script.js"), sin esto cargaría por
 // error el .env de la raíz (el del frontend, con las variables VITE_*) en vez de functions/.env.
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
@@ -20,7 +20,7 @@ const axios  = require('axios');
 // En Cloud Functions / el emulador, admin.initializeApp() sin argumentos sigue funcionando
 // exactamente igual que antes (detecta projectId/credenciales del entorno solo).
 //
-// Corriendo como script suelto local (node functions/verificar-emisor1.js) NO hay metadata de
+// Corriendo como script suelto local (node functions/un-script.js) NO hay metadata de
 // GCP de la que inferir el projectId ("Unable to detect a Project Id in the current environment")
 // — en ese caso lo tomamos de .firebaserc (mismo project que usa el resto del repo) y usamos
 // functions/service-account.json (ya existe, lo usa la integración de Google Sheets) como

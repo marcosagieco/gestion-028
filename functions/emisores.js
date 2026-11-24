@@ -3,8 +3,8 @@
 // Carga functions/.env con ruta explícita (no relativa al cwd desde el que se invoque node),
 // independiente de si algún otro módulo ya llamó a dotenv antes. Este archivo lee process.env
 // en el momento en que se hace require(), así que no puede depender de que facturacion.js (u
-// otro require anterior) ya haya cargado el .env correcto — algunos scripts (ej.
-// verificar-emisor1.js) hacen require('./emisores') antes que require('./facturacion').
+// otro require anterior) ya haya cargado el .env correcto — un script suelto puede hacer
+// require("./emisores") antes que require("./facturacion").
 // En Cloud Functions esto es un no-op inofensivo (las env vars ya están inyectadas por Firebase
 // antes de que corra este código, y si functions/.env no existe en el bundle desplegado, dotenv
 // simplemente no encuentra nada para cargar, sin tirar error).
