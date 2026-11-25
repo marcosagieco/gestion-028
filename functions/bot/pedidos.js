@@ -415,8 +415,9 @@ async function procesarPedido(entrada) {
     fechaSalida: cuando?.fecha || null,
     horaSalida: cuando?.hora || null,
     tandaSalida: cuando?.tandaId || null,
-    // La primera salida va con la moto de la tarde; la segunda y la extra (tercera), con la de la noche.
-    repartidor: usaTandaMoto ? (conservarSalida && anterior.repartidor ? anterior.repartidor : cuando.tandaId === "primera" ? "moto1" : "moto2") : null,
+    // Cada salida tiene su moto (src/reparto/repartidores.js): primera = tarde (moto1), segunda =
+    // tarde-noche (moto2), tercera = noche (moto3, se prende y apaga en /operativo).
+    repartidor: usaTandaMoto ? (conservarSalida && anterior.repartidor ? anterior.repartidor : ({ primera: "moto1", segunda: "moto2", tercera: "moto3" }[cuando.tandaId] || "moto1")) : null,
     medioPago,
     horaSolicitada: horaPedida ? cuando.hora : null,
     montoTransferencia: aTransferir || null,

@@ -1,5 +1,5 @@
-// Salidas: cuándo sale un pedido. La moto tiene dos salidas por día con cupo, más una extra que se prende y se
-// apaga (el depósito las configura en /operativo); el Uber sale en tandas de media hora entre las 13:30 y las 20:00.
+// Salidas: cuándo sale un pedido. La moto tiene tres turnos por día con cupo: tarde, tarde-noche y noche (la
+// noche se prende y se apaga; el depósito los configura en /operativo); el Uber sale en tandas de media hora entre las 13:30 y las 20:00.
 "use strict";
 
 const { db } = require("./firebase");
@@ -9,7 +9,7 @@ const LIMITE_POR_TANDA = 10; // si el panel no tiene uno cargado
 const CADA_TANDA_UBER = 30; // minutos
 const ULTIMA_TANDA = 20 * 60;
 const CORTE_DESPACHO = 20 * 60; // a las 20:00 se cierra sin excepción
-const SALIDAS_MOTO = [{ id: "primera", hora: "15:30" }, { id: "segunda", hora: "18:30" }];
+const SALIDAS_MOTO = [{ id: "primera", hora: "15:30" }, { id: "segunda", hora: "18:30" }]; // sin datos en /operativo (hoy: 15:00 y 17:00)
 const DIAS_SEMANA = { Sun: "domingo", Mon: "lunes", Tue: "martes", Wed: "miércoles", Thu: "jueves", Fri: "viernes", Sat: "sábado" };
 
 const DEMORAS = {
@@ -50,7 +50,7 @@ function minutosDe(texto) {
 
 // Las salidas del día, con la hora que cargó el depósito: las dos de siempre y, si está prendida en /operativo,
 // la salida extra (Lucio, 20/11: «un horario a las 20 que pueda habilitar y sacar»). settings/operativo.salidaExtraMoto
-// = { activa, hora }. Va con la moto de la noche (pedidos.js) y tiene el mismo cupo. Si su hora no es válida o no
+// = { activa, hora }. Desde el 23/11 es el turno de la noche, con su propia moto (moto3, pedidos.js) y el mismo cupo. Si su hora no es válida o no
 // queda después de la segunda, no se ofrece: una salida extra mal cargada nunca frena al bot.
 const HORA_VALIDA = (h) => /^([01]\d|2[0-3]):[0-5]\d$/.test(h) && h <= "20:00";
 function salidasMoto(op) {

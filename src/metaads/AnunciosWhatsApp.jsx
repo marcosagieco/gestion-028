@@ -81,31 +81,32 @@ export default function AnunciosWhatsApp({ db, darkMode: dm, metaPeriod, metaCus
   useEffect(() => { traer(); }, [traer]);
 
   const m = estado.datos;
-  const tarjeta = `rounded-2xl border ${dm ? 'border-white/[0.06]' : 'bg-white border-zinc-200'}`;
-  const fondo = dm ? { background: 'linear-gradient(145deg,#0E0E0E,#161616)', boxShadow: '0 4px 20px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.04)' } : {};
-  const etiqueta = 'text-[10px] font-bold uppercase tracking-widest text-zinc-500';
+  // Mismo estilo que Inicio: panel plano #0A0A0A, títulos de 15px, cajitas internas sin borde.
+  const tarjeta = `rounded-2xl border ${dm ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`;
+  const etiqueta = `text-[13px] font-medium ${dm ? 'text-zinc-300' : 'text-zinc-600'}`;
+  const caja = `rounded-xl p-4 ${dm ? 'bg-white/[0.03]' : 'bg-zinc-50'}`;
   const fuerte = dm ? 'text-zinc-100' : 'text-zinc-900';
   const maxConv = m ? Math.max(m.conversion || 0, m.conversionOrganica || 0, 0.01) : 1;
 
   return (
-    <div className={`${tarjeta} p-5`} style={fondo}>
+    <div className={`${tarjeta} p-5`}>
       <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl flex items-center justify-center bg-emerald-500/10"><MessageCircle size={15} className="text-emerald-400" /></div>
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 bg-emerald-500/10"><MessageCircle size={16} className="text-emerald-400" /></div>
           <div>
-            <h3 className={`font-bold text-sm ${fuerte}`}>Anuncios que llegan al WhatsApp</h3>
-            <p className="text-[11px] text-zinc-500">Lo que gastó cada anuncio cruzado con los clientes y las ventas que hizo el bot.</p>
+            <h3 className={`text-[15px] font-semibold tracking-tight ${fuerte}`}>Anuncios que llegan al WhatsApp</h3>
+            <p className="text-[13px] text-zinc-500 mt-0.5">Lo que gastó cada anuncio cruzado con los clientes y las ventas que hizo el bot.</p>
           </div>
         </div>
         <button onClick={traer} disabled={cargando}
-          className={`h-9 px-3 rounded-xl border text-xs font-bold flex items-center gap-1.5 disabled:opacity-50 ${dm ? 'border-white/[0.07] text-zinc-300 hover:bg-white/[0.06]' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}>
+          className={`h-9 px-3 rounded-xl border text-[13px] font-semibold flex items-center gap-1.5 disabled:opacity-50 ${dm ? 'border-white/[0.07] text-zinc-300 hover:bg-white/[0.06]' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}>
           <RefreshCw size={13} className={cargando ? 'animate-spin' : ''} /> Actualizar
         </button>
       </div>
 
       {estado.error && <p className="text-sm text-red-400 mb-3">{estado.error}</p>}
       {estado.aviso && <p className="text-xs text-amber-400 mb-3">{estado.aviso}</p>}
-      {desde < inicioBot && <p className="text-[11px] text-zinc-500 mb-3">Los clientes por anuncio se cuentan desde el 29/10: antes de esa fecha solo hay gasto.</p>}
+      {desde < inicioBot && <p className="text-[12px] text-zinc-500 mb-3">Los clientes por anuncio se cuentan desde el 29/10: antes de esa fecha solo hay gasto.</p>}
 
       {!m ? (
         <div className="h-40 rounded-xl animate-pulse" style={{ background: dm ? 'rgba(255,255,255,0.03)' : '#f4f4f5' }} />
@@ -113,10 +114,10 @@ export default function AnunciosWhatsApp({ db, darkMode: dm, metaPeriod, metaCus
         <>
           {/* Resumen */}
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-            <div className={`col-span-2 lg:col-span-1 rounded-xl p-4 border ${dm ? 'border-emerald-500/20 bg-emerald-500/[0.06]' : 'border-emerald-200 bg-emerald-50'}`}>
-              <p className={etiqueta}>ROAS por WhatsApp</p>
-              <p className="text-3xl font-black tracking-tight text-emerald-400 mt-1 tabular-nums">{veces(m.roas)}</p>
-              <p className="text-[11px] text-zinc-500 mt-1">Cada $1 en anuncios volvió {m.roas == null ? '—' : pesos(m.roas)} en ventas</p>
+            <div className={`col-span-2 lg:col-span-1 rounded-xl p-4 ${dm ? 'bg-emerald-500/[0.08]' : 'bg-emerald-50'}`}>
+              <p className={`text-[13px] font-medium ${dm ? 'text-emerald-300' : 'text-emerald-700'}`}>ROAS por WhatsApp</p>
+              <p className={`text-[26px] font-bold tracking-tight mt-1 tabular-nums ${dm ? 'text-emerald-400' : 'text-emerald-600'}`}>{veces(m.roas)}</p>
+              <p className="text-[12px] text-zinc-500 mt-1">Cada $1 en anuncios volvió {m.roas == null ? '—' : pesos(m.roas)} en ventas</p>
             </div>
             {[
               { t: 'Inversión', v: pesos(m.gasto), a: 'Gasto en Meta del período' },
@@ -124,37 +125,37 @@ export default function AnunciosWhatsApp({ db, darkMode: dm, metaPeriod, metaCus
               { t: 'Costo por cliente', v: pesos(m.costoPorCliente), a: `${m.clientes} escribieron desde un anuncio` },
               { t: 'Costo por venta', v: pesos(m.costoPorVenta), a: `Ticket promedio ${pesos(m.ticket)}` },
             ].map((k) => (
-              <div key={k.t} className={`rounded-xl p-4 border ${dm ? 'border-white/[0.06] bg-white/[0.02]' : 'border-zinc-200 bg-zinc-50/60'}`}>
+              <div key={k.t} className={caja}>
                 <p className={etiqueta}>{k.t}</p>
-                <p className={`text-xl font-black tracking-tight mt-1.5 tabular-nums ${fuerte}`}>{k.v}</p>
-                <p className="text-[11px] text-zinc-500 mt-1 leading-snug">{k.a}</p>
+                <p className={`text-[22px] font-bold tracking-tight mt-1 tabular-nums ${fuerte}`}>{k.v}</p>
+                <p className="text-[12px] text-zinc-500 mt-1 leading-snug">{k.a}</p>
               </div>
             ))}
           </div>
 
           {/* Conversión con y sin publicidad */}
-          <div className={`mt-3 rounded-xl p-4 border ${dm ? 'border-white/[0.06] bg-white/[0.02]' : 'border-zinc-200 bg-zinc-50/60'}`}>
+          <div className={`mt-3 ${caja}`}>
             <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
               <p className={etiqueta}>¿Compran los que llegan por un anuncio?</p>
-              <p className="text-[11px] text-zinc-500">{pct(m.parteDeClientes)} de los que escriben al bot vienen de un anuncio</p>
+              <p className="text-[12px] text-zinc-500">{pct(m.parteDeClientes)} de los que escriben al bot vienen de un anuncio</p>
             </div>
             {[
               { n: 'Llegaron por un anuncio', v: m.conversion, c: 'bg-indigo-500' },
               { n: 'Escribieron solos', v: m.conversionOrganica, c: 'bg-emerald-500' },
             ].map((b) => (
               <div key={b.n} className="flex items-center gap-3 mb-2 last:mb-0">
-                <span className="text-sm w-44 shrink-0">{b.n}</span>
-                <div className={`flex-1 h-3 rounded-full ${dm ? 'bg-white/[0.06]' : 'bg-zinc-200'}`}>
+                <span className={`text-[13px] w-44 shrink-0 ${dm ? 'text-zinc-300' : 'text-zinc-600'}`}>{b.n}</span>
+                <div className={`flex-1 h-2.5 rounded-full ${dm ? 'bg-white/[0.06]' : 'bg-zinc-200'}`}>
                   <div className={`h-full rounded-full ${b.c}`} style={{ width: `${((b.v || 0) / maxConv) * 100}%` }} />
                 </div>
-                <span className={`text-sm font-black w-14 text-right tabular-nums ${fuerte}`}>{pct(b.v, 1)}</span>
+                <span className={`text-[13px] font-bold w-14 text-right tabular-nums ${fuerte}`}>{pct(b.v, 1)}</span>
               </div>
             ))}
           </div>
 
           {/* Por anuncio */}
           <div className="mt-5">
-            <p className={`${etiqueta} mb-2`}>Por anuncio</p>
+            <p className={`text-[15px] font-semibold tracking-tight mb-3 ${fuerte}`}>Por anuncio</p>
             {m.anuncios.length === 0 ? (
               <p className="text-sm text-zinc-500 py-6 text-center">No hubo anuncios con gasto o clientes en este período.</p>
             ) : (
@@ -162,7 +163,7 @@ export default function AnunciosWhatsApp({ db, darkMode: dm, metaPeriod, metaCus
                 {/* Celular: tarjetas */}
                 <div className="space-y-2 md:hidden">
                   {m.anuncios.map((a) => (
-                    <div key={a.clave} className={`rounded-xl border p-3.5 ${dm ? 'border-white/[0.06] bg-white/[0.02]' : 'border-zinc-200'}`}>
+                    <div key={a.clave} className={`${caja} !p-3.5`}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <p className={`text-sm font-bold truncate ${fuerte}`}>{a.nombre}</p>
@@ -184,9 +185,9 @@ export default function AnunciosWhatsApp({ db, darkMode: dm, metaPeriod, metaCus
 
                 {/* PC: tabla */}
                 <div className="hidden md:block overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-[13px]">
                     <thead>
-                      <tr className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+                      <tr className="text-[12px] font-medium text-zinc-500">
                         <th className="py-2 pr-4 text-left">Anuncio</th>
                         <th className="py-2 px-3 text-right">Gasto</th>
                         <th className="py-2 px-3 text-right">Clientes</th>
@@ -216,7 +217,7 @@ export default function AnunciosWhatsApp({ db, darkMode: dm, metaPeriod, metaCus
                     </tbody>
                   </table>
                 </div>
-                <p className="text-[11px] text-zinc-500 mt-3">ROAS: verde de 3x para arriba, amarillo entre 1,5x y 3x, rojo debajo de 1,5x. Es sobre lo vendido, no sobre la ganancia.</p>
+                <p className="text-[12px] text-zinc-500 mt-3">ROAS: verde de 3x para arriba, amarillo entre 1,5x y 3x, rojo debajo de 1,5x. Es sobre lo vendido, no sobre la ganancia.</p>
               </>
             )}
           </div>

@@ -78,7 +78,7 @@ const estadoCampania = (c) => {
 };
 
 const DEFAULTS = {
-  situacion: 'sin_demora', salidasMoto: { primera: '15:30', segunda: '18:30' }, aliasActivo: 'alias1', limitePorTanda: 10, diasSinDespacho: [],
+  situacion: 'sin_demora', salidasMoto: { primera: '15:00', segunda: '17:00' }, aliasActivo: 'alias1', limitePorTanda: 10, diasSinDespacho: [],
   stockNicotinaTexto: '', stockThcTexto: '',
   preciosVapesTexto: '', preciosThcTexto: '', perfumesTexto: '', appleTexto: '',
   preciosMayoristaTexto: '', ofertasTexto: '', combosBateriasTexto: '', combosBateriasTitulo: 'Combos y baterias', dolarMayorista: '',
@@ -137,12 +137,12 @@ export default function OperativoPage() {
   const guardar = async () => {
     const horarios = [form.salidasMoto?.primera, form.salidasMoto?.segunda];
     if (horarios.some((h) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(h || '') || h > '20:00') || horarios[0] >= horarios[1]) {
-      alert('Las dos salidas deben tener horarios distintos y ordenados, hasta las 20:00.');
+      alert('La tarde y la tarde-noche tienen que tener horarios distintos y ordenados, hasta las 20:00.');
       return;
     }
-    // La extra tiene que quedar después de la segunda y hasta las 20:00 (si no, el bot no la ofrecería).
+    // La noche tiene que quedar después de la tarde-noche y hasta las 20:00 (si no, el bot no la ofrecería).
     if (salidaExtra.activa && (!/^([01]\d|2[0-3]):[0-5]\d$/.test(salidaExtra.hora || '') || salidaExtra.hora > '20:00' || salidaExtra.hora <= horarios[1])) {
-      alert(`La salida extra tiene que ser después de la salida 2 (${horarios[1]}) y hasta las 20:00. Si la salida 2 ya es a las 20:00, pasala a otro horario (por ejemplo 18:30).`);
+      alert(`La noche tiene que ser después de la tarde-noche (${horarios[1]}) y hasta las 20:00.`);
       return;
     }
     if (form.dolarMayorista != null && form.dolarMayorista !== '' && !(Number.isFinite(Number(form.dolarMayorista)) && Number(form.dolarMayorista) > 0)) {
@@ -270,25 +270,26 @@ export default function OperativoPage() {
           {/* Salidas de motomensajeria */}
           <div className={`rounded-2xl border p-5 ${card}`}>
             <p className={`block text-xs font-bold uppercase tracking-wide mb-3 ${label}`}>Salidas de motomensajeria</p>
-            {['primera', 'segunda'].map((id, i) => (
+            {/* Cada salida es un turno con su propio motomensajero y su link (reparto/repartidores.js). */}
+            {[['primera', 'Tarde', '/reparto-tarde'], ['segunda', 'Tarde-noche', '/reparto-tarde-noche']].map(([id, nombre, link]) => (
               <label key={id} className="block mb-4">
-                <span className={`block text-sm mb-2 ${label}`}>Salida {i + 1}</span>
+                <span className={`block text-sm mb-2 ${label}`}>{nombre} <span className="opacity-60">· {link}</span></span>
                 <input type="time" max="20:00" value={form.salidasMoto?.[id] || DEFAULTS.salidasMoto[id]}
                   onChange={(e) => set('salidasMoto', { ...DEFAULTS.salidasMoto, ...form.salidasMoto, [id]: e.target.value })}
                   className={`w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none ${input}`} />
               </label>
             ))}
-            {/* Salida extra: se prende y se apaga; la lleva la moto de la noche, con el mismo cupo */}
+            {/* Noche: se prende y se apaga; la lleva su propia moto (/reparto-noche), con el mismo cupo */}
             <div className={`pt-3 border-t ${dm ? 'border-white/[0.06]' : 'border-zinc-200'}`}>
               <div className="flex items-center justify-between gap-3 mb-2">
-                <span className={`text-sm ${label}`}>Salida extra</span>
-                <button type="button" role="switch" aria-checked={salidaExtra.activa === true} aria-label="Salida extra"
+                <span className={`text-sm ${label}`}>Noche <span className="opacity-60">· /reparto-noche</span></span>
+                <button type="button" role="switch" aria-checked={salidaExtra.activa === true} aria-label="Moto de la noche"
                   onClick={() => setSalidaExtra('activa', !salidaExtra.activa)}
                   className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${salidaExtra.activa ? 'bg-emerald-500' : (dm ? 'bg-white/15' : 'bg-zinc-300')}`}>
                   <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${salidaExtra.activa ? 'translate-x-5' : ''}`} />
                 </button>
               </div>
-              <p className={`text-[11px] mb-3 ${label}`}>Prendida, el bot la ofrece como una salida más (va con la moto de la noche y tiene el mismo cupo). Queda prendida hasta que la apaguen. Tiene que ser después de la salida 2 y hasta las 20:00.</p>
+              <p className={`text-[11px] mb-3 ${label}`}>Prendida, el bot la ofrece y en /pedidos se puede elegir. Tiene su propia moto (/reparto-noche) y el mismo cupo. Queda prendida hasta que la apaguen. Tiene que ser después de la tarde-noche y hasta las 20:00.</p>
               <input type="time" max="20:00" value={salidaExtra.hora || '20:00'}
                 onChange={(e) => setSalidaExtra('hora', e.target.value)}
                 className={`w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none ${input}`} />

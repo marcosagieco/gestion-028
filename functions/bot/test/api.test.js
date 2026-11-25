@@ -923,7 +923,7 @@ async function main() {
     ok("extra: se ofrece la tercera de hoy", conExtra.body.opcionesMoto.some((o) => o.fecha === "2026-10-06" && o.tandaId === "tercera" && o.hora === "20:00"), conExtra.body.opcionesMoto);
     const enExtra = await pedido({ idConversacion: "870", idMensajeOrigen: "8701", medioPago: "al recibir", salidaSeleccionada: { fecha: "2026-10-06", tandaId: "tercera", hora: "20:00" } });
     const extraGuardado = enExtra.body.pedidoId && store[`pedidos/${enExtra.body.pedidoId}`];
-    ok("extra: se carga en la tercera con la moto de la noche", enExtra.body.ok && extraGuardado.tandaSalida === "tercera" && extraGuardado.horaSalida === "20:00" && extraGuardado.repartidor === "moto2", enExtra.body);
+    ok("extra: se carga en la tercera con la moto de la noche", enExtra.body.ok && extraGuardado.tandaSalida === "tercera" && extraGuardado.horaSalida === "20:00" && extraGuardado.repartidor === "moto3", enExtra.body);
     if (enExtra.body.pedidoId) delete store[`pedidos/${enExtra.body.pedidoId}`];
     op.salidaExtraMoto = { activa: true, hora: "18:00" };
     const antesDeLaSegunda = await llamar(api.agentEstadoOperativo);

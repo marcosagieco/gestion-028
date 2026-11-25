@@ -15,6 +15,7 @@ const OperativoPage = lazy(() => import('./OperativoPage.jsx'))
 const CotizarUberPage = lazy(() => import('./CotizarUberPage.jsx'))
 const LinkViejo = lazy(() => import('./reparto/LinkViejo.jsx'))
 const EscanerPage = lazy(() => import('./EscanerPage.jsx'))
+const CierreCajaPage = lazy(() => import('./CierreCajaPage.jsx'))
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -36,17 +37,27 @@ createRoot(document.getElementById('root')).render(
             <RepartoDeposito />
           </Suspense>
         } />
-        {/* Una pantalla por reparto (el de las 15:30 y el de las 18:30). Es el mismo componente con
-            un parámetro: cada uno ve solo sus paradas y maneja su propio recorrido — ver
-            reparto/repartidores.js, donde están los dos links y por qué cada uno lleva su código. */}
+        <Route path="/pedidos/reparto/cierre-de-caja" element={
+          <Suspense fallback={null}>
+            <CierreCajaPage />
+          </Suspense>
+        } />
+        {/* Una pantalla por reparto (tarde, tarde-noche y noche). Es el mismo componente con un
+            parámetro: cada uno ve solo sus paradas y maneja su propio recorrido — ver
+            reparto/repartidores.js, donde están los tres links y por qué se llaman así. */}
         <Route path="/reparto-tarde" element={
           <Suspense fallback={null}>
             <RepartoMoto repartidor="moto1" />
           </Suspense>
         } />
-        <Route path="/reparto-noche" element={
+        <Route path="/reparto-tarde-noche" element={
           <Suspense fallback={null}>
             <RepartoMoto repartidor="moto2" />
+          </Suspense>
+        } />
+        <Route path="/reparto-noche" element={
+          <Suspense fallback={null}>
+            <RepartoMoto repartidor="moto3" />
           </Suspense>
         } />
         {/* /reparto era el link del único motomensajero que había. Ya no muestra ningún recorrido:

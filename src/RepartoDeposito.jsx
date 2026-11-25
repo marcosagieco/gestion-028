@@ -9,7 +9,7 @@ import { Link } from 'react-router-dom';
 import { esProgramado } from './pedidos/fechaSalida';
 import {
   Bike, ArrowLeft, Moon, Sun, ChevronDown, ChevronRight, GripVertical,
-  MapPin, Lock, CheckCircle, XCircle, Loader2, PartyPopper, Clock, Trash2, AlertTriangle, Pencil,
+  MapPin, Lock, CheckCircle, XCircle, Loader2, PartyPopper, Clock, Trash2, AlertTriangle, Pencil, Wallet,
 } from 'lucide-react';
 import {
   DndContext, PointerSensor, TouchSensor, useSensor, useSensors, closestCenter,
@@ -21,6 +21,7 @@ import { computeRecorrido, ordenAPersistir } from './reparto/recorridoEngine';
 import { REPARTIDORES, REPARTIDOR_DEFAULT, repartidorConfig, repartidorDe, esDelRepartidor, otrosRepartidores } from './reparto/repartidores';
 import { loadGoogleMaps, MAP_DARK_STYLE, MAP_LIGHT_STYLE } from './reparto/googleMapsLoader';
 import AddressAutocomplete from './reparto/AddressAutocomplete';
+
 
 // --- Firebase: mismo patrón self-contenido que PedidosPage.jsx ---
 const firebaseConfig = {
@@ -644,8 +645,8 @@ export default function RepartoDeposito() {
     }
   };
 
-  // Pasa una parada de un motomensajero al otro. Es lo que se usa cuando un pedido entró para la
-  // salida de las 15:30 pero no se armó a tiempo, o cuando uno queda cargado y el otro libre.
+  // Pasa una parada de un motomensajero a otro. Es lo que se usa cuando un pedido entró para la
+  // salida de la tarde pero no se armó a tiempo, o cuando uno queda cargado y el otro libre.
   //
   // Se recalculan los DOS recorridos: el que la pierde (para que no quede un hueco en el orden) y el
   // que la recibe (para que entre en el lugar que le corresponde por distancia). Si la parada era la
@@ -663,7 +664,9 @@ export default function RepartoDeposito() {
 
     setPasandoId(pedido.id);
     try {
-      await updateDoc(doc(db, 'pedidos', pedido.id), { repartidor: nuevoId, ordenRecorrido: null, ordenManual: false });
+      // La tanda acompaña al reparto (cupo del bot y seguimiento del cliente); turnoManual hace que se
+      // respete esta elección (ver repartidorDe en reparto/repartidores.js).
+      await updateDoc(doc(db, 'pedidos', pedido.id), { repartidor: nuevoId, tandaSalida: hacia.tanda, turnoManual: true, ordenRecorrido: null, ordenManual: false });
 
       if (eraSuParadaFija) {
         const quedanDelPrimero = (paradasPorRepartidor[desdeId] || []).filter(p => p.id !== pedido.id);
@@ -699,6 +702,10 @@ export default function RepartoDeposito() {
             <p className="font-black text-sm tracking-tight truncate">Reparto en Moto</p>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
+            <Link to="/pedidos/reparto/cierre-de-caja"
+              className={`h-9 px-3 rounded-lg text-sm font-bold flex items-center gap-1.5 transition-colors ${dm ? 'text-zinc-300 bg-white/[0.06] hover:bg-white/[0.1]' : 'text-zinc-700 bg-zinc-100 hover:bg-zinc-200'}`}>
+              <Wallet size={16}/> Cierre de caja
+            </Link>
             <button onClick={() => setDm(v => !v)} className={`p-2.5 rounded-lg transition-colors ${dm ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.06]' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}>{dm ? <Sun size={17}/> : <Moon size={17}/>}</button>
           </div>
         </div>

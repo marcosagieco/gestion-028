@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import AddressAutocomplete from './reparto/AddressAutocomplete';
 import { armarPrefillFinalizar, rankearItemsEnStock } from './pedidos/autocompletarVenta';
-import { REPARTIDORES, repartidorDe, nombreRepartidor } from './reparto/repartidores';
+import { REPARTIDORES, repartidorDe, nombreRepartidor, repartidorConfig, horaDeTurno, turnoActivo } from './reparto/repartidores';
 import { ZONAS } from './reparto/zonas';
 import { rid, useCodigosBarra, derivarProductosConocidos, registrarCodigoBarra, agregarAEscaneo } from './escaneo/datos';
 import { CajaEscaneo, RegistrarCodigoModal, FilaEscaneada } from './escaneo/componentes';
@@ -1025,6 +1025,32 @@ function MotoPendienteCard({ pedido, dm, onListo, onCancel, db, codigosBarra, pr
   // paquete en la mano y sabe para qué salida va. Arranca en el que ya venía asignado (el bot o
   // /pedidos pueden traerlo marcado) y si no, en el primero que sale.
   const [repartidorSel, setRepartidorSel] = useState(() => repartidorDe(pedido));
+  // Horarios de cada turno y si la moto de la noche está prendida (/operativo).
+  const [operativo, setOperativo] = useState(null);
+  useEffect(() => onSnapshot(doc(db, 'settings', 'operativo'), snap => setOperativo(snap.exists() ? snap.data() : {}), () => setOperativo({})), [db]);
+  const [guardandoTurno, setGuardandoTurno] = useState(false);
+  // El turno se guarda apenas se toca: así el pedido ya figura en ese turno en la cola, en el reparto
+  // y para el seguimiento del cliente, aunque todavía no esté armado. `turnoManual` marca que lo
+  // eligió alguien del depósito (ver repartidorDe).
+  const elegirTurno = async (repId) => {
+    if (repId === repartidorSel) return;
+    const anterior = repartidorSel;
+    setRepartidorSel(repId);
+    setGuardandoTurno(true);
+    try {
+      await updateDoc(doc(db, 'pedidos', pedido.id), {
+        repartidor: repId,
+        tandaSalida: repartidorConfig(repId).tanda,
+        horaSalida: horaDeTurno(operativo, repId),
+        turnoManual: true,
+      });
+    } catch (e) {
+      setRepartidorSel(anterior);
+      alert('No se pudo cambiar el turno: ' + e.message);
+    } finally {
+      setGuardandoTurno(false);
+    }
+  };
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => setEntered(true));
@@ -1116,28 +1142,35 @@ function MotoPendienteCard({ pedido, dm, onListo, onCancel, db, codigosBarra, pr
           )}
         </div>
 
-        {/* Con qué motomensajero sale. Al tocar "Listo", el pedido entra directo al recorrido del
-            elegido (y solo él lo ve en su pantalla). Si después hay que cambiarlo, se puede pasar al
-            otro desde el panel de reparto sin tocar nada más. */}
+        {/* En qué turno sale (tarde / tarde-noche / noche). Se guarda al tocarlo; al tocar "Listo" el
+            pedido entra directo al recorrido de ese turno (y solo ese motomensajero lo ve). Si después
+            hay que cambiarlo, se puede pasar a otro desde el panel de reparto. La noche solo aparece
+            si está prendida en /operativo (o si el pedido ya estaba en ella). */}
         <div className="flex flex-col gap-1.5">
-          <label className={`text-xs font-semibold flex items-center gap-1.5 ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}><Bike size={13}/> ¿Con quién sale?</label>
+          <label className={`text-xs font-semibold flex items-center gap-1.5 ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>
+            <Bike size={13}/> ¿En qué turno sale?
+            {guardandoTurno && <Loader2 size={12} className="animate-spin" />}
+          </label>
           <div className="flex gap-2">
-            {REPARTIDORES.map(r => {
+            {REPARTIDORES.filter(r => r.id === repartidorSel || turnoActivo(operativo, r.id)).map(r => {
               const sel = r.id === repartidorSel;
               return (
-                <button key={r.id} type="button" onClick={() => setRepartidorSel(r.id)}
-                  className={`flex-1 h-14 rounded-xl border font-bold transition-all active:scale-[0.98] ${
+                <button key={r.id} type="button" onClick={() => elegirTurno(r.id)} disabled={guardandoTurno}
+                  className={`flex-1 h-14 rounded-xl border font-bold transition-all active:scale-[0.98] disabled:opacity-70 ${
                     sel
                       ? 'text-white border-transparent'
                       : (dm ? 'bg-[#101010] border-white/[0.07] text-zinc-400' : 'bg-white border-zinc-200 text-zinc-500')
                   }`}
                   style={sel ? { background: r.color } : undefined}>
-                  <span className="block text-base leading-tight">{r.nombre}</span>
-                  <span className="block text-[11px] font-semibold opacity-80 leading-tight">sale {r.salida}</span>
+                  <span className="block text-[15px] leading-tight">{r.nombre}</span>
+                  <span className="block text-[11px] font-semibold opacity-80 leading-tight">sale {horaDeTurno(operativo, r.id)}</span>
                 </button>
               );
             })}
           </div>
+          {!turnoActivo(operativo, 'moto3') && repartidorSel !== 'moto3' && (
+            <p className={`text-[11px] ${dm ? 'text-zinc-500' : 'text-zinc-500'}`}>La moto de la noche está apagada en /operativo.</p>
+          )}
         </div>
       </div>
 
@@ -1679,6 +1712,9 @@ export default function PedidosPage() {
         armadoAt: new Date().toISOString(),
         direccion,
         repartidor: repartidorId || repartidorDe(pedido),
+        // El turno elegido manda: la tanda queda igual que el reparto (para el cupo del bot y el
+        // seguimiento del cliente).
+        ...(repartidorId && repartidorId !== pedido.repartidor ? { tandaSalida: repartidorConfig(repartidorId).tanda, turnoManual: true } : {}),
         ...(esCorreo ? { tipoEnvio: 'moto', despachoInterno: 'moto_a_via_cargo' } : {}),
       });
       setFocusPendienteId(null);

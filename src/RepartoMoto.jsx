@@ -3,12 +3,12 @@ import { esProgramado } from './pedidos/fechaSalida';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   initializeFirestore, getFirestore, collection, query, orderBy, onSnapshot,
-  doc, setDoc, updateDoc, writeBatch,
+  doc, getDoc, setDoc, updateDoc, writeBatch,
   persistentLocalCache, persistentMultipleTabManager,
 } from 'firebase/firestore';
 import {
   Bike, Moon, Sun, ChevronDown, ChevronRight, Navigation, CheckCircle2,
-  Lock, XCircle, PartyPopper, Loader2, History, X, Clock, AlertTriangle, GripVertical,
+  Lock, XCircle, PartyPopper, Loader2, History, X, Clock, AlertTriangle, GripVertical, Wallet,
 } from 'lucide-react';
 import {
   DndContext, PointerSensor, TouchSensor, useSensor, useSensors, closestCenter,
@@ -18,8 +18,10 @@ import { CSS as DndCSS } from '@dnd-kit/utilities';
 import { loadGoogleMaps, MAP_DARK_STYLE, MAP_LIGHT_STYLE } from './reparto/googleMapsLoader';
 import { ZONAS_POR_ID, DEPOSITO_ORIGEN } from './reparto/zonas';
 import { computeRecorrido, ordenAPersistir } from './reparto/recorridoEngine';
-import { costoMotomensajeriaDe, medirCostoMotomensajeriaReal } from './reparto/motomensajeria';
+import { costoMotomensajeriaDe, costoMotomensajeriaEstimado, medirCostoMotomensajeriaReal } from './reparto/motomensajeria';
 import { esDelRepartidor, repartidorConfig, REPARTIDOR_DEFAULT } from './reparto/repartidores';
+import CobroEntregaModal from './reparto/CobroEntregaModal';
+import CierreCaja from './reparto/CierreCaja';
 
 // --- Firebase: mismo patrón self-contenido que PedidosPage.jsx ---
 const firebaseConfig = {
@@ -131,18 +133,19 @@ function EntregaFallidaModal({ dm, pedido, onConfirm, onCancel }) {
       <div onClick={e => e.stopPropagation()}
         className={`w-full max-w-sm rounded-3xl border p-5 shadow-2xl animate-in zoom-in-95 duration-150 ${dm ? 'bg-[#161616] border-white/[0.1]' : 'bg-white border-zinc-200'}`}>
         <p className={`text-lg font-black text-center mb-1.5 ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>¿Por qué no se pudo entregar?</p>
-        <p className={`text-sm text-center leading-snug mb-4 ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>{pedido.direccion?.texto}</p>
+        <p className={`text-sm text-center leading-snug mb-1 ${dm ? 'text-zinc-400' : 'text-zinc-600'}`}>{pedido.direccion?.texto}</p>
+        <p className={`text-xs text-center leading-snug mb-4 ${dm ? 'text-amber-300/80' : 'text-amber-700'}`}>El pedido se cancela y sale de tu recorrido.</p>
         <textarea value={motivo} onChange={e => setMotivo(e.target.value)} rows={3} autoFocus
           placeholder="Ej: no atendió, no había nadie, rechazó el pedido..."
           className={`w-full rounded-xl border p-3 text-sm resize-none outline-none transition-all focus:ring-2 focus:ring-amber-500/30 mb-4 ${dm ? 'bg-[#101010] border-white/[0.08] text-zinc-100 placeholder-zinc-600' : 'bg-white border-zinc-200 text-zinc-900'}`} />
         <div className="flex flex-col gap-2">
           <button onClick={() => onConfirm(motivo.trim())} disabled={!motivo.trim()}
             className="w-full h-14 rounded-2xl font-black text-base text-white transition-all active:scale-[0.97] bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-            <AlertTriangle size={18}/> Registrar intento fallido
+            <AlertTriangle size={18}/> Cancelar pedido
           </button>
           <button onClick={onCancel}
             className={`w-full h-11 rounded-xl font-bold text-sm transition-all ${dm ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}>
-            Cancelar
+            Volver
           </button>
         </div>
       </div>
@@ -277,6 +280,7 @@ export default function RepartoMoto({ repartidor = REPARTIDOR_DEFAULT }) {
   const [showEndDayConfirm, setShowEndDayConfirm] = useState(false);
   const [confirmEntregaPedido, setConfirmEntregaPedido] = useState(null);
   const [showHistorial, setShowHistorial] = useState(false);
+  const [showCierre, setShowCierre] = useState(false);
   // 'todos' muestra todo agrupado por día (como antes); un label puntual (ver historialGrupos)
   // filtra a solo ese día — así se puede mirar la plata de una fecha en particular sin desplazarse.
   const [filtroDiaHistorial, setFiltroDiaHistorial] = useState('todos');
@@ -293,6 +297,7 @@ export default function RepartoMoto({ repartidor = REPARTIDOR_DEFAULT }) {
   // pasara algo más. mapReady fuerza a que ese efecto se vuelva a correr apenas el mapa esté listo.
   const [mapReady, setMapReady] = useState(false);
 
+  const soloYo = useMemo(() => [repartidor], [repartidor]);
   const showToast = (message, type = 'success') => { setToast({ message, type }); setTimeout(() => setToast(null), 3000); };
 
   useEffect(() => {
@@ -541,16 +546,26 @@ export default function RepartoMoto({ repartidor = REPARTIDOR_DEFAULT }) {
     notificarEntregaAgente(pedido, 'llegue');
   };
 
-  const handleEntregado = async (pedido) => {
+  // `cobro` viene del cartel de cobro (CobroEntregaModal): cómo pagó, cuánto y las fotos del
+  // comprobante. Las fotos van a `comprobantesEntrega` (una por documento) y el pedido solo guarda
+  // sus ids — ver reparto/cobro.js. Con eso arma el cierre de caja.
+  const handleEntregado = async (pedido, cobro) => {
     if (entregandoId) return;
     setEntregandoId(pedido.id);
     try {
       const posEntrega = await getPosicionActual();
       const nowIso = new Date().toISOString();
+      const fotoIds = [];
+      for (const [i, imagen] of (cobro?.fotos || []).entries()) {
+        const id = `${pedido.id}_${Date.now()}_${i}`;
+        await setDoc(doc(db, 'comprobantesEntrega', id), { pedidoId: pedido.id, repartidor, imagen, creadoEn: nowIso });
+        fotoIds.push(id);
+      }
       await updateDoc(doc(db, 'pedidos', pedido.id), {
         estado: 'entregado',
         entregadoEn: nowIso,
         ubicacionEntrega: posEntrega ? { lat: posEntrega.lat, lng: posEntrega.lng } : null,
+        ...(cobro ? { cobroEntrega: { pagos: cobro.pagos, yaPagado: !!cobro.yaPagado, fotos: fotoIds, repartidor, registradoEn: nowIso } } : {}),
       });
 
       // Avisa al agente de IA para que le escriba al cliente. No bloquea nada.
@@ -562,9 +577,19 @@ export default function RepartoMoto({ repartidor = REPARTIDOR_DEFAULT }) {
       // si falla o Google no responde, el historial cae solo al estimado en línea recta.
       // pagado:false arranca sin pagar — Inicio lo suma a la deuda con ese repartidor hasta que el
       // dueño lo marca como pagado (se paga junto, cada varios días, no envío por envío).
+      // Si Google no responde (o falla), se guarda el estimado en línea recta: así el viaje nunca
+      // queda en $0 en el cierre de caja. Si mientras tanto ya se cerró la caja con ese viaje, no se
+      // pisa (se volvería a marcar como no pagado).
       medirCostoMotomensajeriaReal(pedido.direccion)
-        .then(costo => { if (costo) return updateDoc(doc(db, 'pedidos', pedido.id), { motomensajeria: { ...costo, pagado: false } }); })
-        .catch(err => console.error('motomensajería real:', err));
+        .catch(err => { console.error('motomensajería real:', err); return null; })
+        .then(async costo => {
+          const valor = costo || costoMotomensajeriaEstimado(pedido.direccion);
+          if (!valor) return;
+          const actual = await getDoc(doc(db, 'pedidos', pedido.id));
+          if (actual.exists() && actual.data().motomensajeria) return;
+          return updateDoc(doc(db, 'pedidos', pedido.id), { motomensajeria: { ...valor, pagado: false } });
+        })
+        .catch(err => console.error('motomensajería:', err));
 
       const restantes = stopsRaw.filter(p => p.id !== pedido.id);
       if (restantes.length === 0) {
@@ -585,14 +610,12 @@ export default function RepartoMoto({ repartidor = REPARTIDOR_DEFAULT }) {
     }
   };
 
-  // Registra un intento de entrega que no se pudo concretar (no atendió, rechazó el pedido, no
-  // había nadie) — a diferencia de handleEntregado, el pedido NO se cierra: sigue "armado" y
-  // sigue en stopsRaw, solo se anota el motivo en su historial de intentos y se recalcula el
-  // recorrido saliendo de donde se intentó, para que la parada vuelva a competir por orden con el
-  // resto en vez de quedar congelada ahí para siempre. No se cobra motomensajería por el intento:
-  // solo se paga el km real cuando la entrega se concreta (ver medirCostoMotomensajeriaReal en
-  // handleEntregado) — así el costo del viaje queda igual que hoy, y esto no le agrega plata a
-  // pagar de más a la motomensajería.
+  // Cuando el repartidor marca un problema (no atendió, rechazó el pedido, no había nadie), el
+  // pedido se CANCELA: mismo estado que "Cancelar pedido" en /pedidos, así queda en el historial de
+  // Cancelados con el motivo que escribió. Se saca del recorrido y se recalcula el resto saliendo de
+  // donde está, igual que al entregar. El motivo también queda en intentosFallidos (historial).
+  // No se cobra motomensajería: solo se paga el km real cuando la entrega se concreta (ver
+  // medirCostoMotomensajeriaReal en handleEntregado).
   const handleEntregaFallida = async (pedido, motivo) => {
     if (marcandoFallidaId || !motivo?.trim()) return;
     setMarcandoFallidaId(pedido.id);
@@ -600,18 +623,26 @@ export default function RepartoMoto({ repartidor = REPARTIDOR_DEFAULT }) {
       const posActual = await getPosicionActual();
       const nowIso = new Date().toISOString();
       const intentos = [...(pedido.intentosFallidos || []), { motivo: motivo.trim(), fecha: nowIso }];
-      await updateDoc(doc(db, 'pedidos', pedido.id), { intentosFallidos: intentos });
+      await updateDoc(doc(db, 'pedidos', pedido.id), {
+        estado: 'cancelado',
+        canceladoAt: nowIso,
+        motivoCancelacion: `Problema en la entrega (${yo.nombre}): ${motivo.trim()}`,
+        intentosFallidos: intentos,
+      });
 
-      // Recalcula el recorrido con TODAS las paradas de siempre (esta incluida, sin quitarla) —
-      // a diferencia de handleEntregado, que la sacaba de la lista al entregar.
-      const origin = posActual || { lat: pedido.direccion.lat, lng: pedido.direccion.lng };
-      const ordenado = await computeRecorrido({ pedidos: stopsRaw, paradaCongeladaId: null, origin });
-      const batch = writeBatch(db);
-      ordenado.forEach((p, i) => batch.update(doc(db, 'pedidos', p.id), { ordenRecorrido: i + 1 }));
-      await batch.commit();
-      await setDoc(doc(db, 'recorridos', yo.docRecorrido), { estado: 'en_calle', salidaEn: recorrido?.salidaEn || nowIso, paradaCongelada: ordenado[0].id });
+      const restantes = stopsRaw.filter(p => p.id !== pedido.id);
+      if (restantes.length === 0) {
+        await setDoc(doc(db, 'recorridos', yo.docRecorrido), { estado: 'en_deposito', salidaEn: null, paradaCongelada: null });
+      } else {
+        const origin = posActual || { lat: pedido.direccion.lat, lng: pedido.direccion.lng };
+        const ordenado = await computeRecorrido({ pedidos: restantes, paradaCongeladaId: null, origin });
+        const batch = writeBatch(db);
+        ordenado.forEach((p, i) => batch.update(doc(db, 'pedidos', p.id), { ordenRecorrido: i + 1 }));
+        await batch.commit();
+        await setDoc(doc(db, 'recorridos', yo.docRecorrido), { estado: 'en_calle', salidaEn: recorrido?.salidaEn || nowIso, paradaCongelada: ordenado[0].id });
+      }
 
-      showToast('Intento fallido registrado — el pedido vuelve a la cola');
+      showToast('Pedido cancelado — salió de tu recorrido');
     } catch (e) {
       showToast('Error al registrar el intento: ' + e.message, 'error');
     } finally {
@@ -686,6 +717,8 @@ export default function RepartoMoto({ repartidor = REPARTIDOR_DEFAULT }) {
               <span className={`w-2 h-2 rounded-full flex-shrink-0 ${repartidorActivo ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'}`}/>
               {togglingActivo ? '...' : (repartidorActivo ? 'Activo' : 'Inactivo')}
             </button>
+            <button onClick={() => setShowCierre(true)} title="Mi caja"
+              className={`p-2.5 rounded-lg transition-colors ${dm ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.06]' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}><Wallet size={19}/></button>
             <button onClick={() => setShowHistorial(true)} title="Historial de entregas"
               className={`p-2.5 rounded-lg transition-colors ${dm ? 'text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.06]' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}><History size={19}/></button>
             <button onClick={() => setDm(v => !v)} title={dm ? 'Modo claro' : 'Modo oscuro'}
@@ -812,11 +845,12 @@ export default function RepartoMoto({ repartidor = REPARTIDOR_DEFAULT }) {
       )}
 
       {confirmEntregaPedido && (
-        <ConfirmModal dm={dm} title="¿Ya lo entregaste?" text={confirmEntregaPedido.direccion?.texto}
-          confirmLabel="Sí, entregado"
-          onConfirm={() => { const p = confirmEntregaPedido; setConfirmEntregaPedido(null); handleEntregado(p); }}
+        <CobroEntregaModal dm={dm} pedido={confirmEntregaPedido}
+          onConfirm={(cobro) => { const p = confirmEntregaPedido; setConfirmEntregaPedido(null); handleEntregado(p, cobro); }}
           onCancel={() => setConfirmEntregaPedido(null)} />
       )}
+
+      {showCierre && <CierreCaja dm={dm} db={db} pedidos={pedidos} repartidores={soloYo} volverLabel="Volver al recorrido" onClose={() => setShowCierre(false)} />}
 
       {fallidaPedido && (
         <EntregaFallidaModal dm={dm} pedido={fallidaPedido}

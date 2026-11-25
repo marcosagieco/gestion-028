@@ -42,10 +42,10 @@ function restriccionCambio(pedido, ahora = Date.now()) {
   return { permitido: true, derivar: false, armado: pedido.estado === "armado" };
 }
 
-// Hay dos repartos (15:30 y 18:30) y cada uno tiene su recorrido: se mira el del reparto de ESTE
+// Hay tres repartos (tarde, tarde-noche y noche) y cada uno tiene su recorrido: se mira el del reparto de ESTE
 // pedido, si no a un cliente del segundo se le diría que salió solo porque salió el primero. Los
 // documentos salen de src/reparto/repartidores.js.
-const DOC_RECORRIDO = { moto1: "activo", moto2: "activo_moto2" };
+const DOC_RECORRIDO = { moto1: "activo", moto2: "activo_moto2", moto3: "activo_moto3" };
 async function repartoEnLaCalle(pedido, ahora = Date.now()) {
   const doc = await db.collection("recorridos").doc(DOC_RECORRIDO[pedido.repartidor] || DOC_RECORRIDO.moto1).get();
   const r = doc.exists ? doc.data() : null;

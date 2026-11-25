@@ -3502,6 +3502,8 @@ export default function App() {
   const [metaAdsDailySinceCutoff, setMetaAdsDailySinceCutoff] = useState([]); // spend diario desde PROJECTION_CUTOFF_DATE, para proyección de Meta Ads
   const [metaAllCampaignNames, setMetaAllCampaignNames] = useState([]);
   const [metaPeriod, setMetaPeriod] = useState('last_30d');
+  // Sección "¿Los anuncios dejan plata?": qué clientes se miran (nuevos / los que vuelven / todos).
+  const [metaVistaClientes, setMetaVistaClientes] = useState('nuevos');
   const [metaCustomRange, setMetaCustomRange] = useState({ start: '2026-05-30', end: getTodayDate() });
 
   const [customDateRange, setCustomDateRange] = useState({ start: getTodayDate(), end: getTodayDate() });
@@ -4346,7 +4348,9 @@ export default function App() {
       !teamMembers.some(m => m.paymentType === 'motomensajeria' && (m.repartidorId === r.id || (m.name || '').toLowerCase().includes(r.nombre.toLowerCase()))));
     if (faltan.length === 0) return;
     motoSeedAttemptedRef.current = true;
-    Promise.all(faltan.map(r => addDoc(collection(db, 'teamMembers'), {
+    // Id fijo por reparto (no addDoc): si esto corre a la vez en varias pantallas, todas escriben el
+    // MISMO documento en vez de crear uno cada una (así se habían juntado varias copias de cada reparto).
+    Promise.all(faltan.map(r => setDoc(doc(db, 'teamMembers', `motomensajeria_${r.id}`), {
       name: r.nombre,
       // Queda guardado a qué reparto corresponde, así el panel no depende de cómo se escriba el
       // nombre (se puede renombrar en Equipo 028 sin romper nada).
@@ -5402,11 +5406,13 @@ export default function App() {
       const days = metaPeriod === 'last_7d' ? 7 : metaPeriod === 'last_14d' ? 14 : metaPeriod === 'last_90d' ? 90 : 30;
       start = new Date(today); start.setDate(start.getDate()-(days-1)); start.setHours(0,0,0,0);
     }
+    // costArsAtSale es el costo POR UNIDAD (igual que en Inicio): se multiplica por la cantidad.
+    const costoDe = v => (v.costArsAtSale || 0) * (v.quantity || 0);
     const inR = d => { const dt = new Date(d); return !isNaN(dt) && dt >= start && dt <= end; };
     const fs = sales.filter(s => s.date && inR(s.date) && !s.isFalla && !s.isRobo && (s.isNewClient === 'Nuevo - Publicidad' || s.isNewClient === 'Clientes - Publicidad'));
     const fe = expenses.filter(e => e.date && inR(e.date));
     const revenue = fs.reduce((s,v) => s+(v.totalSaleRaw||0), 0);
-    const cost    = fs.reduce((s,v) => s+(v.costArsAtSale||0), 0);
+    const cost    = fs.reduce((s,v) => s+costoDe(v), 0);
     const totalExp = fe.reduce((s,v) => s+(v.amount||0), 0);
     const totalAllRevenue = sales.filter(s => s.date && inR(s.date)).reduce((s,v) => s+(v.totalSaleRaw||0), 0);
     const adsByDate = {};
@@ -5415,13 +5421,21 @@ export default function App() {
     // ya viene en el día local de la cuenta publicitaria), así que si acá se usa el día UTC, las
     // ventas cargadas de noche quedan un día corridas y el ROAS/MER diario no pega con el gasto real
     // de ese día.
+    // Pedido = ticketId (una venta de varios productos son varios documentos con el mismo ticket).
+    const pedidoDe = (v) => v.ticketId || v.id;
+    const ticketsPorDia = {};
+    const nuevosPorDia = {};
     fs.forEach(s => {
       const d = localDayKey(s.date); if (!d) return;
       if (!adsByDate[d]) adsByDate[d] = { revenue: 0, cost: 0, count: 0 };
       adsByDate[d].revenue += s.totalSaleRaw || 0;
-      adsByDate[d].cost    += s.costArsAtSale || 0;
-      adsByDate[d].count   += 1;
-      if (s.isNewClient === 'Nuevo - Publicidad') newAdsByDate[d] = (newAdsByDate[d] || 0) + 1;
+      adsByDate[d].cost    += costoDe(s);
+      (ticketsPorDia[d] = ticketsPorDia[d] || new Set()).add(pedidoDe(s));
+      adsByDate[d].count = ticketsPorDia[d].size;
+      if (s.isNewClient === 'Nuevo - Publicidad') {
+        (nuevosPorDia[d] = nuevosPorDia[d] || new Set()).add(pedidoDe(s));
+        newAdsByDate[d] = nuevosPorDia[d].size;
+      }
     });
     const allByDate = {};
     sales.filter(s => s.date && inR(s.date)).forEach(s => {
@@ -5433,18 +5447,20 @@ export default function App() {
     ['Nuevo - Publicidad', 'Clientes - Publicidad'].forEach(type => {
       const fsType = fs.filter(s => s.isNewClient === type);
       const revenueType = fsType.reduce((s,v) => s+(v.totalSaleRaw||0), 0);
-      const costType    = fsType.reduce((s,v) => s+(v.costArsAtSale||0), 0);
-      byAdType[type] = { revenue: revenueType, cost: costType, netProfit: revenueType - costType, count: fsType.length };
+      const costType    = fsType.reduce((s,v) => s+costoDe(v), 0);
+      byAdType[type] = { revenue: revenueType, cost: costType, netProfit: revenueType - costType, count: new Set(fsType.map(pedidoDe)).size, productos: fsType.reduce((s,v) => s + (Number(v.quantity) || 1), 0) };
     });
     const adsByCampaign = {};
+    const ticketsPorCampania = {};
     fs.forEach(s => {
       const camp = String(s.adCampaign || '').trim() || 'Sin campaña asignada';
       if (!adsByCampaign[camp]) adsByCampaign[camp] = { revenue: 0, cost: 0, count: 0 };
       adsByCampaign[camp].revenue += s.totalSaleRaw || 0;
-      adsByCampaign[camp].cost    += s.costArsAtSale || 0;
-      adsByCampaign[camp].count   += 1;
+      adsByCampaign[camp].cost    += costoDe(s);
+      (ticketsPorCampania[camp] = ticketsPorCampania[camp] || new Set()).add(pedidoDe(s));
+      adsByCampaign[camp].count = ticketsPorCampania[camp].size;
     });
-    return { revenue, netProfit: revenue - cost, grossProfit: revenue - cost, totalExp, salesCount: fs.length, uniqueClientsCount: uniqueClients.size, totalAllRevenue, adsByDate, newAdsByDate, allByDate, adsByCampaign, byAdType };
+    return { revenue, netProfit: revenue - cost, grossProfit: revenue - cost, totalExp, salesCount: new Set(fs.map(pedidoDe)).size, uniqueClientsCount: uniqueClients.size, totalAllRevenue, adsByDate, newAdsByDate, allByDate, adsByCampaign, byAdType };
   }, [sales, expenses, metaPeriod, metaCustomRange], isMetaAdsTab);
 
   // Evolución mensual de CAC (cliente nuevo) vs Costo por Venta (origen ads, incl. recompras)
@@ -5462,8 +5478,12 @@ export default function App() {
       const dayKey = s.date && localDayKey(s.date);
       const month = dayKey && dayKey.slice(0, 7);
       if (!month || !map[month]) return;
-      if (s.isNewClient === 'Nuevo - Publicidad') { map[month].newAdsCount++; map[month].totalAdsCount++; }
-      else if (s.isNewClient === 'Clientes - Publicidad') { map[month].totalAdsCount++; }
+      // Pedidos (ticket único), no renglones de producto.
+      const t = s.ticketId || s.id;
+      if (s.isNewClient === 'Nuevo - Publicidad') { (map[month]._nuevos = map[month]._nuevos || new Set()).add(t); (map[month]._todos = map[month]._todos || new Set()).add(t); }
+      else if (s.isNewClient === 'Clientes - Publicidad') { (map[month]._todos = map[month]._todos || new Set()).add(t); }
+      map[month].newAdsCount = map[month]._nuevos ? map[month]._nuevos.size : 0;
+      map[month].totalAdsCount = map[month]._todos ? map[month]._todos.size : 0;
     });
     const MN = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
     return Object.values(map)
@@ -12779,23 +12799,38 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                 })()}
 
             {/* --- PESTAÑA META ADS --- */}
-            {activeTab === 'metaads' && (
+            {activeTab === 'metaads' && (() => {
+              // Mismo lenguaje visual que Inicio: paneles planos #0A0A0A, títulos de sección de 15px con
+              // una línea de explicación, tarjetas PremiumMetricCard agrupadas por tema.
+              const panel = `rounded-2xl p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`;
+              const tituloSeccion = `text-[15px] font-semibold tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`;
+              const fuerte = darkMode ? 'text-zinc-100' : 'text-zinc-900';
+              const seccion = (titulo, descripcion, children) => (
+                <div>
+                  <div className="mb-3">
+                    <h3 className={tituloSeccion}>{titulo}</h3>
+                    {descripcion && <p className="text-[13px] mt-0.5 text-zinc-500">{descripcion}</p>}
+                  </div>
+                  {children}
+                </div>
+              );
+              const separador = <div className={`h-px w-full my-2 ${darkMode ? 'bg-white/[0.06]' : 'bg-zinc-200'}`} />;
+              return (
               <div className="space-y-5 animate-in fade-in duration-300">
 
-                {/* Header / Period selector */}
-                <div className={`p-4 rounded-2xl border flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 ${darkMode ? 'border-white/[0.06]' : 'bg-white border-zinc-200'}`}
-                  style={darkMode ? {background:'linear-gradient(145deg,#0E0E0E,#161616)', boxShadow:'0 4px 20px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.04)'} : {}}>
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{background:'rgba(99,102,241,0.14)'}}>
-                      <Target size={15} style={{color:'#6366f1'}}/>
+                {/* Encabezado + período (igual que el selector de Inicio) */}
+                <div className={`p-4 rounded-2xl border flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200'}`}>
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{background:'rgba(99,102,241,0.12)'}}>
+                      <Target size={16} style={{color:'#6366f1'}}/>
                     </div>
                     <div>
-                      <h3 className={`font-bold text-sm ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Meta Ads</h3>
-                      <p className="text-[11px] text-zinc-500">Performance publicitario cruzado con Firebase</p>
+                      <h3 className={`text-[15px] font-semibold tracking-tight ${fuerte}`}>Publicidad en Meta</h3>
+                      <p className="text-[13px] text-zinc-500 mt-0.5">Lo que gastaste en Facebook e Instagram cruzado con las ventas reales.</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 w-full lg:w-auto">
-                    <div className="flex-1 lg:w-52">
+                  <div className="w-full lg:w-auto flex flex-col md:flex-row gap-3 md:items-center">
+                    <div className="w-full md:w-64 flex-shrink-0">
                       <Select darkMode={darkMode} value={metaPeriod} onChange={e => setMetaPeriod(e.target.value)}
                         options={[
                           {value:'today',      label:'Hoy'},
@@ -12806,13 +12841,13 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                           {value:'this_month', label:'Este mes'},
                           {value:'last_month', label:'Mes anterior'},
                           {value:'last_90d',   label:'Últimos 90 días'},
-                          {value:'historico',  label:'📊 Histórico completo'},
-                          {value:'custom',     label:'📅 Rango personalizado'},
+                          {value:'historico',  label:'Histórico completo'},
+                          {value:'custom',     label:'Rango personalizado'},
                         ]}
                       />
                     </div>
                     {metaPeriod === 'custom' && (
-                      <div className="flex items-center gap-2 animate-in slide-in-from-right-2">
+                      <div className="flex items-center gap-2 animate-in slide-in-from-right-2 w-full md:w-auto">
                         <Input darkMode={darkMode} type="date" value={metaCustomRange.start}
                           onChange={e => setMetaCustomRange(r => ({...r, start: e.target.value}))} />
                         <span className="text-zinc-500 font-bold flex-shrink-0">—</span>
@@ -12820,8 +12855,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                           onChange={e => setMetaCustomRange(r => ({...r, end: e.target.value}))} />
                       </div>
                     )}
-                    <Button darkMode={darkMode} onClick={fetchMetaInsights} disabled={metaLoading}
-                      className="flex-shrink-0">
+                    <Button darkMode={darkMode} onClick={fetchMetaInsights} disabled={metaLoading} className="flex-shrink-0">
                       <RefreshCw size={14} className={metaLoading ? 'animate-spin' : ''}/>
                       {metaLoading ? 'Cargando...' : 'Actualizar'}
                     </Button>
@@ -12830,32 +12864,29 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
                 {/* Error */}
                 {metaError && (
-                  <div className="p-4 rounded-2xl border border-red-500/20 bg-red-500/5 text-red-400 text-sm flex items-center gap-3">
+                  <div className={`p-4 rounded-2xl border text-sm flex items-center gap-3 ${darkMode ? 'border-red-500/20 bg-red-500/[0.06] text-red-300' : 'border-red-200 bg-red-50 text-red-600'}`}>
                     <XCircle size={16} className="flex-shrink-0"/>
                     <span>{metaError}</span>
                   </div>
                 )}
 
-                {/* Anuncios cruzados con el bot de WhatsApp: gasto, clientes, ventas y ROAS por anuncio */}
-                <AnunciosWhatsApp db={db} darkMode={darkMode} metaPeriod={metaPeriod} metaCustomRange={metaCustomRange} />
-
-                {/* Skeleton loading */}
+                {/* Cargando por primera vez */}
                 {metaLoading && !metaData && (
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                    {Array.from({length:8}).map((_,i) => (
-                      <div key={i} className={`rounded-2xl border p-5 h-36 animate-pulse ${darkMode ? 'border-white/[0.06]' : 'bg-zinc-100 border-zinc-200'}`}
-                        style={darkMode ? {background:'linear-gradient(145deg,#0E0E0E,#161616)'} : {}}/>
+                  <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                    {Array.from({length:10}).map((_,i) => (
+                      <div key={i} className={`rounded-xl h-[124px] animate-pulse ${darkMode ? 'bg-[#0A0A0A]' : 'bg-zinc-100'}`}/>
                     ))}
                   </div>
                 )}
 
                 {/* Estado vacío */}
                 {!metaData && !metaLoading && !metaError && (
-                  <div className={`rounded-2xl border p-16 text-center ${darkMode ? 'border-white/[0.06]' : 'bg-white border-zinc-200'}`}
-                    style={darkMode ? {background:'linear-gradient(145deg,#0E0E0E,#161616)'} : {}}>
-                    <Target size={36} className="mx-auto mb-4 text-zinc-600"/>
-                    <p className="text-sm font-semibold text-zinc-500 mb-1">Sin datos cargados</p>
-                    <p className="text-xs text-zinc-600 mb-5">Seleccioná un período y hacé clic en Actualizar</p>
+                  <div className={`${panel} py-14 text-center`}>
+                    <div className="w-11 h-11 rounded-xl mx-auto mb-4 flex items-center justify-center" style={{background:'rgba(99,102,241,0.12)'}}>
+                      <Target size={18} style={{color:'#6366f1'}}/>
+                    </div>
+                    <p className={`text-[15px] font-semibold ${fuerte}`}>Todavía no hay datos de Meta</p>
+                    <p className="text-[13px] text-zinc-500 mt-1 mb-5">Elegí un período y tocá Actualizar.</p>
                     <Button darkMode={darkMode} onClick={fetchMetaInsights}>Cargar datos de Meta</Button>
                   </div>
                 )}
@@ -12872,20 +12903,17 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                   const purchases  = parseInt(
                     metaData.actions?.find(a => ['purchase','offsite_conversion.fb_pixel_purchase','omni_purchase'].includes(a.action_type))?.value || 0
                   );
-                  const { revenue, netProfit, grossProfit, totalAllRevenue, adsByDate, newAdsByDate, allByDate, salesCount, adsByCampaign, byAdType } = metaFirebaseStats;
+                  const { revenue, grossProfit, totalAllRevenue, adsByDate, allByDate, salesCount, adsByCampaign, byAdType } = metaFirebaseStats;
                   const roas = adSpend > 0 ? revenue / adSpend : 0;
                   const roasProfit = adSpend > 0 ? grossProfit / adSpend : 0;
                   const mer  = adSpend > 0 ? totalAllRevenue / adSpend : 0;
                   const cpa  = purchases > 0 ? adSpend / purchases : 0;
-                  const rentabilidad = netProfit - adSpend;
                   const newAdsCount = byAdType['Nuevo - Publicidad'].count;
                   const cacNuevo = newAdsCount > 0 ? adSpend / newAdsCount : 0;
                   const cpvAds   = salesCount > 0 ? adSpend / salesCount : 0;
 
                   const dailySpend       = metaDailyData.map(d => parseFloat(d.spend||0));
                   const dailyCtr         = metaDailyData.map(d => parseFloat(d.ctr||0));
-                  const dailyClicks      = metaDailyData.map(d => parseInt(d.clicks||0));
-                  const dailyImpressions = metaDailyData.map(d => parseInt(d.impressions||0));
                   const dailyReach       = metaDailyData.map(d => parseInt(d.reach||0));
                   const dailyFrequency   = metaDailyData.map(d => parseFloat(d.frequency||0));
                   const dailyCpm         = metaDailyData.map(d => parseFloat(d.cpm||0));
@@ -12903,109 +12931,213 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                   const monthlyCpvAds    = monthlyAdsCostTrend.map(m => m.cpvAds || 0);
 
                   const fARS = v => formatMoney(v);
+                  const linea = (arr) => arr.length >= 2 ? arr : null;
+                  const fVeces = v => `${v.toFixed(2)}×`;
+                  const grilla = 'grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-3';
+                  const grilla4 = 'grid grid-cols-2 lg:grid-cols-4 gap-3';
+
+                  // Tablas (campañas): mismo estilo en las dos.
+                  const th = 'pb-3 text-[12px] font-medium text-zinc-500';
+                  const fila = `border-t text-[13px] transition-colors ${darkMode ? 'border-white/[0.05] hover:bg-white/[0.02]' : 'border-zinc-100 hover:bg-zinc-50'}`;
+                  const celda = `py-3 px-3 text-right tabular-nums ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`;
+
+                  // Ganancia real por campaña (cruce Meta + Firebase)
+                  const campaignNames = new Set([...metaCampaigns.map(c => c.name), ...Object.keys(adsByCampaign)]);
+                  const filasCampania = Array.from(campaignNames).map(name => {
+                    const metaC = metaCampaigns.find(c => c.name === name);
+                    const spend = metaC ? parseFloat(metaC.insights?.spend || 0) : null;
+                    const fb = adsByCampaign[name] || { revenue: 0, cost: 0, count: 0 };
+                    const realProfit = fb.revenue - fb.cost;
+                    const rent = spend != null ? realProfit - spend : null;
+                    return { name, spend, ...fb, realProfit, rentabilidad: rent };
+                  }).sort((a, b) => b.realProfit - a.realProfit);
+
 
                   return (
                     <>
-                      {/* Tarjetas + Proyección de Meta Ads (slider horizontal, drag, igual que en Inicio) */}
-                      <div className="space-y-4">
-                        <MetricSlider
-                          darkMode={darkMode}
-                          ariaLabel="métricas y proyecciones de Meta Ads"
-                          pages={[
-                            { id: 'metrics', content: (
-                              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                                <PremiumMetricCard darkMode={darkMode} title="Gasto en Ads" value={fARS(adSpend)} subtitle={null} sparkline={null} lineSparkline={dailySpend.length >= 2 ? dailySpend : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Plata total que gastaste en publicidad en Meta durante el período" />
-                                <PremiumMetricCard darkMode={darkMode} title="ROAS" value={`${roas.toFixed(2)}×`} subtitle={null} sparkline={null} lineSparkline={dailyRoas.length >= 2 ? dailyRoas : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v.toFixed(2)}×`} tooltip="Por cada peso que invertís en ads, cuántos pesos en ventas generás. Arriba de 3x es bueno, arriba de 5x es excelente" />
-                                <PremiumMetricCard darkMode={darkMode} title="ROAS (Ganancia)" value={`${roasProfit.toFixed(2)}×`} subtitle={null} sparkline={null} lineSparkline={dailyRoasP.length >= 2 ? dailyRoasP : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v.toFixed(2)}×`} tooltip="Por cada peso invertido en ads, cuánto ganás neto descontando el costo del producto. Arriba de 1x significa que los ads son rentables" />
-                                <PremiumMetricCard darkMode={darkMode} title="MER" value={`${mer.toFixed(2)}×`} subtitle={null} sparkline={null} lineSparkline={dailyMer.length >= 2 ? dailyMer : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v.toFixed(2)}×`} tooltip="Cuánto factura el negocio en total por cada peso que gastás en publicidad. Mide el impacto general de los ads" />
-                                <PremiumMetricCard darkMode={darkMode} title="CPA" value={cpa > 0 ? fARS(cpa) : '—'} subtitle={`${purchases} conversión${purchases !== 1 ? 'es' : ''}`} sparkline={null} lineSparkline={dailyCpa.length >= 2 ? dailyCpa : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Cuánto te cuesta conseguir un cliente según el píxel de Meta. Mientras más bajo mejor, ideal que sea menor al margen de ganancia del producto" />
-                                <PremiumMetricCard darkMode={darkMode} title="CAC — Cliente Nuevo" value={newAdsCount > 0 ? fARS(cacNuevo) : '—'} subtitle={`${newAdsCount} cliente${newAdsCount !== 1 ? 's' : ''} nuevo${newAdsCount !== 1 ? 's' : ''} por ads · evolución mensual`} sparkline={null} lineSparkline={monthlyCacNuevo.filter(v => v > 0).length >= 2 ? monthlyCacNuevo : null} lineSparklineLabels={monthlyLabels} lineSparklineFormatter={fARS} tooltip="Gasto en Meta Ads del período ÷ cantidad de clientes en su PRIMERA compra marcados como 'Nuevo - Publicidad'. Solo primera compra, no cuenta recompras. El gráfico muestra la evolución mes a mes." />
-                                <PremiumMetricCard darkMode={darkMode} title="Costo por Venta — Origen Ads" value={salesCount > 0 ? fARS(cpvAds) : '—'} subtitle={`${salesCount} pedido${salesCount !== 1 ? 's' : ''} (nuevos + recompras) · evolución mensual`} sparkline={null} lineSparkline={monthlyCpvAds.filter(v => v > 0).length >= 2 ? monthlyCpvAds : null} lineSparklineLabels={monthlyLabels} lineSparklineFormatter={fARS} tooltip="Gasto en Meta Ads del período ÷ TOTAL de pedidos de clientes de origen ads (primera compra 'Nuevo - Publicidad' + recompras 'Clientes - Publicidad'). No es lo mismo que el CAC de cliente nuevo — este incluye recompras. El gráfico muestra la evolución mes a mes." />
-                                <PremiumMetricCard darkMode={darkMode} title="CTR" value={`${ctr.toFixed(2)}%`} subtitle={`${clicks.toLocaleString('es-AR')} clics · ${impressions.toLocaleString('es-AR')} impr.`} sparkline={null} lineSparkline={dailyCtr.length >= 2 ? dailyCtr : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v.toFixed(2)}%`} tooltip="De cada 100 personas que vieron tu anuncio, cuántas hicieron click. Arriba de 1% es aceptable, arriba de 2% es bueno" />
-                                <PremiumMetricCard darkMode={darkMode} title="CPM" value={fARS(cpm)} subtitle={null} sparkline={null} lineSparkline={dailyCpm.length >= 2 ? dailyCpm : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Cuánto pagás para que 1000 personas vean tu anuncio. Mientras más bajo, más barato es llegar a la gente" />
-                                <PremiumMetricCard darkMode={darkMode} title="Alcance" value={reach.toLocaleString('es-AR')} subtitle={`${impressions.toLocaleString('es-AR')} impr.`} sparkline={null} lineSparkline={dailyReach.length >= 2 ? dailyReach : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => v.toLocaleString('es-AR')} tooltip="Cantidad de personas distintas que vieron tu anuncio al menos una vez" />
-                                <PremiumMetricCard darkMode={darkMode} title="Frecuencia" value={frequency.toFixed(2)} subtitle={`${reach.toLocaleString('es-AR')} personas`} sparkline={null} lineSparkline={dailyFrequency.length >= 2 ? dailyFrequency : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => v.toFixed(2)} tooltip="Cuántas veces en promedio vio tu anuncio cada persona. Entre 1.5 y 3 es ideal, más de 3 puede cansar a la audiencia" />
-                                <PremiumMetricCard darkMode={darkMode} title="Ventas por Ads" value={salesCount} subtitle="pedidos atribuidos a publicidad" sparkline={null} lineSparkline={dailySalesCount.length >= 2 ? dailySalesCount : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v} pedido${v !== 1 ? 's' : ''}`} tooltip="Total de ventas registradas como provenientes de publicidad en el período seleccionado" />
-                                <PremiumMetricCard darkMode={darkMode} title="Ticket Promedio Ads" value={salesCount > 0 ? fARS(revenue / salesCount) : '—'} subtitle="por pedido de publicidad" sparkline={null} lineSparkline={dailyTicketAvg.length >= 2 ? dailyTicketAvg : null} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Valor promedio de cada venta atribuida a ads. Cuanto más alto, más eficiente es la inversión publicitaria" />
-                              </div>
-                            ) },
-                            { id: 'gasto', content: (
-                              <ProjectionChart darkMode={darkMode} title="Gasto en Ads Proyectado"
-                                subtitle="Desde el 1 de junio de 2026" projection={metaAdsSpendProjection}
-                                valueFormatter={fARS} axisFormatter={formatCompact} />
-                            ) },
-                            { id: 'facturacion', content: (
-                              <ProjectionChart darkMode={darkMode} title="Facturación por Ads Proyectada"
-                                subtitle="Ventas atribuidas a publicidad, desde el 1 de junio de 2026" projection={metaAdsRevenueProjection}
-                                valueFormatter={fARS} axisFormatter={formatCompact} />
-                            ) },
-                            { id: 'cpa', content: (
-                              <ProjectionChart darkMode={darkMode} title="CPA — Tendencia Proyectada"
-                                subtitle="Gasto ÷ clientes nuevos por ads, desde el 1 de junio de 2026" projection={metaAdsCpaProjection}
-                                valueFormatter={fARS} axisFormatter={fARS} />
-                            ) },
-                          ]}
-                        />
-                      </div>
+                      {/* Tarjetas + Proyecciones (slider, igual que en Inicio) */}
+                      <MetricSlider
+                        darkMode={darkMode}
+                        ariaLabel="métricas y proyecciones de Meta Ads"
+                        pages={[
+                          { id: 'metrics', content: (
+                            <div className="space-y-5">
+                              {seccion("Inversión y retorno", "Cuánto pusiste en anuncios y cuánto volvió en ventas.", (
+                                <div className={grilla}>
+                                  <PremiumMetricCard darkMode={darkMode} title="Gasto en Ads" value={fARS(adSpend)} subtitle="Facebook e Instagram" lineSparkline={linea(dailySpend)} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Plata total que gastaste en publicidad en Meta durante el período" />
+                                  <PremiumMetricCard darkMode={darkMode} title="ROAS" value={fVeces(roas)} subtitle="ventas por cada $1 de ads" lineSparkline={linea(dailyRoas)} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fVeces} tooltip="Por cada peso que invertís en ads, cuántos pesos en ventas generás. Arriba de 3x es bueno, arriba de 5x es excelente" />
+                                  <PremiumMetricCard darkMode={darkMode} title="ROAS (Ganancia)" value={fVeces(roasProfit)} subtitle="ganancia por cada $1 de ads" lineSparkline={linea(dailyRoasP)} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fVeces} tooltip="Por cada peso invertido en ads, cuánto ganás neto descontando el costo del producto. Arriba de 1x significa que los ads son rentables" />
+                                  <PremiumMetricCard darkMode={darkMode} title="MER" value={fVeces(mer)} subtitle="facturación total ÷ gasto" lineSparkline={linea(dailyMer)} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fVeces} tooltip="Cuánto factura el negocio en total por cada peso que gastás en publicidad. Mide el impacto general de los ads" />
+                                  <PremiumMetricCard darkMode={darkMode} title="Ventas por Ads" value={salesCount.toLocaleString('es-AR')} subtitle="pedidos de clientes de publicidad" lineSparkline={linea(dailySalesCount)} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v} pedido${v !== 1 ? 's' : ''}`} tooltip="Total de ventas registradas como provenientes de publicidad en el período seleccionado" />
+                                </div>
+                              ))}
+                              {separador}
+                              {seccion("Costo por cliente", "Cuánto te sale conseguir cada cliente y cada venta.", (
+                                <div className={grilla4}>
+                                  <PremiumMetricCard darkMode={darkMode} title="CAC — Cliente nuevo" value={newAdsCount > 0 ? fARS(cacNuevo) : '—'} subtitle={`${newAdsCount} cliente${newAdsCount !== 1 ? 's' : ''} nuevo${newAdsCount !== 1 ? 's' : ''} · por mes`} lineSparkline={monthlyCacNuevo.filter(v => v > 0).length >= 2 ? monthlyCacNuevo : null} lineSparklineLabels={monthlyLabels} lineSparklineFormatter={fARS} tooltip="Gasto en Meta Ads del período ÷ cantidad de clientes en su PRIMERA compra marcados como 'Nuevo - Publicidad'. Solo primera compra, no cuenta recompras. El gráfico muestra la evolución mes a mes." />
+                                  <PremiumMetricCard darkMode={darkMode} title="Costo por venta" value={salesCount > 0 ? fARS(cpvAds) : '—'} subtitle={`${salesCount} pedido${salesCount !== 1 ? 's' : ''} · por mes`} lineSparkline={monthlyCpvAds.filter(v => v > 0).length >= 2 ? monthlyCpvAds : null} lineSparklineLabels={monthlyLabels} lineSparklineFormatter={fARS} tooltip="Gasto en Meta Ads del período ÷ TOTAL de pedidos de clientes de origen ads (primera compra 'Nuevo - Publicidad' + recompras 'Clientes - Publicidad'). Incluye recompras. El gráfico muestra la evolución mes a mes." />
+                                  <PremiumMetricCard darkMode={darkMode} title="Ticket promedio" value={salesCount > 0 ? fARS(revenue / salesCount) : '—'} subtitle="por pedido de publicidad" lineSparkline={linea(dailyTicketAvg)} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Valor promedio de cada venta atribuida a ads. Cuanto más alto, más eficiente es la inversión publicitaria" />
+                                  <PremiumMetricCard darkMode={darkMode} title="CPA (píxel de Meta)" value={cpa > 0 ? fARS(cpa) : '—'} subtitle={`${purchases} conversión${purchases !== 1 ? 'es' : ''} según Meta`} lineSparkline={linea(dailyCpa)} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Cuánto te cuesta conseguir un cliente según el píxel de Meta. Mientras más bajo mejor, ideal que sea menor al margen de ganancia del producto" />
+                                </div>
+                              ))}
+                              {separador}
+                              {seccion("Alcance de los anuncios", "Cuánta gente los vio y cuánto interés generaron.", (
+                                <div className={grilla4}>
+                                  <PremiumMetricCard darkMode={darkMode} title="Alcance" value={reach.toLocaleString('es-AR')} subtitle="personas distintas" lineSparkline={linea(dailyReach)} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => v.toLocaleString('es-AR')} tooltip="Cantidad de personas distintas que vieron tu anuncio al menos una vez" />
+                                  <PremiumMetricCard darkMode={darkMode} title="Frecuencia" value={frequency.toFixed(2)} subtitle="veces que lo vio cada uno" lineSparkline={linea(dailyFrequency)} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => v.toFixed(2)} tooltip="Cuántas veces en promedio vio tu anuncio cada persona. Entre 1.5 y 3 es ideal, más de 3 puede cansar a la audiencia" />
+                                  <PremiumMetricCard darkMode={darkMode} title="CTR" value={`${ctr.toFixed(2)}%`} subtitle={`${clicks.toLocaleString('es-AR')} clics · ${impressions.toLocaleString('es-AR')} impr.`} lineSparkline={linea(dailyCtr)} lineSparklineLabels={dailyLabels} lineSparklineFormatter={v => `${v.toFixed(2)}%`} tooltip="De cada 100 personas que vieron tu anuncio, cuántas hicieron click. Arriba de 1% es aceptable, arriba de 2% es bueno" />
+                                  <PremiumMetricCard darkMode={darkMode} title="CPM" value={fARS(cpm)} subtitle="cada 1.000 impresiones" lineSparkline={linea(dailyCpm)} lineSparklineLabels={dailyLabels} lineSparklineFormatter={fARS} tooltip="Cuánto pagás para que 1000 personas vean tu anuncio. Mientras más bajo, más barato es llegar a la gente" />
+                                </div>
+                              ))}
+                            </div>
+                          ) },
+                          { id: 'gasto', content: (
+                            <ProjectionChart darkMode={darkMode} title="Gasto en Ads Proyectado"
+                              subtitle="Desde el 1 de junio de 2026" projection={metaAdsSpendProjection}
+                              valueFormatter={fARS} axisFormatter={formatCompact} />
+                          ) },
+                          { id: 'facturacion', content: (
+                            <ProjectionChart darkMode={darkMode} title="Facturación por Ads Proyectada"
+                              subtitle="Ventas atribuidas a publicidad, desde el 1 de junio de 2026" projection={metaAdsRevenueProjection}
+                              valueFormatter={fARS} axisFormatter={formatCompact} />
+                          ) },
+                          { id: 'cpa', content: (
+                            <ProjectionChart darkMode={darkMode} title="CPA — Tendencia Proyectada"
+                              subtitle="Gasto ÷ clientes nuevos por ads, desde el 1 de junio de 2026" projection={metaAdsCpaProjection}
+                              valueFormatter={fARS} axisFormatter={fARS} />
+                          ) },
+                        ]}
+                      />
 
-                      {/* Rentabilidad real */}
-                      <div className={`rounded-2xl border p-5 ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}
-                        style={darkMode ? {background:'linear-gradient(145deg,#0E0E0E,#161616)', boxShadow:'0 4px 24px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04)'} : {}}>
-                        <h3 className="text-[9px] font-bold uppercase tracking-[0.14em] text-zinc-500 mb-5">Rentabilidad Real del Período</h3>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                          <div className={`rounded-xl p-4 border ${darkMode ? 'bg-white/[0.03] border-white/[0.06]' : 'bg-zinc-50 border-zinc-200'}`}>
-                            <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Ganancia Neta (solo Ads)</div>
-                            <div className={`font-black leading-none tracking-tight ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`} style={{fontSize:'clamp(1.4rem,2vw,1.9rem)',letterSpacing:'-0.03em'}}>{fARS(netProfit)}</div>
-                            <div className="text-[11px] text-zinc-500 mt-1.5">Ventas marcadas como publicidad</div>
-                          </div>
-                          <div className={`rounded-xl p-4 border ${darkMode ? 'bg-red-500/5 border-red-500/15' : 'bg-red-50 border-red-200'}`}>
-                            <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Gasto Meta Ads</div>
-                            <div className="font-black leading-none tracking-tight text-red-400" style={{fontSize:'clamp(1.4rem,2vw,1.9rem)',letterSpacing:'-0.03em'}}>− {fARS(adSpend)}</div>
-                            <div className="text-[11px] text-zinc-500 mt-1.5">Inversión publicitaria</div>
-                          </div>
-                          <div className={`rounded-xl p-4 border ${rentabilidad >= 0 ? (darkMode ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-emerald-50 border-emerald-200') : (darkMode ? 'bg-red-500/5 border-red-500/20' : 'bg-red-50 border-red-200')}`}>
-                            <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Rentabilidad Neta</div>
-                            <div className={`font-black leading-none tracking-tight ${rentabilidad >= 0 ? 'text-emerald-400' : 'text-red-400'}`} style={{fontSize:'clamp(1.4rem,2vw,1.9rem)',letterSpacing:'-0.03em'}}>{fARS(rentabilidad)}</div>
-                            <div className="text-[11px] text-zinc-500 mt-1.5">Ganancia Firebase − Ads</div>
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 pt-4 border-t border-dashed border-white/[0.07]">
-                          <div className={`rounded-xl p-4 border ${darkMode ? 'bg-blue-500/5 border-blue-500/15' : 'bg-blue-50 border-blue-200'}`}>
-                            <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Nuevo - Publicidad</div>
-                            <div className="grid grid-cols-2 gap-3">
+                      {/* ¿Los anuncios dejan plata? — se elige qué clientes mirar (nuevos / los que vuelven / todos)
+                          y se cuenta en palabras: cuántos compraron, cuánto pagaron, cuánto quedó después de la
+                          mercadería y, restando lo gastado en Meta, cuánto quedó al final. */}
+                      {(() => {
+                        const nuevos = byAdType['Nuevo - Publicidad'];
+                        const vuelven = byAdType['Clientes - Publicidad'];
+                        const todos = {
+                          revenue: nuevos.revenue + vuelven.revenue,
+                          netProfit: nuevos.netProfit + vuelven.netProfit,
+                          count: nuevos.count + vuelven.count,
+                        };
+                        const periodoTexto = {
+                          today: 'Hoy', yesterday: 'Ayer', last_7d: 'En los últimos 7 días', last_14d: 'En los últimos 14 días',
+                          last_30d: 'En los últimos 30 días', this_month: 'Este mes', last_month: 'El mes pasado',
+                          last_90d: 'En los últimos 90 días', historico: 'Desde que hay datos', custom: 'En el rango elegido',
+                        }[metaPeriod] || 'En el período';
+                        const vistas = [
+                          { key: 'nuevos', label: 'Clientes nuevos', punto: 'bg-blue-500' },
+                          { key: 'vuelven', label: 'Clientes que vuelven', punto: 'bg-violet-500' },
+                          { key: 'todos', label: 'Todos', punto: darkMode ? 'bg-zinc-400' : 'bg-zinc-500' },
+                        ];
+                        const vista = metaVistaClientes;
+                        const d = vista === 'nuevos' ? nuevos : vista === 'vuelven' ? vuelven : todos;
+                        const restaGasto = vista !== 'vuelven';
+                        const final = restaGasto ? d.netProfit - adSpend : d.netProfit;
+                        const gana = final >= 0;
+                        const plural = (n, uno, varios) => `${n.toLocaleString('es-AR')} ${n === 1 ? uno : varios}`;
+                        const titular = vista === 'nuevos'
+                          ? <>{periodoTexto} te compraron <b className={fuerte}>{plural(d.count, 'cliente nuevo', 'clientes nuevos')}</b> que llegaron por un anuncio.</>
+                          : vista === 'vuelven'
+                            ? <>{periodoTexto} te volvieron a comprar <b className={fuerte}>{plural(d.count, 'vez', 'veces')}</b> clientes que en su momento llegaron por un anuncio.</>
+                            : <>{periodoTexto} hubo <b className={fuerte}>{plural(d.count, 'pedido', 'pedidos')}</b> de clientes que vinieron por anuncios ({nuevos.count} de clientes nuevos y {vuelven.count} de clientes que vuelven).</>;
+                        const caja = `rounded-xl p-4 ${darkMode ? 'bg-white/[0.03]' : 'bg-zinc-50'}`;
+                        const etiqueta = `text-[13px] font-medium ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`;
+                        const numero = 'text-[22px] sm:text-[24px] font-bold tracking-tight tabular-nums mt-1';
+                        const signo = <div className="hidden lg:flex items-center justify-center text-xl font-bold text-zinc-500 px-1" />;
+                        return (
+                          <div className={panel}>
+                            <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3 mb-4">
                               <div>
-                                <div className="text-[9px] font-semibold uppercase tracking-widest text-zinc-500 mb-1">Facturación</div>
-                                <div className={`font-black leading-none tracking-tight ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`} style={{fontSize:'clamp(1.1rem,1.6vw,1.4rem)',letterSpacing:'-0.03em'}}>{fARS(byAdType['Nuevo - Publicidad'].revenue)}</div>
+                                <h3 className={tituloSeccion}>¿Los anuncios dejan plata?</h3>
+                                <p className="text-[13px] mt-0.5 text-zinc-500">Elegí qué clientes querés mirar.</p>
                               </div>
-                              <div>
-                                <div className="text-[9px] font-semibold uppercase tracking-widest text-zinc-500 mb-1">Ganancia</div>
-                                <div className="font-black leading-none tracking-tight text-blue-400" style={{fontSize:'clamp(1.1rem,1.6vw,1.4rem)',letterSpacing:'-0.03em'}}>{fARS(byAdType['Nuevo - Publicidad'].netProfit)}</div>
+                              <div className={`inline-flex p-1 rounded-xl self-start ${darkMode ? 'bg-white/[0.04]' : 'bg-zinc-100'}`}>
+                                {vistas.map(v => (
+                                  <button key={v.key} type="button" onClick={() => setMetaVistaClientes(v.key)}
+                                    className={`px-3 h-8 rounded-lg text-[13px] font-semibold flex items-center gap-1.5 transition-colors ${vista === v.key
+                                      ? (darkMode ? 'bg-[#1a1a1a] text-zinc-100' : 'bg-white text-zinc-900 shadow-sm')
+                                      : (darkMode ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-800')}`}>
+                                    <span className={`w-1.5 h-1.5 rounded-full ${v.punto}`} />{v.label}
+                                  </button>
+                                ))}
                               </div>
                             </div>
-                            <div className="text-[11px] text-zinc-500 mt-2.5">{byAdType['Nuevo - Publicidad'].count} pedido{byAdType['Nuevo - Publicidad'].count !== 1 ? 's' : ''} · clientes nuevos por ads</div>
-                          </div>
-                          <div className={`rounded-xl p-4 border ${darkMode ? 'bg-violet-500/5 border-violet-500/15' : 'bg-violet-50 border-violet-200'}`}>
-                            <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Clientes - Publicidad</div>
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <div className="text-[9px] font-semibold uppercase tracking-widest text-zinc-500 mb-1">Facturación</div>
-                                <div className={`font-black leading-none tracking-tight ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`} style={{fontSize:'clamp(1.1rem,1.6vw,1.4rem)',letterSpacing:'-0.03em'}}>{fARS(byAdType['Clientes - Publicidad'].revenue)}</div>
+
+                            <p className={`text-[15px] leading-relaxed mb-4 ${darkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>{titular}</p>
+
+                            <div className={`grid grid-cols-1 sm:grid-cols-2 ${restaGasto ? 'lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr]' : 'lg:grid-cols-[1fr_auto_1fr]'} gap-2 lg:gap-0 items-stretch`}>
+                              <div className={caja}>
+                                <p className={etiqueta}>Te pagaron</p>
+                                <p className={`${numero} ${fuerte}`}>{fARS(d.revenue)}</p>
+                                <p className="text-[12px] text-zinc-500 mt-1">lo que facturaste con estas ventas</p>
                               </div>
-                              <div>
-                                <div className="text-[9px] font-semibold uppercase tracking-widest text-zinc-500 mb-1">Ganancia</div>
-                                <div className="font-black leading-none tracking-tight text-violet-400" style={{fontSize:'clamp(1.1rem,1.6vw,1.4rem)',letterSpacing:'-0.03em'}}>{fARS(byAdType['Clientes - Publicidad'].netProfit)}</div>
+                              {React.cloneElement(signo, {}, '→')}
+                              <div className={caja}>
+                                <p className={etiqueta}>Ganancia de esas ventas</p>
+                                <p className={`${numero} ${fuerte}`}>{fARS(d.netProfit)}</p>
+                                <p className="text-[12px] text-zinc-500 mt-1">después de pagar la mercadería</p>
                               </div>
+                              {restaGasto && <>
+                                {React.cloneElement(signo, {}, '−')}
+                                <div className={caja}>
+                                  <p className={etiqueta}>Gastaste en anuncios</p>
+                                  <p className={`${numero} ${darkMode ? 'text-rose-300' : 'text-rose-600'}`}>{fARS(adSpend)}</p>
+                                  <p className="text-[12px] text-zinc-500 mt-1">{vista === 'nuevos' ? 'todo lo de Meta, como si fuera solo para traer nuevos' : 'todo lo de Meta en el período'}</p>
+                                </div>
+                                {React.cloneElement(signo, {}, '=')}
+                                <div className={`rounded-xl p-4 ${gana ? (darkMode ? 'bg-emerald-500/[0.08]' : 'bg-emerald-50') : (darkMode ? 'bg-rose-500/[0.08]' : 'bg-rose-50')}`}>
+                                  <p className={`text-[13px] font-medium ${gana ? (darkMode ? 'text-emerald-300' : 'text-emerald-700') : (darkMode ? 'text-rose-300' : 'text-rose-700')}`}>{gana ? 'Te quedó' : 'Perdiste'}</p>
+                                  <p className={`${numero} ${gana ? (darkMode ? 'text-emerald-400' : 'text-emerald-600') : (darkMode ? 'text-rose-400' : 'text-rose-600')}`}>{fARS(Math.abs(final))}</p>
+                                  <p className="text-[12px] text-zinc-500 mt-1">{gana ? 'limpio, después de los anuncios' : 'los anuncios costaron más de lo que dejaron'}</p>
+                                </div>
+                              </>}
                             </div>
-                            <div className="text-[11px] text-zinc-500 mt-2.5">{byAdType['Clientes - Publicidad'].count} pedido{byAdType['Clientes - Publicidad'].count !== 1 ? 's' : ''} · clientes recurrentes por ads</div>
+
+                            {/* Por cliente / por pedido: la cuenta que importa para saber si conviene seguir pautando */}
+                            {d.count > 0 && (
+                              <div className={`mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2`}>
+                                {vista === 'nuevos' && (
+                                  <div className={caja}>
+                                    <p className={etiqueta}>Cada cliente nuevo te costó</p>
+                                    <p className={`text-[18px] font-bold tabular-nums mt-1 ${fuerte}`}>{fARS(adSpend / d.count)}</p>
+                                    <p className="text-[12px] text-zinc-500 mt-1">en anuncios</p>
+                                  </div>
+                                )}
+                                <div className={caja}>
+                                  <p className={etiqueta}>{vista === 'nuevos' ? 'Y te dejó de ganancia' : 'Ganancia por pedido'}</p>
+                                  <p className={`text-[18px] font-bold tabular-nums mt-1 ${fuerte}`}>{fARS(d.netProfit / d.count)}</p>
+                                  <p className="text-[12px] text-zinc-500 mt-1">{vista === 'nuevos' ? 'en su primera compra' : 'en promedio'}</p>
+                                </div>
+                                <div className={caja}>
+                                  <p className={etiqueta}>Compra promedio</p>
+                                  <p className={`text-[18px] font-bold tabular-nums mt-1 ${fuerte}`}>{fARS(d.revenue / d.count)}</p>
+                                  <p className="text-[12px] text-zinc-500 mt-1">lo que paga cada uno</p>
+                                </div>
+                                {vista !== 'nuevos' && (
+                                  <div className={caja}>
+                                    <p className={etiqueta}>{vista === 'vuelven' ? 'Sobre el total de ventas por ads' : 'Clientes nuevos en el total'}</p>
+                                    <p className={`text-[18px] font-bold tabular-nums mt-1 ${fuerte}`}>{todos.revenue > 0 ? `${Math.round(((vista === 'vuelven' ? vuelven.revenue : nuevos.revenue) / todos.revenue) * 100)}%` : '—'}</p>
+                                    <p className="text-[12px] text-zinc-500 mt-1">de lo facturado por publicidad</p>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {vista === 'vuelven' && (
+                              <p className="text-[12px] text-zinc-500 mt-3">Acá no se resta el gasto en anuncios: estos clientes ya los habías conseguido antes. Son la plata que siguen dejando los clientes que trajo la publicidad.</p>
+                            )}
                           </div>
-                        </div>
-                      </div>
+                        );
+                      })()}
+
+                      {/* Anuncios cruzados con el bot de WhatsApp: gasto, clientes, ventas y ROAS por anuncio */}
+                      <AnunciosWhatsApp db={db} darkMode={darkMode} metaPeriod={metaPeriod} metaCustomRange={metaCustomRange} />
 
                       {/* Campañas activas */}
                       {metaCampaignsLoading && (
-                        <div className={`rounded-2xl border p-5 ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}
-                          style={darkMode ? {background:'linear-gradient(145deg,#0E0E0E,#161616)', boxShadow:'0 4px 24px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04)'} : {}}>
-                          <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-zinc-500 mb-4">Campañas Activas</div>
+                        <div className={panel}>
+                          <h3 className={`${tituloSeccion} mb-4`}>Campañas activas</h3>
                           <div className="space-y-2">
                             {[0,1,2].map(i => (
                               <div key={i} className={`h-10 rounded-lg animate-pulse ${darkMode ? 'bg-white/[0.04]' : 'bg-zinc-100'}`}/>
@@ -13014,47 +13146,49 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         </div>
                       )}
                       {!metaCampaignsLoading && metaCampaigns.length > 0 && (
-                        <div className={`rounded-2xl border p-5 ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}
-                          style={darkMode ? {background:'linear-gradient(145deg,#0E0E0E,#161616)', boxShadow:'0 4px 24px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04)'} : {}}>
-                          <div className="flex items-center justify-between mb-5">
-                            <h3 className="text-[9px] font-bold uppercase tracking-[0.14em] text-zinc-500">Campañas Activas</h3>
-                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${darkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-600'}`}>
+                        <div className={panel}>
+                          <div className="flex items-start justify-between gap-3 mb-4">
+                            <div>
+                              <h3 className={tituloSeccion}>Campañas activas</h3>
+                              <p className="text-[13px] mt-0.5 text-zinc-500">Lo que reporta Meta de cada campaña en el período.</p>
+                            </div>
+                            <span className={`shrink-0 text-[12px] px-2 py-0.5 rounded-full font-semibold ${darkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-600'}`}>
                               {metaCampaigns.length} activa{metaCampaigns.length !== 1 ? 's' : ''}
                             </span>
                           </div>
                           <div className="overflow-x-auto -mx-1">
                             <table className="w-full min-w-[520px]">
                               <thead>
-                                <tr className={`text-[9px] font-bold uppercase tracking-widest ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                                  <th className="text-left pb-3 pr-4 pl-1">Campaña</th>
-                                  <th className="text-right pb-3 px-3">Gasto</th>
-                                  <th className="text-right pb-3 px-3">ROAS</th>
-                                  <th className="text-right pb-3 px-3">CTR</th>
-                                  <th className="text-right pb-3 px-3">CPA</th>
-                                  <th className="text-right pb-3 pl-3 pr-1">Conv.</th>
+                                <tr>
+                                  <th className={`${th} text-left pr-4 pl-1`}>Campaña</th>
+                                  <th className={`${th} text-right px-3`}>Gasto</th>
+                                  <th className={`${th} text-right px-3`}>ROAS</th>
+                                  <th className={`${th} text-right px-3`}>CTR</th>
+                                  <th className={`${th} text-right px-3`}>CPA</th>
+                                  <th className={`${th} text-right pl-3 pr-1`}>Conv.</th>
                                 </tr>
                               </thead>
                               <tbody>
                                 {metaCampaigns.map(c => {
                                   const ins = c.insights;
                                   const spend = parseFloat(ins?.spend || 0);
-                                  const ctr = parseFloat(ins?.ctr || 0);
-                                  const purchases = parseInt(ins?.actions?.find(a => ['purchase','offsite_conversion.fb_pixel_purchase','omni_purchase'].includes(a.action_type))?.value || 0);
-                                  const cpa = purchases > 0 ? spend / purchases : 0;
+                                  const cctr = parseFloat(ins?.ctr || 0);
+                                  const cpur = parseInt(ins?.actions?.find(a => ['purchase','offsite_conversion.fb_pixel_purchase','omni_purchase'].includes(a.action_type))?.value || 0);
+                                  const ccpa = cpur > 0 ? spend / cpur : 0;
                                   const roasRaw = ins?.purchase_roas?.find?.(r => ['omni_purchase','offsite_conversion.fb_pixel_purchase','purchase'].includes(r.action_type))?.value ?? ins?.purchase_roas?.[0]?.value ?? null;
                                   return (
-                                    <tr key={c.id} className={`border-t text-xs ${darkMode ? 'border-white/[0.05]' : 'border-zinc-100'}`}>
+                                    <tr key={c.id} className={fila}>
                                       <td className="py-3 pr-4 pl-1">
                                         <div className="flex items-center gap-2">
                                           <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-emerald-400"/>
-                                          <span className={`font-medium truncate max-w-[200px] ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`} title={c.name}>{c.name}</span>
+                                          <span className={`font-medium truncate max-w-[240px] ${fuerte}`} title={c.name}>{c.name}</span>
                                         </div>
                                       </td>
-                                      <td className={`py-3 px-3 text-right font-semibold tabular-nums ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{fARS(spend)}</td>
-                                      <td className={`py-3 px-3 text-right tabular-nums ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{roasRaw ? `${parseFloat(roasRaw).toFixed(2)}×` : '—'}</td>
-                                      <td className={`py-3 px-3 text-right tabular-nums ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{ctr.toFixed(2)}%</td>
-                                      <td className={`py-3 px-3 text-right tabular-nums ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{cpa > 0 ? fARS(cpa) : '—'}</td>
-                                      <td className={`py-3 pl-3 pr-1 text-right font-medium tabular-nums ${darkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>{purchases || '—'}</td>
+                                      <td className={`py-3 px-3 text-right font-semibold tabular-nums ${fuerte}`}>{fARS(spend)}</td>
+                                      <td className={celda}>{roasRaw ? `${parseFloat(roasRaw).toFixed(2)}×` : '—'}</td>
+                                      <td className={celda}>{cctr.toFixed(2)}%</td>
+                                      <td className={celda}>{ccpa > 0 ? fARS(ccpa) : '—'}</td>
+                                      <td className={`${celda} pl-3 pr-1`}>{cpur || '—'}</td>
                                     </tr>
                                   );
                                 })}
@@ -13065,63 +13199,56 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                       )}
 
                       {/* Ganancia real por campaña (cruce Meta + Firebase) */}
-                      {(() => {
-                        const campaignNames = new Set([
-                          ...metaCampaigns.map(c => c.name),
-                          ...Object.keys(adsByCampaign)
-                        ]);
-                        const rows = Array.from(campaignNames).map(name => {
-                          const metaC = metaCampaigns.find(c => c.name === name);
-                          const spend = metaC ? parseFloat(metaC.insights?.spend || 0) : null;
-                          const fb = adsByCampaign[name] || { revenue: 0, cost: 0, count: 0 };
-                          const realProfit = fb.revenue - fb.cost;
-                          const rentabilidad = spend != null ? realProfit - spend : null;
-                          return { name, spend, ...fb, realProfit, rentabilidad };
-                        }).sort((a, b) => b.realProfit - a.realProfit);
-
-                        if (rows.length === 0) return null;
-                        return (
-                          <div className={`rounded-2xl border p-5 ${darkMode ? 'border-white/[0.07]' : 'bg-white border-zinc-200'}`}
-                            style={darkMode ? {background:'linear-gradient(145deg,#0E0E0E,#161616)', boxShadow:'0 4px 24px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04)'} : {}}>
-                            <div className="mb-1">
-                              <h3 className="text-[9px] font-bold uppercase tracking-[0.14em] text-zinc-500">Ganancia Real por Campaña</h3>
-                              <p className="text-[11px] text-zinc-500 mt-1">Cruza el gasto de Meta con las ventas que cargaste marcadas con esa campaña. Requiere elegir la campaña al cargar la venta.</p>
-                            </div>
-                            <div className="overflow-x-auto -mx-1 mt-4">
-                              <table className="w-full min-w-[560px]">
-                                <thead>
-                                  <tr className={`text-[9px] font-bold uppercase tracking-widest ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                                    <th className="text-left pb-3 pr-4 pl-1">Campaña</th>
-                                    <th className="text-right pb-3 px-3">Gasto</th>
-                                    <th className="text-right pb-3 px-3">Ganancia Real</th>
-                                    <th className="text-right pb-3 px-3">Rentabilidad</th>
-                                    <th className="text-right pb-3 pl-3 pr-1">Pedidos</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {rows.map(r => (
-                                    <tr key={r.name} className={`border-t text-xs ${darkMode ? 'border-white/[0.05]' : 'border-zinc-100'}`}>
-                                      <td className="py-3 pr-4 pl-1">
-                                        <span className={`font-medium truncate max-w-[220px] inline-block align-middle ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`} title={r.name}>{r.name}</span>
-                                      </td>
-                                      <td className={`py-3 px-3 text-right font-semibold tabular-nums ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{r.spend != null ? fARS(r.spend) : '—'}</td>
-                                      <td className={`py-3 px-3 text-right font-semibold tabular-nums ${darkMode ? 'text-zinc-200' : 'text-zinc-800'}`}>{fARS(r.realProfit)}</td>
-                                      <td className={`py-3 px-3 text-right font-bold tabular-nums ${r.rentabilidad == null ? (darkMode ? 'text-zinc-500' : 'text-zinc-400') : r.rentabilidad >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{r.rentabilidad != null ? fARS(r.rentabilidad) : '—'}</td>
-                                      <td className={`py-3 pl-3 pr-1 text-right font-medium tabular-nums ${darkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>{r.count}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
+                      {filasCampania.length > 0 && (
+                        <div className={panel}>
+                          <div className="mb-4">
+                            <h3 className={tituloSeccion}>Ganancia real por campaña</h3>
+                            <p className="text-[13px] mt-0.5 text-zinc-500">Cruza el gasto de Meta con las ventas que cargaste marcadas con esa campaña.</p>
                           </div>
-                        );
-                      })()}
+                          <div className="overflow-x-auto -mx-1">
+                            <table className="w-full min-w-[560px]">
+                              <thead>
+                                <tr>
+                                  <th className={`${th} text-left pr-4 pl-1`}>Campaña</th>
+                                  <th className={`${th} text-right px-3`}>Gasto</th>
+                                  <th className={`${th} text-right px-3`}>Ganancia real</th>
+                                  <th className={`${th} text-right px-3`}>Rentabilidad</th>
+                                  <th className={`${th} text-right pl-3 pr-1`}>Pedidos</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {filasCampania.map(r => (
+                                  <tr key={r.name} className={fila}>
+                                    <td className="py-3 pr-4 pl-1">
+                                      <span className={`font-medium truncate max-w-[240px] inline-block align-middle ${fuerte}`} title={r.name}>{r.name}</span>
+                                    </td>
+                                    <td className={celda}>{r.spend != null ? fARS(r.spend) : '—'}</td>
+                                    <td className={`py-3 px-3 text-right font-semibold tabular-nums ${fuerte}`}>{fARS(r.realProfit)}</td>
+                                    <td className="py-3 px-3 text-right">
+                                      {r.rentabilidad == null ? <span className="text-zinc-500">—</span> : (
+                                        <span className={`inline-block px-2 py-0.5 rounded-full text-[12px] font-bold tabular-nums ${r.rentabilidad >= 0 ? (darkMode ? 'bg-emerald-500/10 text-emerald-400' : 'bg-emerald-50 text-emerald-600') : (darkMode ? 'bg-rose-500/10 text-rose-400' : 'bg-rose-50 text-rose-600')}`}>{fARS(r.rentabilidad)}</span>
+                                      )}
+                                    </td>
+                                    <td className={`${celda} pl-3 pr-1`}>{r.count}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
                     </>
                   );
                 })()}
 
+                {/* Sin datos de Meta igual se ve el cruce con WhatsApp (sale del bot, no de Meta) */}
+                {!metaData && !metaLoading && (
+                  <AnunciosWhatsApp db={db} darkMode={darkMode} metaPeriod={metaPeriod} metaCustomRange={metaCustomRange} />
+                )}
+
               </div>
-            )}
+              );
+            })()}
 
             {/* --- PESTAÑA BOT (estadísticas del bot de WhatsApp) --- */}
             {activeTab === 'bot' && <BotEstadisticas db={db} darkMode={darkMode} />}

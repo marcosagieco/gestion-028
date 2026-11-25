@@ -283,6 +283,19 @@ export function armarPrefillFinalizar(pedido, sellableItems, hoy, aliasDelDia = 
     origen.pago = !!alias;
   }
 
+  // Lo que anotó el motomensajero al entregar (reparto/cobro.js) manda sobre lo que se dijo con el
+  // bot: es lo que de verdad pagó. Dólares y "a la cuenta del motomensajero" no existen como medio
+  // de pago de la venta (depende de cómo lo rinde), así que en esos casos se completa a mano. Igual
+  // con "Otro" (lo escribió a mano el repartidor).
+  const cobro = pedido?.cobroEntrega;
+  if (cobro && !cobro.yaPagado && cobro.pagos?.length && !cobro.pagos.some(p => p.medioPago === 'usd' || p.medioPago === 'repartidor' || p.medioPago === 'otro')) {
+    const cobrados = cobro.pagos.map(p => ({ uid: nuevoUid(), medioPago: p.medioPago, monto: String(p.monto) }));
+    const transferidoAntes = medioPago === 'mitad y mitad' && pedido?.aTransferir > 0
+      ? [{ uid: nuevoUid(), medioPago: alias || '', monto: String(pedido.aTransferir) }] : [];
+    pagos = [...transferidoAntes, ...cobrados];
+    origen.pago = true;
+  }
+
   // Siempre 028 Import por defecto, sea un pedido del bot o uno cargado a mano: es lo que casi
   // siempre va. Sigue siendo un desplegable, así que si lo vendió otra persona se cambia.
   const vendedor = '028 Import';
