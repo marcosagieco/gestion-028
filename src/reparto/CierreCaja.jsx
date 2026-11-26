@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, where, writeBatch, setDoc } from 'firebase/firestore';
-import { X, ArrowLeft, Image as ImageIcon, Loader2, AlertTriangle, CheckCircle2, ChevronDown, Copy, Plus, Trash2, RotateCcw } from 'lucide-react';
+import { X, ArrowLeft, Image as ImageIcon, Loader2, AlertTriangle, CheckCircle2, ChevronDown, Copy, Plus, Trash2, RotateCcw, FileText } from 'lucide-react';
 import { METODO_POR_ID, diaLocal, formatARS, formatUSD, labelMetodo, labelPago } from './cobro';
 import { repartidorConfig, repartidorDe } from './repartidores';
 import { costoMotomensajeriaEstimado } from './motomensajeria';
@@ -334,6 +334,7 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
   };
   const [abiertoCierre, setAbiertoCierre] = useState(null);
   const [detalle, setDetalle] = useState(null); // qué parte del detalle está desplegada
+  const [mensajeAbierto, setMensajeAbierto] = useState(null); // renglón con el pedido desplegado
 
   const tx = dm ? 'text-zinc-100' : 'text-zinc-900';
   const suave = dm ? 'text-zinc-400' : 'text-zinc-500';
@@ -354,22 +355,48 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
     return Object.entries(g).sort(([a], [b]) => a.localeCompare(b));
   }, [c.recibido]);
 
-  // Un renglón de la cuenta: "texto ......... $monto".
-  const fila = (key, izq, der, { signo, fuerte, ayuda, borrar, p } = {}) => (
-    <div key={key} className="flex items-baseline justify-between gap-3 py-1.5">
-      <span className={`min-w-0 ${fuerte ? `text-[15px] font-black ${tx}` : `text-[14px] ${tx}`}`}>
-        {izq}
-        {ayuda && <span className={`block text-[12px] font-normal ${suave}`}>{ayuda}</span>}
-        {p?.cobroEntrega?.fotos?.length > 0 && (
-          <button onClick={() => verComprobantes(p)} className="ml-1.5 align-middle text-indigo-400 inline-flex items-center gap-0.5 text-[12px] font-bold"><ImageIcon size={13}/> foto</button>
+  // Un renglón de la cuenta: "texto ......... $monto". Con `pedido`, abajo aparece "Ver pedido",
+  // que despliega el mensaje con el que se cargó el pedido en la web (el mismo de Pedidos reparto).
+  const fila = (key, izq, der, { signo, fuerte, ayuda, borrar, p, pedido } = {}) => {
+    const abierto = pedido && mensajeAbierto === key;
+    return (
+      <div key={key} className="py-1.5">
+        <div className="flex items-baseline justify-between gap-3">
+          <span className={`min-w-0 ${fuerte ? `text-[15px] font-black ${tx}` : `text-[14px] ${tx}`}`}>
+            {izq}
+            {ayuda && <span className={`block text-[12px] font-normal ${suave}`}>{ayuda}</span>}
+            {(pedido || p?.cobroEntrega?.fotos?.length > 0 || borrar) && (
+              <span className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5">
+                {pedido && (
+                  <button onClick={() => setMensajeAbierto(abierto ? null : key)} className="inline-flex items-center gap-0.5 text-[12px] font-bold text-indigo-400">
+                    <FileText size={13}/> {abierto ? 'Ocultar pedido' : 'Ver pedido'}
+                  </button>
+                )}
+                {p?.cobroEntrega?.fotos?.length > 0 && (
+                  <button onClick={() => verComprobantes(p)} className="inline-flex items-center gap-0.5 text-[12px] font-bold text-indigo-400"><ImageIcon size={13}/> Ver comprobante</button>
+                )}
+                {borrar && <button onClick={borrar} title="Borrar" className="text-rose-400"><Trash2 size={13}/></button>}
+              </span>
+            )}
+          </span>
+          <span className={`flex-shrink-0 tabular-nums ${fuerte ? `text-[17px] font-black ${tx}` : `text-[14px] font-bold ${tx}`}`}>
+            {signo && <span className={suave}>{signo} </span>}{der}
+          </span>
+        </div>
+        {abierto && (
+          <div className={`mt-2 rounded-xl p-3 text-[13px] ${dm ? 'bg-white/[0.04] text-zinc-300' : 'bg-zinc-50 text-zinc-700'}`}>
+            <p className="whitespace-pre-wrap leading-relaxed">{pedido.mensaje?.trim() || 'Este pedido no tiene mensaje cargado.'}</p>
+            <div className={`flex flex-wrap gap-x-4 gap-y-0.5 mt-2 pt-2 border-t text-[12px] ${dm ? 'border-white/[0.06]' : 'border-zinc-200'} ${suave}`}>
+              {pedido.direccion?.texto && <span>📍 {pedido.direccion.texto}</span>}
+              {typeof pedido.total === 'number' && <span>Total del pedido: <b className={tx}>{formatARS(pedido.total)}</b></span>}
+              {pedido.medioPago && <span>Le dijo al bot: {pedido.medioPago}</span>}
+              {pedido.entregadoEn && <span>Entregado: {fechaHora(pedido.entregadoEn)}</span>}
+            </div>
+          </div>
         )}
-        {borrar && <button onClick={borrar} title="Borrar" className="ml-2 align-middle text-rose-400"><Trash2 size={13}/></button>}
-      </span>
-      <span className={`flex-shrink-0 tabular-nums ${fuerte ? `text-[17px] font-black ${tx}` : `text-[14px] font-bold ${tx}`}`}>
-        {signo && <span className={suave}>{signo} </span>}{der}
-      </span>
-    </div>
-  );
+      </div>
+    );
+  };
 
   // Una parte del detalle, plegada: el título con su total, y al tocar se abre la lista.
   const plegable = (id, titulo, explicacion, totalTxt, contenido) => {
@@ -495,21 +522,21 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
                 {recibidoPorDia.map(([k, filas]) => (
                   <div key={k}>
                     {recibidoPorDia.length > 1 && <p className={`text-[11px] font-black uppercase tracking-widest mt-2 ${suave}`}>{nombreDia(k)}</p>}
-                    {filas.map((f, i) => fila(`${f.p.id}${i}`, lugar(f.p), formatARS(f.monto), { ayuda: comoLoRecibio(f.medioPago), p: f.p }))}
+                    {filas.map((f, i) => fila(`${f.p.id}${i}`, lugar(f.p), formatARS(f.monto), { ayuda: comoLoRecibio(f.medioPago), p: f.p, pedido: f.p }))}
                   </div>
                 ))}
-                {c.dolares.map((f, i) => fila(`usd${i}`, lugar(f.p), formatUSD(f.monto), { ayuda: 'en dólares (va aparte)', p: f.p }))}
+                {c.dolares.map((f, i) => fila(`usd${i}`, lugar(f.p), formatUSD(f.monto), { ayuda: 'en dólares (va aparte)', p: f.p, pedido: f.p }))}
               </>)}
 
             {plegable('viajes', '🛵 Viajes que le pagás', `$1.000 por km (Google Maps), mínimo $3.000${c.totalGastos ? ' · más gastos' : ''}`,
               formatARS(c.totalEnvios), <>
-                {c.viajes.map(v => fila(v.p.id, lugar(v.p), formatARS(v.monto), { ayuda: `${Math.round(v.km * 10) / 10} km${v.estimado ? ' · estimado (no se pudo medir)' : ''}` }))}
+                {c.viajes.map(v => fila(v.p.id, lugar(v.p), formatARS(v.monto), { ayuda: `${Math.round(v.km * 10) / 10} km${v.estimado ? ' · estimado (no se pudo medir)' : ''}`, pedido: v.p }))}
                 {c.movs.filter(m => m.tipo === 'cargo').map(m => fila(m.id, m.nota || 'Otro gasto', formatARS(m.monto), { ayuda: 'gasto anotado a mano', borrar: puedeCerrar ? () => borrarMov(m) : null }))}
               </>)}
 
             {c.directo.length > 0 && plegable('directo', '🏦 Entró directo a tus cuentas', 'Alias 3 u otro medio. No pasa por la moto: no se suma, es para controlar',
               formatARS(c.totalDirecto), <>
-                {c.directo.map((f, i) => fila(`d${i}`, lugar(f.p), formatARS(f.monto), { ayuda: f.antes ? 'pagó antes del envío' : labelPago(f), p: f.antes ? null : f.p }))}
+                {c.directo.map((f, i) => fila(`d${i}`, lugar(f.p), formatARS(f.monto), { ayuda: f.antes ? 'pagó antes del envío' : labelPago(f), p: f.antes ? null : f.p, pedido: f.p }))}
               </>)}
           </>}
 
