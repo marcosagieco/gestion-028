@@ -1184,6 +1184,21 @@ async function main() {
     }
   }
 
+  // ── BLACK FRIDAY 028 (27/11): la campaña también reemplaza la lista THC; el pack de 3 se lee aunque diga el precio del 3ro ──
+  {
+    const blackThc = "🖤 LISTA PRECIOS THC — BLACK FRIDAY 028\n\n━━━━━━━━━━━━━━━\n\n💨 CÁPSULAS THC\n\n🔝🦾 CÁPSULAS 028 1ML — PREMIUM\n\n💰 1x $38.000\n🔥 2x $72.000\n🎯 3x $100.000 (el 3ro a solo 28.000)\n🚀 5x $155.000";
+    const cotizar = async (cantidad, hora) => conHora(hora, async () => {
+      store["settings/operativo"] = { ...LISTAS, limitePorTanda: 100, campania: { activa: true, nombre: "BLACK FRIDAY 028", inicio: "2026-11-27T00:00", fin: "2026-11-30T23:59", envioGratisDesde: 100000, preciosThcTexto: blackThc } };
+      const r = await llamar(api.agentCotizarProductos, { method: "POST", body: { items: [{ producto: "CÁPSULAS 028 1ML PREMIUM", cantidad }], medioPago: "transferencia" } });
+      return r.body.ok ? r.body.subtotal : r.body.error;
+    });
+    ok("black: 3 cápsulas 028 por $100.000 durante la campaña", (await cotizar(3, "2026-11-28T12:00:00")) === 100000);
+    ok("black: 5 cápsulas 028 por $155.000", (await cotizar(5, "2026-11-28T12:00:00")) === 155000);
+    ok("black: antes de la campaña vale la lista THC de siempre", (await cotizar(1, "2026-11-26T23:00:00")) === 45000);
+    const estado = await conHora("2026-11-27T00:30:00", () => llamar(api.agentEstadoOperativo));
+    ok("black: el estado del día manda la lista THC de la campaña", /BLACK FRIDAY 028/.test(estado.body.plantillas.PRECIOS_THC), estado.body.plantillas.PRECIOS_THC);
+  }
+
   // ── Si el cliente no puede transferir a la cuenta activa, el bot le pasa la de respaldo (Lucio, 20/11) ──
   {
     store["settings/operativo"] = { ...LISTAS, aliasActivo: "alias3", limitePorTanda: 100 };

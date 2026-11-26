@@ -64,7 +64,7 @@ const fechaLinda = (f) => { const [a, m, d] = f.split('-').map(Number); return `
 // siempre y aplica el envío gratis. Se prende y se apaga sola por la fecha (functions/bot/campania.js).
 const CAMPANIA_VACIA = {
   activa: false, nombre: '', inicio: '', fin: '', lanzamientoHasta: '', envioGratisDesde: '', mensaje: '',
-  preciosVapesTexto: '', appleTexto: '', mysteryBoxTexto: '',
+  preciosVapesTexto: '', preciosThcTexto: '', appleTexto: '', mysteryBoxTexto: '',
 };
 // "AAAA-MM-DDTHH:mm" de ahora en Buenos Aires, para comparar con las fechas de la campaña.
 const ahoraBA = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date()).replace(' ', 'T');
@@ -192,6 +192,7 @@ export default function OperativoPage() {
           envioGratisDesde: Number(campania.envioGratisDesde) > 0 ? Number(campania.envioGratisDesde) : null,
           mensaje: (campania.mensaje || '').trim(),
           preciosVapesTexto: (campania.preciosVapesTexto || '').trim(),
+          preciosThcTexto: (campania.preciosThcTexto || '').trim(),
           appleTexto: (campania.appleTexto || '').trim(),
           mysteryBoxTexto: (campania.mysteryBoxTexto || '').trim(),
         },
@@ -542,9 +543,10 @@ Hasta el domingo`}
               placeholder={'CYBER 028, del lunes 2 al miércoles 4 de noviembre.\nSorteo: $50.000 para gastar en la web. Para participar: comprá durante el Cyber y sumate a la comunidad de WhatsApp.'}
               className={`mt-2 w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none ${input}`} />
           </label>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {[
               ['preciosVapesTexto', 'Precios de descartables de la campaña'],
+              ['preciosThcTexto', 'Precios THC de la campaña'],
               ['appleTexto', 'Apple y accesorios de la campaña (con los combos)'],
               ['mysteryBoxTexto', 'Mystery Box'],
             ].map(([campo, texto]) => (

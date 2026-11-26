@@ -5,7 +5,7 @@
 // Además hay un envío gratis de siempre, con un interruptor en /operativo (envioGratisVigente).
 //
 // settings/operativo.campania = { activa, nombre, inicio, fin, lanzamientoHasta, envioGratisDesde, mensaje,
-//   preciosVapesTexto, appleTexto, mysteryBoxTexto }
+//   preciosVapesTexto, preciosThcTexto, appleTexto, mysteryBoxTexto }
 // Las fechas son "AAAA-MM-DDTHH:mm" en hora de Buenos Aires (como las escribe el panel). Una lista vacía
 // no reemplaza nada.
 "use strict";
@@ -14,7 +14,8 @@ const { db } = require("./firebase");
 const { textoDe } = require("./texto");
 
 // Las listas que una campaña puede reemplazar.
-const LISTAS_DE_CAMPANIA = ["preciosVapesTexto", "appleTexto", "mysteryBoxTexto"];
+// THC se sumó para el BLACK FRIDAY 028 (27/11): las cápsulas tienen precio Black.
+const LISTAS_DE_CAMPANIA = ["preciosVapesTexto", "preciosThcTexto", "appleTexto", "mysteryBoxTexto"];
 
 // "2026-11-02T00:00" en Buenos Aires (UTC-3 todo el año) → milisegundos, o NaN.
 const enBuenosAires = (texto) => (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(String(texto || "")) ? Date.parse(texto + ":00-03:00") : NaN);
