@@ -45,6 +45,8 @@ const INFORMATIVO_RE = /valuad[ao]s?\b|\bdesde\b|a partir de|env[ií]o gratis|ah
 const ROTULO_RE = /^(precios?( (combo|actualizad[oa]|final|promo|promocional|oferta|especial|nuevo|de hoy|hoy))?|ahora|oferta|promo|total|valor)$/;
 // Un precio con nombre genérico ("📦 BOX $100.000" bajo "MYSTERY BOX DESCARTABLES"): el producto es la sección.
 const GENERICO_RE = /^(box|caja|combo|pack|kit)$/i;
+// El precio de la 3ra unidad sobre el 2x: "Sumá un 3ro por $20.000", "el 3ro a $20.000", "3° unidad $20.000".
+const TERCERO_RE = /\b(3\s*(ro|ra|er|°|º)|tercer[oa]?)\b|3\s*[°º]/;
 const enMiles = (monto) => (monto % 1000 === 0 ? `${monto / 1000} MIL` : pesos(monto));
 
 function esNombre(linea) {
@@ -100,6 +102,13 @@ function parsearProductos(texto) {
     // precios guarda siempre el total de esa cantidad.
     const porUnidad = PRECIO_POR_UNIDAD_RE.test(linea.slice(precio.index));
     const total = porUnidad ? monto * cantidad : monto;
+    // "➕ Sumá un 3ro por $20.000" (BLACK FRIDAY 028, 26/11): no es otro producto ni el precio de 1, es lo que
+    // se suma al 2x del producto de arriba. Antes quedaba como un producto «Sumá un 3ro por» y 3 unidades se
+    // cobraban como 2x + 1x ($70.000 en vez de $66.000).
+    if (actual && actual.precios[2] && !CANTIDAD_RE.test(antes) && TERCERO_RE.test(normalizar(enLinea))) {
+      actual.precios[3] = actual.precios[2] + monto;
+      continue;
+    }
     if (GENERICO_RE.test(nombreEnLinea.trim()) && nombres.length) {
       productos.push({ nombre: nombres.join(" "), detalle: detalles.join(" "), lineas: [...bloque], precios: { [cantidad]: total }, seccion: nombres.join(" "), montoSeccion: monto });
       continue;

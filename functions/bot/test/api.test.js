@@ -1195,6 +1195,10 @@ async function main() {
     ok("black: 3 cápsulas 028 por $100.000 durante la campaña", (await cotizar(3, "2026-11-28T12:00:00")) === 100000);
     ok("black: 5 cápsulas 028 por $155.000", (await cotizar(5, "2026-11-28T12:00:00")) === 155000);
     ok("black: antes de la campaña vale la lista THC de siempre", (await cotizar(1, "2026-11-26T23:00:00")) === 45000);
+    // Como la cargó el equipo: «➕ Sumá un 3ro por $20.000» es lo que se suma al 2x, no otro producto.
+    const { parsearProductos } = require("../catalogo");
+    const v400 = parsearProductos("❄️ *IGNITE V400 ICE 40K*\n1x ~$27.000~ *$24.000*\n2x ~$51.000~ *$46.000*\n➕ Sumá un 3ro por *$20.000*\n🎁 5x ~$129.000~ *$106.000*");
+    ok("black: «Sumá un 3ro por» arma el pack de 3 sobre el 2x", v400.length === 1 && JSON.stringify(v400[0].precios) === JSON.stringify({ 1: 24000, 2: 46000, 3: 66000, 5: 106000 }), v400);
     const estado = await conHora("2026-11-27T00:30:00", () => llamar(api.agentEstadoOperativo));
     ok("black: el estado del día manda la lista THC de la campaña", /BLACK FRIDAY 028/.test(estado.body.plantillas.PRECIOS_THC), estado.body.plantillas.PRECIOS_THC);
   }
