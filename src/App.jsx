@@ -1455,7 +1455,7 @@ const PremiumMetricCard = ({ title, value, subtitle, change, sparkline, sparklin
   const colorCambio = quieto ? 'text-zinc-400 bg-zinc-500/10' : bueno ? (darkMode ? 'text-emerald-400 bg-emerald-500/10' : 'text-emerald-600 bg-emerald-50') : (darkMode ? 'text-rose-400 bg-rose-500/10' : 'text-rose-600 bg-rose-50');
 
   return (
-    <div onClick={onClick} className={`group relative rounded-xl p-4 flex flex-col min-w-0 h-full transition-colors ${onClick ? 'cursor-pointer active:scale-[0.99] touch-manipulation' : ''} ${
+    <div onClick={onClick} className={`group relative rounded-xl p-3.5 sm:p-4 flex flex-col min-w-0 h-full transition-colors ${onClick ? 'cursor-pointer active:scale-[0.99] touch-manipulation' : ''} ${
       darkMode
         ? `bg-[#0A0A0A] ${onClick ? 'hover:bg-[#101010]' : ''}`
         : `bg-white ${onClick ? 'hover:bg-zinc-50' : ''}`
@@ -1489,10 +1489,10 @@ const PremiumMetricCard = ({ title, value, subtitle, change, sparkline, sparklin
           )}
         </div>
       </div>
-      <div className="flex items-center gap-2 mt-2">
-        <div className={`text-[20px] sm:text-[24px] lg:text-[26px] font-bold tracking-tight leading-tight break-words min-w-0 ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`}>{value}</div>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-2">
+        <div className={`text-[clamp(16px,5vw,21px)] sm:text-[24px] lg:text-[26px] font-bold tracking-tight leading-tight whitespace-nowrap tabular-nums ${darkMode ? 'text-zinc-50' : 'text-zinc-900'}`}>{value}</div>
         {(extra || hayCambio) && (
-          <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+          <div className="sm:ml-auto flex items-center gap-1.5 flex-shrink-0">
             {extra}
             {hayCambio && (
               <span title="Contra el período anterior" className={`inline-flex items-center gap-1 text-[11px] sm:text-xs font-semibold rounded-full px-1.5 py-0.5 ${colorCambio}`}>
@@ -1503,7 +1503,7 @@ const PremiumMetricCard = ({ title, value, subtitle, change, sparkline, sparklin
           </div>
         )}
       </div>
-      {subtitle && <p title={typeof subtitle === 'string' ? subtitle : undefined} className="text-[11px] sm:text-xs leading-snug mt-1 text-zinc-500 truncate">{subtitle}</p>}
+      {subtitle && <p title={typeof subtitle === 'string' ? subtitle : undefined} className="text-[11px] sm:text-xs leading-snug mt-1 text-zinc-500 line-clamp-2 sm:line-clamp-none sm:truncate">{subtitle}</p>}
       {lineSparkline && <MiniLineChart data={lineSparkline} labels={lineSparklineLabels} formatter={lineSparklineFormatter} />}
       {sparkline && <div className="mt-auto pt-2"><MiniLineChart data={sparkline} labels={sparklineLabels} formatter={sparklineFormatter} showArea /></div>}
     </div>
@@ -8502,7 +8502,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
       const cardNodes = buildHomeCardNodes(cur, comparisonStats, opts);
 
       const sectorGrid = (sectorKey) => (
-          <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-2.5 sm:gap-3">
               {(homeCardOrder[sectorKey] || []).map(id => {
                   if (!cardNodes[id]) return null;
                   return editable
@@ -8792,16 +8792,16 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
       <nav className={`md:hidden fixed bottom-0 w-full z-40 border-t transition-colors ${darkMode ? 'bg-[#0E0E0E]/95 backdrop-blur-xl border-white/[0.06] text-zinc-500' : 'bg-white/95 backdrop-blur-xl border-zinc-200/80 text-zinc-400'}`}
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-          <div className="flex justify-around items-center h-16 px-1 overflow-x-auto scrollbar-none">
+          <div className="flex items-center h-16 px-1 overflow-x-auto scrollbar-none overscroll-x-contain">
             {TABS.map(tab => (
               <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className="flex flex-col items-center justify-center flex-1 min-w-0 h-full gap-1 transition-all px-0.5"
+                  onClick={(e) => { setActiveTab(tab.id); e.currentTarget.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' }); }}
+                  className="flex flex-col items-center justify-center flex-1 min-w-[60px] h-full gap-1 transition-all px-0.5"
                   style={activeTab === tab.id ? {color:'#6366f1'} : {}}
               >
                   <tab.icon size={19} strokeWidth={activeTab === tab.id ? 2.5 : 1.8} />
-                  <span className={`text-[9px] leading-none w-full text-center truncate ${activeTab === tab.id ? 'font-bold' : 'font-medium'}`}>{tab.shortLabel || tab.label}</span>
+                  <span className={`text-[10px] leading-none w-full text-center whitespace-nowrap ${activeTab === tab.id ? 'font-bold' : 'font-medium'}`}>{tab.shortLabel || tab.label}</span>
               </button>
             ))}
           </div>
@@ -8927,7 +8927,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                         <span className="text-[11px] font-semibold text-zinc-500">{customDateRange.start} — {customDateRange.end}</span>
                                     </div>
                                     {renderHomeCardSectors(analysisData.baseStats, analysisData.compareStats, { rangeStart: analysisData.rangeStart, rangeEnd: analysisData.rangeEnd })}
-                                    <div className={`rounded-2xl p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
+                                    <div className={`rounded-2xl p-4 sm:p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
                                         <div className="flex items-center gap-2 mb-3">
                                             <TrendingUp size={13} className="text-zinc-500"/>
                                             <span className={`text-[13px] font-medium ${darkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>Ingresos (Base)</span>
@@ -8945,7 +8945,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                         <span className="text-[11px] font-semibold text-zinc-500">{compareDateRange.start} — {compareDateRange.end}</span>
                                     </div>
                                     {renderHomeCardSectors(analysisData.compareStats, analysisData.baseStats, { rangeStart: analysisData.compareRangeStart, rangeEnd: analysisData.compareRangeEnd })}
-                                    <div className={`rounded-2xl p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
+                                    <div className={`rounded-2xl p-4 sm:p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
                                         <div className="flex items-center gap-2 mb-3">
                                             <TrendingUp size={13} className="text-rose-500"/>
                                             <span className={`text-[13px] font-medium ${darkMode ? 'text-zinc-300' : 'text-zinc-700'}`}>Ingresos (Vs)</span>
@@ -8995,13 +8995,13 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         <MetricasBotInicio db={db} darkMode={darkMode} rangeStart={analysisData.rangeStart} rangeEnd={analysisData.rangeEnd} />
                     ),
                     evolucion: globalMonth !== 'compare' && (
-                            <div className={`rounded-2xl p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
+                            <div className={`rounded-2xl p-4 sm:p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
                                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                                     <div>
                                         <h3 className={`text-[15px] font-semibold tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Evolución del período</h3>
                                         <p className="text-[13px] text-zinc-500 mt-0.5 leading-relaxed">Cómo vinieron las ventas día por día. Elegí qué ver y de qué cuenta.</p>
                                     </div>
-                                    <div className={`flex items-center gap-1 p-1 rounded-xl ${darkMode ? 'bg-zinc-900/60' : 'bg-zinc-100'}`}>
+                                    <div className={`flex items-center gap-1 p-1 rounded-xl max-w-full overflow-x-auto scrollbar-none ${darkMode ? 'bg-zinc-900/60' : 'bg-zinc-100'}`}>
                                         {[
                                             { key: 'all',      label: 'Todos' },
                                             { key: 'alias1',   label: 'Alias 1' },
@@ -9011,7 +9011,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                                             { key: 'efectivo', label: 'Efectivo' },
                                         ].map(({ key, label }) => (
                                             <button key={key} onClick={() => setChartMedioPago(key)}
-                                                className={`px-2.5 py-1 text-[10px] font-bold rounded-lg transition-all duration-150 ${
+                                                className={`flex-shrink-0 px-2.5 py-1.5 sm:py-1 text-[11px] sm:text-[10px] font-bold rounded-lg transition-all duration-150 ${
                                                     chartMedioPago === key
                                                         ? (darkMode ? 'bg-zinc-700 text-zinc-100 shadow-sm' : 'bg-white text-zinc-900 shadow-sm')
                                                         : 'text-zinc-500 hover:text-zinc-400'
@@ -9032,7 +9032,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                     equipoClientes: (
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                         {/* EQUIPO */}
-                        <div className={`rounded-2xl p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
+                        <div className={`rounded-2xl p-4 sm:p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
                             <div className="flex items-center justify-between mb-4">
                                 <div className="flex items-center gap-2">
                                     <h3 className={`text-[15px] font-semibold tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Rendimiento del equipo</h3>
@@ -9132,7 +9132,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             h-full para que el wrapper tome el alto completo de la fila del grid, y así
                             "Último Costo" (flex-1 más abajo) pueda estirarse hasta llenarlo) */}
                         <div className="flex flex-col gap-5 h-full">
-                        <div className={`rounded-2xl p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
+                        <div className={`rounded-2xl p-4 sm:p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
                             {(() => {
                                 const orgList = newClientsList.filter(s => s.isNewClient === 'Nuevo - Organico' || s.isNewClient === true);
                                 const adsList = newClientsList.filter(s => s.isNewClient === 'Nuevo - Publicidad');
@@ -9454,7 +9454,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         return (
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                             {topFailedProducts.length > 0 && (
-                            <div className={`rounded-2xl p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
+                            <div className={`rounded-2xl p-4 sm:p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
                                 <div className="flex items-center justify-between mb-4">
                                     <div>
                                         <h3 className={`text-[15px] font-semibold tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Productos con más fallas</h3>
@@ -9509,7 +9509,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             </div>
                             )}
                             {topStolenProducts.length > 0 && (
-                            <div className={`rounded-2xl p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
+                            <div className={`rounded-2xl p-4 sm:p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
                                 <div className="flex items-center justify-between mb-4">
                                     <div>
                                         <h3 className={`text-[15px] font-semibold tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Productos con más robos</h3>
@@ -9572,7 +9572,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                         const gridColor = darkMode ? '#1D1D1D' : '#e4e4e7';
                         const textColor = darkMode ? '#71717a' : '#a1a1aa';
                         return (
-                        <div className={`rounded-2xl p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
+                        <div className={`rounded-2xl p-4 sm:p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`}>
                             <h3 className={`text-[15px] font-semibold tracking-tight text-center mb-3 ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>Cotización del Dólar</h3>
 
                             {/* Selector para elegir el dólar y Recargo: uno al lado del otro, a la misma altura,
@@ -9688,7 +9688,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                             const hidden = hiddenHomeCharts.includes(id);
                             if (hidden && !homeEditMode) return null;
                             return (
-                                <div className={`rounded-2xl p-5 border ${wide ? 'lg:col-span-2' : ''} ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'} ${hidden ? 'opacity-40' : ''}`}>
+                                <div className={`rounded-2xl p-4 sm:p-5 border ${wide ? 'lg:col-span-2' : ''} ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'} ${hidden ? 'opacity-40' : ''}`}>
                                     <div className="flex items-start justify-between gap-3 mb-3">
                                         <div className="min-w-0">
                                             <div className="flex items-center gap-2 flex-wrap">
@@ -12802,7 +12802,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
             {activeTab === 'metaads' && (() => {
               // Mismo lenguaje visual que Inicio: paneles planos #0A0A0A, títulos de sección de 15px con
               // una línea de explicación, tarjetas PremiumMetricCard agrupadas por tema.
-              const panel = `rounded-2xl p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`;
+              const panel = `rounded-2xl p-4 sm:p-5 border ${darkMode ? 'bg-[#0A0A0A] border-white/[0.06]' : 'bg-white border-zinc-200/80'}`;
               const tituloSeccion = `text-[15px] font-semibold tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`;
               const fuerte = darkMode ? 'text-zinc-100' : 'text-zinc-900';
               const seccion = (titulo, descripcion, children) => (
@@ -12872,7 +12872,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
 
                 {/* Cargando por primera vez */}
                 {metaLoading && !metaData && (
-                  <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                  <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-2.5 sm:gap-3">
                     {Array.from({length:10}).map((_,i) => (
                       <div key={i} className={`rounded-xl h-[124px] animate-pulse ${darkMode ? 'bg-[#0A0A0A]' : 'bg-zinc-100'}`}/>
                     ))}
@@ -12933,7 +12933,7 @@ Esto descuenta stock del lote, pero NO crea venta todavía.`)) return;
                   const fARS = v => formatMoney(v);
                   const linea = (arr) => arr.length >= 2 ? arr : null;
                   const fVeces = v => `${v.toFixed(2)}×`;
-                  const grilla = 'grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-3';
+                  const grilla = 'grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-2.5 sm:gap-3';
                   const grilla4 = 'grid grid-cols-2 lg:grid-cols-4 gap-3';
 
                   // Tablas (campañas): mismo estilo en las dos.
