@@ -67,6 +67,18 @@ const pagadoDeCierre = (ci) => ci.pagosSaldo
   : Math.abs(Math.round(ci.saldo || 0));
 const faltaDeCierre = (ci) => Math.max(0, Math.abs(Math.round(ci.saldo || 0)) - pagadoDeCierre(ci));
 
+// Cómo se pagó el saldo de un cierre.
+const MEDIOS_PAGO_SALDO = { efectivo: 'Efectivo', transferencia: 'Transferencia' };
+const aNumero = (s) => Math.round(parseFloat(String(s || '').replace(/\./g, '').replace(',', '.')) || 0);
+const detallePagos = (pagos) => pagos.map(pg => `${MEDIOS_PAGO_SALDO[pg.medio] || 'Pago'} ${formatARS(pg.monto)}`).join(' + ');
+// Lo que se agrega al texto de WhatsApp del cierre cuando se paga al cerrar.
+const textoPagos = (pagos, saldo) => {
+  if (!pagos.length || Math.round(saldo) === 0) return '';
+  const total = pagos.reduce((s, pg) => s + pg.monto, 0);
+  const falta = Math.abs(Math.round(saldo)) - total;
+  return `\n\n✅ *${saldo > 0 ? 'Te pagó' : 'Le pagaste'}:* ${detallePagos(pagos)}${falta > 0 ? `\n⏳ *Faltan ${formatARS(falta)}*` : ''}`;
+};
+
 // `dia` (YYYY-MM-DD): solo las entregas y movimientos de ese día, para cerrar día por día.
 function cuentaPendiente(pedidos, repartidorId, movimientos, dia = null) {
   const suyos = pedidos.filter(p => repartidorDe(p) === repartidorId);
@@ -175,8 +187,8 @@ function textoWhatsApp(c, nombre) {
   L.push('', '💰 *Saldo*');
   L.push(`• Recibido por la moto en pesos: ${formatARS(c.totalRecibido)}`);
   L.push(`• Menos envíos${c.totalGastos ? ' y gastos' : ''}: ${formatARS(c.totalEnvios)}`);
-  c.movs.filter(m => m.tipo === 'entrego').forEach(m => L.push(`• Menos los ${formatARS(m.monto)} que ya te entregó${m.nota ? ` (${m.nota})` : ''}`));
-  c.movs.filter(m => m.tipo === 'adelanto').forEach(m => L.push(`• Más los ${formatARS(m.monto)} que le adelantaste${m.nota ? ` (${m.nota})` : ''}`));
+  c.movs.filter(m => m.tipo === 'entrego').forEach(m => L.push(`• Menos los ${formatARS(m.monto)} que ya te entregó${m.medio ? ` en ${m.medio}` : ''}${m.nota ? ` (${m.nota})` : ''}`));
+  c.movs.filter(m => m.tipo === 'adelanto').forEach(m => L.push(`• Más los ${formatARS(m.monto)} que le adelantaste${m.medio ? ` en ${m.medio}` : ''}${m.nota ? ` (${m.nota})` : ''}`));
   const s = Math.round(c.saldo);
   L.push(s > 0 ? `• *La moto te tiene que entregar: ${formatARS(s)}*` : s < 0 ? `• *Le tenés que pagar a la moto: ${formatARS(-s)}*` : '• *Están a mano*');
 
@@ -243,7 +255,7 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
     const monto = parseFloat(String(nuevoMov?.monto || '').replace(/\./g, '').replace(',', '.')) || 0;
     if (!monto) return;
     try {
-      await addDoc(collection(db, 'cajaMovimientos'), { repartidor: sel, tipo: nuevoMov.tipo, monto, nota: nuevoMov.nota.trim(), fecha: new Date().toISOString(), cierreId: null, ...(dia ? { dia } : {}) });
+      await addDoc(collection(db, 'cajaMovimientos'), { repartidor: sel, tipo: nuevoMov.tipo, monto, nota: nuevoMov.nota.trim(), fecha: new Date().toISOString(), cierreId: null, ...(dia ? { dia } : {}), ...(nuevoMov.tipo !== 'cargo' ? { medio: nuevoMov.medio || 'efectivo' } : {}) });
       setNuevoMov(null);
     } catch (e) { avisar('No se pudo guardar: ' + e.message); }
   };
@@ -265,9 +277,15 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
     }
   };
 
-  // `pagado`: si el saldo ya se pagó al cerrar. Si no, el cierre queda "sin pagar" hasta que se anote.
-  const cerrarCaja = async (pagado) => {
+  // Cómo se pagó el saldo: lo que va en efectivo y lo que va por transferencia (al cerrar o después).
+  const [formaPago, setFormaPago] = useState({ efectivo: '', transferencia: '' });
+  const pagosDeForma = (fp) => Object.keys(MEDIOS_PAGO_SALDO).map(medio => ({ medio, monto: aNumero(fp[medio]) })).filter(pg => pg.monto > 0);
+
+  // `pagos`: lo que ya se pagó del saldo al cerrar ([{ medio, monto }]). Vacío: el cierre queda
+  // "sin pagar" hasta que se anote.
+  const cerrarCaja = async (pagos = []) => {
     if (cerrando || !hayAlgo) return;
+    const pagado = pagos.length > 0;
     setCerrando(true);
     try {
       const nowIso = new Date().toISOString();
@@ -288,8 +306,8 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
         recibido: c.totalRecibido, directo: c.totalDirecto, usd: c.totalDolares,
         viajes: c.totalViajes, cantidadViajes: c.viajes.length, gastos: c.totalGastos,
         yaEntrego: c.yaEntrego, adelantado: c.adelantado, saldo: c.saldo,
-        pedidos: c.abiertas.map(p => p.id), texto, dia: dia || null, dias: [...c.dias].sort(),
-        pagosSaldo: pagado && Math.round(c.saldo) !== 0 ? [{ monto: Math.abs(Math.round(c.saldo)), fecha: nowIso, alCerrar: true }] : [],
+        pedidos: c.abiertas.map(p => p.id), texto: texto + textoPagos(pagos, c.saldo), dia: dia || null, dias: [...c.dias].sort(),
+        pagosSaldo: Math.round(c.saldo) !== 0 ? pagos.map(pg => ({ ...pg, fecha: nowIso, alCerrar: true })) : [],
       });
       if (c.viajes.length) {
         await setDoc(doc(db, 'settings', yo.docUltimoPago), { monto: c.totalViajes, cantidadEnvios: c.viajes.length, fecha: nowIso });
@@ -348,12 +366,14 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
   };
 
   // --- anotar el pago del saldo de un cierre que se cerró sin pagar ---
-  const [pagando, setPagando] = useState(null); // { id, monto }
+  const [pagando, setPagando] = useState(null); // { id, efectivo, transferencia }
   const anotarPago = async (ci) => {
-    const monto = Math.round(parseFloat(String(pagando?.monto || '').replace(/\./g, '').replace(',', '.')) || 0);
+    const nuevos = pagosDeForma(pagando || {});
+    const monto = nuevos.reduce((s, pg) => s + pg.monto, 0);
     if (!monto) return;
     try {
-      await updateDoc(doc(db, 'cierresCaja', ci.id), { pagosSaldo: [...(ci.pagosSaldo || []), { monto, fecha: new Date().toISOString() }] });
+      const fecha = new Date().toISOString();
+      await updateDoc(doc(db, 'cierresCaja', ci.id), { pagosSaldo: [...(ci.pagosSaldo || []), ...nuevos.map(pg => ({ ...pg, fecha }))] });
       setPagando(null);
       avisar(monto >= faltaDeCierre(ci) ? 'Listo, ese cierre quedó pagado.' : `Anotado. Faltan ${formatARS(faltaDeCierre(ci) - monto)}.`);
     } catch (e) { avisar('No se pudo anotar: ' + e.message); }
@@ -370,16 +390,36 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
     if ((ci.saldo || 0) > 0) return esRepartidor ? `Te falta entregar ${f}` : `Te debe ${f}`;
     return esRepartidor ? `Te deben ${f}` : `Le debés ${f}`;
   };
+  // Los dos casilleros: cuánto en efectivo y cuánto por transferencia, con la suma contra lo que se debe.
+  const camposPago = (valor, cambiar, total) => {
+    const suma = pagosDeForma(valor).reduce((s, pg) => s + pg.monto, 0);
+    return (
+      <div className="space-y-2">
+        {Object.entries(MEDIOS_PAGO_SALDO).map(([medio, label], i) => (
+          <label key={medio} className="flex items-center gap-2">
+            <span className={`w-28 text-[13.5px] font-bold ${tx}`}>{medio === 'efectivo' ? '💵' : '🏦'} {label}</span>
+            <input value={valor[medio]} onChange={e => cambiar({ ...valor, [medio]: e.target.value.replace(/[^\d.,]/g, '') })} inputMode="decimal" placeholder="$ 0" autoFocus={i === 0}
+              className={`flex-1 min-w-0 h-11 px-3 rounded-xl border outline-none font-bold tabular-nums ${dm ? 'bg-[#101010] border-white/[0.08] text-zinc-100' : 'bg-white border-zinc-200'}`} />
+          </label>
+        ))}
+        <p className={`text-[12.5px] font-bold ${suma === total ? 'text-emerald-500' : suma > total ? 'text-rose-500' : suave}`}>
+          {suma === total ? `✓ Suma ${formatARS(suma)}, justo lo que había que pagar` : suma > total ? `Suma ${formatARS(suma)}: son ${formatARS(suma - total)} de más` : `Suma ${formatARS(suma)} de ${formatARS(total)}${suma > 0 ? ` · quedan ${formatARS(total - suma)} pendientes` : ''}`}
+        </p>
+      </div>
+    );
+  };
+
   // El formulario para anotar un pago (va en el cartel de arriba y en el historial).
   const formPago = (ci) => pagando?.id === ci.id ? (
-    <div className="flex gap-2 mt-2">
-      <input value={pagando.monto} onChange={e => setPagando(v => ({ ...v, monto: e.target.value.replace(/[^\d.,]/g, '') }))} inputMode="decimal" autoFocus
-        className={`w-32 h-10 px-3 rounded-xl border outline-none font-bold ${dm ? 'bg-[#101010] border-white/[0.08] text-zinc-100' : 'bg-white border-zinc-200'}`} />
-      <button onClick={() => anotarPago(ci)} className="flex-1 h-10 rounded-xl font-black text-white bg-emerald-500 text-[13.5px]">Anotar pago</button>
-      <button onClick={() => setPagando(null)} className={`h-10 px-3 rounded-xl font-bold text-[13px] ${botonGris}`}>Cancelar</button>
+    <div className="mt-2 space-y-2">
+      {camposPago(pagando, v => setPagando({ ...v, id: ci.id }), faltaDeCierre(ci))}
+      <div className="flex gap-2">
+        <button onClick={() => anotarPago(ci)} disabled={!pagosDeForma(pagando).length} className="flex-1 h-10 rounded-xl font-black text-white bg-emerald-500 text-[13.5px] disabled:opacity-50">Anotar pago</button>
+        <button onClick={() => setPagando(null)} className={`h-10 px-3 rounded-xl font-bold text-[13px] ${botonGris}`}>Cancelar</button>
+      </div>
     </div>
   ) : (
-    <button onClick={() => setPagando({ id: ci.id, monto: String(faltaDeCierre(ci)) })}
+    <button onClick={() => setPagando({ id: ci.id, efectivo: String(faltaDeCierre(ci)), transferencia: '' })}
       className="mt-2 h-10 px-3.5 rounded-xl font-black text-white bg-emerald-500 text-[13.5px] inline-flex items-center gap-1.5">
       <CheckCircle2 size={16}/> {(ci.saldo || 0) > 0 ? (esRepartidor ? 'Ya lo entregué' : 'Ya me pagó') : (esRepartidor ? 'Ya me pagaron' : 'Ya le pagué')}
     </button>
@@ -551,7 +591,7 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
                     <span className={`text-[14px] font-bold ${tx}`}>Cierre {diasDeCierre(ci) || fechaHora(ci.fecha)}</span>
                     <span className={`text-[15px] font-black tabular-nums ${tx}`}>{textoDeuda(ci)}</span>
                   </div>
-                  {pagadoDeCierre(ci) > 0 && <p className={`text-[12px] ${suave}`}>Ya pagó {formatARS(pagadoDeCierre(ci))} de {formatARS(Math.abs(Math.round(ci.saldo)))}</p>}
+                  {pagadoDeCierre(ci) > 0 && <p className={`text-[12px] ${suave}`}>Ya pagó {formatARS(pagadoDeCierre(ci))} de {formatARS(Math.abs(Math.round(ci.saldo)))}{ci.pagosSaldo?.some(pg => pg.medio) ? ` (${detallePagos(ci.pagosSaldo)})` : ''}</p>}
                   {puedeCerrar && formPago(ci)}
                 </div>
               ))}
@@ -603,8 +643,8 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
                 <p className={`text-[11px] font-black uppercase tracking-widest mb-1 ${suave}`}>Cómo sale la cuenta</p>
                 {fila('r', `${quien} cobró en mano`, formatARS(c.totalRecibido), { ayuda: 'Efectivo y transferencias a su cuenta' })}
                 {fila('v', `Menos ${c.viajes.length === 1 ? 'el viaje' : `los ${c.viajes.length} viajes`}${c.totalGastos ? ' y gastos' : ''}`, formatARS(c.totalEnvios), { signo: '−', ayuda: 'Lo que le pagás por llevar los pedidos' })}
-                {c.movs.filter(m => m.tipo === 'entrego').map(m => fila(m.id, 'Menos lo que ya te dio', formatARS(m.monto), { signo: '−', ayuda: m.nota || fechaHora(m.fecha), borrar: puedeCerrar ? () => borrarMov(m) : null }))}
-                {c.movs.filter(m => m.tipo === 'adelanto').map(m => fila(m.id, 'Más lo que le adelantaste', formatARS(m.monto), { signo: '+', ayuda: m.nota || fechaHora(m.fecha), borrar: puedeCerrar ? () => borrarMov(m) : null }))}
+                {c.movs.filter(m => m.tipo === 'entrego').map(m => fila(m.id, 'Menos lo que ya te dio', formatARS(m.monto), { signo: '−', ayuda: [MEDIOS_PAGO_SALDO[m.medio], m.nota || fechaHora(m.fecha)].filter(Boolean).join(' · '), borrar: puedeCerrar ? () => borrarMov(m) : null }))}
+                {c.movs.filter(m => m.tipo === 'adelanto').map(m => fila(m.id, 'Más lo que le adelantaste', formatARS(m.monto), { signo: '+', ayuda: [MEDIOS_PAGO_SALDO[m.medio], m.nota || fechaHora(m.fecha)].filter(Boolean).join(' · '), borrar: puedeCerrar ? () => borrarMov(m) : null }))}
                 <div className={`mt-1 pt-1 ${linea}`}>
                   {fila('s', saldo > 0 ? (esRepartidor ? 'Tenés que entregar' : 'Te tiene que dar') : saldo < 0 ? (esRepartidor ? 'Te tienen que pagar' : 'Le tenés que pagar') : 'Están a mano', formatARS(Math.abs(saldo)), { signo: '=', fuerte: true })}
                 </div>
@@ -664,6 +704,16 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
                 ))}
               </div>
               <p className={`text-[12.5px] ${suave}`}>{MOVIMIENTOS[nuevoMov.tipo].ayuda}</p>
+              {nuevoMov.tipo !== 'cargo' && (
+                <div className="grid grid-cols-2 gap-1.5">
+                  {Object.entries(MEDIOS_PAGO_SALDO).map(([medio, label]) => (
+                    <button key={medio} onClick={() => setNuevoMov(v => ({ ...v, medio }))}
+                      className={`h-10 rounded-xl border text-[13px] font-bold ${(nuevoMov.medio || 'efectivo') === medio ? 'bg-indigo-500 border-transparent text-white' : (dm ? 'border-white/[0.08] text-zinc-300' : 'border-zinc-200 text-zinc-700')}`}>
+                      {medio === 'efectivo' ? '💵' : '🏦'} {label}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="flex gap-2">
                 <input value={nuevoMov.monto} onChange={e => setNuevoMov(v => ({ ...v, monto: e.target.value.replace(/[^\d.,]/g, '') }))} inputMode="decimal" placeholder="$ Monto" autoFocus
                   className={`w-32 h-11 px-3 rounded-xl border outline-none font-bold ${dm ? 'bg-[#101010] border-white/[0.08] text-zinc-100' : 'bg-white border-zinc-200'}`} />
@@ -684,7 +734,7 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
 
           {puedeCerrar && hayAlgo && (!confirmando ? (
             <div>
-              <button onClick={() => setConfirmando(true)}
+              <button onClick={() => { setConfirmando(true); setFormaPago({ efectivo: saldo ? String(Math.abs(saldo)) : '', transferencia: '' }); }}
                 className="w-full h-14 rounded-2xl font-black text-base text-white bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] transition-all flex items-center justify-center gap-2">
                 <CheckCircle2 size={20}/> Cerrar la caja de {yo.nombre}{dia ? ` del ${nombreDia(dia)}` : ''}
               </button>
@@ -700,24 +750,25 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
               <p className={`text-[13px] mt-1 ${suave}`}>Se guarda el cierre y {dia ? 'ese día' : 'la caja'} vuelve a cero. {c.viajes.length} {c.viajes.length === 1 ? 'viaje queda pagado' : 'viajes quedan pagados'} (también en Inicio). Si te equivocás, lo podés borrar del historial.</p>
               {saldo !== 0 ? (
                 <>
-                  <p className={`text-[14px] font-bold mt-3 ${tx}`}>
-                    {saldo > 0 ? `¿${yo.nombre} ya te dio los ${formatARS(saldo)}` : `¿Ya le pagaste los ${formatARS(-saldo)} a ${yo.nombre}`}{c.totalDolares > 0 ? ` (y los ${formatUSD(c.totalDolares)})` : ''}?
+                  <p className={`text-[14px] font-bold mt-3 mb-2 ${tx}`}>
+                    {saldo > 0 ? `¿Cómo te pagó ${yo.nombre} los ${formatARS(saldo)}?` : `¿Cómo le pagaste los ${formatARS(-saldo)} a ${yo.nombre}?`}{c.totalDolares > 0 ? ` (los ${formatUSD(c.totalDolares)} van aparte)` : ''}
                   </p>
-                  <div className="grid grid-cols-2 gap-2 mt-2">
-                    <button onClick={() => cerrarCaja(true)} disabled={cerrando} className="min-h-12 py-1.5 rounded-xl font-black text-white bg-emerald-500 disabled:opacity-60 flex items-center justify-center gap-1.5 text-[14px] leading-tight">
-                      {cerrando ? <Loader2 size={18} className="animate-spin"/> : <CheckCircle2 size={18}/>} {saldo > 0 ? 'Sí, ya me pagó' : 'Sí, ya le pagué'}
+                  {camposPago(formaPago, setFormaPago, Math.abs(saldo))}
+                  <div className="grid grid-cols-2 gap-2 mt-3">
+                    <button onClick={() => cerrarCaja(pagosDeForma(formaPago))} disabled={cerrando || !pagosDeForma(formaPago).length} className="min-h-12 py-1.5 rounded-xl font-black text-white bg-emerald-500 disabled:opacity-50 flex items-center justify-center gap-1.5 text-[14px] leading-tight">
+                      {cerrando ? <Loader2 size={18} className="animate-spin"/> : <CheckCircle2 size={18}/>} Cerrar y anotar pago
                     </button>
-                    <button onClick={() => cerrarCaja(false)} disabled={cerrando} className={`min-h-12 py-1.5 px-2 rounded-xl font-black disabled:opacity-60 text-[14px] leading-tight border-2 ${dm ? 'border-amber-500/40 text-amber-300' : 'border-amber-300 text-amber-700'}`}>
-                      No, {saldo > 0 ? 'me paga después' : 'le pago después'}
+                    <button onClick={() => cerrarCaja([])} disabled={cerrando} className={`min-h-12 py-1.5 px-2 rounded-xl font-black disabled:opacity-60 text-[14px] leading-tight border-2 ${dm ? 'border-amber-500/40 text-amber-300' : 'border-amber-300 text-amber-700'}`}>
+                      Cerrar, {saldo > 0 ? 'me paga después' : 'le pago después'}
                     </button>
                   </div>
-                  <p className={`text-[12px] mt-1.5 ${suave}`}>Si elegís «después», queda arriba como sin pagar hasta que lo anotes.</p>
+                  <p className={`text-[12px] mt-1.5 ${suave}`}>Si te pagó una parte, poné solo esa: lo que falta queda arriba como sin pagar. Si no te pagó nada, tocá «después».</p>
                   <button onClick={() => setConfirmando(false)} className={`w-full mt-2 h-10 rounded-xl font-bold text-[13px] ${botonGris}`}>Cancelar, todavía no cierro</button>
                 </>
               ) : (
                 <div className="flex gap-2 mt-3">
                   <button onClick={() => setConfirmando(false)} className={`flex-1 h-12 rounded-xl font-bold ${botonGris}`}>Todavía no</button>
-                  <button onClick={() => cerrarCaja(true)} disabled={cerrando} className="flex-1 h-12 rounded-xl font-black text-white bg-emerald-500 disabled:opacity-60 flex items-center justify-center gap-2">
+                  <button onClick={() => cerrarCaja([])} disabled={cerrando} className="flex-1 h-12 rounded-xl font-black text-white bg-emerald-500 disabled:opacity-60 flex items-center justify-center gap-2">
                     {cerrando ? <Loader2 size={18} className="animate-spin"/> : <CheckCircle2 size={18}/>} Sí, cerrar
                   </button>
                 </div>
@@ -765,7 +816,7 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
                             <p className={`text-[11px] font-black uppercase tracking-widest ${suave}`}>Pagos anotados</p>
                             {ci.pagosSaldo.map((pg, i) => (
                               <p key={i} className={`flex items-center gap-2 text-[13px] mt-0.5 ${tx}`}>
-                                <span className="flex-1">{fechaHora(pg.fecha)}{pg.alCerrar ? ' (al cerrar)' : ''}</span>
+                                <span className="flex-1">{MEDIOS_PAGO_SALDO[pg.medio] ? <b>{pg.medio === 'efectivo' ? '💵' : '🏦'} {MEDIOS_PAGO_SALDO[pg.medio]} · </b> : null}{fechaHora(pg.fecha)}{pg.alCerrar ? ' (al cerrar)' : ''}</span>
                                 <b className="tabular-nums">{formatARS(pg.monto)}</b>
                                 {puedeCerrar && <button onClick={() => borrarPago(ci, i)} title="Borrar pago" className="text-rose-400"><Trash2 size={13}/></button>}
                               </p>
