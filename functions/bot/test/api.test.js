@@ -1084,13 +1084,17 @@ async function main() {
     ok("armado sin pagar: el bot lo cambia, vuelve a pendiente y avisa al equipo", armado.body.ok && armado.body.cambiadoTrasArmado && armado.body.avisarAlEquipo && pa.estado === "pendiente" && pa.cambiadoTrasArmado && pa.items[0].cantidad === 3 && count() === antes, armado.body);
     const pagado = await pedido({ comprobante: { numero: "pago-base", monto: 29000 } });
     const cambios = { pedidoId: pagado.body.pedidoId, telefono: "5491158696086", items: [{ producto: "Elfbar Ice King", cantidad: 2, variante: "Peach" }] };
-    const extra = await llamar(api.agentPedido, { method: "POST", body: cambios });
-    ok("pagado: no lo cambia el bot, deriva", extra.status === 409 && extra.body.derivar && extra.body.motivo === "cambio_de_pedido_pagado" && store[`pedidos/${pagado.body.pedidoId}`].items[0].cantidad === 1, extra.body);
+    // Pagado sin armar (Melia, conv. 3058): el bot lo cambia; si sube el total, primero transfiere la diferencia.
     const vistaPagado = await llamar(api.agentPedido, { method: "POST", body: { ...cambios, preview: true } });
-    ok("pagado: tampoco muestra un cambio propuesto", vistaPagado.status === 409 && vistaPagado.body.derivar, vistaPagado.body);
+    ok("pagado sin armar: muestra el cambio y cuánto falta transferir", vistaPagado.body.ok && vistaPagado.body.saldoPendiente > 0 && /transferir la diferencia/.test(vistaPagado.body.nota || ""), vistaPagado.body);
+    const sinDiferencia = await llamar(api.agentPedido, { method: "POST", body: { ...cambios, idMensajeOrigen: "pa-0" } });
+    ok("pagado sin armar: sin el pago de la diferencia no lo aplica", sinDiferencia.status === 400 && sinDiferencia.body.requierePago && /modificar_pedido/.test(sinDiferencia.body.error) && store[`pedidos/${pagado.body.pedidoId}`].items[0].cantidad === 1, sinDiferencia.body);
+    const pp = store[`pedidos/${pagado.body.pedidoId}`];
+    const conDiferencia = await pedido({ pedidoId: pagado.body.pedidoId, idMensajeOrigen: "pa-1", items: [{ producto: "Elfbar Ice King", cantidad: 2, variante: "Peach" }], salidaSeleccionada: { fecha: pp.fechaSalida, tandaId: pp.tandaSalida, hora: pp.horaSalida } });
+    ok("pagado sin armar: con la diferencia transferida lo cambia", conDiferencia.body.ok && store[`pedidos/${pagado.body.pedidoId}`].items[0].cantidad === 2, conDiferencia.body);
     store[`pedidos/${pagado.body.pedidoId}`].estado = "armado";
-    const pagadoArmado = await llamar(api.agentPedido, { method: "POST", body: { ...cambios, idMensajeOrigen: "pa-1" } });
-    ok("pagado y armado: deriva y no lo toca", pagadoArmado.status === 409 && pagadoArmado.body.motivo === "cambio_de_pedido_pagado" && store[`pedidos/${pagado.body.pedidoId}`].estado === "armado", pagadoArmado.body);
+    const pagadoArmado = await llamar(api.agentPedido, { method: "POST", body: { ...cambios, items: [{ producto: "Elfbar Ice King", cantidad: 3, variante: "Peach" }], idMensajeOrigen: "pa-2" } });
+    ok("pagado y armado: deriva y no lo toca", pagadoArmado.status === 409 && pagadoArmado.body.motivo === "cambio_de_pedido_pagado" && store[`pedidos/${pagado.body.pedidoId}`].estado === "armado" && store[`pedidos/${pagado.body.pedidoId}`].items[0].cantidad === 2, pagadoArmado.body);
 
     for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
     store["settings/operativo"].limitePorTanda = 1;
@@ -1155,7 +1159,7 @@ async function main() {
     ok('Cancelar: sin pagar y pendiente se cancela como en el panel',can.body.cancelado&&pc2.estado==='cancelado'&&pc2.canceladoAt&&/cliente/.test(pc2.motivoCancelacion),pc2);
     const armadoNoPago=await cancelar(p.body.pedidoId,tel);ok('Cancelar: armado no lo cancela el bot, lo deriva',armadoNoPago.status===409&&armadoNoPago.body.derivar&&store[ref].estado==='armado',armadoNoPago.body);
     store['pedidos/pagado-cancelar']={telefono:pagoTel,estado:'pendiente',montoPagado:30000,comprobante:{numero:'111222333',monto:30000},origen:'bot_n8n'};
-    const pag=await cancelar('pagado-cancelar',pagoTel);ok('Cancelar: pagado no se cancela y los cambios los hace el equipo',pag.status===409&&pag.body.motivo==='pagado'&&pag.body.derivarSiQuiereCambiar&&/cambio_de_pedido_pagado/.test(pag.body.error)&&store['pedidos/pagado-cancelar'].estado==='pendiente',pag.body);
+    const pag=await cancelar('pagado-cancelar',pagoTel);ok('Cancelar: pagado no se cancela; un cambio lo hace el bot si no está armado',pag.status===409&&pag.body.motivo==='pagado'&&pag.body.cambiarConModificar&&/modificar_pedido/.test(pag.body.error)&&/cambio_de_pedido_pagado/.test(pag.body.error)&&store['pedidos/pagado-cancelar'].estado==='pendiente',pag.body);
     delete store['pedidos/pagado-cancelar'];
     const fox=await llamar(api.agentBuscarCatalogo,{query:{consulta:'EarPods Foxconn'}});ok('Apple: Foxconn se informa sin certificar original Apple',fox.body.resultados.some(x=>/Foxconn según/.test(x.autenticidadDeclarada)&&/no equivale/.test(x.autenticidadDeclarada)),fox.body);
     const sinOrigen=await llamar(api.agentBuscarCatalogo,{query:{consulta:'AirPods Pro'}});ok('Apple: no inventa el origen de un producto sin ficha',sinOrigen.body.resultados.some(x=>/no especificada/.test(x.autenticidadDeclarada)),sinOrigen.body);

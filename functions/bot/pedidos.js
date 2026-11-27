@@ -59,8 +59,8 @@ const faltaDato = (mensaje, extra) => error(400, mensaje, extra);
 // La cuenta a la que se le pide que transfiera: la que dijo el comprobante, o la activa del panel.
 const cuentaDeCobro = (pedida, op) => (CUENTAS_DE_COBRO.includes(pedida) ? pedida : CUENTAS_DE_COBRO.includes(op.aliasActivo) ? op.aliasActivo : "alias1");
 
-// El pedido que se quiere cambiar: tiene que ser del bot, de este cliente, en curso y sin pagar (la regla
-// está en restriccionCambio: pagado se deriva; armado sin pagar se cambia y vuelve a pendiente).
+// El pedido que se quiere cambiar: tiene que ser del bot, de este cliente y en curso (la regla está en
+// restriccionCambio: armado y pagado se deriva; el resto lo cambia el bot).
 async function pedidoAModificar(pedidoId, telefono, idMensajeOrigen, preview) {
   const ref = db.collection("pedidos").doc(String(pedidoId));
   const snap = await ref.get();
@@ -354,7 +354,7 @@ async function procesarPedido(entrada) {
     if (anterior && recibido === 0) return faltaDato("El pedido anterior se pagaba al recibir y no tiene un pago previo registrado. Pedí la transferencia del total y el comprobante antes de cambiarlo a Uber o correo.", { requierePago: true });
     // Si falta plata, no se carga: el cliente transfiere lo que falta y se vuelve a llamar con todos los comprobantes.
     if (diferencia < -TOLERANCIA_COMPROBANTE) {
-      return faltaDato(`Lo transferido (${pesos(recibido)}) no alcanza: faltan ${pesos(-diferencia)} para el total de ${pesos(esperado)}. Decile al cliente cuánto falta y pedile el comprobante de esa transferencia; cuando llegue, volvé a llamar a crear_pedido.${avisoSinContar}`, { requierePago: true, faltante: -diferencia });
+      return faltaDato(`Lo transferido (${pesos(recibido)}) no alcanza: faltan ${pesos(-diferencia)} para el total de ${pesos(esperado)}. Decile al cliente cuánto falta, mandale PLANTILLA:ALIAS y pedile el comprobante de esa transferencia; cuando llegue, volvé a llamar a ${anterior ? "modificar_pedido con soloVer en false" : "crear_pedido"}.${avisoSinContar}`, { requierePago: true, faltante: -diferencia });
     }
   }
   // Lo que pagó de más (fuera de la tolerancia) queda anotado en el pedido para que el equipo lo devuelva.
@@ -372,7 +372,10 @@ async function procesarPedido(entrada) {
 
   if (preview) {
     return ok({ preview: true, mensaje, total, salida: cuando, opcionesMoto: opciones.slice(0, 4), pedidoId: refAnterior?.id || null,
-      saldoPendiente: anterior && diferencia < 0 ? -diferencia : 0, requiereTransferencia: conComprobante && (!anterior || diferencia < 0) });
+      saldoPendiente: anterior && diferencia < 0 ? -diferencia : 0, requiereTransferencia: conComprobante && (!anterior || diferencia < 0),
+      // Un pedido ya pagado que cambia (27/11): si sube, transfiere la diferencia antes de aplicarlo; si baja, se le devuelve.
+      ...(anterior && conComprobante && pagado > 0 && diferencia < -TOLERANCIA_COMPROBANTE ? { nota: `Ya pagó ${pesos(pagado)}: para aplicar el cambio tiene que transferir la diferencia de ${pesos(-diferencia)}. Mostrale el cambio, mandale PLANTILLA:ALIAS y, cuando llegue el comprobante, aplicalo con soloVer en false.` } : {}),
+      ...(anterior && conComprobante && pagado > 0 && diferencia > TOLERANCIA_COMPROBANTE ? { nota: `Ya pagó ${pesos(pagado)}: con el cambio le sobran ${pesos(diferencia)}, que el equipo le devuelve. Si confirma, aplicalo con soloVer en false.` } : {}) });
   }
 
   // ── Guardar ──
@@ -503,7 +506,7 @@ const agentPedido = conClave(async (req, res) => {
 });
 
 // Regla del negocio para cancelar: si no pagó y el depósito todavía no lo armó, se cancela. Si ya pagó,
-// no se cancela y los cambios los hace el equipo (18/11). Armado sin pagar, la cancelación la revisa el equipo. Queda igual que con el botón
+// no se cancela; un cambio lo hace el bot salvo que ya esté armado (27/11). Armado sin pagar, la cancelación la revisa el equipo. Queda igual que con el botón
 // «Cancelar pedido» del panel (estado cancelado, con motivo y fecha; libera su lugar en la tanda).
 async function cancelarPedido(entrada) {
   const telefono = normalizarTelefono(entrada.telefono);
@@ -514,7 +517,7 @@ async function cancelarPedido(entrada) {
   if (p.estado === "cancelado") return ok({ cancelado: true, yaEstaba: true, mensaje: "Ese pedido ya estaba cancelado." });
   if (p.estado !== "pendiente" && p.estado !== "armado") return error(409, "Ese pedido ya salió o se entregó: no se puede cancelar.", { motivo: "ya_salio" });
   if (estaPagado(p)) {
-    return error(409, "Ese pedido ya está pagado: no se cancela. Si quiere cambiar algo (el día, la salida o los productos), lo hace el equipo: derivá con el motivo cambio_de_pedido_pagado.", { motivo: "pagado", derivarSiQuiereCambiar: true });
+    return error(409, "Ese pedido ya está pagado: no se cancela. Si quiere cambiar algo (el día, la salida o los productos), hacelo vos con modificar_pedido; si el depósito ya lo armó, derivá con el motivo cambio_de_pedido_pagado.", { motivo: "pagado", cambiarConModificar: true });
   }
   if (p.estado === "armado") {
     return error(409, "El depósito ya armó ese pedido: no lo cancelás vos. Derivá con el motivo cancelar_pedido_armado para que lo revise el equipo. Si en vez de cancelar quiere cambiarlo, el cambio lo hacés vos con modificar_pedido.", { motivo: "armado", derivar: true });
