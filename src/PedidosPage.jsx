@@ -5,7 +5,7 @@ import { initializeFirestore, getFirestore, collection, query, orderBy, onSnapsh
 import {
   ClipboardList, Plus, Clock, AlertTriangle, XCircle, CheckCircle, ChevronRight,
   ChevronDown, ChevronUp, History, Save, Moon, Sun, PartyPopper, Search, Trash2, Download,
-  Bike, Car, MapPin, PackageCheck, Store, Archive, Pencil, Loader2, Mail, ScanBarcode, CalendarClock
+  Bike, Car, MapPin, PackageCheck, PackageX, Store, Archive, Pencil, Loader2, Mail, ScanBarcode, CalendarClock
 } from 'lucide-react';
 import AddressAutocomplete from './reparto/AddressAutocomplete';
 import { armarPrefillFinalizar, rankearItemsEnStock } from './pedidos/autocompletarVenta';
@@ -15,6 +15,7 @@ import { rid, useCodigosBarra, derivarProductosConocidos, registrarCodigoBarra, 
 import { CajaEscaneo, RegistrarCodigoModal, FilaEscaneada } from './escaneo/componentes';
 import AccesosRapidos from './navegacion/AccesosRapidos';
 import { hoyLocal, esProgramado, esFechaValida, fechaSalidaCorta } from './pedidos/fechaSalida';
+import { ponerEnCero } from './pedidos/stockOperativo';
 
 // --- Firebase: mismo patrón que FacturasPage.jsx — página 100% independiente de App.jsx,
 // reutiliza la instancia si ya fue inicializada (no debería pasar acá porque esta página vive
@@ -853,6 +854,138 @@ function EditableDireccion({ pedido, dm }) {
 // un solo pedido a la vez, bien grande, con un botón enorme para no errarle.
 // Se monta de nuevo cada vez que cambia el pedido en foco (el padre le pasa key={pedido.id}),
 // así el "entered" arranca en false y dispara la animación de crecimiento apenas se pinta.
+// «No hay stock»: el depósito marca qué producto del pedido no está y el bot de WhatsApp se lo avisa
+// al cliente con lo que sí hay (functions/bot/sinstock.js). El pedido guarda
+//   sinStock = { faltantes: [{ producto, variante, cantidad }], nota, marcadoEn, avisadoEn?, resueltoEn? }
+//   avisoSinStock = 'pendiente' (el bot lo busca cada minuto) | 'enviado' | 'sin_whatsapp' | 'descartado'
+const nombreItem = (it) => `${Number(it.cantidad) > 1 ? `${it.cantidad}x ` : ''}${it.producto}${it.variante ? ` ${it.variante}` : ''}`;
+function SinStock({ pedido, dm }) {
+  const [abierto, setAbierto] = useState(false);
+  const [elegidos, setElegidos] = useState([]); // índices de pedido.items
+  const [otro, setOtro] = useState('');
+  const [nota, setNota] = useState('');
+  const [guardando, setGuardando] = useState(false);
+  const items = Array.isArray(pedido.items) ? pedido.items.filter(it => it && it.producto) : [];
+  const ss = pedido.sinStock;
+  const activo = ss && !ss.resueltoEn && (ss.faltantes || []).length > 0;
+  const porWhatsapp = !!(pedido.telefono && pedido.idConversacion);
+
+  const limpiar = () => { setAbierto(false); setElegidos([]); setOtro(''); setNota(''); };
+  const guardar = async () => {
+    const faltantes = [
+      ...elegidos.map(i => items[i]).filter(Boolean).map(it => ({ producto: it.producto, variante: it.variante || '', cantidad: Number(it.cantidad) || 1 })),
+      ...(otro.trim() ? [{ producto: otro.trim(), variante: '', cantidad: 1 }] : []),
+    ];
+    if (!faltantes.length) return;
+    setGuardando(true);
+    try {
+      // En la misma operación: el pedido queda marcado y ese sabor pasa a (0) en la lista de stock de
+      // /operativo, así el bot no se lo ofrece a otro cliente (ver pedidos/stockOperativo.js).
+      await runTransaction(db, async (tx) => {
+        const refOp = doc(db, 'settings', 'operativo');
+        const op = (await tx.get(refOp)).data() || {};
+        const { cambios, resultado } = ponerEnCero(op, faltantes);
+        if (Object.keys(cambios).length) tx.update(refOp, cambios);
+        tx.update(doc(db, 'pedidos', pedido.id), {
+          sinStock: { faltantes, nota: nota.trim(), marcadoEn: new Date().toISOString(), stockOperativo: resultado },
+          avisoSinStock: porWhatsapp ? 'pendiente' : 'sin_whatsapp',
+        });
+      });
+      limpiar();
+    } catch (e) {
+      alert('No se pudo guardar: ' + e.message);
+    } finally {
+      setGuardando(false);
+    }
+  };
+  const resolver = async () => {
+    if (!window.confirm('¿Ya se resolvió? Se saca el cartel de «sin stock» de este pedido.')) return;
+    try { await updateDoc(doc(db, 'pedidos', pedido.id), { 'sinStock.resueltoEn': new Date().toISOString(), 'sinStock.resueltoPor': 'deposito' }); }
+    catch (e) { alert('No se pudo guardar: ' + e.message); }
+  };
+
+  if (activo) {
+    const estado = pedido.avisoSinStock;
+    const hora = ss.avisadoEn ? new Date(ss.avisadoEn).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : '';
+    return (
+      <div className={`rounded-2xl border-2 p-3.5 ${dm ? 'border-amber-500/40 bg-amber-500/[0.07]' : 'border-amber-300 bg-amber-50'}`}>
+        <p className="text-[13px] font-black uppercase tracking-wider text-amber-500 flex items-center gap-1.5"><PackageX size={15}/> Sin stock</p>
+        <p className={`text-[15px] font-bold mt-1 ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>{ss.faltantes.map(nombreItem).join(' · ')}</p>
+        {ss.nota && <p className={`text-[13px] mt-0.5 ${dm ? 'text-zinc-300' : 'text-zinc-700'}`}>{ss.nota}</p>}
+        <p className={`text-[12.5px] font-bold mt-2 ${estado === 'enviado' ? 'text-emerald-500' : dm ? 'text-amber-300' : 'text-amber-700'}`}>
+          {estado === 'enviado' ? `✓ El bot ya le avisó al cliente${hora ? ` (${hora})` : ''}. Esperá su respuesta.`
+            : estado === 'sin_whatsapp' ? '⚠️ Este pedido no vino por WhatsApp: avisale vos al cliente.'
+            : estado === 'descartado' ? '⚠️ El bot no le avisó (el aviso venció). Avisale vos al cliente.'
+            : '⏳ El bot todavía no le avisó al cliente.'}
+        </p>
+        {(ss.stockOperativo || []).map((r, i) => (
+          <p key={i} className={`text-[12.5px] font-bold mt-1 ${r.estado === 'puesto' || r.estado === 'ya_estaba' ? 'text-emerald-500' : dm ? 'text-amber-300' : 'text-amber-700'}`}>
+            {r.estado === 'puesto' ? `✓ En /operativo quedó en 0: ${r.linea}`
+              : r.estado === 'ya_estaba' ? `✓ En /operativo ya estaba en 0: ${r.linea}`
+              : `⚠️ No encontré seguro «${r.faltante}» en la lista de stock de /operativo: ponelo en 0 a mano.`}
+          </p>
+        ))}
+        <button type="button" onClick={resolver}
+          className={`mt-2.5 w-full h-10 rounded-xl text-sm font-bold border ${dm ? 'border-white/[0.12] text-zinc-200 hover:bg-white/[0.05]' : 'border-zinc-300 text-zinc-700 hover:bg-white'}`}>
+          Ya se resolvió
+        </button>
+      </div>
+    );
+  }
+
+  if (!abierto) {
+    return (
+      <button type="button" onClick={() => setAbierto(true)}
+        className={`self-start h-9 px-3 rounded-xl text-[13px] font-bold border flex items-center gap-1.5 transition-all active:scale-[0.97] ${dm ? 'border-amber-500/30 text-amber-300 hover:bg-amber-500/10' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
+        <PackageX size={15}/> No hay stock
+      </button>
+    );
+  }
+
+  const hayAlgo = elegidos.length > 0 || !!otro.trim();
+  return (
+    <div className={`rounded-2xl border-2 p-3.5 flex flex-col gap-2.5 ${dm ? 'border-amber-500/40 bg-amber-500/[0.05]' : 'border-amber-300 bg-amber-50'}`}>
+      <p className={`text-[15px] font-black ${dm ? 'text-zinc-100' : 'text-zinc-900'}`}>¿Qué producto no hay?</p>
+      {items.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          {items.map((it, i) => {
+            const sel = elegidos.includes(i);
+            return (
+              <button key={i} type="button" onClick={() => setElegidos(v => sel ? v.filter(x => x !== i) : [...v, i])}
+                className={`min-h-11 px-3 py-2 rounded-xl border text-left text-[14px] font-bold flex items-center gap-2 transition-all ${sel
+                  ? 'bg-amber-500 border-transparent text-white'
+                  : (dm ? 'bg-[#101010] border-white/[0.08] text-zinc-200' : 'bg-white border-zinc-200 text-zinc-800')}`}>
+                <span className={`w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 ${sel ? 'border-white' : (dm ? 'border-zinc-600' : 'border-zinc-300')}`}>{sel && <CheckCircle size={13}/>}</span>
+                {nombreItem(it)}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <input value={otro} onChange={e => setOtro(e.target.value)}
+        placeholder={items.length ? 'Otro (escribilo): ej. Ice King Peach' : 'Escribí qué producto no hay: ej. Ice King Peach'}
+        className={`h-11 border rounded-xl px-3 w-full text-[15px] outline-none ${dm ? 'bg-[#101010] border-white/[0.08] text-zinc-100 placeholder-zinc-600' : 'bg-white border-zinc-200 text-zinc-900'}`} />
+      <input value={nota} onChange={e => setNota(e.target.value)} placeholder="Nota para el cliente (opcional): ej. queda 1 sola"
+        className={`h-11 border rounded-xl px-3 w-full text-[14px] outline-none ${dm ? 'bg-[#101010] border-white/[0.08] text-zinc-100 placeholder-zinc-600' : 'bg-white border-zinc-200 text-zinc-900'}`} />
+      <p className="text-[12px] leading-snug text-zinc-500">
+        {porWhatsapp
+          ? 'El bot de WhatsApp le avisa al cliente y le ofrece lo que sí hay. Ese sabor queda en 0 en la lista de stock de /operativo.'
+          : 'Este pedido no vino por WhatsApp: el bot no puede avisarle, queda marcado para que le avises vos.'}
+      </p>
+      <div className="flex gap-2">
+        <button type="button" onClick={guardar} disabled={!hayAlgo || guardando}
+          className="flex-1 h-11 rounded-xl font-black text-sm text-white bg-amber-500 hover:bg-amber-400 disabled:opacity-40 transition-all active:scale-[0.97]">
+          {guardando ? 'Guardando...' : 'Avisar que no hay'}
+        </button>
+        <button type="button" onClick={limpiar} disabled={guardando}
+          className={`h-11 px-3 rounded-xl font-bold text-sm ${dm ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-800'}`}>
+          Cancelar
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Botón para programar el día en que SALE el pedido (ver pedidos/fechaSalida.js). Con una fecha
 // futura el pedido se va a la pestaña Programados y vuelve solo a la cola ese día; al anotar la
 // venta, la fecha del formulario arranca en esa. Se puede cambiar o quitar en cualquier momento.
@@ -968,6 +1101,8 @@ function FocusCard({ pedido, dm, eyebrow, actionLabel, actionColor, onAction, on
           )}
         </div>
       </div>
+
+      {conEscaneo && <SinStock pedido={pedido} dm={dm} />}
 
       <EditableMensaje pedido={pedido} dm={dm}
         textClassName={`text-xl leading-snug whitespace-pre-wrap font-bold ${dm ? 'text-zinc-50' : 'text-zinc-900'}`} />
@@ -1096,6 +1231,8 @@ function MotoPendienteCard({ pedido, dm, onListo, onCancel, db, codigosBarra, pr
           </span>
         </div>
       </div>
+
+      <SinStock pedido={pedido} dm={dm} />
 
       <EditableMensaje pedido={pedido} dm={dm}
         textClassName={`text-lg leading-snug whitespace-pre-wrap font-bold ${dm ? 'text-zinc-50' : 'text-zinc-900'}`} />

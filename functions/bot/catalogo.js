@@ -462,6 +462,6 @@ function sinPrecios(texto) {
 }
 
 module.exports = {
-  LISTAS_DEL_PANEL, STOCK_DE, parsearProductos, productosEnPesos, nombresDeLaLista, buscarProducto, productoDeLinea, faltaStock,
+  LISTAS_DEL_PANEL, STOCK_DE, esNombre, parsearProductos, productosEnPesos, nombresDeLaLista, buscarProducto, productoDeLinea, faltaStock,
   MINIMO_MAYORISTA, parsearMayorista, precioMayorista, productoMayorista, buscarEnCatalogo, sinPrecios,
 };

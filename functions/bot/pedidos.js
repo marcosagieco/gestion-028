@@ -465,6 +465,8 @@ async function procesarPedido(entrada) {
     tx.set(ref, refAnterior ? {
       ...actual, ...pedido, estado: "pendiente", createdAt: actual.createdAt, idempotencia: actual.idempotencia,
       ...(actual.estado === "armado" ? { cambiadoTrasArmado: ahora } : {}),
+      // Si faltaba stock y el cliente cambió los productos, el faltante queda resuelto (sinstock.js).
+      ...(actual.sinStock && !actual.sinStock.resueltoEn && entrada.items !== undefined ? { sinStock: { ...actual.sinStock, resueltoEn: ahora, resueltoPor: "bot" } } : {}),
       idMensajeOrigen: actual.idMensajeOrigen, cuentaCobro: actual.cuentaCobro || pedido.cuentaCobro, comprobanteImagen: actual.comprobanteImagen,
       updatedAt: ahora, ultimoMensajeModificacion: String(entrada.idMensajeOrigen || ""),
     } : pedido);

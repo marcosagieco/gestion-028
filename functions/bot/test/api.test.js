@@ -1095,6 +1095,18 @@ async function main() {
     store[`pedidos/${pagado.body.pedidoId}`].estado = "armado";
     const pagadoArmado = await llamar(api.agentPedido, { method: "POST", body: { ...cambios, items: [{ producto: "Elfbar Ice King", cantidad: 3, variante: "Peach" }], idMensajeOrigen: "pa-2" } });
     ok("pagado y armado: deriva y no lo toca", pagadoArmado.status === 409 && pagadoArmado.body.motivo === "cambio_de_pedido_pagado" && store[`pedidos/${pagado.body.pedidoId}`].estado === "armado" && store[`pedidos/${pagado.body.pedidoId}`].items[0].cantidad === 2, pagadoArmado.body);
+    // Sin stock (Marcos 27/11): con el faltante marcado, el bot cambia el producto aunque esté armado y pagado.
+    const ssp = store[`pedidos/${pagado.body.pedidoId}`];
+    ssp.sinStock = { faltantes: [{ producto: ssp.items[0].producto, variante: ssp.items[0].variante, cantidad: 2 }], nota: "", marcadoEn: new Date().toISOString() };
+    ssp.avisoSinStock = "enviado";
+    const masCaro = await llamar(api.agentPedido, { method: "POST", body: { ...cambios, items: [{ producto: "Elfbar Ice King", cantidad: 4, variante: "Peach" }], idMensajeOrigen: "ss-caro" } });
+    ok("sin stock pagado y armado: si el nuevo cuesta más, pide la diferencia y no lo toca", !masCaro.body.ok && masCaro.body.requierePago && store[`pedidos/${pagado.body.pedidoId}`].items[0].cantidad === 2 && !store[`pedidos/${pagado.body.pedidoId}`].sinStock.resueltoEn, masCaro.body);
+    const cambiado = await llamar(api.agentPedido, { method: "POST", body: { ...cambios, items: [{ producto: "Ignite V400", cantidad: 1, variante: "Peach" }], idMensajeOrigen: "ss-cambio" } });
+    const ssc = store[`pedidos/${pagado.body.pedidoId}`];
+    ok("sin stock pagado y armado: el bot cambia el producto y el faltante queda resuelto", cambiado.body.ok && /Ignite/i.test(ssc.items[0].producto) && ssc.sinStock.resueltoEn && ssc.sinStock.resueltoPor === "bot" && ssc.comprobante, cambiado.body);
+    ssc.estado = "armado";
+    const despues = await llamar(api.agentPedido, { method: "POST", body: { ...cambios, idMensajeOrigen: "ss-despues" } });
+    ok("sin stock resuelto: armado y pagado vuelve a derivar", despues.status === 409 && despues.body.motivo === "cambio_de_pedido_pagado", despues.body);
 
     for (const k of Object.keys(store)) if (k.startsWith("pedidos/")) delete store[k];
     store["settings/operativo"].limitePorTanda = 1;
@@ -1273,6 +1285,54 @@ async function main() {
     const faltaDato = await llamar(api.agentComprobantesDeLaPausa, { method: "POST", body: { telefono: tel, desde: String(desde) } });
     ok("pausa: sin conversación se rechaza", faltaDato.status === 400, faltaDato.body);
     for (const k of ["cw-pausa", "cw-pausa-otra-conv", "cw-pausa-usado", "cw-pausa-viejo"]) delete store["comprobantes/" + k];
+  }
+
+  // ── «No hay stock»: el depósito marca el faltante en /pedidos y el bot le avisa al cliente ──
+  {
+    const op = store["settings/operativo"];
+    const stockAntes = op.stockNicotinaTexto;
+    op.stockNicotinaTexto = "STOCK\n\n👑 ELFBAR ICE KING\n\nPeach 🍑 (3)\nBlueberry Ice 🫐 (2)\nStrawberry Ice 🍓 (0)";
+    const hace = (min) => new Date(Date.now() - min * 60000).toISOString();
+    const base = { estado: "pendiente", origen: "bot_n8n", createdAt: hace(20), telefono: "5491100000001", idConversacion: "c-ss", cliente: "Fede Gómez", total: 52000,
+      items: [{ producto: "Elfbar Ice King", variante: "Peach", cantidad: 2, importe: 49000 }] };
+    const marca = (extra) => ({ sinStock: { faltantes: [{ producto: "Elfbar Ice King", variante: "Peach", cantidad: 2 }], nota: "", marcadoEn: hace(1) }, avisoSinStock: "pendiente", ...extra });
+    store["pedidos/ss-1"] = { ...base, ...marca() };
+    store["pedidos/ss-pagado"] = { ...base, telefono: "5491100000002", idConversacion: "c-ss2", comprobante: "123", montoPagado: 52000, ...marca() };
+    store["pedidos/ss-web"] = { ...base, telefono: null, idConversacion: null, origen: "web", ...marca() };
+    store["pedidos/ss-cancelado"] = { ...base, estado: "cancelado", ...marca() };
+    store["pedidos/ss-viejo"] = { ...base, ...marca({ sinStock: { faltantes: [{ producto: "Elfbar Ice King", variante: "Peach" }], marcadoEn: hace(60 * 30) } }) };
+    store["pedidos/ss-enviado"] = { ...base, ...marca({ avisoSinStock: "enviado" }) };
+
+    const r = await llamar(api.agentAvisosSinStock, { method: "GET" });
+    const a = (r.body.avisos || []).find((x) => x.pedidoId === "ss-1");
+    ok("sin stock: lista los pendientes con conversación", r.body.ok && r.body.avisos.length === 2 && a && a.idConversacion === "c-ss" && a.faltantes[0].producto === "Elfbar Ice King", r.body);
+    const sabores = a?.alternativas?.[0]?.opciones?.[0]?.sabores || [];
+    ok("sin stock: ofrece los otros sabores con stock, sin el que falta ni los de (0)", sabores.length === 1 && /Blueberry/.test(sabores[0]), a?.alternativas);
+    ok("sin stock: arma un mensaje para el cliente con el stock actualizado", /Fede/.test(a?.mensajeSugerido || "") && /stock actualizado/.test(a.mensajeSugerido) && /Blueberry/.test(a.mensajeSugerido), a?.mensajeSugerido);
+    const lista = (a?.stockActual || [])[0];
+    ok("sin stock: manda la lista de stock entera, sin el sabor que falta ni los de (0)", lista && lista.lista === "STOCK_NICOTINA" && /ICE KING/.test(lista.texto) && /Blueberry/.test(lista.texto) && !/Peach/.test(lista.texto) && !/Strawberry/.test(lista.texto), a?.stockActual);
+    ok("sin stock: sin pagar, si no quiere otro se saca del pedido", /sacá ese producto/.test(a?.siNoQuiereOtro || ""), a?.siNoQuiereOtro);
+    ok("sin stock: sin pagar, el bot puede cambiar el pedido", a?.puedeModificar === true && a.pagado === false, a);
+    const pagado = r.body.avisos.find((x) => x.pedidoId === "ss-pagado");
+    ok("sin stock: pagado, el bot puede cambiar el producto; si no quiere otro, deriva sin ofrecer devolución", pagado && pagado.pagado && pagado.puedeModificar && pagado.cambio.porSinStock && /Derivá/.test(pagado.siNoQuiereOtro) && /no ofrezcas devolución/.test(pagado.siNoQuiereOtro), pagado);
+    ok("sin stock: sin WhatsApp queda para el depósito", store["pedidos/ss-web"].avisoSinStock === "sin_whatsapp", store["pedidos/ss-web"]);
+    ok("sin stock: cancelado o de hace más de un día no se avisa", store["pedidos/ss-cancelado"].avisoSinStock === "descartado" && store["pedidos/ss-viejo"].avisoSinStock === "descartado");
+
+    const confirmado = await llamar(api.agentAvisosSinStock, { method: "POST", body: { pedidoId: "ss-1", enviadoEn: "2026-11-27T15:00:00.000Z" } });
+    ok("sin stock: POST lo marca enviado", confirmado.body.marcado && store["pedidos/ss-1"].avisoSinStock === "enviado" && store["pedidos/ss-1"].sinStock.avisadoEn === "2026-11-27T15:00:00.000Z", store["pedidos/ss-1"]);
+    const otraVez = await llamar(api.agentAvisosSinStock, { method: "POST", body: { pedidoId: "ss-1" } });
+    ok("sin stock: confirmar dos veces no rompe nada", otraVez.body.ok && !otraVez.body.marcado);
+    const sinId = await llamar(api.agentAvisosSinStock, { method: "POST", body: {} });
+    ok("sin stock: POST sin pedidoId se rechaza", sinId.status === 400, sinId.body);
+    const sinClave = await llamar(api.agentAvisosSinStock, { method: "GET", headers: {} });
+    ok("sin stock: sin clave -> 401", sinClave.status === 401);
+
+    const estado = await llamar(api.agentEstadoOperativo, { query: { telefono: "5491100000001" } });
+    const actual = estado.body.pedidoActual;
+    ok("sin stock: el estado del pedido le cuenta al bot qué falta", actual && actual.sinStock && /Ice King Peach/.test(actual.sinStock.faltantes[0]) && actual.sinStock.avisadoAlCliente === true, actual);
+
+    for (const k of ["ss-1", "ss-pagado", "ss-web", "ss-cancelado", "ss-viejo", "ss-enviado"]) delete store["pedidos/" + k];
+    op.stockNicotinaTexto = stockAntes;
   }
 
   const fallas = resultados.filter((r) => !r.ok);

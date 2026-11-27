@@ -23,6 +23,13 @@ function esPedidoEnCurso(p, ahora = Date.now()) {
 // Pagado: con un comprobante o con plata ya recibida (también la mitad de «mitad y mitad»).
 const estaPagado = (p) => Number(p?.montoPagado) > 0 || !!p?.comprobante;
 
+// «No hay stock» (sinstock.js): lo que el depósito marcó que falta, mientras no se resuelva. Así el bot lo
+// sabe en la conversación aunque el aviso ya haya salido.
+const nombreFaltante = (f) => `${Number(f.cantidad) > 1 ? `${f.cantidad}x ` : ""}${f.producto}${f.variante ? ` ${f.variante}` : ""}`;
+const sinStockActivo = (p) => p?.sinStock && !p.sinStock.resueltoEn && (p.sinStock.faltantes || []).length
+  ? { faltantes: p.sinStock.faltantes.map(nombreFaltante), nota: p.sinStock.nota || "", avisadoAlCliente: p.avisoSinStock === "enviado" }
+  : null;
+
 // Si el cliente puede cambiar el pedido, o qué pasa si lo pide. Reglas de Lucio: solo se deriva si ya está
 // armado Y pagado (27/11). Pagado sin armar, el bot lo cambia (si sube el total, el cliente transfiere la
 // diferencia; si baja, queda anotado para devolverle): caso Melia (conv. 3058), pagó y quería sumar un vape y se
@@ -36,6 +43,13 @@ function restriccionCambio(pedido, ahora = Date.now()) {
   const salida = Date.parse(`${pedido.fechaSalida || ""}T${pedido.horaSalida || ""}:00-03:00`);
   if (pedido.estado === "armado" && Number.isFinite(salida) && ahora >= salida) {
     return { permitido: false, derivar: false, bloqueadoSalida: true, motivo: "salida_cerrada", mensaje: "tu pedido ya está armado y llegó la hora de salida; ya no podemos modificarlo" };
+  }
+  // Excepción: si el depósito marcó que falta stock (sinstock.js), el bot cambia ese producto por otro aunque
+  // esté armado y pagado (Marcos 27/11). Si el nuevo cuesta más, agentPedido pide la diferencia; si cuesta menos,
+  // queda anotado lo pagado de más. Con el cambio de productos el faltante queda resuelto y vuelve la regla de siempre.
+  if (estaPagado(pedido) && sinStockActivo(pedido)) {
+    return { permitido: true, derivar: false, pagado: true, porSinStock: true, armado: pedido.estado === "armado",
+      mensaje: "Falta stock: cambiá ese producto por el que elija el cliente aunque el pedido esté pagado. Si el nuevo cuesta más, pedile la diferencia; si cuesta menos, queda anotado lo que pagó de más." };
   }
   if (pedido.estado === "armado" && estaPagado(pedido)) {
     return { permitido: false, derivar: true, armado: true, pagado: true, motivo: "cambio_de_pedido_pagado", mensaje: "El pedido ya está pagado y el depósito ya lo armó: los cambios los hace el equipo. Derivá con el motivo cambio_de_pedido_pagado y contale al cliente qué quiere cambiar en el resumen." };
@@ -82,6 +96,7 @@ async function pedidoEnCurso(telefono) {
     horaSalida: pedido.horaSalida || null,
     puedeAfirmarEnCamino: enLaCalle,
     pagado: estaPagado(pedido),
+    sinStock: sinStockActivo(pedido),
     puedeModificar: pedido.origen === "bot_n8n" && restriccionCambio(pedido).permitido,
     cambio: restriccionCambio(pedido),
     detalle: pedido.origen === "bot_n8n" ? {
@@ -91,4 +106,4 @@ async function pedidoEnCurso(telefono) {
   };
 }
 
-module.exports = { esPedidoEnCurso, estaPagado, restriccionCambio, pedidoEnCurso };
+module.exports = { esPedidoEnCurso, estaPagado, restriccionCambio, pedidoEnCurso, nombreFaltante, sinStockActivo };

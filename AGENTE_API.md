@@ -24,6 +24,7 @@ total, salida, cupo y validación del pago. El backend no lee la conversación: 
 | `bot/pedidos.js` | `agentPedido`: resumen, carga y cambio de pedidos |
 | `bot/comprobantes.js` | `agentGuardarComprobante`, `agentComprobantesDeLaPausa`, `serveComprobante` y la tolerancia del pago |
 | `bot/uber.js` | `agentCrearCotizacionUber` y `agentAvisosCotizacionUber` |
+| `bot/sinstock.js` | `agentAvisosSinStock`: el depósito marca «No hay stock» y el bot le avisa al cliente |
 | `bot/estadisticas.js` | `agentEstadisticasBot` |
 | `bot/web.js` | `actualizarInfoWebDiario`, `agentActualizarInfoWeb` y la `infoWeb` de `agentBuscarCatalogo` |
 | `bot/campania.js` | La campaña vigente (por ejemplo CYBER 028): sus listas y su envío gratis |
@@ -204,6 +205,49 @@ servidor y el cliente se quedaba sin el precio).
   `procesado` con `avisoNoEnviado: true`, así el panel no la muestra como «Enviando al cliente…».
 - `POST { id, enviadoEn }` cuando el mensaje salió: queda `procesado` y el precio vale 45 minutos desde
   `enviadoEn`. Si no se confirma, el siguiente minuto se vuelve a intentar.
+
+## GET/POST `agentAvisosSinStock`
+
+Cuando el depósito toca «No hay stock» en un pedido de `/pedidos` y marca qué producto falta, el bot se
+lo avisa al cliente en su conversación y le ofrece lo que sí hay. Igual que el Uber: el n8n lo busca cada
+minuto (el backend no llama al n8n).
+
+- `GET` devuelve `{ avisos: [...] }`, uno por pedido:
+  ```json
+  {
+    "pedidoId": "bot-…", "idConversacion": "1545", "telefono": "549…", "cliente": "Fede",
+    "faltantes": [{ "producto": "Elfbar Ice King", "variante": "Peach", "cantidad": 2 }],
+    "nota": "queda 1 sola",
+    "alternativas": [{ "faltante": "2x Elfbar Ice King Peach", "opciones": [{ "producto": "ELFBAR ICE KING", "precios": "1x $26.000, 2x $49.000", "sabores": ["Blueberry Ice (2)"] }] }],
+    "pagado": false, "total": 52000, "totalTexto": "$52.000",
+    "puedeModificar": true, "cambio": { "permitido": true },
+    "stockActual": [{ "lista": "STOCK_NICOTINA", "texto": "STOCK…" }],
+    "siNoQuiereOtro": "No pagó: si no quiere otro, sacá ese producto…",
+    "mensajeSugerido": "Hola Fede! Te escribimos por tu pedido: nos quedamos sin 2x Elfbar Ice King Peach 😔\n\nLo que sí tenemos:\n• ELFBAR ICE KING: Blueberry Ice\n\n¿Querés cambiarlo por alguno de estos?"
+  }
+  ```
+  - `alternativas`: otros sabores con stock del mismo modelo (sin el que falta) o modelos parecidos, del
+    mismo buscador que `agentBuscarCatalogo`.
+  - `stockActual`: `[{ lista, texto }]`, la lista entera de la categoría del faltante (de vapes y THC la de
+    stock; de perfumes y Apple la de productos), sin los sabores en (0) ni el que falta. Al cliente se le manda
+    todo el stock actualizado, no solo los parecidos.
+  - `siNoQuiereOtro`: qué hacer si el cliente no quiere ningún otro. Pagado: **no se ofrece devolución**, se
+    deriva a una persona con el motivo `sin_stock_pagado`. Sin pagar: se saca el producto del pedido (o se
+    cancela si no queda nada).
+  - `mensajeSugerido`: un texto listo para mandar; el agente lo puede usar tal cual o redactar el suyo. Ya trae el stock actualizado.
+  - `puedeModificar` / `cambio`: cuando el cliente elige otro producto, **el bot actualiza el pedido** con
+    `agentPedido { pedidoId, items }` (los items completos, con el nuevo en lugar del que falta). Vale **aunque
+    esté pagado** (`cambio.porSinStock`): si el nuevo cuesta más, `agentPedido` responde `requierePago` con lo que
+    falta; si cuesta menos, queda anotado lo pagado de más. Con ese cambio el faltante queda resuelto (el cartel
+    se va del panel) y vuelve la regla de siempre: armado y pagado, los cambios los hace el equipo.
+  - No aparecen los pedidos cancelados o que ya salieron, ni los marcados hace más de 24 horas (quedan
+    `descartado`), ni los que no vinieron por WhatsApp (quedan `sin_whatsapp` y el panel le dice al
+    depósito que avise él).
+- `POST { pedidoId, enviadoEn }` cuando el mensaje salió: el pedido queda `enviado` y el panel muestra
+  «✓ El bot ya le avisó». Si no se confirma, el siguiente minuto se vuelve a intentar.
+- Además, mientras no se resuelva, `agentEstadoOperativo.pedidoActual.sinStock` trae
+  `{ faltantes: ["2x Elfbar Ice King Peach"], nota, avisadoAlCliente }`, para que el agente lo sepa cuando
+  el cliente responde.
 
 ## Información de productos de la web — `actualizarInfoWebDiario` y POST `agentActualizarInfoWeb`
 
