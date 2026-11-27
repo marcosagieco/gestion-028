@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, where, writeBatch, setDoc } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, where, writeBatch, setDoc, updateDoc } from 'firebase/firestore';
 import { X, ArrowLeft, Image as ImageIcon, Loader2, AlertTriangle, CheckCircle2, ChevronDown, Copy, Plus, Trash2, RotateCcw, FileText } from 'lucide-react';
 import { METODO_POR_ID, diaLocal, formatARS, formatUSD, labelMetodo, labelPago } from './cobro';
 import { repartidorConfig, repartidorDe } from './repartidores';
@@ -57,12 +57,23 @@ const pagadoAntes = (p) => {
   return 0;
 };
 
-function cuentaPendiente(pedidos, repartidorId, movimientos) {
+// El día de un movimiento a mano: el que se eligió al anotarlo, o el día en que se anotó.
+const diaMov = (m) => m.dia || diaLocal(m.fecha);
+
+// Lo que ya se pagó del saldo de un cierre. Los cierres de antes no anotaban el pago: se toman como
+// pagados (se cerraban cuando ya se había pagado).
+const pagadoDeCierre = (ci) => ci.pagosSaldo
+  ? ci.pagosSaldo.reduce((s, pg) => s + (Number(pg.monto) || 0), 0)
+  : Math.abs(Math.round(ci.saldo || 0));
+const faltaDeCierre = (ci) => Math.max(0, Math.abs(Math.round(ci.saldo || 0)) - pagadoDeCierre(ci));
+
+// `dia` (YYYY-MM-DD): solo las entregas y movimientos de ese día, para cerrar día por día.
+function cuentaPendiente(pedidos, repartidorId, movimientos, dia = null) {
   const suyos = pedidos.filter(p => repartidorDe(p) === repartidorId);
   // Solo las entregas hechas con el cierre de caja (las que tienen el cobro anotado) y que todavía no
   // entraron en un cierre. Los viajes de antes (cientos, nunca marcados como pagados) quedan afuera:
   // siguen en la deuda de Inicio como siempre.
-  const abiertas = suyos.filter(p => esEntrega(p) && p.cobroEntrega && !p.cobroEntrega.cierreId)
+  const abiertas = suyos.filter(p => esEntrega(p) && p.cobroEntrega && !p.cobroEntrega.cierreId && (!dia || diaLocal(p.entregadoEn) === dia))
     .sort((a, b) => new Date(a.entregadoEn) - new Date(b.entregadoEn));
   const cobros = abiertas.filter(p => !p.cobroEntrega.yaPagado);
 
@@ -91,7 +102,7 @@ function cuentaPendiente(pedidos, repartidorId, movimientos) {
     });
   const viajePorId = Object.fromEntries(viajes.map(v => [v.p.id, v]));
 
-  const movs = movimientos.filter(m => m.repartidor === repartidorId);
+  const movs = movimientos.filter(m => m.repartidor === repartidorId && (!dia || diaMov(m) === dia));
   const sumaMov = (tipo) => movs.filter(m => m.tipo === tipo).reduce((s, m) => s + (Number(m.monto) || 0), 0);
   const suma = (l) => l.reduce((s, x) => s + x.monto, 0);
 
@@ -121,7 +132,7 @@ function cuentaPendiente(pedidos, repartidorId, movimientos) {
   });
 
   const sinViaje = viajes.filter(v => v.sinGuardar && Date.now() - new Date(v.p.entregadoEn).getTime() < 2 * 60e3).length;
-  const dias = [...new Set(abiertas.map(p => diaLocal(p.entregadoEn)))];
+  const dias = [...new Set([...abiertas.map(p => diaLocal(p.entregadoEn)), ...movs.map(diaMov)])].filter(Boolean);
 
   return {
     abiertas, cobros, recibido, dolares, directo, viajes, viajePorId, movs,
@@ -200,13 +211,24 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
     () => setMovimientos([])), [db]);
 
   const cuentas = useMemo(() => Object.fromEntries(repartidores.map(id => [id, cuentaPendiente(pedidos, id, movimientos)])), [pedidos, repartidores, movimientos]);
-  const c = cuentas[sel];
+
+  // Cerrar día por día: si la moto tiene entregas de varios días sin cerrar, se elige uno (o todos juntos).
+  const [diaSel, setDiaSel] = useState(null);
+  const diasAbiertos = useMemo(() => [...cuentas[sel].dias].sort(), [cuentas, sel]);
+  const dia = diaSel && diasAbiertos.includes(diaSel) ? diaSel : null;
+  const cuentasPorDia = useMemo(() => Object.fromEntries(diasAbiertos.map(d => [d, cuentaPendiente(pedidos, sel, movimientos, d)])), [diasAbiertos, pedidos, sel, movimientos]);
+  const c = dia ? cuentasPorDia[dia] : cuentas[sel];
   const texto = useMemo(() => textoWhatsApp(c, yo.nombre), [c, yo.nombre]);
 
-  const [cierres, setCierres] = useState([]);
-  useEffect(() => onSnapshot(query(collection(db, 'cierresCaja'), where('repartidor', '==', sel)),
-    snap => setCierres(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.fecha || '').localeCompare(a.fecha || '')).slice(0, 30)),
-    () => setCierres([])), [db, sel]);
+  // Todos los cierres (son pocos): el historial de la moto elegida y lo que cada moto todavía debe
+  // (o se le debe) de cierres que se cerraron sin pagar.
+  const [todosCierres, setTodosCierres] = useState([]);
+  useEffect(() => onSnapshot(collection(db, 'cierresCaja'),
+    snap => setTodosCierres(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''))),
+    () => setTodosCierres([])), [db]);
+  const cierres = useMemo(() => todosCierres.filter(ci => ci.repartidor === sel).slice(0, 30), [todosCierres, sel]);
+  const sinPagar = useMemo(() => todosCierres.filter(ci => ci.repartidor === sel && faltaDeCierre(ci) > 0), [todosCierres, sel]);
+  const deudaCierres = (id) => todosCierres.filter(ci => ci.repartidor === id).reduce((s, ci) => s + Math.sign(ci.saldo || 0) * faltaDeCierre(ci), 0);
 
   const [aviso, setAviso] = useState('');
   const avisar = (t) => { setAviso(t); setTimeout(() => setAviso(''), 3500); };
@@ -221,7 +243,7 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
     const monto = parseFloat(String(nuevoMov?.monto || '').replace(/\./g, '').replace(',', '.')) || 0;
     if (!monto) return;
     try {
-      await addDoc(collection(db, 'cajaMovimientos'), { repartidor: sel, tipo: nuevoMov.tipo, monto, nota: nuevoMov.nota.trim(), fecha: new Date().toISOString(), cierreId: null });
+      await addDoc(collection(db, 'cajaMovimientos'), { repartidor: sel, tipo: nuevoMov.tipo, monto, nota: nuevoMov.nota.trim(), fecha: new Date().toISOString(), cierreId: null, ...(dia ? { dia } : {}) });
       setNuevoMov(null);
     } catch (e) { avisar('No se pudo guardar: ' + e.message); }
   };
@@ -243,7 +265,8 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
     }
   };
 
-  const cerrarCaja = async () => {
+  // `pagado`: si el saldo ya se pagó al cerrar. Si no, el cierre queda "sin pagar" hasta que se anote.
+  const cerrarCaja = async (pagado) => {
     if (cerrando || !hayAlgo) return;
     setCerrando(true);
     try {
@@ -265,13 +288,15 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
         recibido: c.totalRecibido, directo: c.totalDirecto, usd: c.totalDolares,
         viajes: c.totalViajes, cantidadViajes: c.viajes.length, gastos: c.totalGastos,
         yaEntrego: c.yaEntrego, adelantado: c.adelantado, saldo: c.saldo,
-        pedidos: c.abiertas.map(p => p.id), texto,
+        pedidos: c.abiertas.map(p => p.id), texto, dia: dia || null, dias: [...c.dias].sort(),
+        pagosSaldo: pagado && Math.round(c.saldo) !== 0 ? [{ monto: Math.abs(Math.round(c.saldo)), fecha: nowIso, alCerrar: true }] : [],
       });
       if (c.viajes.length) {
         await setDoc(doc(db, 'settings', yo.docUltimoPago), { monto: c.totalViajes, cantidadEnvios: c.viajes.length, fecha: nowIso });
       }
       setConfirmando(false);
-      avisar('Caja cerrada. Quedó guardada en el historial.');
+      setDiaSel(null);
+      avisar(pagado || Math.round(c.saldo) === 0 ? 'Caja cerrada. Quedó guardada en el historial.' : 'Caja cerrada. Quedó arriba como «sin pagar» hasta que anotes el pago.');
     } catch (e) {
       avisar('No se pudo cerrar la caja: ' + e.message);
     } finally {
@@ -321,6 +346,44 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
       setTrabajando(false);
     }
   };
+
+  // --- anotar el pago del saldo de un cierre que se cerró sin pagar ---
+  const [pagando, setPagando] = useState(null); // { id, monto }
+  const anotarPago = async (ci) => {
+    const monto = Math.round(parseFloat(String(pagando?.monto || '').replace(/\./g, '').replace(',', '.')) || 0);
+    if (!monto) return;
+    try {
+      await updateDoc(doc(db, 'cierresCaja', ci.id), { pagosSaldo: [...(ci.pagosSaldo || []), { monto, fecha: new Date().toISOString() }] });
+      setPagando(null);
+      avisar(monto >= faltaDeCierre(ci) ? 'Listo, ese cierre quedó pagado.' : `Anotado. Faltan ${formatARS(faltaDeCierre(ci) - monto)}.`);
+    } catch (e) { avisar('No se pudo anotar: ' + e.message); }
+  };
+  const borrarPago = async (ci, i) => {
+    const pg = ci.pagosSaldo[i];
+    if (!window.confirm(`¿Borrar el pago de ${formatARS(pg.monto)}?`)) return;
+    try { await updateDoc(doc(db, 'cierresCaja', ci.id), { pagosSaldo: ci.pagosSaldo.filter((_, j) => j !== i) }); }
+    catch (e) { avisar('No se pudo borrar: ' + e.message); }
+  };
+  const diasDeCierre = (ci) => ci.dia ? nombreDia(ci.dia) : (ci.dias || []).map(d => nombreDia(d)).join(', ');
+  const textoDeuda = (ci) => {
+    const f = formatARS(faltaDeCierre(ci));
+    if ((ci.saldo || 0) > 0) return esRepartidor ? `Te falta entregar ${f}` : `Te debe ${f}`;
+    return esRepartidor ? `Te deben ${f}` : `Le debés ${f}`;
+  };
+  // El formulario para anotar un pago (va en el cartel de arriba y en el historial).
+  const formPago = (ci) => pagando?.id === ci.id ? (
+    <div className="flex gap-2 mt-2">
+      <input value={pagando.monto} onChange={e => setPagando(v => ({ ...v, monto: e.target.value.replace(/[^\d.,]/g, '') }))} inputMode="decimal" autoFocus
+        className={`w-32 h-10 px-3 rounded-xl border outline-none font-bold ${dm ? 'bg-[#101010] border-white/[0.08] text-zinc-100' : 'bg-white border-zinc-200'}`} />
+      <button onClick={() => anotarPago(ci)} className="flex-1 h-10 rounded-xl font-black text-white bg-emerald-500 text-[13.5px]">Anotar pago</button>
+      <button onClick={() => setPagando(null)} className={`h-10 px-3 rounded-xl font-bold text-[13px] ${botonGris}`}>Cancelar</button>
+    </div>
+  ) : (
+    <button onClick={() => setPagando({ id: ci.id, monto: String(faltaDeCierre(ci)) })}
+      className="mt-2 h-10 px-3.5 rounded-xl font-black text-white bg-emerald-500 text-[13.5px] inline-flex items-center gap-1.5">
+      <CheckCircle2 size={16}/> {(ci.saldo || 0) > 0 ? (esRepartidor ? 'Ya lo entregué' : 'Ya me pagó') : (esRepartidor ? 'Ya me pagaron' : 'Ya le pagué')}
+    </button>
+  );
 
   const [viendo, setViendo] = useState(null);
   const verComprobantes = async (p) => {
@@ -458,7 +521,7 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
                 const nada = cuentas[id].abiertas.length === 0 && cuentas[id].movs.length === 0;
                 const activo = id === sel;
                 return (
-                  <button key={id} onClick={() => { setSel(id); setConfirmando(false); setNuevoMov(null); setDetalle(null); setBorrando(null); }}
+                  <button key={id} onClick={() => { setSel(id); setDiaSel(null); setConfirmando(false); setNuevoMov(null); setDetalle(null); setBorrando(null); setPagando(null); }}
                     className={`rounded-2xl border-2 p-3 text-left transition-all ${activo
                       ? (dm ? 'border-indigo-400/70 bg-indigo-500/[0.08]' : 'border-indigo-400 bg-white shadow-sm')
                       : (dm ? 'border-white/[0.06] bg-[#111]' : 'border-zinc-200 bg-white/60')}`}>
@@ -466,9 +529,57 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
                     <span className={`block text-[12.5px] font-bold mt-1 tabular-nums ${nada ? suave : s > 0 ? 'text-emerald-500' : s < 0 ? 'text-indigo-400' : suave}`}>
                       {nada ? 'Nada pendiente' : s === 0 ? 'A mano' : s > 0 ? `Te da ${formatARS(s)}` : `Le pagás ${formatARS(-s)}`}
                     </span>
+                    {deudaCierres(id) !== 0 && (
+                      <span className="block text-[11.5px] font-bold mt-0.5 text-amber-500 tabular-nums">
+                        {deudaCierres(id) > 0 ? `Debe ${formatARS(deudaCierres(id))} de cierres` : `Le debés ${formatARS(-deudaCierres(id))}`}
+                      </span>
+                    )}
                   </button>
                 );
               })}
+            </div>
+          )}
+
+          {/* Cierres que se cerraron sin pagar: acá se anota cuando se pagan */}
+          {sinPagar.length > 0 && (
+            <div className={`rounded-2xl border-2 p-4 ${dm ? 'border-amber-500/40 bg-amber-500/[0.06]' : 'border-amber-300 bg-amber-50'}`}>
+              <p className="text-[15px] font-black text-amber-500 flex items-center gap-1.5"><AlertTriangle size={17}/> {esRepartidor ? 'Cierres sin saldar' : `Cierres de ${yo.nombre} sin pagar`}</p>
+              <p className={`text-[12.5px] mt-0.5 ${dm ? 'text-amber-200/80' : 'text-amber-800'}`}>Se cerraron pero la plata todavía no se pagó. Cuando se pague, tocá el botón verde.</p>
+              {sinPagar.map(ci => (
+                <div key={ci.id} className={`mt-3 pt-3 border-t ${dm ? 'border-amber-500/20' : 'border-amber-200'}`}>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className={`text-[14px] font-bold ${tx}`}>Cierre {diasDeCierre(ci) || fechaHora(ci.fecha)}</span>
+                    <span className={`text-[15px] font-black tabular-nums ${tx}`}>{textoDeuda(ci)}</span>
+                  </div>
+                  {pagadoDeCierre(ci) > 0 && <p className={`text-[12px] ${suave}`}>Ya pagó {formatARS(pagadoDeCierre(ci))} de {formatARS(Math.abs(Math.round(ci.saldo)))}</p>}
+                  {puedeCerrar && formPago(ci)}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Elegir el día: para cerrar día por día cuando se juntan varios */}
+          {diasAbiertos.length > 1 && (
+            <div>
+              <p className={`text-[11px] font-black uppercase tracking-widest px-1 mb-1.5 ${suave}`}>¿Qué día querés cerrar?</p>
+              <div className="flex gap-2 overflow-x-auto pb-1 -mx-4 px-4">
+                {[null, ...diasAbiertos].map(d => {
+                  const cc = d ? cuentasPorDia[d] : cuentas[sel];
+                  const s = Math.round(cc.saldo);
+                  const activo = d === dia;
+                  return (
+                    <button key={d || 'todos'} onClick={() => { setDiaSel(d); setConfirmando(false); setDetalle(null); }}
+                      className={`flex-shrink-0 rounded-xl border-2 px-3 py-2 text-left transition-all ${activo
+                        ? (dm ? 'border-indigo-400/70 bg-indigo-500/[0.08]' : 'border-indigo-400 bg-white shadow-sm')
+                        : (dm ? 'border-white/[0.06] bg-[#111]' : 'border-zinc-200 bg-white/60')}`}>
+                      <span className={`block text-[13.5px] font-black capitalize ${tx}`}>{d ? nombreDia(d) : `Todos juntos (${diasAbiertos.length} días)`}</span>
+                      <span className={`block text-[12px] font-bold tabular-nums ${s > 0 ? 'text-emerald-500' : s < 0 ? 'text-indigo-400' : suave}`}>
+                        {cc.abiertas.length} {cc.abiertas.length === 1 ? 'entrega' : 'entregas'} · {s === 0 ? 'a mano' : s > 0 ? `te da ${formatARS(s)}` : `le pagás ${formatARS(-s)}`}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -575,22 +686,42 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
             <div>
               <button onClick={() => setConfirmando(true)}
                 className="w-full h-14 rounded-2xl font-black text-base text-white bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] transition-all flex items-center justify-center gap-2">
-                <CheckCircle2 size={20}/> Cerrar la caja de {yo.nombre}
+                <CheckCircle2 size={20}/> Cerrar la caja de {yo.nombre}{dia ? ` del ${nombreDia(dia)}` : ''}
               </button>
-              <p className={`text-[12.5px] text-center mt-1.5 ${suave}`}>Tocalo cuando ya se pagaron. Queda todo en cero y se guarda abajo, en el historial.</p>
+              <p className={`text-[12.5px] text-center mt-1.5 ${suave}`}>
+                {dia ? 'Cierra solo ese día; los otros días siguen abiertos.' : diasAbiertos.length > 1 ? `Cierra los ${diasAbiertos.length} días juntos. Para cerrar uno solo, elegilo arriba.` : 'Queda todo en cero y se guarda abajo, en el historial.'}
+              </p>
             </div>
           ) : (
             <div className={`${tarjeta} p-4`}>
-              <p className={`text-[15px] font-bold ${tx}`}>
-                {saldo > 0 ? `¿${yo.nombre} ya te dio los ${formatARS(saldo)}` : saldo < 0 ? `¿Ya le pagaste los ${formatARS(-saldo)} a ${yo.nombre}` : '¿Cerrar la caja'}{c.totalDolares > 0 ? ` y los ${formatUSD(c.totalDolares)}` : ''}?
+              <p className={`text-[15px] font-black ${tx}`}>
+                ¿Cerrar la caja de {yo.nombre}{dia ? ` del ${nombreDia(dia)}` : ''}?
               </p>
-              <p className={`text-[13px] mt-1 ${suave}`}>Se guarda el cierre y la caja vuelve a cero. {c.viajes.length} {c.viajes.length === 1 ? 'viaje queda pagado' : 'viajes quedan pagados'} (también en Inicio). Si te equivocás, lo podés borrar del historial.</p>
-              <div className="flex gap-2 mt-3">
-                <button onClick={() => setConfirmando(false)} className={`flex-1 h-12 rounded-xl font-bold ${botonGris}`}>Todavía no</button>
-                <button onClick={cerrarCaja} disabled={cerrando} className="flex-1 h-12 rounded-xl font-black text-white bg-emerald-500 disabled:opacity-60 flex items-center justify-center gap-2">
-                  {cerrando ? <Loader2 size={18} className="animate-spin"/> : <CheckCircle2 size={18}/>} Sí, cerrar
-                </button>
-              </div>
+              <p className={`text-[13px] mt-1 ${suave}`}>Se guarda el cierre y {dia ? 'ese día' : 'la caja'} vuelve a cero. {c.viajes.length} {c.viajes.length === 1 ? 'viaje queda pagado' : 'viajes quedan pagados'} (también en Inicio). Si te equivocás, lo podés borrar del historial.</p>
+              {saldo !== 0 ? (
+                <>
+                  <p className={`text-[14px] font-bold mt-3 ${tx}`}>
+                    {saldo > 0 ? `¿${yo.nombre} ya te dio los ${formatARS(saldo)}` : `¿Ya le pagaste los ${formatARS(-saldo)} a ${yo.nombre}`}{c.totalDolares > 0 ? ` (y los ${formatUSD(c.totalDolares)})` : ''}?
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <button onClick={() => cerrarCaja(true)} disabled={cerrando} className="min-h-12 py-1.5 rounded-xl font-black text-white bg-emerald-500 disabled:opacity-60 flex items-center justify-center gap-1.5 text-[14px] leading-tight">
+                      {cerrando ? <Loader2 size={18} className="animate-spin"/> : <CheckCircle2 size={18}/>} {saldo > 0 ? 'Sí, ya me pagó' : 'Sí, ya le pagué'}
+                    </button>
+                    <button onClick={() => cerrarCaja(false)} disabled={cerrando} className={`min-h-12 py-1.5 px-2 rounded-xl font-black disabled:opacity-60 text-[14px] leading-tight border-2 ${dm ? 'border-amber-500/40 text-amber-300' : 'border-amber-300 text-amber-700'}`}>
+                      No, {saldo > 0 ? 'me paga después' : 'le pago después'}
+                    </button>
+                  </div>
+                  <p className={`text-[12px] mt-1.5 ${suave}`}>Si elegís «después», queda arriba como sin pagar hasta que lo anotes.</p>
+                  <button onClick={() => setConfirmando(false)} className={`w-full mt-2 h-10 rounded-xl font-bold text-[13px] ${botonGris}`}>Cancelar, todavía no cierro</button>
+                </>
+              ) : (
+                <div className="flex gap-2 mt-3">
+                  <button onClick={() => setConfirmando(false)} className={`flex-1 h-12 rounded-xl font-bold ${botonGris}`}>Todavía no</button>
+                  <button onClick={() => cerrarCaja(true)} disabled={cerrando} className="flex-1 h-12 rounded-xl font-black text-white bg-emerald-500 disabled:opacity-60 flex items-center justify-center gap-2">
+                    {cerrando ? <Loader2 size={18} className="animate-spin"/> : <CheckCircle2 size={18}/>} Sí, cerrar
+                  </button>
+                </div>
+              )}
             </div>
           ))}
           {aviso && <p className={`text-center text-sm font-bold ${aviso.startsWith('No') ? 'text-rose-500' : 'text-emerald-500'}`}>{aviso}</p>}
@@ -603,15 +734,19 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
                 const s = Math.round(ci.saldo || 0);
                 const abierto = abiertoCierre === ci.id;
                 const n = ci.pedidos?.length || 0;
+                const falta = faltaDeCierre(ci);
                 return (
                   <div key={ci.id} className={tarjeta}>
                     <button onClick={() => setAbiertoCierre(abierto ? null : ci.id)} className="w-full flex items-center gap-3 p-3.5 text-left">
                       <span className="flex-1 min-w-0">
-                        <span className={`block text-[14px] font-bold ${tx}`}>{fechaHora(ci.fecha)}</span>
-                        <span className={`block text-[12px] ${suave}`}>{n} {n === 1 ? 'entrega' : 'entregas'}{ci.usd ? ` · ${formatUSD(ci.usd)}` : ''}</span>
+                        <span className={`block text-[14px] font-bold capitalize ${tx}`}>{diasDeCierre(ci) || fechaHora(ci.fecha)}</span>
+                        <span className={`block text-[12px] ${suave}`}>{n} {n === 1 ? 'entrega' : 'entregas'}{ci.usd ? ` · ${formatUSD(ci.usd)}` : ''}{diasDeCierre(ci) ? ` · cerrado ${fechaHora(ci.fecha)}` : ''}</span>
                       </span>
-                      <span className={`text-[13.5px] font-black tabular-nums ${s > 0 ? 'text-emerald-500' : s < 0 ? 'text-indigo-400' : suave}`}>
-                        {s === 0 ? 'A mano' : s > 0 ? `${esRepartidor ? 'Entregaste' : 'Te dio'} ${formatARS(s)}` : `${esRepartidor ? 'Te pagaron' : 'Le pagaste'} ${formatARS(-s)}`}
+                      <span className="text-right">
+                        <span className={`block text-[13.5px] font-black tabular-nums ${falta > 0 ? 'text-amber-500' : s > 0 ? 'text-emerald-500' : s < 0 ? 'text-indigo-400' : suave}`}>
+                          {falta > 0 ? textoDeuda(ci) : s === 0 ? 'A mano' : s > 0 ? `${esRepartidor ? 'Entregaste' : 'Te dio'} ${formatARS(s)}` : `${esRepartidor ? 'Te pagaron' : 'Le pagaste'} ${formatARS(-s)}`}
+                        </span>
+                        {s !== 0 && <span className={`block text-[11px] font-bold ${falta > 0 ? 'text-amber-500' : 'text-emerald-500'}`}>{falta > 0 ? '⏳ Sin pagar' : '✓ Pagado'}</span>}
                       </span>
                       <ChevronDown size={16} className={`flex-shrink-0 transition-transform ${suave} ${abierto ? 'rotate-180' : ''}`}/>
                     </button>
@@ -625,6 +760,19 @@ export default function CierreCaja({ dm, db, pedidos, repartidores, puedeCerrar 
                             <p>Viajes: {formatARS(ci.viajes)} ({ci.cantidadViajes})</p>
                           </div>
                         )}
+                        {ci.pagosSaldo?.length > 0 && (
+                          <div className={`mt-2 pt-2 ${linea}`}>
+                            <p className={`text-[11px] font-black uppercase tracking-widest ${suave}`}>Pagos anotados</p>
+                            {ci.pagosSaldo.map((pg, i) => (
+                              <p key={i} className={`flex items-center gap-2 text-[13px] mt-0.5 ${tx}`}>
+                                <span className="flex-1">{fechaHora(pg.fecha)}{pg.alCerrar ? ' (al cerrar)' : ''}</span>
+                                <b className="tabular-nums">{formatARS(pg.monto)}</b>
+                                {puedeCerrar && <button onClick={() => borrarPago(ci, i)} title="Borrar pago" className="text-rose-400"><Trash2 size={13}/></button>}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                        {puedeCerrar && falta > 0 && formPago(ci)}
                         {borrando === ci.id ? (
                           <div className={`mt-3 rounded-xl border p-3 ${dm ? 'border-rose-500/30 bg-rose-500/[0.06]' : 'border-rose-200 bg-rose-50'}`}>
                             <p className={`text-[14px] font-black ${tx}`}>¿Borrar este cierre?</p>
