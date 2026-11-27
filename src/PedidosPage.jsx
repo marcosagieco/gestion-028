@@ -16,6 +16,7 @@ import { CajaEscaneo, RegistrarCodigoModal, FilaEscaneada } from './escaneo/comp
 import AccesosRapidos from './navegacion/AccesosRapidos';
 import { hoyLocal, esProgramado, esFechaValida, fechaSalidaCorta } from './pedidos/fechaSalida';
 import { ponerEnCero } from './pedidos/stockOperativo';
+import { clienteDelPedido, tipoSugerido, anotarCompraDelCliente } from './pedidos/clientes';
 
 // --- Firebase: mismo patrón que FacturasPage.jsx — página 100% independiente de App.jsx,
 // reutiliza la instancia si ya fue inicializada (no debería pasar acá porque esta página vive
@@ -1648,6 +1649,9 @@ export default function PedidosPage() {
   const [finalizarTotalEsperado, setFinalizarTotalEsperado] = useState(null);
   // Qué campos llenó el sistema solo, para marcarlos en pantalla y que se vea qué revisar.
   const [finalizarOrigen, setFinalizarOrigen] = useState({ items: null, envio: false, pago: false, vendedor: false, sinMatch: 0 });
+  // Lo que se sabe del cliente por su teléfono (pedidos/clientes.js): { telefono, cliente, sugerido }.
+  const [finalizarCliente, setFinalizarCliente] = useState(null);
+  const abriendoFinalizarRef = useRef(null);
   const [showCancelados, setShowCancelados] = useState(false);
   const [pedidosBorrados, setPedidosBorrados] = useState([]);
   const [showBorrados, setShowBorrados] = useState(false);
@@ -1940,6 +1944,19 @@ export default function PedidosPage() {
     setFinalizarTotalEsperado(prefill.totalEsperado);
     setFinalizarOrigen(prefill.origen);
     setFinalizarTarget(pedido);
+
+    // Tipo de cliente según sus compras anteriores (Marcos 27/11): vino alguna vez por publicidad →
+    // «Clientes - Publicidad»; si no → «Frecuente». Si el teléfono no figura, es nuevo: queda para elegir
+    // (o «Nuevo - Publicidad» si el bot detectó que llegó por un anuncio). Sin teléfono, queda como siempre.
+    setFinalizarCliente(null);
+    abriendoFinalizarRef.current = pedido.id;
+    clienteDelPedido(db, pedido).then(r => {
+      if (!r || abriendoFinalizarRef.current !== pedido.id) return;
+      const sugerido = r.cliente ? tipoSugerido(r.cliente) : (pedido.publicidad ? 'Nuevo - Publicidad' : '');
+      setFinalizarCliente({ ...r, sugerido });
+      // Solo si todavía no lo tocó nadie (sigue el valor por defecto).
+      setFinalizarForm(f => f.tipoCliente === prefill.form.tipoCliente ? { ...f, tipoCliente: sugerido } : f);
+    }).catch(() => {});
   };
 
   // Tocar cualquier campo de una línea apaga su cartelito "Auto": a partir de ahí lo cargó una
@@ -2330,6 +2347,8 @@ export default function PedidosPage() {
           acreditado,
         },
       });
+      // El historial del cliente por teléfono, para completar el tipo la próxima vez. Si falla no frena nada.
+      anotarCompraDelCliente(db, finalizarTarget, finalizarForm.tipoCliente, nowIso).catch(e => console.error('clientes:', e));
 
       setFinalizarTarget(null);
       setFinalizarItems([nuevaLineaProducto()]);
@@ -2907,6 +2926,15 @@ export default function PedidosPage() {
                     <ChevronDown size={14} className={dm ? 'text-zinc-500' : 'text-zinc-400'} />
                   </div>
                 </div>
+                {finalizarCliente && (
+                  <p className={`text-[11px] font-semibold ${finalizarCliente.cliente ? (dm ? 'text-emerald-400' : 'text-emerald-600') : (dm ? 'text-amber-300' : 'text-amber-700')}`}>
+                    {finalizarCliente.cliente
+                      ? `Auto · Ya compró ${finalizarCliente.cliente.compras} ${finalizarCliente.cliente.compras === 1 ? 'vez' : 'veces'} (la última como ${PEDIDO_TIPO_CLIENTE_LABELS[finalizarCliente.cliente.ultimoTipo] || finalizarCliente.cliente.ultimoTipo}).`
+                      : finalizarCliente.sugerido
+                        ? 'Cliente nuevo: no figura en compras anteriores y llegó por un anuncio.'
+                        : 'Cliente nuevo: no figura en compras anteriores. Elegí si llegó orgánico o por publicidad.'}
+                  </p>
+                )}
               </div>
 
               {/* Medio(s) de pago: arranca con uno solo, como siempre. "Dividir" suma otra línea con
