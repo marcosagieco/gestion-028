@@ -14,14 +14,54 @@ const { normalizar, normalizarTelefono, hashCorto, importeDeTexto } = require(".
 // Diferencia aceptada entre lo transferido y lo que había que transferir, de más o de menos.
 const TOLERANCIA_COMPROBANTE = 5000;
 
-// Cada cuenta del negocio, por los datos que aparecen como destino en un comprobante.
+// Cada cuenta del negocio: su CBU/CVU y su alias bancario. Un comprobante es de una cuenta del negocio solo si
+// muestra uno de estos dos datos. El nombre no alcanza (Lucio, 27/11): «Lucio Felix Bunge» en Belo es otra
+// cuenta, aunque se llame igual que la del alias 1. Tampoco el CUIT: es de la persona, no de la cuenta.
 const CUENTAS = [
-  { alias: "alias3", claves: ["0000510400000000001348", "tame lake", "tamelake", "30718603702"] },
-  { alias: "alias2", claves: ["0070181130004057764295", "gieco", "028import.gal2"] },
-  // La Cuenta Recaudadora también es de Lucio: va antes del alias 1 para que su CVU no se tome por «bunge».
-  { alias: "alias4", claves: ["0000137902554316992947", "servicio de pago"] },
-  { alias: "alias1", claves: ["0070194130004014092980", "bunge", "028import.gl"] },
+  { alias: "alias1", cbu: "0070194130004014092980", aliasBanco: "028import.gl", titular: "bunge" },
+  { alias: "alias2", cbu: "0070181130004057764295", aliasBanco: "028import.gal2", titular: "gieco" },
+  { alias: "alias3", cbu: "0000510400000000001348", aliasBanco: "tamelake358sa.eluter", titular: "tame lake" },
+  { alias: "alias4", cbu: "0000137902554316992947", aliasBanco: null, titular: "bunge" }, // Cuenta Recaudadora: sin alias
 ];
+
+// Dos CBU/CVU son el mismo con a lo sumo un dígito de diferencia (uno de más, de menos o cambiado): la lectura
+// de una imagen a veces se come o duplica un cero (Celina, 22/10). Dos cuentas distintas difieren en muchos más.
+function mismoCbu(a, b) {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0, j = 0, diferencias = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++diferencias > 1) return false;
+    if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; }
+  }
+  return diferencias + (a.length - i) + (b.length - j) <= 1;
+}
+
+// La cuenta del negocio a la que va un comprobante, por su CBU/CVU o su alias, mirando todos los datos leídos
+// (la lectura a veces pone el CBU en otro campo o invierte origen y destino). { cuenta, conDatos }: conDatos dice
+// si se leyó algún CBU/CVU o alias; sin eso no se puede saber a qué cuenta fue.
+function cuentaDelComprobante(l) {
+  // cuentasVisibles: todos los CBU/CVU y alias del comprobante, de quien paga y de quien recibe.
+  const visibles = Array.isArray(l.cuentasVisibles) ? l.cuentasVisibles.join(", ") : l.cuentasVisibles;
+  const textos = [l.cbuCvu, l.alias, l.destinatario, l.titular, l.cuit, visibles].map((v) => String(v || ""));
+  const numeros = new Set();
+  const cbuCvu = textos[0].replace(/\D/g, "");
+  if (cbuCvu.length >= 18) numeros.add(cbuCvu);
+  for (const t of textos) for (const m of t.matchAll(/\d[\d .-]{16,30}\d/g)) {
+    const d = m[0].replace(/\D/g, "");
+    if (d.length >= 18 && d.length <= 24) numeros.add(d);
+  }
+  const plano = textos.join("|").toLowerCase().replace(/\s+/g, "");
+  const aliasLeido = /[a-z0-9]+\.[a-z0-9.]+/i.test(textos[1]);
+  // Algunos bancos muestran el CBU enmascarado («****2980»): vale si terminan igual y el titular es el dueño.
+  const enmascarado = [...textos.join(" ").matchAll(/[*x•·]{2,}\s*-?\s*(\d{3,6})\b/gi)].map((m) => m[1]);
+  const destinatario = normalizar(String(l.destinatario || ""));
+  const cuenta = CUENTAS.find((c) => [...numeros].some((n) => mismoCbu(n, c.cbu)))
+    || CUENTAS.find((c) => c.aliasBanco && new RegExp(`(^|[^a-z0-9.])${c.aliasBanco.replace(/\./g, "\\.")}($|[^a-z0-9.])`).test(plano))
+    || CUENTAS.find((c) => enmascarado.some((fin) => c.cbu.endsWith(fin)) && destinatario.includes(c.titular));
+  return { cuenta: cuenta || null, conDatos: numeros.size > 0 || aliasLeido || enmascarado.length > 0 };
+}
 
 const idComprobante = (url) => `cw-${hashCorto(String(url).trim())}`;
 
@@ -51,15 +91,13 @@ function leerComprobante(lectura) {
   const sinNumero = fh && monto ? `SINNRO-${fh[1].padStart(2, "0")}${fh[2].padStart(2, "0")}${fh[3].slice(-2)}-${fh[4].padStart(2, "0")}${fh[5]}-${Math.round(monto)}` : "";
   const leido = String(l.numeroOperacion || "").trim().replace(/\s+/g, "");
   const numero = (/^[a-z0-9][a-z0-9-]{5,79}$/i.test(leido) && leido.replace(/\D/g, "").length >= 6 ? leido : "") || sinNumero;
-  // El destino es del negocio si coincide cualquiera de sus datos: el CBU/CVU leído de una imagen
-  // puede tener un dígito de más o de menos, pero el titular igual coincide.
-  const cuentaEn = (texto) => CUENTAS.find((c) => c.claves.some((k) => texto.includes(normalizar(k))));
-  const destino = normalizar([l.destinatario, l.alias, l.cuit, l.cbuCvu].map(campo).join(" ")) + " " + campo(l.cbuCvu).replace(/\D/g, " ");
+  const { cuenta, conDatos } = cuentaDelComprobante(l);
   // Mercado Pago muestra «Origen y destino» en una sola lista y la lectura a veces invierte los roles: pone
   // al negocio como quien paga (Macarena, 4/11). Un cliente nunca manda un pago hecho desde la cuenta del
-  // negocio, así que si el negocio figura como titular, es el destino y quien paga es el «destinatario».
-  const invertido = !cuentaEn(destino) && cuentaEn(normalizar(campo(l.titular)));
-  const cuenta = cuentaEn(destino) || invertido || null;
+  // negocio, así que si el titular es el dueño de la cuenta, quien paga es el «destinatario». El nombre solo
+  // sirve para esto (mostrar bien quién pagó): la cuenta ya salió del CBU o del alias.
+  const esDelDuenio = (t) => !!cuenta && normalizar(campo(t)).includes(cuenta.titular);
+  const invertido = esDelDuenio(l.titular) && !esDelDuenio(l.destinatario);
   const titular = campo(invertido ? l.destinatario : l.titular);
   return {
     esComprobante: true,
@@ -69,6 +107,8 @@ function leerComprobante(lectura) {
     numero: numero || null,
     nombre: titular && !/^no (especificad|visible|aparece|figura)/i.test(titular) ? titular.slice(0, 80) : null,
     cuentaCobro: cuenta ? cuenta.alias : null,
+    // Sin CBU/CVU ni alias a la vista no se sabe a qué cuenta fue: se le pide una captura donde se vea.
+    destinoSinDatos: !cuenta && !conDatos,
     descripcion: ["Comprobante de pago", "Monto: " + (monto ? monto.toLocaleString("es-AR", { maximumFractionDigits: 2 }) : "-"),
       "Número de operación: " + (campo(l.numeroOperacion) || "-"), "Fecha y hora: " + campo(l.fechaHora), "Titular: " + titular, "Destinatario: " + campo(invertido ? l.titular : l.destinatario),
       "CBU o CVU: " + campo(l.cbuCvu), "Alias visible: " + campo(l.alias), "CUIT: " + campo(l.cuit)].join("\n"),
@@ -179,6 +219,7 @@ const agentGuardarComprobante = conClave(async (req, res) => {
     idMensaje: b.idMensaje != null ? String(b.idMensaje) : null,
     comprobante: { numero, monto: datos.monto, nombre: datos.nombre },
     cuentaCobro: datos.cuentaCobro,
+    ...(datos.destinoSinDatos ? { destinoSinDatos: true } : {}),
     claveOperacion,
     veces: 1,
     posibleEdicion: datos.edicionDetectada,

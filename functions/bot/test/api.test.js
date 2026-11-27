@@ -440,7 +440,7 @@ async function main() {
     }
     store["settings/operativo"].aliasActivo = "desconocido";
     const fallback = await llamar(api.agentEstadoOperativo);
-    ok("comprobantes: alias inválido usa Galicia tanto en pago como en validación", fallback.body.plantillas.ALIAS.includes("Lucio Felix Bunge") && fallback.body.plantillas.COMPROBANTES_VALIDOS.includes("alias1/028import.gl"), fallback.body.plantillas);
+    ok("comprobantes: alias inválido usa Galicia tanto en pago como en validación", fallback.body.plantillas.ALIAS.includes("Lucio Felix Bunge") && fallback.body.plantillas.COMPROBANTES_VALIDOS.includes("alias 028import.gl"), fallback.body.plantillas);
     store["settings/operativo"].aliasActivo = aliasGuardado;
 
     const cola = async (n, extra = {}) => {
@@ -816,6 +816,24 @@ async function main() {
     const doc = store[`comprobantes/${r.body.id}`];
     ok("suelto: guarda el comprobante con sus datos", r.body.guardado && doc.comprobante.numero === "185563329942" && doc.comprobante.monto === 65990 && doc.comprobante.nombre === "Celina Luque Peluffo" && doc.telefono === "5492235861032" && doc.pedidoId === null, doc);
     ok("suelto: reconoce la cuenta aunque el CVU se haya leído mal", doc.cuentaCobro === "alias3", doc.cuentaCobro);
+    // Lucio, 27/11: solo valen las cuentas cargadas, por CBU/CVU o alias. Mismo nombre en otra cuenta (Belo) no.
+    const belo = await guardar({ url: "https://chatwoot/belo.jpg", idMensaje: 20, lectura: { esComprobante: true, monto: "$48.990", numeroOperacion: "191976372290", titular: "Ramiro Valentin Santibanez", destinatario: "Lucio Felix Bunge", cbuCvu: "0000139300000018485648", cuit: "20-48459795-3" } });
+    ok("comprobantes: «Lucio Felix Bunge» en Belo (otro CBU) no es del negocio", belo.body.guardado && belo.body.cuentaDelNegocio === false && store[`comprobantes/${belo.body.id}`].cuentaCobro === null, belo.body);
+    const pepito = await guardar({ url: "https://chatwoot/naranja.jpg", idMensaje: 21, lectura: { esComprobante: true, monto: "$21.000", numeroOperacion: "190867720517", titular: "Benjamin Espindola", destinatario: "Agustina Ortiz Lanus", cbuCvu: "4530000800013199821352", cuit: "27-25251342-1" } });
+    ok("comprobantes: una transferencia a un tercero no es del negocio", pepito.body.cuentaDelNegocio === false, pepito.body);
+    const porAlias = await guardar({ url: "https://chatwoot/alias.jpg", idMensaje: 22, lectura: { esComprobante: true, monto: "$30.000", numeroOperacion: "600700800900", titular: "Juan Perez", destinatario: "LUCIO FELIX BUNGE", alias: "028IMPORT.GL" } });
+    ok("comprobantes: con el alias del negocio (aunque no se lea el CBU) es del negocio", store[`comprobantes/${porAlias.body.id}`].cuentaCobro === "alias1", porAlias.body);
+    const soloNombre = await guardar({ url: "https://chatwoot/solo-nombre.jpg", idMensaje: 23, lectura: { esComprobante: true, monto: "$30.000", numeroOperacion: "600700800901", titular: "Juan Perez", destinatario: "Lucio Felix Bunge" } });
+    const dSolo = store[`comprobantes/${soloNombre.body.id}`];
+    ok("comprobantes: solo con el nombre no alcanza (no se ve a qué cuenta fue)", dSolo.cuentaCobro === null && dSolo.destinoSinDatos === true, dSolo);
+    const unDigito = await guardar({ url: "https://chatwoot/un-digito.jpg", idMensaje: 24, lectura: { esComprobante: true, monto: "$30.000", numeroOperacion: "600700800902", destinatario: "Marcos Gieco", cbuCvu: "0070181130004057764294" } });
+    ok("comprobantes: un dígito mal leído en el CBU sigue siendo la cuenta", store[`comprobantes/${unDigito.body.id}`].cuentaCobro === "alias2", unDigito.body);
+    const dosDigitos = await guardar({ url: "https://chatwoot/dos-digitos.jpg", idMensaje: 25, lectura: { esComprobante: true, monto: "$30.000", numeroOperacion: "600700800903", destinatario: "Marcos Gieco", cbuCvu: "0070181130004057764211" } });
+    const mascara = await guardar({ url: "https://chatwoot/mascara.jpg", idMensaje: 26, lectura: { esComprobante: true, monto: "$30.000", numeroOperacion: "600700800904", destinatario: "Lucio Felix Bunge", cbuCvu: "CBU ****2980" } });
+    ok("comprobantes: CBU enmascarado con el mismo final y el titular es la cuenta", store[`comprobantes/${mascara.body.id}`].cuentaCobro === "alias1", mascara.body);
+    const mascaraOtra = await guardar({ url: "https://chatwoot/mascara-otra.jpg", idMensaje: 27, lectura: { esComprobante: true, monto: "$30.000", numeroOperacion: "600700800905", destinatario: "Lucio Felix Bunge", cbuCvu: "CVU ****5648" } });
+    ok("comprobantes: CBU enmascarado con otro final no es del negocio", store[`comprobantes/${mascaraOtra.body.id}`].cuentaCobro === null && !store[`comprobantes/${mascaraOtra.body.id}`].destinoSinDatos, mascaraOtra.body);
+    ok("comprobantes: dos dígitos distintos ya es otra cuenta", store[`comprobantes/${dosDigitos.body.id}`].cuentaCobro === null, dosDigitos.body);
     // Cuenta Recaudadora (21/11): también está a nombre de Lucio; el CVU manda sobre «bunge» del alias 1.
     const recaudadora = await guardar({ url: "https://chatwoot/recaudadora.jpg", idMensaje: 10, lectura: { esComprobante: true, monto: "$40.000", numeroOperacion: "556677889900", titular: "Celina Luque Peluffo", destinatario: "Lucio Bunge", cbuCvu: "0000137902554316992947" } });
     ok("suelto: el CVU de la Cuenta Recaudadora es alias4, no alias1", store[`comprobantes/${recaudadora.body.id}`]?.cuentaCobro === "alias4", recaudadora.body);
@@ -863,7 +881,8 @@ async function main() {
     delete store[`comprobantes/${corto.body.id}`];
     // Macarena (4/11): Mercado Pago lista «Origen y destino» juntos y la lectura invirtió los roles (Bunge como titular).
     const invertido = await guardar({ url: "https://chatwoot/maca.jpg", lectura: { esComprobante: true, monto: "50.000", numeroOperacion: "187702585028", fechaHora: "04/noviembre/2026 a las 10:38",
-      titular: "Lucio Felix Bunge", destinatario: "Macarena Katerina Martinez", cbuCvu: "0000003100052295155598", cuit: "27-42796817-6" } });
+      titular: "Lucio Felix Bunge", destinatario: "Macarena Katerina Martinez", cbuCvu: "0000003100052295155598", cuit: "27-42796817-6",
+      cuentasVisibles: "0000003100052295155598, 0070194130004014092980" } });
     const dInv = store[`comprobantes/${invertido.body.id}`];
     ok("suelto: con los roles invertidos igual reconoce la cuenta del negocio y quién pagó", invertido.body.guardado && invertido.body.cuentaDelNegocio
       && dInv.cuentaCobro === "alias1" && dInv.comprobante.nombre === "Macarena Katerina Martinez", dInv);
@@ -1091,7 +1110,7 @@ async function main() {
     const datos = { telefono: "+5492235861032", idConversacion: "201", idMensajeOrigen: "vincular-1", comprobanteUrl: url };
     const previo = await resumen(datos);
     await llamar(api.agentGuardarComprobante, { method: "POST", body: { url, telefono: datos.telefono, idConversacion: "201", idMensaje: "vincular-0",
-      lectura: { esComprobante: true, monto: previo.body.total, numeroOperacion: "777000111", destinatario: "Tame Lake S.A." } } });
+      lectura: { esComprobante: true, monto: previo.body.total, numeroOperacion: "777000111", destinatario: "Tame Lake S.A.", cbuCvu: "0000510400000000001348" } } });
     const cargado = await pedido(datos);
     const suelto = Object.values(store).find((v) => v.urlFuente === url);
     ok("suelto: crear_pedido lo vincula al pedido", cargado.body.ok && suelto?.pedidoId === cargado.body.pedidoId, { cargado: cargado.body, suelto });

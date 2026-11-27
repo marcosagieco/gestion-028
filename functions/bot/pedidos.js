@@ -111,12 +111,13 @@ async function inicioDeLaCompra(telefono, anterior, desdeCompra) {
 // Por qué un comprobante de la compra no sirve para pagarla (null si sirve). Los datos del pago salen
 // siempre del comprobante guardado, nunca de lo que escribió el modelo.
 const DESCARTE = {
-  ajeno: { error: "El comprobante no va a ninguna cuenta del negocio: decile al cliente que ese destino no es nuestro, mandale PLANTILLA:ALIAS y pedile el comprobante de la transferencia a esa cuenta.", corto: "uno va a una cuenta que no es del negocio" },
+  ajeno: { error: "El comprobante no va a ninguna cuenta del negocio (el CBU/CVU o el alias de destino no es nuestro, aunque el nombre se parezca): decile al cliente que esa cuenta no es nuestra, mandale PLANTILLA:ALIAS y pedile el comprobante de la transferencia a esa cuenta.", corto: "uno va a una cuenta que no es del negocio" },
+  sinCuenta: { error: "En el comprobante no se ve el CBU/CVU ni el alias de destino, y sin eso no se puede saber a qué cuenta fue: pedile una captura o el comprobante completo donde se vea.", corto: "en uno no se ve a qué cuenta fue" },
   ilegible: { error: "En el comprobante no se lee el importe: pedile que lo mande de nuevo.", corto: "en uno no se lee el importe" },
   usado: { error: "Ese comprobante ya se usó para otro pedido: decíselo al cliente y pedile el comprobante de esta compra.", corto: "uno ya se usó en otro pedido" },
 };
 async function descarte(c, pedidoId) {
-  if (!c.cuentaCobro) return "ajeno";
+  if (!c.cuentaCobro) return c.destinoSinDatos ? "sinCuenta" : "ajeno";
   if (!(Number(c.comprobante?.monto) > 0)) return "ilegible";
   // La misma clave que guarda el pedido en bot_pagos (cuenta + dígitos del número de operación).
   const digitos = String(c.comprobante.numero).replace(/\D/g, "");
