@@ -105,6 +105,9 @@ const fakeAxios = {
       // Como Google: la primera ruta es la más rápida (más larga, por autopista) y la corta viene de
       // alternativa. El backend tiene que pedir auto con alternativas y quedarse con la de menos km.
       // Y a veces la corta solo aparece pidiendo sin autopistas.
+      // La moto (27/11) pide la ruta más rápida en moto: por defecto mide lo mismo que la corta, así las cuentas
+      // de siempre no cambian; un test la alarga con global.__MOTO_MAS_LARGA para ver que se usa esa.
+      if (body.travelMode === "TWO_WHEELER") return { status: 200, data: { routes: [{ distanceMeters: Math.round(km * (global.__MOTO_MAS_LARGA ? 1300 : 1000)) }] } };
       if (body.travelMode !== "DRIVE" || body.computeAlternativeRoutes !== true) return { status: 200, data: { routes: [{ distanceMeters: Math.round(km * 1500) }] } };
       if (!body.routeModifiers?.avoidHighways) return { status: 200, data: { routes: [{ distanceMeters: Math.round(km * 1500) }, { distanceMeters: Math.round(km * 1200) }] } };
       return { status: 200, data: { routes: [{ distanceMeters: Math.round(km * 1100) }, { distanceMeters: Math.round(km * 1000) }] } };

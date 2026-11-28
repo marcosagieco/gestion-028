@@ -103,9 +103,10 @@ async function flashConTarifa(op, direccion) {
   if (!String(direccion || "").trim()) return { error: "falta la dirección: pedile calle, altura y barrio" };
   const u = await ubicar(direccion);
   if (!u) return { error: "no pude ubicar la dirección: pedile calle, altura y barrio" };
-  const p = precioFlash(op, u.km);
-  if (p.lejos) return { lejos: true, km: u.km, mensaje: `El Flash llega hasta ${p.maxKm} km del depósito y esa dirección está a ${u.km} km: ofrecé correo (sucursal o domicilio).` };
-  return { monto: p.monto, km: u.km };
+  // El Flash va por el camino más corto (18/11); la moto, por el más rápido (envios.ubicar).
+  const p = precioFlash(op, u.kmFlash);
+  if (p.lejos) return { lejos: true, km: u.kmFlash, mensaje: `El Flash llega hasta ${p.maxKm} km del depósito y esa dirección está a ${u.kmFlash} km: ofrecé correo (sucursal o domicilio).` };
+  return { monto: p.monto, km: u.kmFlash };
 }
 
 // POST /agentCrearCotizacionUber — { idConversacion, telefonoCliente, nombreCliente, direccion, explicacion, pedido }

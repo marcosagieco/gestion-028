@@ -43,11 +43,11 @@ function haversineKm(a, b) {
   return 2 * 6371 * Math.asin(Math.sqrt(h));
 }
 
-// Kilómetros REALES por calle entre el depósito y un punto (moto y Flash). Regla de Lucio (18/11): el
-// camino en auto con MENOS km, siempre. Antes se pedía la ruta de moto con tránsito y se tomaba la
-// primera, que es la más rápida: a Av. Córdoba 1540 daba ~13 km por autopista cuando por Libertador
-// son 8,9 km, y se cobraba de más (Flash y moto). Ahora se piden las alternativas en auto y se toma la
-// más corta. La calle es un 39% más larga que la línea recta (medido sobre 131 entregas reales): si
+// Kilómetros REALES por calle entre el depósito y un punto. Son dos:
+// - Flash: el camino en auto con MENOS km (Lucio, 18/11). A Av. Córdoba 1540 la ruta más rápida daba ~13 km
+//   por autopista cuando por Libertador son 8,9 km, y el Flash se cobraba de más.
+// - Moto: la ruta MÁS RÁPIDA en moto, con tránsito (Marcos y Lucio, 27/11): es la que hace el motomensajero,
+//   aunque tenga más km. La calle es un 39% más larga que la línea recta (medido sobre 131 entregas reales): si
 // Google no contesta, se usa la línea recta por ese factor: menos exacto, pero no deja el cobro corto.
 const FACTOR_CALLE = 1.4;
 
@@ -68,6 +68,28 @@ async function rutas(destino, extra) {
     { headers: { "X-Goog-Api-Key": GOOGLE_MAPS_KEY, "X-Goog-FieldMask": "routes.distanceMeters" }, timeout: 8000 }
   );
   return (data.routes || []).map((r) => r.distanceMeters).filter((m) => typeof m === "number" && m > 0);
+}
+
+// La ruta más rápida en moto (la primera que devuelve Google con tránsito). null si no responde.
+async function kmRutaRapida(destino) {
+  try {
+    const { data } = await axios.post(
+      "https://routes.googleapis.com/directions/v2:computeRoutes",
+      {
+        origin: { location: { latLng: { latitude: DEPOSITO.lat, longitude: DEPOSITO.lng } } },
+        destination: { location: { latLng: { latitude: destino.lat, longitude: destino.lng } } },
+        travelMode: "TWO_WHEELER",
+        routingPreference: "TRAFFIC_AWARE",
+      },
+      { headers: { "X-Goog-Api-Key": GOOGLE_MAPS_KEY, "X-Goog-FieldMask": "routes.distanceMeters" }, timeout: 8000 }
+    );
+    const metros = data.routes && data.routes[0] && data.routes[0].distanceMeters;
+    if (!(metros > 0)) throw new Error("sin rutas");
+    return metros / 1000;
+  } catch (e) {
+    console.error("[bot] Routes API (moto) no respondió:", e.message);
+    return null;
+  }
 }
 
 async function kmPorCalle(destino) {
@@ -99,10 +121,14 @@ async function ubicar(direccion) {
   const zona = barrios.map((b) => BARRIO_A_ZONA[b]).find(Boolean) || null;
   const esCABA = componentes.some((c) => NOMBRES_CABA.has(normalizar(c.long_name)) || NOMBRES_CABA.has(normalizar(c.short_name)));
   const { lat, lng } = r.geometry.location;
-  const kmCalle = await kmPorCalle({ lat, lng });
-  const km = Math.round((kmCalle !== null ? kmCalle : haversineKm(DEPOSITO, { lat, lng }) * FACTOR_CALLE) * 10) / 10;
+  const [kmCorto, kmRapido] = await Promise.all([kmPorCalle({ lat, lng }), kmRutaRapida({ lat, lng })]);
+  const estimado = haversineKm(DEPOSITO, { lat, lng }) * FACTOR_CALLE;
+  const redondo = (n) => Math.round(n * 10) / 10;
+  // km: la moto (ruta más rápida); kmFlash: el Flash (camino más corto). Si una consulta falla, vale la otra.
+  const km = redondo(kmRapido ?? kmCorto ?? estimado);
+  const kmFlash = redondo(kmCorto ?? kmRapido ?? estimado);
   return {
-    lat, lng, zona, km, esCABA, kmExacto: kmCalle !== null,
+    lat, lng, zona, km, kmFlash, esCABA, kmExacto: kmRapido !== null || kmCorto !== null,
     cubiertoMoto: esCABA || zona === "B",
     monto: Math.max(Math.round(km * TARIFA_POR_KM), MINIMO_ENVIO),
   };

@@ -77,6 +77,16 @@ async function main() {
     const r2 = await resumen({ direccion: { texto: "Calle Inventada 123" } });
     ok("moto: una dirección que Google no ubica se rechaza", r2.status === 400 && /no pude ubicar/.test(r2.body.error), r2.body);
   }
+  // Marcos y Lucio (27/11): la moto se cotiza por la ruta más rápida en moto; el Flash, por el camino más corto (18/11).
+  {
+    const { ubicar } = require("../envios");
+    const corta = await ubicar("Cabildo 2000, Belgrano");
+    global.__MOTO_MAS_LARGA = true;
+    const rapida = await ubicar("Cabildo 2000, Belgrano");
+    delete global.__MOTO_MAS_LARGA;
+    ok("envíos: la moto usa la ruta más rápida aunque tenga más km", rapida.km > corta.km && rapida.monto >= corta.monto, { corta, rapida });
+    ok("envíos: el Flash sigue con el camino más corto", rapida.kmFlash === corta.kmFlash && corta.kmFlash === corta.km, { corta, rapida });
+  }
   {
     const r = await llamar(api.agentCotizarEnvio, { query: { direccion: "Maipú 1000, Olivos" } });
     ok("cotizar_envio: Olivos cubierto, con efectivo y con monto", r.body.cubiertoMoto && r.body.admiteEfectivo && r.body.monto >= 3000, r.body);
